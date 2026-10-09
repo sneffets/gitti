@@ -1,0 +1,61 @@
+[package]
+name = "gitti-app"
+edition.workspace = true
+version = "0.2.0"  # own version per crate (shown in About / --version)
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "gitti"
+path = "src/main.rs"
+
+[dependencies]
+gitti-core.workspace = true
+gpui-kit = "0.7"
+anyhow = "1"
+async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Dock icon of the bare binary (`app_icon.rs`), spell checking (`spell/macos.rs`); same
+# versions as gpui uses.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSSpellChecker"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSArray", "NSString", "NSRange", "NSLocale"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Spell checking (`spell/win.rs`); the version gpui uses.
+windows = { version = "0.62", features = ["Win32_Globalization", "Win32_System_Com"] }
+
+# Headless UI tests: one binary, own main (no libtest harness — the platform text system
+# must be created on the main thread); suites in `tests/ui/*.rs`.
+[[test]]
+name = "ui"
+path = "tests/ui/main.rs"
+harness = false
+
+[features]
+# Enables offscreen rendering of the window for `shot:` steps in GITTI_SCRIPT.
+screenshot = ["gpui-kit/test-support", "dep:image"]
+
+[build-dependencies]
+# Windows icon resource (`build.rs`); same version as gpui uses.
+embed-resource = "3"
+
+[dev-dependencies]
+tempfile = "3"
+# `#[gitti_test::test]` (the time limit) for the unit tests.
+gitti-test.workspace = true
+# Headless UI tests (`tests/ui`): TestAppContext + element observation.
+gpui-kit = { version = "0.7", features = ["test-support"] }
+# `examples/make_icons.rs` (same version as gpui uses).
+resvg = { version = "0.46", default-features = false }
+
+# RELEASE TESTS — slow / randomized; run only before a release, never in daily work or
+# per merge. Uncomment to compile; see release-tests/README.md.
+# [[test]]
+# name = "release_ui"
+# path = "../../release-tests/ui/main.rs"
+# harness = false

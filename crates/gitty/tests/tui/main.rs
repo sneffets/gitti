@@ -1,0 +1,28 @@
+//! gitty's integration tests: one test binary (one link) instead of one per file.
+//! `cargo test --workspace --test tui -- staging::` runs one module's tests (`--workspace`,
+//! not `-p`: cargo would resolve dependency features differently and rebuild them).
+
+mod common;
+mod support;
+
+mod cancel;
+mod change_search;
+mod config_safety;
+mod keybar;
+mod lfs;
+mod linux;
+mod menus;
+mod merge_editor;
+mod navigation;
+mod palette;
+mod progress;
+mod remote;
+mod repo_cmds;
+mod scroll;
+mod sha256;
+mod signing_keys;
+mod speed;
+mod staging;
+mod submodules;
+mod unicode;
+mod views;

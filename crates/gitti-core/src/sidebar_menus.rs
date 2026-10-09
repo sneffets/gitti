@@ -1,0 +1,230 @@
+//! What the sidebar's context menus offer, in gitti and gitty alike: the entries
+//! each kind of row (and each section header) must have. Both apps' tests open every menu
+//! and check it against this table (gitti `tests/menus.rs`, gitty `tests/sidebar_menus.rs`),
+//! so a menu can't silently lose an entry and the two apps keep the same choices. An app
+//! may offer more (gitti: "Open in New Tab", "Merge … into current…" with options; gitty:
+//! "Switch to Worktree"), never less.
+//!
+//! Labels are compared with [`menu_key`]: lower case, without "…", a trailing state
+//! ("(checked out here)", ": on") or a key hint after two spaces ("Mark for Comparison  ⇧C").
+//! Placeholders: `{name}` the row's own name (branch, `origin/main`, tag), `{head}` the
+//! current branch, `{remote}` the row's remote (a remote branch's, else the first remote),
+//! `{branch}` a remote branch's name without the remote, `{fm}` the platform's file
+//! manager name.
+
+use crate::palette::normalize;
+
+/// A kind of sidebar row, or a section header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SideMenu {
+    Remote,
+    /// A local branch other than the checked-out one.
+    Branch,
+    /// The checked-out branch.
+    CurrentBranch,
+    RemoteBranch,
+    Tag,
+    Stash,
+    /// A linked worktree other than this one.
+    Worktree,
+    Submodule,
+    BranchesSection,
+    RemotesSection,
+    TagsSection,
+    StashesSection,
+    WorktreesSection,
+    SubmodulesSection,
+}
+
+/// Every menu of the table, for tests that walk them all.
+pub const ALL: &[SideMenu] = &[
+    SideMenu::Remote,
+    SideMenu::Branch,
+    SideMenu::CurrentBranch,
+    SideMenu::RemoteBranch,
+    SideMenu::Tag,
+    SideMenu::Stash,
+    SideMenu::Worktree,
+    SideMenu::Submodule,
+    SideMenu::BranchesSection,
+    SideMenu::RemotesSection,
+    SideMenu::TagsSection,
+    SideMenu::StashesSection,
+    SideMenu::WorktreesSection,
+    SideMenu::SubmodulesSection,
+];
+
+/// The entries of `menu`, with placeholders.
+pub fn entries(menu: SideMenu) -> &'static [&'static str] {
+    match menu {
+        SideMenu::Remote => &[
+            "Fetch {remote}",
+            "Pull from {remote}",
+            "Push {head} to {remote}",
+            "Prune Stale Branches of {remote}",
+            "Copy URL",
+            "Edit URL…",
+            "Rename…",
+            "Remove…",
+            "Add Remote…",
+        ],
+        SideMenu::Branch => &[
+            "Checkout {name}",
+            "Merge {name} into {head}",
+            "Rebase {head} onto {name}",
+            "Push {name} to {remote}",
+            "Force Push {name} to {remote}…",
+            "Push Options…",
+            "Set Upstream…",
+            "Create Branch From…",
+            "Create Tag…",
+            "Mark for Comparison",
+            "Rename…",
+            "Delete…",
+            "Force Delete…",
+            "Copy Name",
+        ],
+        SideMenu::CurrentBranch => &[
+            "Pull",
+            "Push",
+            "Push {name} to {remote}",
+            "Push Options…",
+            "Set Upstream…",
+            "Create Branch From…",
+            "Create Tag…",
+            "Mark for Comparison",
+            "Rename…",
+            "Copy Name",
+        ],
+        SideMenu::RemoteBranch => &[
+            "Checkout as local {branch}",
+            "Merge {name} into {head}",
+            "Rebase {head} onto {name}",
+            "Create Branch From…",
+            "Create Tag…",
+            "Set as Upstream of {head}",
+            "Mark for Comparison",
+            "Delete {branch} on {remote}…",
+            "Copy Name",
+        ],
+        SideMenu::Tag => &[
+            "Checkout {name}",
+            "Merge {name} into {head}",
+            "Create Branch From…",
+            "Push Tag to {remote}",
+            "Mark for Comparison",
+            "Delete Tag…",
+            "Delete Tag on {remote}…",
+            "Copy Name",
+        ],
+        SideMenu::Stash => &[
+            "Apply",
+            "Pop",
+            "Create Branch from Stash…",
+            "Copy Message",
+            "Drop…",
+        ],
+        SideMenu::Worktree => &[
+            "Reveal in {fm}",
+            "Sparse Folders…",
+            "Move…",
+            "Remove Worktree…",
+            "Copy Path",
+        ],
+        SideMenu::Submodule => &[
+            "Update",
+            "Update to Remote Branch",
+            "Reveal in {fm}",
+            "Sync URL",
+            "Copy Path",
+            "Remove Submodule…",
+        ],
+        SideMenu::BranchesSection => &["Create Branch at HEAD…", "Switch Branch…"],
+        SideMenu::RemotesSection => &["Add Remote…", "Fetch All"],
+        SideMenu::TagsSection => &["Create Tag at HEAD…", "Push All Tags to {remote}"],
+        SideMenu::StashesSection => &[
+            "Stash Changes…",
+            "Stash Including Untracked",
+            "Apply Latest Stash",
+            "Pop Latest Stash",
+        ],
+        SideMenu::WorktreesSection => &["Add Worktree…", "Prune Worktrees", "Repair Worktrees…"],
+        SideMenu::SubmodulesSection => &[
+            "Add Submodule…",
+            "Update Submodules",
+            "Update Submodules to Remote Branches",
+            "Sync Submodule URLs",
+            "Run Command in Each Submodule…",
+        ],
+    }
+}
+
+/// Values for the placeholders of [`entries`].
+#[derive(Debug, Clone, Default)]
+pub struct Vars {
+    pub name: String,
+    pub head: String,
+    pub remote: String,
+    pub branch: String,
+    pub fm: String,
+}
+
+impl Vars {
+    fn fill(&self, label: &str) -> String {
+        label
+            .replace("{name}", &self.name)
+            .replace("{head}", &self.head)
+            .replace("{remote}", &self.remote)
+            .replace("{branch}", &self.branch)
+            .replace("{fm}", &self.fm)
+    }
+}
+
+/// A menu label reduced for comparing (see the module docs).
+pub fn menu_key(label: &str) -> String {
+    let label = label.split("  ").next().unwrap_or(label);
+    normalize(label)
+}
+
+/// The entries of `menu` (filled in) that `labels` — what an app's menu shows — lacks.
+pub fn missing(menu: SideMenu, vars: &Vars, labels: &[String]) -> Vec<String> {
+    let have: Vec<String> = labels.iter().map(|l| menu_key(l)).collect();
+    entries(menu)
+        .iter()
+        .map(|e| vars.fill(e))
+        .filter(|e| !have.contains(&menu_key(e)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gitti_test::test]
+    fn keys_drop_hints_and_states() {
+        assert_eq!(menu_key("Mark for Comparison  ⇧C"), "mark for comparison");
+        assert_eq!(menu_key("Delete… (checked out here)"), "delete");
+        assert_eq!(menu_key("Set Upstream… (now origin/main)"), "set upstream");
+    }
+
+    #[gitti_test::test]
+    fn table_is_unique_and_missing_fills_in() {
+        for &m in ALL {
+            let mut seen = std::collections::HashSet::new();
+            for e in entries(m) {
+                assert!(seen.insert(menu_key(e)), "{m:?}: {e} twice");
+            }
+        }
+        let vars = Vars {
+            name: "v1".into(),
+            head: "main".into(),
+            remote: "origin".into(),
+            ..Default::default()
+        };
+        let have = vec!["Checkout v1 (detached)".to_string(), "Push Tag to origin".into()];
+        let miss = missing(SideMenu::Tag, &vars, &have);
+        assert!(miss.contains(&"Merge v1 into main".to_string()), "{miss:?}");
+        assert!(!miss.iter().any(|m| m.starts_with("Checkout")), "{miss:?}");
+        assert!(!miss.iter().any(|m| m.starts_with("Push Tag")), "{miss:?}");
+    }
+}

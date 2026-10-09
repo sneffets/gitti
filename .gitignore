@@ -1,0 +1,7 @@
+/target
+.DS_Store
+# Personal Claude Code notes (private working docs live outside this repo)
+CLAUDE.local.md
+# xtask worktree slots (default place)
+/.claude/worktrees/
+.claude/settings.local.json

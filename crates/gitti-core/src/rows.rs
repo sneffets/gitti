@@ -1,0 +1,1318 @@
+//! Flattened, uniform-height rows of a diff panel — the view model shared by the GUI
+//! (`gitti-app`, virtualised with `uniform_list`) and the TUI (`gitty`).
+
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+
+use crate::context::{self, FileContext, Reveal};
+use crate::diff::FileDiff;
+use crate::patch::Selection;
+
+mod anchor;
+mod groups;
+pub use anchor::{AnchorAt, AnchorHit, RowAnchor, RowFiles, find_anchor, reveal_above, row_anchor};
+pub use groups::{Group, LineTotals, WorktreeTotals, group_files, group_paths, grouped};
+
+/// Where a diff comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Src {
+    /// Unmerged files (diff against HEAD, conflict markers visible).
+    Conflicted,
+    Unstaged,
+    Staged,
+    Commit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffRow {
+    Section(Src),
+    /// Sub header of a group of the unstaged section ([`Group`]): its files follow unless
+    /// it is collapsed.
+    Group(Group),
+    File {
+        src: Src,
+        file: usize,
+    },
+    Hunk {
+        src: Src,
+        file: usize,
+        hunk: usize,
+    },
+    Line {
+        src: Src,
+        file: usize,
+        hunk: usize,
+        line: usize,
+        /// Wrapped continuation index (0 = first visual row of the line).
+        part: u16,
+    },
+    Note {
+        src: Src,
+        file: usize,
+    },
+    /// Gap between files (dark band).
+    Spacer,
+    /// Gap between two hunks of the same file.
+    HunkGap,
+    /// Empty space under the commit header, which is drawn over these rows so that it
+    /// scrolls away with the diff.
+    HeaderSpace,
+    /// An unchanged line outside the hunks, revealed by "show more lines" (`line` = its
+    /// 1-based number in the new version, text in [`Expansion::context_line`]). Display
+    /// only: not selectable, never part of a patch.
+    Context {
+        src: Src,
+        file: usize,
+        line: u32,
+        part: u16,
+    },
+    /// "Show more lines" at gap `gap` of a file (0 = above the first hunk, `hunks.len()` =
+    /// below the last one, else above hunk `gap`); see [`crate::context`].
+    Expand {
+        src: Src,
+        file: usize,
+        gap: usize,
+    },
+    /// Row `line` of a submodule pointer change ([`crate::submodule::SubmoduleDiff::row`]:
+    /// 0 = the summary, then the commits, then notes). Not selectable: the change is
+    /// staged / unstaged as a whole (the file's path).
+    Submodule {
+        src: Src,
+        file: usize,
+        line: usize,
+    },
+}
+
+impl DiffRow {
+    /// Short kind name, e.g. for layout probes (`diff-row:12:line`).
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            DiffRow::Section(_) => "section",
+            DiffRow::Group(_) => "group",
+            DiffRow::File { .. } => "file",
+            DiffRow::Hunk { .. } => "hunk",
+            DiffRow::Line { .. } => "line",
+            DiffRow::Note { .. } => "note",
+            DiffRow::Spacer => "spacer",
+            DiffRow::HunkGap => "hunk-gap",
+            DiffRow::HeaderSpace => "header-space",
+            DiffRow::Context { .. } => "context",
+            DiffRow::Expand { .. } => "expand",
+            DiffRow::Submodule { .. } => "submodule",
+        }
+    }
+}
+
+impl DiffRow {
+    /// The file a row belongs to.
+    pub fn file_ref(&self) -> Option<(Src, usize)> {
+        match *self {
+            DiffRow::File { src, file }
+            | DiffRow::Note { src, file }
+            | DiffRow::Hunk { src, file, .. }
+            | DiffRow::Line { src, file, .. }
+            | DiffRow::Context { src, file, .. }
+            | DiffRow::Expand { src, file, .. }
+            | DiffRow::Submodule { src, file, .. } => Some((src, file)),
+            _ => None,
+        }
+    }
+
+    /// The 1-based line of `f` (this row's file) to open an editor at: a line's new number
+    /// (removed lines: the old one), a hunk's first new line, a file's first hunk.
+    pub fn editor_line(&self, f: &FileDiff) -> u32 {
+        let first = || f.hunks.first().map_or(1, |h| h.new_start);
+        match *self {
+            DiffRow::Line { hunk, line, .. } => f
+                .hunks
+                .get(hunk)
+                .and_then(|h| h.lines.get(line))
+                .and_then(|l| l.new_no.or(l.old_no))
+                .unwrap_or_else(first),
+            DiffRow::Hunk { hunk, .. } => f.hunks.get(hunk).map_or_else(first, |h| h.new_start),
+            DiffRow::Context { line, .. } => line,
+            _ => first(),
+        }
+        .max(1)
+    }
+
+    /// [`Self::editor_line`] in the old version of the file (Open Old Version): a line's
+    /// old number (added lines: the old line they follow), a hunk's first old line.
+    pub fn editor_line_old(&self, f: &FileDiff) -> u32 {
+        let first = || f.hunks.first().map_or(1, |h| h.old_start);
+        match *self {
+            DiffRow::Line { hunk, line, .. } => f
+                .hunks
+                .get(hunk)
+                .and_then(|h| {
+                    // The nearest old line number at or before this line.
+                    h.lines.get(..=line)?.iter().rev().find_map(|l| l.old_no)
+                })
+                .unwrap_or_else(first),
+            DiffRow::Hunk { hunk, .. } => f.hunks.get(hunk).map_or_else(first, |h| h.old_start),
+            DiffRow::Context { line, .. } => context::old_line_no(f, line),
+            _ => first(),
+        }
+        .max(1)
+    }
+}
+
+/// Files with more diff lines than this start collapsed.
+const AUTO_COLLAPSE_LINES: usize = 2000;
+
+/// Collapse state per file path. Files are expanded unless listed (or auto-collapsed).
+/// Also the revealed context lines per file ([`FileContext`]), kept while a file's diff
+/// stays the same.
+#[derive(Debug, Default, Clone)]
+pub struct Expansion {
+    toggled: HashSet<(Src, String)>,
+    /// "Expand all" / "Collapse all" overrides the size-based default.
+    all: Option<bool>,
+    context: HashMap<(Src, String), FileContext>,
+    /// Collapsed groups of the unstaged section (their header stays, the files are hidden).
+    collapsed_groups: HashSet<Group>,
+}
+
+impl Expansion {
+    pub fn set_all(&mut self, expanded: bool) {
+        self.toggled.clear();
+        self.all = Some(expanded);
+        // "Expand all" opens collapsed groups too; "Collapse all" keeps the group headers
+        // open (their file headers are the overview).
+        if expanded {
+            self.collapsed_groups.clear();
+        }
+    }
+
+    pub fn is_expanded(&self, src: Src, file: &FileDiff) -> bool {
+        let default = self.all.unwrap_or(diff_len(file) <= AUTO_COLLAPSE_LINES);
+        let toggled = self.toggled.contains(&(src, file.path().to_string()));
+        default != toggled
+    }
+
+    pub fn is_group_collapsed(&self, group: Group) -> bool {
+        self.collapsed_groups.contains(&group)
+    }
+
+    pub fn toggle_group(&mut self, group: Group) {
+        if !self.collapsed_groups.remove(&group) {
+            self.collapsed_groups.insert(group);
+        }
+    }
+
+    pub fn toggle(&mut self, src: Src, path: &str) {
+        let key = (src, path.to_string());
+        if !self.toggled.remove(&key) {
+            self.toggled.insert(key);
+        }
+    }
+
+    /// The revealed context of `diff` (`None` before its text is loaded, or when it was
+    /// made for a different diff of the path).
+    pub fn context(&self, src: Src, diff: &FileDiff) -> Option<&FileContext> {
+        self.context
+            .get(&(src, diff.path().to_string()))
+            .filter(|c| c.is_for(diff))
+    }
+
+    /// Whether the new version's text of `diff` is loaded (reveals then need no read).
+    pub fn has_context_text(&self, src: Src, diff: &FileDiff) -> bool {
+        self.context(src, diff).is_some()
+    }
+
+    /// Stores the new version's lines of `diff` (read once per file); false when they
+    /// don't belong to it (the file changed since) or the diff can't show more lines.
+    pub fn set_context_text(&mut self, src: Src, diff: &FileDiff, lines: Arc<Vec<String>>) -> bool {
+        if self.has_context_text(src, diff) {
+            return true;
+        }
+        match FileContext::new(diff, lines) {
+            Some(c) => {
+                self.context.insert((src, diff.path().to_string()), c);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Reveals lines of gap `gap` of `diff` (`None`: every gap — the whole file); false
+    /// when the text is not loaded or nothing was hidden there.
+    pub fn reveal(&mut self, src: Src, diff: &FileDiff, gap: Option<usize>, how: Reveal) -> bool {
+        let Some(c) = self
+            .context
+            .get_mut(&(src, diff.path().to_string()))
+            .filter(|c| c.is_for(diff))
+        else {
+            return false;
+        };
+        match gap {
+            Some(g) => c.reveal(diff, g, how),
+            None => c.reveal_all(diff),
+        }
+    }
+
+    /// Whether unchanged lines of `diff` are revealed ("show more lines" / the whole file).
+    pub fn is_revealed(&self, src: Src, diff: &FileDiff) -> bool {
+        self.context(src, diff).is_some_and(FileContext::is_revealed)
+    }
+
+    /// "Show Changes Only" for one file: hides its revealed lines (the text stays loaded, so
+    /// showing them again reads nothing). False when none were shown.
+    pub fn hide_context(&mut self, src: Src, path: &str) -> bool {
+        self.context
+            .get_mut(&(src, path.to_string()))
+            .is_some_and(FileContext::hide_all)
+    }
+
+    /// Hides the revealed lines of every file — when the shown file / commit / view is left
+    /// (the next file always opens as changes) and for Esc in the diff. False when
+    /// none were shown.
+    pub fn hide_all_context(&mut self) -> bool {
+        let mut any = false;
+        for c in self.context.values_mut() {
+            any |= c.hide_all();
+        }
+        any
+    }
+
+    /// The largest line number revealed lines may have (for gutter widths).
+    pub fn max_context_line(&self) -> u32 {
+        self.context.values().map(FileContext::total).max().unwrap_or(0)
+    }
+
+    /// Text of the revealed line `line` (1-based, new version) of `path`.
+    pub fn context_line(&self, src: Src, path: &str, line: u32) -> Option<&str> {
+        self.context.get(&(src, path.to_string()))?.line(line)
+    }
+
+    /// Gap `gap` of `diff` and the number of lines still hidden there (`None` = unknown
+    /// yet) — for the label of its expander row.
+    pub fn gap_state(&self, src: Src, diff: &FileDiff, gap: usize) -> Option<(context::Gap, Option<u32>)> {
+        let c = self.context(src, diff);
+        let g = context::gaps(diff, c.map(|c| c.total()))
+            .into_iter()
+            .find(|g| g.index == gap)?;
+        let shown = c.map_or((0, 0), |c| c.shown(gap));
+        Some((g, context::gap_view(&g, shown).expander.flatten()))
+    }
+}
+
+fn diff_len(f: &FileDiff) -> usize {
+    f.hunks.iter().map(|h| h.lines.len() + 1).sum()
+}
+
+/// Characters of a diff line as displayed (tabs expanded, CR dropped).
+pub fn expand_line(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\t' => out.push_str("    "),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Longest line we lay out (wrapped or not); the rest is cut off with `…`.
+pub const MAX_LINE_CHARS: usize = 20_000;
+
+/// Display columns of a char: 2 for wide ones (CJK, emoji), 0 for combining marks and
+/// zero-width chars (they stay with the char before them), else 1. A terminal cell in
+/// gitty; in gitti one advance of the monospace diff font (a CJK glyph of the fallback
+/// font is about 1.7 of them, so 2 keeps it inside the row).
+pub fn char_cols(c: char) -> usize {
+    unicode_width::UnicodeWidthChar::width(c).unwrap_or(1)
+}
+
+/// Char ranges of the visual rows of a line, each at most `cols` display columns wide
+/// ([`char_cols`]; a single wider char gets a row of its own): greedy word wrap, hard
+/// break for long words.
+fn wrap_ranges(chars: &[char], cols: usize) -> Vec<(usize, usize)> {
+    let n = chars.len().min(MAX_LINE_CHARS);
+    let cols = cols.max(1);
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < n || out.is_empty() {
+        let (mut end, mut used, mut half) = (start, 0, None);
+        while end < n {
+            let w = char_cols(chars[end]);
+            if used + w > cols && end > start {
+                break;
+            }
+            if half.is_none() && used >= cols / 2 {
+                half = Some(end);
+            }
+            used += w;
+            end += 1;
+        }
+        if end < n
+            && let Some(h) = half
+            // Break after the last space in the second half of the row, if any.
+            && let Some(i) = (h..end).rev().find(|&i| chars[i] == ' ')
+        {
+            end = i + 1;
+        }
+        out.push((start, end));
+        if end == start {
+            break;
+        }
+        start = end;
+    }
+    out
+}
+
+/// Number of visual rows for `text` at `cols` columns (`None` = no wrapping).
+fn parts(text: &str, wrap: Option<usize>) -> u16 {
+    match wrap {
+        Some(cols) if cols > 0 => {
+            let chars: Vec<char> = expand_line(text).chars().collect();
+            wrap_ranges(&chars, cols).len().clamp(1, u16::MAX as usize) as u16
+        }
+        _ => 1,
+    }
+}
+
+/// Visual row `part` of a line plus its char range in the expanded line (for styling).
+pub fn line_part_range(
+    text: &str,
+    part: u16,
+    wrap: Option<usize>,
+    unwrapped_max: usize,
+) -> (String, usize, usize) {
+    let expanded = expand_line(text);
+    match wrap {
+        Some(cols) if cols > 0 => {
+            let chars: Vec<char> = expanded.chars().collect();
+            match wrap_ranges(&chars, cols).get(part as usize) {
+                Some(&(a, b)) => (chars[a..b].iter().collect(), a, b),
+                None => (String::new(), 0, 0),
+            }
+        }
+        _ => {
+            let n = expanded.chars().count();
+            if n > unwrapped_max {
+                let mut s: String = expanded.chars().take(unwrapped_max).collect();
+                s.push('…');
+                (s, 0, unwrapped_max)
+            } else {
+                (expanded, 0, n)
+            }
+        }
+    }
+}
+
+/// The intra-line ranges of a line (`Hunk::intra_ranges`: chars of the expanded line) that
+/// fall into the shown part `[a, b)` of it (`line_part_range`; gitty passes its horizontal
+/// scroll offset and `usize::MAX`), as byte ranges into the part's `text`.
+pub fn part_byte_ranges(
+    text: &str,
+    ranges: &[std::ops::Range<u32>],
+    a: usize,
+    b: usize,
+) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let mut bytes: Option<Vec<usize>> = None;
+    for r in ranges {
+        let (s, e) = ((r.start as usize).max(a), (r.end as usize).min(b));
+        if s >= e {
+            continue;
+        }
+        // Char offset → byte offset in `text` (built once, only when a range is visible).
+        let offs = bytes.get_or_insert_with(|| {
+            text.char_indices()
+                .map(|(i, _)| i)
+                .chain([text.len()])
+                .collect()
+        });
+        let last = offs.len() - 1;
+        let (s, e) = ((s - a).min(last), (e - a).min(last));
+        if s < e {
+            out.push(offs[s]..offs[e]);
+        }
+    }
+    out
+}
+
+/// The text of visual row `part` of a line.
+#[cfg(test)]
+pub fn line_part(text: &str, part: u16, wrap: Option<usize>, unwrapped_max: usize) -> String {
+    let expanded = expand_line(text);
+    match wrap {
+        Some(cols) if cols > 0 => {
+            let chars: Vec<char> = expanded.chars().collect();
+            wrap_ranges(&chars, cols)
+                .get(part as usize)
+                .map(|&(a, b)| chars[a..b].iter().collect())
+                .unwrap_or_default()
+        }
+        _ => {
+            if expanded.chars().count() > unwrapped_max {
+                let mut s: String = expanded.chars().take(unwrapped_max).collect();
+                s.push('…');
+                s
+            } else {
+                expanded
+            }
+        }
+    }
+}
+
+pub fn build_worktree_rows(
+    ws: &crate::WorkingState,
+    exp: &Expansion,
+    wrap: Option<usize>,
+) -> Vec<DiffRow> {
+    build_worktree_rows_for(ws, None, exp, wrap)
+}
+
+/// [`build_worktree_rows`] restricted to the parts (conflicted / unstaged / staged) of one
+/// path (`only`, a file tab of the working directory). Rows keep the file indices of the
+/// whole state, so staging from the filtered rows works as from all of them.
+pub fn build_worktree_rows_for(
+    ws: &crate::WorkingState,
+    only: Option<&str>,
+    exp: &Expansion,
+    wrap: Option<usize>,
+) -> Vec<DiffRow> {
+    let mut rows = Vec::new();
+    for (src, files) in [
+        (Src::Conflicted, &ws.conflicted),
+        (Src::Unstaged, &ws.unstaged),
+        (Src::Staged, &ws.staged),
+    ] {
+        let shown = |f: &crate::WorkFile| only.is_none_or(|p| f.path() == p);
+        if !files.iter().any(shown) {
+            continue;
+        }
+        if !rows.is_empty() {
+            rows.push(DiffRow::Spacer);
+        }
+        rows.push(DiffRow::Section(src));
+        // The unstaged section in groups, not for one file tab.
+        if src == Src::Unstaged && only.is_none() && grouped(ws) {
+            for group in Group::ALL {
+                let mut members = group_files(ws, group).peekable();
+                if members.peek().is_none() {
+                    continue;
+                }
+                if rows.last() != Some(&DiffRow::Section(src)) {
+                    rows.push(DiffRow::Spacer);
+                }
+                rows.push(DiffRow::Group(group));
+                if exp.is_group_collapsed(group) {
+                    continue;
+                }
+                for (i, f) in members {
+                    rows.push(DiffRow::Spacer);
+                    push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap);
+                }
+            }
+            continue;
+        }
+        for (i, f) in files.iter().enumerate() {
+            if !shown(f) {
+                continue;
+            }
+            rows.push(DiffRow::Spacer);
+            push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap);
+        }
+    }
+    rows
+}
+
+/// The status letter of a conflicted file on file tabs, file rows and diff headers. git's
+/// porcelain says `U` ("unmerged"), which reads as "untracked" or "unstaged".
+/// In a commit diff `C` is a copy; in the working directory a conflict is told by where
+/// the file is (`Src::Conflicted`, `TabStage::Conflicted`), not by the letter alone.
+pub const CONFLICT_LETTER: char = 'C';
+
+/// What a commit / index status letter means ("modified", "copied", …) for tooltips and
+/// pickers. Conflicts are not a letter here (see [`CONFLICT_LETTER`]).
+pub fn change_name(letter: char) -> &'static str {
+    match letter {
+        '?' => "untracked",
+        'A' => "added",
+        'D' => "deleted",
+        'R' => "renamed",
+        'C' => "copied",
+        'T' => "type changed",
+        _ => "modified",
+    }
+}
+
+/// The group header row `row` belongs to: the group header itself or the nearest one
+/// above it in the unstaged section (`None` outside the groups).
+pub fn group_of_row(rows: &[DiffRow], row: usize) -> Option<Group> {
+    for r in rows.get(..=row)?.iter().rev() {
+        match *r {
+            DiffRow::Group(g) => return Some(g),
+            DiffRow::Section(_) => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Where the changes of a working-directory file tab are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabStage {
+    Unstaged,
+    /// Changes in the index and in the working directory.
+    Partly,
+    Staged,
+    Conflicted,
+}
+
+/// A file tab of the working-directory view: one per changed path, its unstaged and staged
+/// parts together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeTab {
+    pub path: String,
+    /// Status letter as on the file rows: `?` untracked, [`CONFLICT_LETTER`] conflicted, else the
+    /// working-directory letter (`M`, `D`, …) or, for staged-only files, the index letter.
+    pub letter: char,
+    pub stage: TabStage,
+}
+
+impl WorktreeTab {
+    /// The file name (last path component); an untracked folder entry keeps its slash
+    /// (`dir/`, `status.showUntrackedFiles=normal`).
+    pub fn name(&self) -> &str {
+        let trimmed = self.path.strip_suffix('/').unwrap_or(&self.path);
+        let start = trimmed.rfind('/').map_or(0, |i| i + 1);
+        &self.path[start..]
+    }
+
+    /// E.g. "modified, partly staged" (tooltips).
+    pub fn describe(&self) -> String {
+        let what = change_name(self.letter);
+        match self.stage {
+            TabStage::Conflicted => "conflicted".to_string(),
+            TabStage::Unstaged if self.letter == '?' => what.to_string(),
+            TabStage::Unstaged => format!("{what}, unstaged"),
+            TabStage::Partly => format!("{what}, partly staged"),
+            TabStage::Staged => format!("{what}, staged"),
+        }
+    }
+}
+
+/// The file tabs of `ws`, sorted by path (stable while files are staged / unstaged).
+pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
+    let mut map: std::collections::BTreeMap<&str, WorktreeTab> = Default::default();
+    for f in &ws.conflicted {
+        map.entry(f.path()).or_insert_with(|| WorktreeTab {
+            path: f.path().to_string(),
+            letter: CONFLICT_LETTER,
+            stage: TabStage::Conflicted,
+        });
+    }
+    for f in &ws.unstaged {
+        let e = &f.entry;
+        let (letter, stage) = if e.untracked {
+            ('?', TabStage::Unstaged)
+        } else if e.conflicted {
+            (CONFLICT_LETTER, TabStage::Conflicted)
+        } else {
+            (e.worktree.unwrap_or('M'), TabStage::Unstaged)
+        };
+        map.entry(f.path()).or_insert_with(|| WorktreeTab {
+            path: f.path().to_string(),
+            letter,
+            stage,
+        });
+    }
+    for f in &ws.staged {
+        let tab = map.entry(f.path()).or_insert_with(|| WorktreeTab {
+            path: f.path().to_string(),
+            letter: f.entry.index.unwrap_or('M'),
+            stage: TabStage::Staged,
+        });
+        if tab.stage == TabStage::Unstaged {
+            tab.stage = TabStage::Partly;
+        }
+    }
+    map.into_values().collect()
+}
+
+/// Rows of a commit diff; `only` restricts them to one file (file tab).
+pub fn build_commit_rows(
+    files: &[FileDiff],
+    only: Option<usize>,
+    exp: &Expansion,
+    wrap: Option<usize>,
+) -> Vec<DiffRow> {
+    let mut rows = Vec::new();
+    for (i, f) in files.iter().enumerate() {
+        if only.is_some_and(|o| o != i) {
+            continue;
+        }
+        if !rows.is_empty() {
+            rows.push(DiffRow::Spacer);
+        }
+        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap);
+    }
+    rows
+}
+
+fn push_file(
+    rows: &mut Vec<DiffRow>,
+    src: Src,
+    file: usize,
+    diff: Option<&FileDiff>,
+    exp: &Expansion,
+    wrap: Option<usize>,
+) {
+    rows.push(DiffRow::File { src, file });
+    let Some(diff) = diff else {
+        rows.push(DiffRow::Note { src, file });
+        return;
+    };
+    if !exp.is_expanded(src, diff) {
+        return;
+    }
+    if let Some(sub) = &diff.submodule {
+        rows.extend((0..sub.row_count()).map(|line| DiffRow::Submodule { src, file, line }));
+        return;
+    }
+    // An LFS file: its summary row (sizes, ids) above the content's hunks, if any.
+    if diff.lfs.is_some() {
+        rows.push(DiffRow::Note { src, file });
+        if diff.hunks.is_empty() {
+            return;
+        }
+    } else if diff.binary || diff.hunks.is_empty() {
+        rows.push(DiffRow::Note { src, file });
+        return;
+    }
+    let ctx = exp.context(src, diff);
+    let gaps = context::gaps(diff, ctx.map(|c| c.total()));
+    // The rows of gap `h`: revealed lines below the hunk above, the expander while lines
+    // are hidden, revealed lines above the hunk below.
+    let push_gap = |rows: &mut Vec<DiffRow>, h: usize| {
+        let gap = gaps.iter().find(|g| g.index == h);
+        let Some(gap) = gap.filter(|g| !g.is_empty()) else {
+            // Nothing to reveal: the separator between two hunks only.
+            if h > 0 && h < diff.hunks.len() {
+                rows.push(DiffRow::HunkGap);
+            }
+            return;
+        };
+        let view = context::gap_view(gap, ctx.map_or((0, 0), |c| c.shown(h)));
+        let lines = |rows: &mut Vec<DiffRow>, range: std::ops::Range<u32>| {
+            for line in range {
+                let text = ctx.and_then(|c| c.line(line)).unwrap_or("");
+                for part in 0..parts(text, wrap) {
+                    rows.push(DiffRow::Context {
+                        src,
+                        file,
+                        line,
+                        part,
+                    });
+                }
+            }
+        };
+        lines(rows, view.down);
+        if view.expander.is_some() {
+            rows.push(DiffRow::Expand { src, file, gap: h });
+        }
+        lines(rows, view.up);
+    };
+    for (h, hunk) in diff.hunks.iter().enumerate() {
+        push_gap(rows, h);
+        rows.push(DiffRow::Hunk { src, file, hunk: h });
+        for (l, line) in hunk.lines.iter().enumerate() {
+            for part in 0..parts(&line.text, wrap) {
+                rows.push(DiffRow::Line {
+                    src,
+                    file,
+                    hunk: h,
+                    line: l,
+                    part,
+                });
+            }
+        }
+    }
+    push_gap(rows, diff.hunks.len());
+}
+
+fn section(ws: &crate::WorkingState, src: Src) -> &[crate::WorkFile] {
+    match src {
+        Src::Conflicted => &ws.conflicted,
+        Src::Unstaged => &ws.unstaged,
+        Src::Staged => &ws.staged,
+        Src::Commit => &[],
+    }
+}
+
+/// Whether the working-directory section `src` of `ws` lists `path`.
+pub fn has_work_file(ws: &crate::WorkingState, src: Src, path: &str) -> bool {
+    section(ws, src).iter().any(|f| f.path() == path)
+}
+
+/// Where the view goes after the file `path` left section `src` as a whole (staged,
+/// unstaged, discarded): the `File` row (in `rows`, built from `now`) of the file that
+/// followed it in that section in `prev`, else of the one before it. `None` when none of
+/// them is in the rows any more.
+pub fn neighbour_file_row(
+    rows: &[DiffRow],
+    prev: &crate::WorkingState,
+    now: &crate::WorkingState,
+    src: Src,
+    path: &str,
+) -> Option<usize> {
+    let before = section(prev, src);
+    let i = before.iter().position(|f| f.path() == path)?;
+    let after = section(now, src);
+    before[i + 1..]
+        .iter()
+        .chain(before[..i].iter().rev())
+        .find_map(|f| {
+            let file = after.iter().position(|g| g.path() == f.path())?;
+            rows.iter().position(|r| *r == DiffRow::File { src, file })
+        })
+}
+
+/// The expander row a key at row `row` acts on: the nearest `Expand` row of the file
+/// `row` belongs to (the next file's when `row` is between files), downwards first.
+pub fn expander_near(rows: &[DiffRow], row: usize) -> Option<usize> {
+    let file = rows
+        .get(row..)?
+        .iter()
+        .chain(rows[..row].iter().rev())
+        .find_map(DiffRow::file_ref)?;
+    rows.iter()
+        .enumerate()
+        .filter(|(_, r)| matches!(r, DiffRow::Expand { .. }) && r.file_ref() == Some(file))
+        .min_by_key(|(i, _)| (i.abs_diff(row), *i < row))
+        .map(|(i, _)| i)
+}
+
+/// Line selection inside one file of the diff panel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineSel {
+    pub src: Src,
+    pub file: usize,
+    /// Row index of the anchor (for shift-click / drag ranges).
+    pub anchor_row: usize,
+    /// Selected change lines as (hunk, line).
+    pub lines: BTreeSet<(usize, usize)>,
+}
+
+impl LineSel {
+    pub fn contains(&self, src: Src, file: usize, hunk: usize, line: usize) -> bool {
+        self.src == src && self.file == file && self.lines.contains(&(hunk, line))
+    }
+
+    pub fn count_in_hunk(&self, src: Src, file: usize, hunk: usize) -> usize {
+        if self.src != src || self.file != file {
+            return 0;
+        }
+        self.lines.range((hunk, 0)..(hunk + 1, 0)).count()
+    }
+
+    pub fn to_selection(&self) -> Selection {
+        let mut s = Selection::default();
+        for &(h, l) in &self.lines {
+            s.add_lines(h, [l]);
+        }
+        s
+    }
+
+    /// Selects all change lines between the anchor row and `row` (same file only).
+    pub fn select_range(
+        &mut self,
+        rows: &[DiffRow],
+        row: usize,
+        is_change: impl Fn(usize, usize) -> bool,
+    ) {
+        let (a, b) = if self.anchor_row <= row {
+            (self.anchor_row, row)
+        } else {
+            (row, self.anchor_row)
+        };
+        self.lines.clear();
+        for r in rows.iter().take(b + 1).skip(a) {
+            if let DiffRow::Line {
+                src,
+                file,
+                hunk,
+                line,
+                ..
+            } = *r
+                && src == self.src
+                && file == self.file
+                && is_change(hunk, line)
+            {
+                self.lines.insert((hunk, line));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff::parse_unified;
+
+    #[gitti_test::test]
+    fn rows_and_range_selection() {
+        let d = parse_unified(
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -10,2 +10,2 @@\n x\n-y\n+z\n",
+        );
+        let exp = Expansion::default();
+        let rows = build_commit_rows(&d, None, &exp, None);
+        // file + 2 hunk headers + expander between them + 4 + 3 lines (the file ends there:
+        // no context after the last change)
+        assert_eq!(rows.len(), 11);
+        assert_eq!(rows[6], DiffRow::Expand { src: Src::Commit, file: 0, gap: 1 });
+        assert!(!rows.contains(&DiffRow::Spacer));
+        let mut sel = LineSel {
+            src: Src::Commit,
+            file: 0,
+            anchor_row: 3,
+            lines: BTreeSet::new(),
+        };
+        let f = &d[0];
+        sel.select_range(&rows, 9, |h, l| f.hunks[h].lines[l].is_change());
+        assert_eq!(
+            sel.lines.iter().copied().collect::<Vec<_>>(),
+            vec![(0, 1), (0, 2), (1, 1)]
+        );
+        assert_eq!(sel.count_in_hunk(Src::Commit, 0, 0), 2);
+        let s = sel.to_selection();
+        assert_eq!(s.hunks.len(), 2);
+    }
+
+    #[gitti_test::test]
+    fn editor_lines_of_both_versions() {
+        let d = parse_unified(
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -10,3 +20,4 @@\n a\n-b\n+B\n+C\n c\n",
+        );
+        let f = &d[0];
+        let line = |l| DiffRow::Line {
+            src: Src::Commit,
+            file: 0,
+            hunk: 0,
+            line: l,
+            part: 0,
+        };
+        // ` a` 10/20, `-b` 11/–, `+B` –/21, `+C` –/22, ` c` 12/23.
+        assert_eq!(line(0).editor_line_old(f), 10);
+        assert_eq!(line(1).editor_line_old(f), 11);
+        assert_eq!(line(3).editor_line_old(f), 11, "added: the old line before");
+        assert_eq!(line(4).editor_line_old(f), 12);
+        assert_eq!(line(3).editor_line(f), 22);
+        let hunk = DiffRow::Hunk {
+            src: Src::Commit,
+            file: 0,
+            hunk: 0,
+        };
+        assert_eq!(hunk.editor_line_old(f), 10);
+    }
+
+    fn work_file(
+        path: &str,
+        index: Option<char>,
+        worktree: Option<char>,
+        untracked: bool,
+    ) -> crate::WorkFile {
+        let diff = parse_unified(&format!(
+            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-a\n+b\n"
+        ))
+        .pop();
+        crate::WorkFile {
+            entry: crate::status::StatusEntry {
+                path: path.into(),
+                orig_path: None,
+                index,
+                worktree,
+                untracked,
+                conflicted: false,
+                submodule: None,
+            },
+            diff,
+            patch_diff: None,
+        }
+    }
+
+    #[gitti_test::test]
+    fn worktree_tabs_merge_the_parts_of_a_path() {
+        let ws = crate::WorkingState {
+            unstaged: vec![
+                work_file("src/b.rs", Some('M'), Some('M'), false),
+                work_file("z.txt", None, Some('D'), false),
+                work_file("new.txt", None, None, true),
+            ],
+            staged: vec![
+                work_file("a.txt", Some('A'), None, false),
+                work_file("src/b.rs", Some('M'), Some('M'), false),
+            ],
+            ..Default::default()
+        };
+        let tabs = worktree_tabs(&ws);
+        let got: Vec<(&str, char, TabStage)> = tabs
+            .iter()
+            .map(|t| (t.path.as_str(), t.letter, t.stage))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("a.txt", 'A', TabStage::Staged),
+                ("new.txt", '?', TabStage::Unstaged),
+                ("src/b.rs", 'M', TabStage::Partly),
+                ("z.txt", 'D', TabStage::Unstaged),
+            ]
+        );
+        assert_eq!(tabs[2].name(), "b.rs");
+        assert_eq!(tabs[2].describe(), "modified, partly staged");
+        assert_eq!(tabs[1].describe(), "untracked");
+
+        // One tab's rows: both parts of the path, with the indices of the whole state.
+        let exp = Expansion::default();
+        let rows = build_worktree_rows_for(&ws, Some("src/b.rs"), &exp, None);
+        let files: Vec<(Src, usize)> = rows
+            .iter()
+            .filter_map(|r| match r {
+                DiffRow::File { src, file } => Some((*src, *file)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(files, vec![(Src::Unstaged, 0), (Src::Staged, 1)]);
+        assert_eq!(
+            rows.iter()
+                .filter(|r| matches!(r, DiffRow::Section(_)))
+                .count(),
+            2
+        );
+        let only_staged = build_worktree_rows_for(&ws, Some("a.txt"), &exp, None);
+        assert_eq!(only_staged[0], DiffRow::Section(Src::Staged));
+        assert!(!only_staged.contains(&DiffRow::Section(Src::Unstaged)));
+        assert_eq!(
+            build_worktree_rows_for(&ws, None, &exp, None),
+            build_worktree_rows(&ws, &exp, None)
+        );
+        assert!(build_worktree_rows_for(&ws, Some("gone"), &exp, None).is_empty());
+    }
+
+    #[gitti_test::test]
+    fn conflicted_tabs_say_c_not_u() {
+        // git's `U` ("unmerged") read as untracked / unstaged; conflicts show `C`.
+        let mut both = work_file("both.txt", Some('U'), Some('U'), false);
+        both.entry.conflicted = true;
+        let ws = crate::WorkingState {
+            conflicted: vec![both.clone()],
+            unstaged: vec![both],
+            staged: vec![work_file("copy.txt", Some('C'), None, false)],
+            ..Default::default()
+        };
+        let tabs = worktree_tabs(&ws);
+        assert_eq!(tabs[0].letter, CONFLICT_LETTER);
+        assert_eq!(tabs[0].stage, TabStage::Conflicted);
+        assert_eq!(tabs[0].describe(), "conflicted");
+        // A staged copy keeps `C` but is no conflict.
+        assert_eq!(tabs[1].letter, 'C');
+        assert_eq!(tabs[1].describe(), "copied, staged");
+        assert_eq!(change_name('C'), "copied");
+    }
+
+    #[gitti_test::test]
+    fn revealed_context_rows() {
+        // A 40-line file `l1`…`l40`, line 25 changed.
+        let diff = |new25: &str| {
+            parse_unified(&format!(
+                "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -22,7 +22,7 @@\n l22\n l23\n l24\n-l25\n+{new25}\n l26\n l27\n l28\n"
+            ))
+        };
+        let d = diff("L25");
+        let f = &d[0];
+        let text = |new25: &str| {
+            let mut lines: Vec<String> = (1..=40).map(|i| format!("l{i}")).collect();
+            lines[24] = new25.into();
+            Arc::new(lines)
+        };
+        let mut exp = Expansion::default();
+        let kinds = |rows: &[DiffRow]| -> String {
+            rows.iter()
+                .map(|r| match r {
+                    DiffRow::File { .. } => "F".to_string(),
+                    DiffRow::Hunk { .. } => "H".into(),
+                    DiffRow::Line { .. } => "L".into(),
+                    DiffRow::Context { line, .. } => format!("c{line}"),
+                    DiffRow::Expand { gap, .. } => format!("E{gap}"),
+                    _ => "?".into(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let rows = build_commit_rows(&d, None, &exp, None);
+        assert_eq!(kinds(&rows), "F E0 H L L L L L L L L E1");
+        // Nothing to reveal before the text is there.
+        assert!(!exp.reveal(Src::Commit, f, Some(0), Reveal::More));
+        assert!(!exp.set_context_text(Src::Commit, f, text("other")), "not this diff's text");
+        assert!(exp.set_context_text(Src::Commit, f, text("L25")));
+        assert_eq!(exp.gap_state(Src::Commit, f, 1).map(|(_, n)| n), Some(Some(12)));
+        assert!(exp.reveal(Src::Commit, f, Some(0), Reveal::More));
+        assert!(exp.reveal(Src::Commit, f, Some(1), Reveal::Down));
+        let rows = build_commit_rows(&d, None, &exp, None);
+        let ctx_above: Vec<String> = (2..=21).map(|i| format!("c{i}")).collect();
+        assert_eq!(
+            kinds(&rows),
+            format!("F E0 {} H L L L L L L L L c29 c30 c31 c32 c33 c34 c35 c36 c37 c38 c39 c40", ctx_above.join(" "))
+        );
+        assert_eq!(exp.context_line(Src::Commit, "f", 21), Some("l21"));
+        // The expander near a line of the file: the one above (the only one left).
+        assert_eq!(expander_near(&rows, 30), Some(1));
+        let line = rows.iter().position(|r| matches!(r, DiffRow::Context { line: 30, .. })).unwrap();
+        assert_eq!(rows[line].editor_line(f), 30);
+        assert_eq!(rows[line].editor_line_old(f), 30);
+        // Selecting across revealed lines only takes the change lines of the hunk.
+        let mut sel = LineSel {
+            src: Src::Commit,
+            file: 0,
+            anchor_row: 3,
+            lines: BTreeSet::new(),
+        };
+        sel.select_range(&rows, rows.len() - 1, |h, l| f.hunks[h].lines[l].is_change());
+        assert_eq!(sel.lines.iter().copied().collect::<Vec<_>>(), vec![(0, 3), (0, 4)]);
+        // The same diff again (a refresh): still revealed. Another diff of the file: reset.
+        assert_eq!(build_commit_rows(&diff("L25"), None, &exp, None), rows);
+        let changed = build_commit_rows(&diff("X25"), None, &exp, None);
+        assert_eq!(kinds(&changed), "F E0 H L L L L L L L L E1");
+        // Show the whole file.
+        assert!(exp.reveal(Src::Commit, f, None, Reveal::All));
+        let rows = build_commit_rows(&d, None, &exp, None);
+        assert!(!rows.iter().any(|r| matches!(r, DiffRow::Expand { .. })));
+        assert_eq!(
+            rows.iter()
+                .filter(|r| matches!(r, DiffRow::Context { .. } | DiffRow::Line { .. }))
+                .count(),
+            41,
+            "40 lines + the removed one"
+        );
+        assert_eq!(expander_near(&rows, 3), None);
+        // "Show Changes Only": hides every revealed line, the text stays loaded.
+        assert!(exp.is_revealed(Src::Commit, f));
+        assert!(!exp.hide_context(Src::Commit, "other"));
+        assert!(exp.hide_context(Src::Commit, "f"));
+        assert!(!exp.is_revealed(Src::Commit, f));
+        assert_eq!(kinds(&build_commit_rows(&d, None, &exp, None)), "F E0 H L L L L L L L L E1");
+        assert!(exp.has_context_text(Src::Commit, f));
+        assert!(!exp.hide_context(Src::Commit, "f"), "nothing left to hide");
+        // Leaving the file hides what any file revealed; showing more reads nothing then.
+        assert!(exp.reveal(Src::Commit, f, Some(1), Reveal::More));
+        assert!(exp.hide_all_context());
+        assert!(!exp.hide_all_context());
+        assert!(exp.reveal(Src::Commit, f, None, Reveal::All));
+    }
+
+    #[gitti_test::test]
+    fn neighbour_after_a_file_left_its_section() {
+        let f = |p: &str| work_file(p, None, Some('M'), false);
+        let prev = crate::WorkingState {
+            unstaged: vec![f("a"), f("b"), f("c")],
+            ..Default::default()
+        };
+        let now = |names: &[&str]| crate::WorkingState {
+            unstaged: names.iter().map(|n| f(n)).collect(),
+            staged: vec![f("b")],
+            ..Default::default()
+        };
+        let exp = Expansion::default();
+        let file_row = |ws: &crate::WorkingState, src: Src, file: usize| {
+            build_worktree_rows(ws, &exp, None)
+                .iter()
+                .position(|r| *r == DiffRow::File { src, file })
+        };
+        // "b" staged: "c" (now index 1) follows.
+        let ws = now(&["a", "c"]);
+        let rows = build_worktree_rows(&ws, &exp, None);
+        assert!(!has_work_file(&ws, Src::Unstaged, "b"));
+        assert!(has_work_file(&ws, Src::Staged, "b"));
+        assert_eq!(
+            neighbour_file_row(&rows, &prev, &ws, Src::Unstaged, "b"),
+            file_row(&ws, Src::Unstaged, 1)
+        );
+        // "c" (the last) staged: the one before it.
+        let ws = now(&["a", "b"]);
+        let rows = build_worktree_rows(&ws, &exp, None);
+        assert_eq!(
+            neighbour_file_row(&rows, &prev, &ws, Src::Unstaged, "c"),
+            file_row(&ws, Src::Unstaged, 1)
+        );
+        // Nothing left in the section.
+        let ws = now(&[]);
+        let rows = build_worktree_rows(&ws, &exp, None);
+        assert_eq!(neighbour_file_row(&rows, &prev, &ws, Src::Unstaged, "a"), None);
+    }
+
+    #[gitti_test::test]
+    fn wrapping_splits_long_lines() {
+        let d = parse_unified(
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-abcdefghij\n+\tab\n",
+        );
+        let rows = build_commit_rows(&d, None, &Expansion::default(), Some(4));
+        // file, hunk, "abcdefghij" → 3 parts, "    ab" → 2 parts
+        assert_eq!(rows.len(), 2 + 3 + 2);
+        assert_eq!(line_part("abcdefghij", 2, Some(4), 100), "ij");
+        // word wrap: break after the space instead of inside "world"
+        assert_eq!(line_part("hello world", 0, Some(8), 100), "hello ");
+        assert_eq!(line_part("hello world", 1, Some(8), 100), "world");
+        assert_eq!(line_part("\tab", 1, Some(4), 100), "ab");
+        assert_eq!(line_part("abcdef", 0, None, 3), "abc…");
+    }
+
+    #[gitti_test::test]
+    fn wrapping_counts_display_columns() {
+        let cols = |s: &str| s.chars().map(char_cols).sum::<usize>();
+        // CJK: two columns each, so 3 per row of 6 (not 6).
+        let jp = "日本語の漢字仮名交じり文";
+        assert_eq!(line_part(jp, 0, Some(6), 100), "日本語");
+        assert_eq!(parts(jp, Some(6)), 4);
+        // Every part of a mixed line fits, nothing is lost or doubled.
+        let mixed = "ab日本👍🏽cd👩‍👩‍👧‍👦 e\u{301}f 漢字 xyz";
+        for width in 1..12 {
+            let n = parts(mixed, Some(width));
+            let all: String = (0..n)
+                .map(|p| line_part(mixed, p, Some(width), 100))
+                .collect();
+            assert_eq!(all, mixed, "width {width}");
+            for p in 0..n {
+                let part = line_part(mixed, p, Some(width), 100);
+                assert!(
+                    cols(&part) <= width || part.chars().count() == 1,
+                    "width {width} part {p} {part:?}"
+                );
+            }
+        }
+        // A combining mark stays with its base char (zero columns).
+        assert_eq!(line_part("abe\u{301}cd", 0, Some(3), 100), "abe\u{301}");
+        // A wide char in a one-column row: a row of its own.
+        assert_eq!(parts("日本", Some(1)), 2);
+    }
+
+    #[gitti_test::test]
+    fn intra_ranges_map_onto_wrapped_parts() {
+        let d = parse_unified(
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-\tlet ä = alpha_one + 1;\n+\tlet ä = alpha_two + 1;\n",
+        );
+        let h = &d[0].hunks[0];
+        // "    let ä = alpha_one + 1;": "one" → "two" at expanded chars 18..21.
+        assert_eq!(h.intra_ranges(1, false).len(), 1);
+        assert_eq!(h.intra_ranges(1, false)[0], 18..21);
+        let text = &h.lines[1].text;
+        let collect = |h: &crate::diff::Hunk, line: usize, wrap: Option<usize>| {
+            let text = &h.lines[line].text;
+            let mut out = Vec::new();
+            for part in 0..parts(text, wrap) {
+                let (t, a, b) = line_part_range(text, part, wrap, MAX_LINE_CHARS);
+                for r in part_byte_ranges(&t, h.intra_ranges(line, false), a, b) {
+                    out.push(format!("{part}:{}", &t[r]));
+                }
+            }
+            out
+        };
+        assert_eq!(collect(h, 1, None), vec!["0:two"]);
+        assert_eq!(collect(h, 1, Some(20)), vec!["1:two"]);
+        // Wrapped inside the range: it is split across the parts.
+        let d2 = parse_unified(
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-alpha_one_beta\n+alpha_two_beta\n",
+        );
+        assert_eq!(collect(&d2[0].hunks[0], 0, Some(8)), vec!["0:on", "1:e"]);
+        assert_eq!(collect(&d2[0].hunks[0], 1, Some(8)), vec!["0:tw", "1:o"]);
+        // Unwrapped and cut off inside the range ("t…"), then before it (nothing).
+        let (t, a, b) = line_part_range(text, 0, None, 19);
+        assert_eq!(
+            part_byte_ranges(&t, h.intra_ranges(1, false), a, b),
+            vec![t.len() - 4..t.len() - 3]
+        );
+        let (t, a, b) = line_part_range(text, 0, None, 10);
+        assert!(part_byte_ranges(&t, h.intra_ranges(1, false), a, b).is_empty());
+        // gitty's horizontal scroll: text from char 16 on, open end.
+        let t: String = expand_line(text).chars().skip(16).collect();
+        let r = part_byte_ranges(&t, h.intra_ranges(1, false), 16, usize::MAX);
+        assert_eq!(&t[r[0].clone()], "two");
+    }
+
+    #[gitti_test::test]
+    fn unstaged_groups_and_totals() {
+        let kinds = |rows: &[DiffRow]| -> String {
+            rows.iter()
+                .map(|r| match r {
+                    DiffRow::Section(s) => format!("S{s:?}"),
+                    DiffRow::Group(g) => format!("G{}", g.name()),
+                    DiffRow::File { src, file } => format!("F{}{file}", if *src == Src::Staged { "s" } else { "" }),
+                    DiffRow::Spacer => "_".into(),
+                    _ => ".".into(),
+                })
+                .filter(|k| k != ".")
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let mut binary = work_file("img.png", None, None, true);
+        binary.diff.as_mut().unwrap().binary = true;
+        let ws = crate::WorkingState {
+            unstaged: vec![
+                work_file("a.txt", None, Some('M'), false),
+                work_file("new.txt", None, None, true),
+                work_file("z.txt", None, Some('D'), false),
+                binary,
+            ],
+            staged: vec![work_file("s.txt", Some('M'), None, false)],
+            ..Default::default()
+        };
+        let mut exp = Expansion::default();
+        let rows = build_worktree_rows(&ws, &exp, None);
+        // Tracked first, untracked second; file indices are those of `unstaged`.
+        assert_eq!(
+            kinds(&rows),
+            "SUnstaged Gtracked _ F0 _ F2 _ Guntracked _ F1 _ F3 _ SStaged _ Fs0"
+        );
+        assert_eq!(group_of_row(&rows, 0), None);
+        let f3 = rows.iter().position(|r| *r == DiffRow::File { src: Src::Unstaged, file: 3 });
+        assert_eq!(group_of_row(&rows, f3.unwrap()), Some(Group::Untracked));
+        assert_eq!(group_paths(&ws, Group::Untracked), vec!["new.txt", "img.png"]);
+        assert_eq!(group_paths(&ws, Group::Tracked), vec!["a.txt", "z.txt"]);
+        // A collapsed group keeps its header only.
+        exp.toggle_group(Group::Tracked);
+        let rows = build_worktree_rows(&ws, &exp, None);
+        assert_eq!(
+            kinds(&rows),
+            "SUnstaged Gtracked _ Guntracked _ F1 _ F3 _ SStaged _ Fs0"
+        );
+        let staged_row = rows.iter().position(|r| *r == DiffRow::Section(Src::Staged)).unwrap();
+        assert_eq!(group_of_row(&rows, staged_row), None);
+        exp.set_all(true);
+        assert!(!exp.is_group_collapsed(Group::Tracked), "expand all opens groups");
+        // No untracked files: no group headers. One file tab: none either.
+        let plain = crate::WorkingState {
+            unstaged: vec![work_file("a.txt", None, Some('M'), false)],
+            ..Default::default()
+        };
+        assert_eq!(kinds(&build_worktree_rows(&plain, &exp, None)), "SUnstaged _ F0");
+        assert_eq!(
+            kinds(&build_worktree_rows_for(&ws, Some("new.txt"), &exp, None)),
+            "SUnstaged _ F1"
+        );
+        // Only untracked files: their group header alone.
+        let only_new = crate::WorkingState {
+            unstaged: vec![work_file("new.txt", None, None, true)],
+            ..Default::default()
+        };
+        assert_eq!(
+            kinds(&build_worktree_rows(&only_new, &exp, None)),
+            "SUnstaged Guntracked _ F0"
+        );
+
+        // Totals: each test file is one `-a +b` line; the binary one counts nothing.
+        let t = WorktreeTotals::of(&ws);
+        let lt = |added, removed, files| LineTotals { added, removed, files };
+        assert_eq!(t.unstaged, lt(3, 3, 4));
+        assert_eq!(t.group(Group::Tracked), lt(2, 2, 2));
+        assert_eq!(t.group(Group::Untracked), lt(1, 1, 2));
+        assert_eq!(t.section(Src::Staged), lt(1, 1, 1));
+        assert!(t.section(Src::Conflicted).is_empty());
+        let diffs: Vec<FileDiff> = ws.unstaged.iter().filter_map(|f| f.diff.clone()).collect();
+        assert_eq!(LineTotals::of(&diffs), lt(3, 3, 4));
+    }
+}

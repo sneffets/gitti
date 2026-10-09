@@ -1,0 +1,4 @@
+[alias]
+# Dev tasks in Rust (crates/xtask): `cargo xtask help`.
+xtask = "run --quiet --package xtask --"
+

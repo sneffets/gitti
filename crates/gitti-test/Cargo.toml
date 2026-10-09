@@ -1,0 +1,12 @@
+[package]
+name = "gitti-test"
+edition.workspace = true
+version = "0.1.0"
+license.workspace = true
+publish = false
+description = "`#[gitti_test::test]`: `#[test]` with the suite's time limit (2 s, killed after 10 s)"
+
+[lib]
+proc-macro = true
+
+[dependencies]

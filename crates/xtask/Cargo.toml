@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+edition.workspace = true
+version = "0.1.0"
+license.workspace = true
+publish = false
+description = "Dev tasks: `cargo xtask worktree` (agent worktree slots)"
+
+[dependencies]
+
+[dev-dependencies]
+gitti-test.workspace = true

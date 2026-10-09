@@ -1,0 +1,8 @@
+#!/bin/sh
+prev=""
+for a in "$@"; do
+  case "$prev" in /fo|-fo|/FO|-FO) : > "$a" ;; esac
+  case "$a" in /fo?*) : > "${a#/fo}" ;; -fo?*) : > "${a#-fo}" ;; esac
+  prev="$a"
+done
+exit 0

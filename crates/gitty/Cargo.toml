@@ -1,0 +1,32 @@
+[package]
+name = "gitty"
+description = "Terminal UI for git on top of gitti-core, with the look and keys of gitti"
+edition.workspace = true
+version = "0.1.0"  # own version per crate (shown in About / --version)
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "gitty"
+path = "src/main.rs"
+
+[dependencies]
+gitti-core.workspace = true
+ratatui = "0.30"
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+unicode-width = "0.2"
+
+[build-dependencies]
+# Windows icon resource (`build.rs`); same version as gpui uses.
+embed-resource = "3"
+
+[dev-dependencies]
+tempfile = "3"
+gitti-test.workspace = true
+
+# RELEASE TESTS — slow / randomized; run only before a release, never in daily work or per
+# merge. Uncomment to compile; see release-tests/README.md. Comment out again before
+# committing.
+# [[test]]
+# name = "release_tui"
+# path = "../../release-tests/tui/main.rs"

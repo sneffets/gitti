@@ -1,0 +1,456 @@
+//! What the views show: the file list (`t`), Go to Commit's file history, toggles keeping
+//! the top line, the unstaged groups with their totals, panes clipped at narrow widths, the
+//! intra-line marks, reduced colours, dragged pane separators kept as fractions, hiding the
+//! sidebar, a signed commit's details.
+
+use crate::common;
+use crate::support;
+
+use common::*;
+use support::*;
+
+/// t lists every file of the shown diff (what changed), typing narrows it, ⏎ puts the
+/// diff cursor on the file's header and focuses the diff — no git; a commit's files; a
+/// conflicted file says `C`, not git's `U`.
+#[gitti_test::test]
+fn file_list_filters_and_jumps_to_the_file() {
+    let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n"), ("staged.txt", "s\n")]);
+    let d = dir.path();
+    git(d, &["add", "staged.txt"]);
+    std::fs::write(d.join("zebra.txt"), "z\n").unwrap();
+    let out = gitty(d, "cmds;press:t;items;dump;press:z;press:e;press:b;dump;press:enter;cmds;state");
+    for item in ["item: a.txt", "item: staged.txt", "item: zebra.txt"] {
+        assert!(out.contains(item), "{item}: {out}");
+    }
+    let s = screens(&out);
+    assert!(s[0].contains("Go to File (3)"), "{out}");
+    assert!(s[0].contains("untracked") && s[0].contains("added, staged"), "{out}");
+    assert!(s[1].contains("│  zebra.txt") && !s[1].contains("│  staged.txt"), "{out}");
+    let st = states(&out)[0];
+    assert!(st.contains("focus=Detail") && st.contains("File { src: Unstaged, file: 1 }"), "{out}");
+    assert!(cmds(&out)[1].is_empty(), "{out}");
+}
+
+#[gitti_test::test]
+fn file_list_of_a_commit_and_the_conflict_letter() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", "a\n")] },
+        Commit { branch: "feat", from: Some(1), merge: None, msg: "feat", files: &[("a.txt", "feat\n"), ("b.txt", "b\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "main", files: &[("a.txt", "main\n")] },
+    ]);
+    let d = dir.path();
+    let merged = std::process::Command::new("git").args(["merge", "-q", "feat"]).current_dir(d).output().unwrap();
+    assert!(!merged.status.success());
+    let out = gitty(d, "dump;press:j;key:j;press:t;items;press:b;press:.;press:t;key:enter;state");
+    let screen = screens(&out)[0];
+    assert!(screen.lines().any(|l| l.contains("C a.txt")), "conflicted file letter: {out}");
+    assert!(!screen.lines().any(|l| l.contains("U a.txt")), "{out}");
+    // Row 2 = the feat commit (two files).
+    assert!(out.contains("item: a.txt") && out.contains("item: b.txt"), "{out}");
+    assert!(states(&out)[0].contains("File { src: Commit, file: 1 }"), "{out}");
+}
+
+/// During a merge the working-directory row is the pending merge commit — a
+/// dashed edge from it to MERGE_HEAD's commit (`feat`); the rows below it have none.
+/// `feat` says MERGE_HEAD, no other row does.
+#[gitti_test::test]
+fn merge_preview_dashes_the_pending_merge() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", "a\n")] },
+        Commit { branch: "feat", from: Some(1), merge: None, msg: "feat", files: &[("a.txt", "feat\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "main", files: &[("a.txt", "main\n")] },
+    ]);
+    let d = dir.path();
+    let merged = std::process::Command::new("git").args(["merge", "-q", "feat"]).current_dir(d).output().unwrap();
+    assert!(!merged.status.success());
+    let out = gitty(d, "dump");
+    let screen = screens(&out)[0];
+    let lines: Vec<&str> = screen.lines().collect();
+    // Rows: the working directory (merging), main (HEAD), feat (MERGE_HEAD), init.
+    let wt = lines.iter().position(|l| l.contains("◌╌╮")).unwrap_or_else(|| panic!("{out}"));
+    assert!(lines[wt + 1].contains("◉ ╎"), "{out}");
+    let dashed: Vec<usize> = (0..lines.len()).filter(|&i| lines[i].contains(['╌', '╎'])).collect();
+    assert_eq!(dashed, [wt, wt + 1], "{out}");
+    let marked: Vec<usize> = (0..lines.len()).filter(|&i| lines[i].contains(" MERGE_HEAD ")).collect();
+    assert_eq!(marked, [wt + 2], "{out}");
+    assert!(lines[wt + 2].contains("feat"), "{out}");
+}
+
+/// Go to Commit: a file name lists the commits that changed the file (through a rename),
+/// each with the path it had; the line above says what was searched; ⏎ selects the
+/// commit with the file under the diff cursor. Plain words search messages without git;
+/// nothing found is said.
+#[gitti_test::test]
+fn go_to_commit_finds_file_history_and_messages() {
+    let body: String = (0..20).map(|i| format!("parser line {i}\n")).collect();
+    let more = format!("{body}more\n");
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "Initial commit", files: &[("a.txt", "a\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "Add the parser", files: &[("src/foo.rs", &body)] },
+        Commit { branch: "main", from: None, merge: None, msg: "Edit things", files: &[("zzz.txt", "z\n")] },
+    ]);
+    let d = dir.path();
+    // The rename and the edit in two real commits (fast-import has no renames).
+    std::fs::create_dir_all(d.join("src/core")).unwrap();
+    git(d, &["mv", "src/foo.rs", "src/core/bar.rs"]);
+    git(d, &["commit", "-qm", "Move the parser"]);
+    std::fs::write(d.join("src/core/bar.rs"), more).unwrap();
+    git(d, &["commit", "-qam", "Edit bar"]);
+    let out = gitty(
+        d,
+        "press:ctrl-g;type:bar.rs;dump;press:down;key:enter;state;press:ctrl-g;cmds;type:parser;cmds;dump;press:q;press:q;dump",
+    );
+    let s = screens(&out);
+    assert!(s[0].contains("Edit bar") && s[0].contains("Move the parser") && s[0].contains("Add the parser"), "{out}");
+    assert!(s[0].contains("src/foo.rs → src/core/bar.rs"), "{out}");
+    assert!(!s[0].contains("Initial commit") && !s[0].contains("Edit things"), "{out}");
+    assert!(s[0].contains("No commit message or author contains 'bar.rs'"), "{out}");
+    let st = states(&out)[0];
+    assert!(st.contains("Move the parser]") && st.contains("focus=Commits") && st.contains("File {"), "{out}");
+    assert!(cmds(&out)[1].is_empty(), "text search runs no git: {out}");
+    assert!(s[1].contains("Move the parser") && s[1].contains("Add the parser"), "{out}");
+    assert!(s[2].contains("Nothing matches 'parserqq'"), "{out}");
+}
+
+/// `ws.txt` (300 lines) between two long diffs: the worktree changes line 60, 220, the long
+/// line 100 and line 160 only in whitespace.
+fn ws_repo() -> tempfile::TempDir {
+    let text = |f: &dyn Fn(usize) -> Option<String>| -> String {
+        (1..=300).map(|i| f(i).unwrap_or_else(|| format!("line {i}")) + "\n").collect()
+    };
+    let fill = |tag: &str| -> String { (0..80).map(|i| format!("{tag} {i}\n")).collect() };
+    let work = text(&|i| match i {
+        60 => Some("LINE 60".to_string()),
+        100 => Some(format!("line 100 {}", "long words ".repeat(40))),
+        160 => Some("line 160 ".to_string()),
+        220 => Some("LINE 220".to_string()),
+        _ => None,
+    });
+    fixture(
+        &[("ws.txt", &text(&|_| None)), ("a.txt", &fill("base")), ("z.txt", &fill("base"))],
+        &[("ws.txt", &work), ("a.txt", &fill("work")), ("z.txt", &fill("work"))],
+    )
+}
+
+/// W, = / - and w keep the line at the top of the diff on its screen row; the
+/// whitespace-only change ignore-whitespace drops is revealed as context in its place.
+#[gitti_test::test]
+fn toggles_keep_the_top_line_and_reveal_dropped_lines() {
+    let dir = ws_repo();
+    // n×4 = ws.txt's third hunk (157…163) on top, j×5 = the added "line 160 ", one wheel
+    // step = line 159 on the top row.
+    let out = gitty(
+        dir.path(),
+        "press:enter;press:n;press:n;press:n;press:n;press:j;press:j;press:j;press:j;press:j;wheel:80,10,1;\
+         state;key:W;state;key:W;state;key:=;state;key:-;state;press:w;state;press:w;state",
+    );
+    let st = states(&out);
+    let top = |s: &str| word(s, " top").to_string();
+    let cursor_row = |s: &str| -> String {
+        let rest = &s[s.find(" cursor=").unwrap() + 8..];
+        let rest = &rest[rest.find(' ').unwrap() + 1..];
+        rest[..rest.find(" sel_lines=").unwrap()].to_string()
+    };
+    let screen_row = |s: &str| num(s, "cursor") - num(s, "diff_offset");
+    assert_eq!(top(st[0]), "ws.txt:159.0+0", "{out}");
+    let added = "Line { src: Unstaged, file: 1, hunk: 2, line: 4,";
+    assert!(cursor_row(st[0]).starts_with(added), "{out}");
+    assert_eq!(top(st[1]), "ws.txt:159.0+0", "W: {out}");
+    assert_eq!(cursor_row(st[1]), "Context { src: Unstaged, file: 1, line: 160, part: 0 }", "{out}");
+    assert_eq!(screen_row(st[1]), 1, "right below line 159: {out}");
+    assert_eq!(top(st[2]), "ws.txt:159.0+0", "{out}");
+    assert!(cursor_row(st[2]).starts_with(added), "{out}");
+    assert_eq!(num(st[2], "diff_offset"), num(st[0], "diff_offset"), "{out}");
+    for (i, what) in [(3, "more context"), (4, "fewer context"), (5, "wrap on"), (6, "wrap off")] {
+        assert_eq!(top(st[i]), "ws.txt:159.0+0", "{what}: {out}");
+        assert_eq!(screen_row(st[i]), screen_row(st[0]), "{what}: {out}");
+    }
+}
+
+/// a.txt modified (−1 +2), d.txt deleted (−1), new1.txt / new2.txt untracked (+1, +2), a
+/// binary untracked bin.dat, s.txt staged (−1 +1).
+fn grouped_repo() -> tempfile::TempDir {
+    let dir = fixture(
+        &[("a.txt", "one\ntwo\nthree\n"), ("d.txt", "gone\n"), ("s.txt", "s\n")],
+        &[("a.txt", "one\nTWO\nthree\nfour\n"), ("new1.txt", "n\n"), ("new2.txt", "n\nm\n"), ("s.txt", "S\n")],
+    );
+    let d = dir.path();
+    std::fs::remove_file(d.join("d.txt")).unwrap();
+    std::fs::write(d.join("bin.dat"), [0u8, 1, 2, 0, 255]).unwrap();
+    git(d, &["add", "s.txt"]);
+    dir
+}
+
+/// The diff rows of a dump (the detail pane at 120 columns starts at column 69).
+fn detail(screen: &str) -> Vec<String> {
+    screen.lines().map(|l| l.chars().skip(69).collect::<String>().trim_end().to_string()).collect()
+}
+
+/// The unstaged section in groups with counts and line totals; ⏎ folds a group (no
+/// git), s stages a group (one `git add` of its paths, path-limited queries), without
+/// untracked files no group headers; d on a group asks with its own wording.
+#[gitti_test::test]
+fn unstaged_groups_fold_stage_and_discard_with_totals() {
+    let dir = grouped_repo();
+    let out = gitty_with(
+        dir.path(),
+        tempfile::tempdir().unwrap().path(),
+        "120x40",
+        "cmds;press:enter;dump;check;press:j;state;press:d;dump;press:esc;press:enter;state;dump;cmds;\
+         press:j;state;press:d;dump;press:esc;cmds;key:s;cmds;state;dump",
+    );
+    let sc = screens(&out);
+    let st = states(&out);
+    let blocks = cmds(&out);
+    let first = detail(sc[0]);
+    let has = |rows: &[String], s: &str| rows.iter().any(|r| r.contains(s));
+    assert!(has(&first, "UNSTAGED FILES (5)   -2   +5"), "{out}");
+    assert!(has(&first, "▾ Working Directory (2)   -2   +2"), "{out}");
+    assert!(has(&first, "▾ Untracked Files (3)   -0   +3"), "{out}");
+    assert!(has(&first, "STAGED FILES (1)   -1   +1"), "{out}");
+    let at = |s: &str| first.iter().position(|r| r.contains(s)).unwrap();
+    assert!(at("Working Directory") < at("M a.txt") && at("D d.txt") < at("Untracked Files"), "{out}");
+    assert!(at("Untracked Files") < at("? new1.txt") && at("? new2.txt") < at(" STAGED FILES (1)"), "{out}");
+    assert!(out.contains("check: ok"), "{out}");
+    // j from the section: the group header; d asks with the group's wording; ⏎ folds it.
+    assert!(st[0].contains("cursor=1 Group(Tracked)"), "{out}");
+    assert!(sc[1].contains("Discard the changes of 2 tracked files?"), "{out}");
+    assert!(st[1].contains("cursor=1 Group(Tracked)"), "{out}");
+    let folded = detail(sc[2]);
+    assert!(has(&folded, "▸ Working Directory (2)") && !has(&folded, "M a.txt") && has(&folded, "? new1.txt"), "{out}");
+    assert!(blocks[1].is_empty(), "folding ran git: {out}");
+    assert!(st[2].contains("Group(Untracked)"), "{out}");
+    assert!(sc[3].contains("Delete 3 untracked files?"), "{out}");
+    assert!(blocks[2].is_empty(), "{out}");
+    let stage = &blocks[3];
+    assert!(stage[0].starts_with("add -A -- "), "{out}");
+    for p in ["new1.txt", "new2.txt", "bin.dat"] {
+        assert!(stage[0].contains(p), "{out}");
+    }
+    assert!(!stage[0].contains("a.txt") && stage.len() <= 4, "only the group: {out}");
+    assert!(stage[1..].iter().all(|c| c.contains(" -- ")), "not path-limited: {out}");
+    assert!(st[3].contains("unstaged=2 staged=4"), "{out}");
+    let after = detail(sc[4]);
+    assert!(!has(&after, "Working Directory (") && has(&after, "UNSTAGED FILES (2)"), "{out}");
+    assert!(has(&after, "STAGED FILES (4)   -1   +4"), "{out}");
+}
+
+/// Compare mode's title: files and line totals.
+#[gitti_test::test]
+fn compare_title_shows_the_totals() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "A", files: &[("f.txt", "1\n2\n3\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "B", files: &[("f.txt", "1\nTWO\n3\n4\n5\n"), ("g.txt", "g\n")] },
+    ]);
+    let out = gitty(dir.path(), "press:j;press:j;press:C;key:k;dump");
+    assert!(screens(&out)[0].contains("Compare  2 files  −1 +4"), "{out}");
+}
+
+/// A wide graph makes the commit list narrow — its rows ("No changes") never run
+/// into the detail pane; `check` finds nothing drawn outside a pane, at several sizes, with
+/// the worktree view, the git log and a resize.
+#[gitti_test::test]
+fn narrow_panes_never_draw_into_their_neighbours() {
+    let mut commits = vec![Commit { branch: "main", from: None, merge: None, msg: "root", files: &[("r.txt", "r\n")] }];
+    let names: Vec<String> = (1..=20).map(|i| format!("b{i}")).collect();
+    let msgs: Vec<String> = (1..=20).map(|i| format!("c{i}")).collect();
+    let files: Vec<[(&str, &str); 1]> = names.iter().map(|n| [(n.as_str(), "x\n")]).collect();
+    for i in 0..20 {
+        commits.push(Commit { branch: &names[i], from: Some(1), merge: None, msg: &msgs[i], files: &files[i] });
+    }
+    let dir = import(&commits);
+    let d = dir.path();
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(d, config.path(), "70x30", "dump;check");
+    let row = out.lines().nth(2).unwrap();
+    assert!(row.chars().skip(31).take(3).all(|c| c == ' '), "'No changes' runs into the detail pane: {row:?}\n{out}");
+    write_files(d, &[("new.txt", "a\nb\n"), ("r.txt", "changed\n")]);
+    let tour = "check;press:enter;check;press:j;check;press:esc;press:L;check;press:j;check;\
+                press:tab;check;resize:45x12;check;resize:140x16;check;resize:200x8;check";
+    let out = gitty_with(d, config.path(), "90x20", tour);
+    let bad: Vec<&str> = out.lines().filter(|l| l.starts_with("check: ") && *l != "check: ok").collect();
+    assert!(bad.is_empty() && out.contains("check: ok"), "{bad:?}\n{out}");
+}
+
+/// Only the changed digit gets the lighter background (and its text lifted); the tab
+/// before it is expanded, so the columns match; a pure addition has no partner.
+#[gitti_test::test]
+fn intra_line_diff_marks_the_changed_characters() {
+    let dir = fixture(
+        &[("a.txt", "\tlet timeout = 1500;\nkeep\n")],
+        &[("a.txt", "\tlet timeout = 1600;\nkeep\nstruct Unrelated;\n")],
+    );
+    // 120x30, the worktree diff: rows 9 (removed), 10 (added), 12 (the addition).
+    let out = gitty(dir.path(), "dump;cells:9;cells:10;cells:12");
+    let screen = screens(&out)[0];
+    for (row, text) in [(9, "1500"), (10, "1600"), (12, "Unrelated")] {
+        assert!(screen.lines().nth(row).is_some_and(|l| l.contains(text)), "{text} on row {row}: {out}");
+    }
+    use gitti_core::intraline::{DEFAULT_STRENGTH, lift, lighten_rgb};
+    let lifted = |rgb| {
+        let [r, g, b] = lighten_rgb(rgb, lift(DEFAULT_STRENGTH));
+        format!("Rgb({r}, {g}, {b})")
+    };
+    let word_removed = format!("fg={} bg={}", lifted([0xf6, 0xe4, 0xe7]), lifted([0x7a, 0x44, 0x50]));
+    let word_added = format!("fg={} bg={}", lifted([0xe3, 0xf4, 0xf2]), lifted([0x36, 0x75, 0x7e]));
+    let blocks: Vec<&str> = out.split("\n\n").filter(|b| b.contains("fg=")).collect();
+    let marked = |block: &str, bg: &str| -> Vec<String> {
+        block.lines().filter(|l| l.contains(bg)).map(|l| l.rsplit(" NONE ").next().unwrap_or("").to_string()).collect()
+    };
+    assert_eq!(marked(blocks[0], &word_removed), vec!["\"5\""], "{out}");
+    assert_eq!(marked(blocks[1], &word_added), vec!["\"6\""], "{out}");
+    assert!(marked(blocks[2], &word_added).is_empty(), "{out}");
+}
+
+/// Terminals without 24-bit colour: GITTY_COLORS=256 / 16 map every frame down
+/// — no RGB left, no text in its background's colour (`check`), added green / removed red
+/// in 16 colours.
+#[gitti_test::test]
+fn reduced_colour_terminals() {
+    let dir = fixture(&[("a.txt", "one\ntwo\n")], &[("a.txt", "one\n2\n")]);
+    let d = dir.path();
+    // 120x30, the worktree diff: row 10 "- two", row 11 "+ 2".
+    let tour = "check;cells:0;cells:10;cells:11;press:j;check;press:enter;check;press:esc;press:?;check;press:esc;press:ctrl-p;check";
+    for depth in ["256", "16"] {
+        let config = tempfile::tempdir().unwrap();
+        let out = gitty_env(d, config.path(), "120x30", &[("GITTY_COLORS", depth)], tour);
+        let bad: Vec<&str> = out.lines().filter(|l| l.starts_with("check: ") && *l != "check: ok").collect();
+        assert!(bad.is_empty(), "{depth}: {bad:?}\n{out}");
+        assert!(!out.contains("Rgb("), "{depth}: RGB left\n{out}");
+        if depth == "16" {
+            let blocks: Vec<&str> = out.split("\n\n").collect();
+            assert!(blocks[1].contains("bg=Red"), "removed line:\n{}", blocks[1]);
+            assert!(blocks[2].contains("bg=Green"), "added line:\n{}", blocks[2]);
+        } else {
+            assert!(out.contains("Indexed("), "{out}");
+        }
+    }
+}
+
+/// A dragged separator moves the pane border; the layout is kept as fractions for every
+/// repository (the same at twice the width); the git log's height too.
+#[gitti_test::test]
+fn pane_separators_drag_and_are_kept_as_fractions() {
+    let (a, b) = (fixture(&[("a.txt", "a\n")], &[]), fixture(&[("b.txt", "b\n")], &[]));
+    let config = tempfile::tempdir().unwrap();
+    // 120 columns: sidebar separator 26 → 30 (25 %); the log (L) and its title bar (row
+    // 19 of 30) dragged up to row 14.
+    let out = gitty_with(a.path(), config.path(), "120x30", "drag:26,5,30,5;dump;press:L;drag:0,19,0,14");
+    assert_eq!(out.lines().nth(1).unwrap_or_default().find("Commits"), Some(32), "{out}");
+    let out = gitty_with(b.path(), config.path(), "240x30", "dump");
+    assert_eq!(out.lines().nth(1).unwrap_or_default().find("Commits"), Some(62), "{out}");
+    assert_eq!(out.lines().position(|l| l.contains("Git Command Log")), Some(14), "{out}");
+}
+
+/// H hides / shows the sidebar — persisted (shared with gitti); hidden, tab skips it and h
+/// shows it while focused; the palette finds it by "hide", "show" and "sidebar".
+#[gitti_test::test]
+fn hide_and_show_the_sidebar() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let config = tempfile::tempdir().unwrap();
+    let run = |script: &str| gitty_with(dir.path(), config.path(), "160x45", script);
+    let out = run("dump;press:H;dump");
+    let s = screens(&out);
+    assert!(s[0].contains("Locations") && !s[1].contains("Locations"), "H hides it: {out}");
+    let out = run(
+        "dump;press:tab;press:shift-tab;press:shift-tab;dump;press:esc;press:h;dump;press:esc;press:l;\
+         press:ctrl-p;press:h;press:i;press:d;press:e;items;state;press:esc;\
+         press:ctrl-p;press:s;press:h;press:o;press:w;items;state;press:esc;\
+         press:ctrl-p;press:s;press:i;press:d;press:e;press:b;press:a;press:r;items;state;\
+         press:enter;dump",
+    );
+    let s = screens(&out);
+    assert!(!s[0].contains("Locations"), "still hidden after a restart: {out}");
+    assert!(!s[1].contains("Locations"), "tab reached the hidden sidebar: {out}");
+    assert!(s[2].contains("Locations"), "h shows it while focused: {out}");
+    let lists = item_lists(&out);
+    assert_eq!(lists.len(), 3, "{out}");
+    for (q, found) in ["hide", "show", "sidebar"].iter().zip(&lists) {
+        assert!(found.iter().take(5).any(|l| l.starts_with("Toggle Sidebar")), "palette {q:?}: {found:?}");
+    }
+    assert!(s[3].contains("Locations"), "the palette entry shows it again: {out}");
+}
+
+/// A signed commit (SSH): the Signature header line, its details by a click.
+#[gitti_test::test]
+fn signed_commit_shows_the_signature_and_its_details() {
+    let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n")]);
+    let d = dir.path();
+    let keys = tempfile::tempdir().unwrap();
+    let key = keys.path().join("id");
+    let st = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "k", "-f"])
+        .arg(&key)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let pubkey = std::fs::read_to_string(key.with_extension("pub")).unwrap();
+    let allowed = keys.path().join("allowed");
+    std::fs::write(&allowed, format!("jürgen@größe.de {pubkey}")).unwrap();
+    add_config(
+        d,
+        &format!(
+            "[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {}\n[gpg \"ssh\"]\n\tallowedSignersFile = {}\n",
+            config_path(&key),
+            config_path(&allowed)
+        ),
+    );
+    git(d, &["commit", "-q", "-S", "-am", "signed"]);
+    // Row 1 = the signed commit; the Signature header line is the detail pane's row 6.
+    let out = gitty(d, "press:j;wait;dump;click:100,6;dump");
+    assert!(out.contains("✓ Signed · jürgen@größe.de · just now"), "{out}");
+    assert!(out.contains("Verified with:"), "{out}");
+    let boxed: Vec<&str> = out
+        .lines()
+        .filter_map(|l| l.get(l.find('│')? + '│'.len_utf8()..l.rfind('│')?))
+        .collect();
+    let text = boxed.join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(text.contains("line 1: jürgen@größe.de (k)"), "{text}\n{out}");
+}
+
+/// Palette "Two-Line Commit List" puts every commit on two rows (subject; badges,
+/// author … date), a click on either row selects that commit, and the choice is stored
+/// (the next run starts with it; shared with gitti). "One-Line Commit List" shows the
+/// author column, cut with "…", in a list too narrow for Auto's (author from 60 columns)
+/// as long as the subject keeps 16 columns.
+#[gitti_test::test]
+fn commit_list_layouts_from_the_palette() {
+    let dir = repo();
+    let d = dir.path();
+    git(d, &["-c", "user.name=Maximilian Mustermann-Lang", "commit", "-qam", "Second commit"]);
+    let config = tempfile::tempdir().unwrap();
+    // 120x12: the list is 41 columns wide; rows: working directory 2–3, "Second commit"
+    // 4–5, "Initial commit" 6–7.
+    let out = gitty_with(
+        d,
+        config.path(),
+        "120x12",
+        "dump;key:ctrl-p;type:two line;key:enter;dump;click:40,7;state",
+    );
+    let s = screens(&out);
+    let line = |screen: &str, text: &str| -> usize {
+        screen.lines().position(|l| l.contains(text)).unwrap_or_else(|| panic!("{text}: {out}"))
+    };
+    // Auto in a 41-column list: one line, no author.
+    assert!(!s[0].contains("Maximilian"), "{out}");
+    let lines: Vec<&str> = s[1].lines().collect();
+    let second = line(s[1], "Second commit");
+    assert!(lines[second + 1].contains("main") && lines[second + 1].contains("Maximilian"), "{out}");
+    assert!(lines[second + 1].contains("just now") && !lines[second].contains("just now"), "{out}");
+    let initial = line(s[1], "Initial commit");
+    assert_eq!(initial, second + 2, "{out}");
+    assert!(lines[initial + 1].contains("Tester"), "{out}");
+    // The click on "Initial commit"'s second row selects it.
+    assert!(states(&out)[0].contains("[") && states(&out)[0].contains("Initial commit]"), "{out}");
+
+    // 140x12: a 50-column list.
+    let out = gitty_with(d, config.path(), "140x12", "dump;key:ctrl-p;type:one line;key:enter;dump");
+    let s = screens(&out);
+    let lines: Vec<&str> = s[0].lines().collect();
+    let second = line(s[0], "Second commit");
+    assert!(lines[second + 1].contains("Maximilian"), "the stored two-line rows: {out}");
+    let row = s[1].lines().find(|l| l.contains("Second commit")).unwrap_or_else(|| panic!("{out}"));
+    assert!(row.contains("Maximilia") && row.contains('…') && row.contains("just now"), "{out}");
+    let next = s[1].lines().skip_while(|l| !l.contains("Second commit")).nth(1).unwrap_or_default();
+    assert!(next.contains("Initial commit"), "{out}");
+}

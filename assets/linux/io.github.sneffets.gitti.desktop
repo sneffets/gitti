@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=gitti
+GenericName=Git GUI
+Comment=Git client with hunk and line staging
+Exec=gitti %f
+Icon=io.github.sneffets.gitti
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=io.github.sneffets.gitti
+StartupNotify=true

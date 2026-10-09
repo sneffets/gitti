@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/gitti-core", "crates/gitti-app", "crates/gitty", "crates/gitti-test", "crates/xtask"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+gitti-core = { path = "crates/gitti-core" }
+gitti-test = { path = "crates/gitti-test" }
+
+[profile.dev]
+opt-level = 1
+# Line tables only (backtraces keep file:line): full DWARF made every test binary huge —
+# ~45 links per change, 30–56 GB `target/` per worktree slot on Linux, ~4.4 GB RAM per link.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+# Release (start-up on Windows): a smaller exe for virus scanners that read all of it
+# before it starts. Measured on macOS (gitti / gitty): default 82.4 / 55.7 MB; fat LTO +
+# one codegen unit cuts ~6 MB of code (thin LTO: nothing) and builds no slower here (4 jobs:
+# 4:39 vs 6:56 min — dependencies stop at bitcode, one long final step). Half of the exe are
+# the tree-sitter grammars' parse tables (41 MB, data no compiler setting shrinks).
+# Symbols stay (`strip` = default): panic.log's backtraces need them (Windows keeps them in
+# the .pdb anyway, so stripping would not shrink the exe there). Unwinding stays: thread
+# panics are caught at `join` (repo.rs `joined`, compare.rs) instead of ending the app.
+# The dev / test profiles above are untouched.
+[profile.release]
+lto = "fat"
+codegen-units = 1

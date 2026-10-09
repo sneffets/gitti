@@ -1,0 +1,76 @@
+[package]
+name = "gitti-core"
+edition.workspace = true
+version = "0.1.0"  # own version per crate (shown in About / --version)
+license.workspace = true
+
+[dependencies]
+gix = { version = "0.88", default-features = false, features = ["max-performance-safe", "revision", "sha1", "sha256"] }
+anyhow = "1"
+thiserror = "2"
+notify = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "3.2.0"
+# Display columns of wide (CJK, emoji) and zero-width chars for line wrapping (`rows.rs`).
+unicode-width = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+# Syntax highlighting (`syntax.rs`, used by gitty; same grammar versions as gpui-component).
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-yaml = "0.7"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-objc = "3.0.2"
+tree-sitter-glsl = "0.2.0"
+tree-sitter-hlsl = "0.2.0"
+tree-sitter-wgsl-bevy = "0.1.4"
+tree-sitter-xml = "0.7.0"
+tree-sitter-powershell = "0.26.4"
+tree-sitter-ini = "1.4.0"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-bash = "0.23"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-lua = "0.4"
+tree-sitter-zig = "1.1"
+tree-sitter-scala = "0.23"
+tree-sitter-sequel = "0.3"
+tree-sitter-make = "1.1"
+tree-sitter-cmake = "0.7"
+tree-sitter-swift = "0.7"
+tree-sitter-diff = "0.1"
+dirs = "6"
+# Askpass token from the OS random number generator (already in the tree via tempfile).
+getrandom = "0.4"
+# Touching files for "Track with Git LFS" also when they are read-only (lockable).
+filetime = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+gitti-test.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Own `main`: the test binary is its own askpass helper (like gitti / gitty), and the
+# environment scenarios must run before any thread starts.
+[[test]]
+name = "askpass_env"
+harness = false
+
+# RELEASE TESTS — slow / randomized; run only before a release, never in daily work or per merge.
+# Uncomment to compile; see release-tests/README.md.
+# [[test]]
+# name = "release_core"
+# path = "../../release-tests/core/main.rs"
