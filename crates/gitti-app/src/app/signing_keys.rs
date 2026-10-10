@@ -53,11 +53,13 @@ pub(super) fn signature_menu(menu: PopupMenu, app: &WeakEntity<GittiApp>, cx: &A
     let menu = menu.item(item("Signature Details…", |this, w, cx| {
         this.show_signature_details(w, cx)
     }));
-    if offered {
+    let menu = if offered {
         menu.item(item(sk::ACTION_LABEL, |this, w, cx| this.get_signing_keys(None, w, cx)))
     } else {
         menu
-    }
+    };
+    // No allowed signers file set: use one the user has, or how to set one up.
+    super::signers::menu_items(menu, app, cx)
 }
 
 impl GittiApp {
@@ -84,8 +86,17 @@ impl GittiApp {
         };
         let details = info.details();
         let mut spec = ModalSpec::new("Signature").ok("Close").cancel(None);
-        if self.signing_key_offer().is_some() {
+        // One button: an allowed signers file the user has beats fetching keys, which
+        // beats how to set one up.
+        let files = self.signers_files_known();
+        if files.is_some_and(|n| n > 0) {
+            spec = spec.extra(super::signers::USE_LABEL, |this, w, cx| this.use_allowed_signers_file(w, cx));
+        } else if self.signing_key_offer().is_some() {
             spec = spec.extra(sk::ACTION_LABEL, |this, w, cx| this.get_signing_keys(None, w, cx));
+        } else if files.is_some() {
+            spec = spec.extra(gitti_core::allowed_signers::HELP_LABEL, |this, w, cx| {
+                this.allowed_signers_help(w, cx)
+            });
         }
         self.show_text_modal_spec(spec, details, window, cx);
     }

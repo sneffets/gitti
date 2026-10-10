@@ -33,6 +33,7 @@ mod repo_actions;
 mod script_scroll;
 mod settings_view;
 mod sidebar;
+mod signers;
 mod signing_keys;
 mod spell_ui;
 mod startup_ui;
@@ -50,6 +51,7 @@ mod worktrees;
 
 pub(crate) use overlay_keys::intercept as intercept_overlay_keys;
 pub(crate) use menus::take_menu_labels;
+pub(crate) use signers::set_open_repos;
 pub(crate) use unavailable::set_tab_count;
 pub(crate) use startup_ui::WHERE as STARTUP_TIMINGS_WHERE;
 
@@ -221,6 +223,9 @@ pub struct GittiApp {
     submodule_banner_dismissed: Option<submodules::BannerKey>,
     /// Verification result of the shown commit's signature (`None` inside = failed).
     signature: Option<(gitti_core::ObjectId, Option<gitti_core::signature::SignatureInfo>)>,
+    /// The shown SSH signature can't be checked for want of an allowed signers file: the
+    /// files that could be used (`signers.rs`).
+    signers_offer: Option<signers::SignersOffer>,
 
     selected: usize,
     commit_scroll: UniformListScrollHandle,
@@ -584,6 +589,7 @@ impl GittiApp {
             lfs: Default::default(),
             submodule_banner_dismissed: None,
             signature: None,
+            signers_offer: None,
             selected: 0,
             sidebar_scroll: ScrollHandle::new(),
             commit_scroll: UniformListScrollHandle::new(),
@@ -1678,14 +1684,23 @@ impl GittiApp {
             return;
         };
         self.signature = None;
-        let task = cx
-            .background_executor()
-            .spawn(async move { repo.verify_signature(id) });
+        self.signers_offer = None;
+        let others = signers::open_repos();
+        let task = cx.background_executor().spawn(async move {
+            let info = repo.verify_signature(id).ok().flatten();
+            // No allowed signers file set: which ones the user has (no git).
+            let offer = info
+                .as_ref()
+                .filter(|i| gitti_core::allowed_signers::missing_setting(i))
+                .and_then(|_| signers::SignersOffer::find(id, &repo, &others));
+            (info, offer)
+        });
         cx.spawn(async move |this, cx| {
-            let result = task.await;
+            let (info, offer) = task.await;
             this.update(cx, |this, cx| {
                 if this.detail_generation == generation {
-                    this.signature = Some((id, result.ok().flatten()));
+                    this.signature = Some((id, info));
+                    this.signers_offer = offer;
                     cx.notify();
                 }
             })

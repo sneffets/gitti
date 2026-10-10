@@ -1497,8 +1497,12 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
                     SigTone::Warning => p.warning,
                     SigTone::Bad => p.danger,
                 };
-                let more = if app.signing_keys_offered() {
+                let more = if app.signers_files_known().is_some_and(|n| n > 0) {
+                    "⏎: details · m: use an allowed signers file"
+                } else if app.signing_keys_offered() {
                     "⏎: details · m: Get Signing Keys from GitHub"
+                } else if app.signers_files_known().is_some() {
+                    "⏎: details · m: how to check SSH signatures"
                 } else {
                     "⏎ / click: details"
                 };
@@ -2908,9 +2912,16 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
             let live = modal.live_now();
             let mut live_lines: Vec<(String, Color)> = Vec::new();
             if let Some(l) = &live {
+                // Its own line breaks kept (paragraphs), each line wrapped.
                 let wrap = |text: &str, color, out: &mut Vec<(String, Color)>| {
-                    for line in word_wrap(text, W as usize - 4) {
-                        out.push((line, color));
+                    for para in text.split('\n') {
+                        if para.is_empty() {
+                            out.push((String::new(), color));
+                            continue;
+                        }
+                        for line in word_wrap(para, W as usize - 4) {
+                            out.push((line, color));
+                        }
                     }
                 };
                 if !l.text.is_empty() {

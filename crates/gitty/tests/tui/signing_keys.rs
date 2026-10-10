@@ -2,7 +2,9 @@
 //! allowed signers file lists, a GitHub remote, GitHub's answers from files
 //! (`GITTI_TEST_GITHUB`), a private home and global config: the commit menu offers it, the
 //! dialog lists the key ticked and says where it goes, ⏎ writes the allowed signers file,
-//! sets it in the global config, and the commit verifies.
+//! sets it in the global config, and the commit verifies. With an allowed signers file at
+//! a usual place (but none set), it is offered instead and "for This Repository" makes the
+//! commit verify.
 
 use std::path::Path;
 use std::process::Command;
@@ -30,6 +32,66 @@ fn run(dir: &Path, home: &Path, github: &Path, script: &str) -> String {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(out.status.success(), "gitty failed: {}\n{stdout}", String::from_utf8_lossy(&out.stderr));
     stdout
+}
+
+/// A repository whose HEAD is SSH-signed (origin on GitHub) and the key's public line.
+fn signed_repo(keys: &Path) -> (tempfile::TempDir, String) {
+    let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n")]);
+    let d = dir.path();
+    let key = keys.join("id");
+    let st = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "k", "-f"])
+        .arg(&key)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    add_config(
+        d,
+        &format!(
+            "[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {}\n[remote \"origin\"]\n\turl = git@github.com:o/r.git\n",
+            config_path(&key)
+        ),
+    );
+    git(d, &["commit", "-q", "-S", "-am", "signed"]);
+    let pubkey = std::fs::read_to_string(key.with_extension("pub")).unwrap();
+    let line: String = pubkey.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+    (dir, line)
+}
+
+/// `~/.ssh/allowed_signers` lists the key but no file is set: the Signature line says
+/// so, the commit menu offers the file for this repository and for all, the palette's
+/// "Use an Allowed Signers File…" opens the dialog filled in and saying what it writes;
+/// ⏎ sets it in `.git/config` (not globally) and the commit verifies.
+#[gitti_test::test]
+fn allowed_signers_file_is_offered_and_used() {
+    let keys = tempfile::tempdir().unwrap();
+    let (dir, line) = signed_repo(keys.path());
+    let d = dir.path();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
+    std::fs::write(home.path().join(".ssh/allowed_signers"), format!("t@example.com namespaces=\"git\" {line}\n")).unwrap();
+    let github = tempfile::tempdir().unwrap();
+    let script = format!(
+        "press:j;wait;dump;key:m;items;press:esc;press:ctrl-p;{}key:enter;dump;state;key:enter;wait;dump;state",
+        presses("allowed signers file")
+    );
+    let out = run(d, home.path(), github.path(), &script);
+    let s = screens(&out);
+    assert!(s[0].contains("? Signed, not verified"), "{out}");
+    assert!(out.contains("item: Use ~/.ssh/allowed_signers for This Repository…"), "{out}");
+    assert!(out.contains("item: Use ~/.ssh/allowed_signers for All Repositories…"), "{out}");
+    assert!(states(&out)[0].contains("Input \"Allowed Signers File\""), "{out}");
+    let dialog = s[1].split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in ["~/.ssh/allowed_signers", "1 key — of t@example.com", "git config --local gpg.ssh.allowedSignersFile", "not how you sign"] {
+        assert!(dialog.contains(want), "{want:?}: {out}");
+    }
+    let config = std::fs::read_to_string(d.join(".git/config")).unwrap();
+    assert!(config.contains("allowedSignersFile"), "{config}");
+    let global = std::fs::read_to_string(home.path().join("global.gitconfig")).unwrap();
+    assert!(global.is_empty(), "{global}");
+    assert!(s[2].contains("✓ Signed · t@example.com"), "{out}");
+    assert!(states(&out)[1].contains("This repository now checks SSH signatures"), "{out}");
 }
 
 #[gitti_test::test]

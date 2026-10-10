@@ -49,6 +49,7 @@ mod remote_cmds;
 mod repo_cmds;
 mod search;
 mod sidebar_menu;
+mod signers;
 mod signing_keys;
 mod submodules;
 mod subtrees;
@@ -74,8 +75,11 @@ pub enum Msg {
     DetailSlow(u64),
     /// Syntax highlighting of the shown diff (generation, per file).
     Highlights(u64, HashMap<(Src, String), FileHighlight>),
-    /// Signature verification of a commit (`None`: verification failed to run).
-    Signature(ObjectId, Option<SignatureInfo>),
+    /// Signature verification of a commit (`None`: verification failed to run), and the
+    /// allowed signers files to offer when none is set (`app/signers.rs`).
+    Signature(ObjectId, Box<(Option<SignatureInfo>, Option<signers::SignersOffer>)>),
+    /// "Use … for This Repository / All Repositories": the `git config` ran.
+    SignersSet(Result<String, String>),
     /// "Get Signing Keys from GitHub…": a lookup or an import finished.
     SigningKeys(Box<signing_keys::KeysMsg>),
     OpDone {
@@ -427,6 +431,8 @@ pub struct App {
     pub change: change_search::ChangeSearchTui,
     /// Verification result for the shown commit (`(id, None)` = failed to run).
     pub signature: Option<(ObjectId, Option<SignatureInfo>)>,
+    /// No allowed signers file set for the shown SSH signature: the files to offer.
+    signers_offer: Option<signers::SignersOffer>,
     /// A GitHub signing-key lookup or import is running (`app/signing_keys.rs`).
     pub keys_job: bool,
     pub rows: Vec<DiffRow>,
@@ -707,6 +713,7 @@ impl App {
             detail_pending: false,
             header: Vec::new(),
             signature: None,
+            signers_offer: None,
             keys_job: false,
             prefetching: Default::default(),
             last_shown_row: 0,
@@ -970,16 +977,19 @@ impl App {
                     self.hl_running = false;
                 }
             }
-            Msg::Signature(id, info) => {
+            Msg::Signature(id, result) => {
                 if let Detail::Commit(cv) = &self.detail
                     && cv.id == id
                 {
+                    let (info, offer) = *result;
                     self.signature = Some((id, info));
+                    self.signers_offer = offer;
                     let cv = cv.clone();
                     self.header = crate::ui::commit_header(self, &cv);
                 }
             }
             Msg::SigningKeys(m) => self.signing_keys_msg(*m),
+            Msg::SignersSet(result) => self.signers_set(result),
             Msg::OpDone {
                 label,
                 result,
@@ -1668,6 +1678,17 @@ impl App {
     pub fn show_signature(&mut self) {
         if let Some((_, Some(info))) = &self.signature {
             let mut text = info.details();
+            match self.signers_files_known() {
+                Some(n) if n > 0 => text.push_str(&format!(
+                    "\nYou have an allowed signers file to check it with: m on the Signature line → {}",
+                    signers::USE_LABEL.trim_end_matches('…')
+                )),
+                Some(_) => text.push_str(&format!(
+                    "\nHow to set up an allowed signers file: m on the Signature line → {}",
+                    gitti_core::allowed_signers::HELP_LABEL
+                )),
+                None => {}
+            }
             if self.signing_keys_offered() {
                 text.push_str(&format!(
                     "\nThe signer's keys may be on GitHub: m on the Signature line → {}",
@@ -1684,12 +1705,8 @@ impl App {
             matches!(&self.detail, Detail::Commit(old) if old.id == cv.id && pair(old) == pair(&cv));
         if cv.sig_kind.is_some() && self.signature.as_ref().is_none_or(|(id, _)| *id != cv.id) {
             self.signature = None;
-            let (repo, id) = (self.repo.clone(), cv.id);
-            spawn(
-                &self.tx,
-                move || repo.verify_signature(id).ok().flatten(),
-                move |info| Msg::Signature(id, info),
-            );
+            self.signers_offer = None;
+            self.spawn_verify(cv.id);
         }
         let cv = Arc::new(cv);
         self.header = crate::ui::commit_header(self, &cv);
@@ -3448,6 +3465,7 @@ impl App {
             app.copy(subject)
         }));
         items.extend(self.signing_key_items(Some(&sha)));
+        items.extend(self.signers_items(Some(&sha)));
         Some((format!("Commit {short}"), items))
     }
 
@@ -3488,9 +3506,11 @@ impl App {
 
     fn detail_menu_spec(&self) -> (String, Vec<MenuItem>) {
         let mut items = Vec::new();
-        // On the header's Signature line, its details and the GitHub keys.
+        // On the header's Signature line, its details, the GitHub keys and an allowed
+        // signers file.
         if Some(self.diff_cursor) == self.signature_header_line() {
             items.extend(self.signing_key_items(None));
+            items.extend(self.signers_items(None));
             if !items.is_empty() {
                 items.push(MenuItem::separator());
             }
@@ -3766,6 +3786,7 @@ impl App {
             "for the shown commit's signature",
             |app: &mut App| app.get_signing_keys(None),
         ));
+        items.push(self.signers_palette_item());
         items.extend(self.change_search_palette_items());
         items.extend(self.repo_palette_items());
         items.extend(self.submodule_palette_items());

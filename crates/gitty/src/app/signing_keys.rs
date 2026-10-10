@@ -185,21 +185,17 @@ impl App {
     }
 
     /// Verifies the shown commit's signature again (keys changed).
-    fn reverify_signature(&mut self, id: ObjectId) {
+    pub(super) fn reverify_signature(&mut self, id: ObjectId) {
         let shown = matches!(&self.detail, Detail::Commit(cv) if cv.id == id);
         if !shown {
             return;
         }
         self.signature = None;
+        self.signers_offer = None;
         if let Detail::Commit(cv) = &self.detail {
             let cv = cv.clone();
             self.header = crate::ui::commit_header(self, &cv);
         }
-        let repo = self.repo.clone();
-        spawn(
-            &self.tx,
-            move || repo.verify_signature(id).ok().flatten(),
-            move |info| Msg::Signature(id, info),
-        );
+        self.spawn_verify(id);
     }
 }

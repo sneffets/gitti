@@ -80,6 +80,8 @@ pub enum AppEvent {
     /// This tab's first read of its repository is done (shown, or failed): the next
     /// restored tab may read its own.
     FirstLoadDone,
+    /// The global allowed signers file was set: every tab checks its shown signature again.
+    SignersChanged,
 }
 
 impl EventEmitter<AppEvent> for GittiApp {}

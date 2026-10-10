@@ -3,6 +3,7 @@
 //! not `-p`: cargo would resolve dependency features differently and rebuild them).
 //! `askpass_env` stays its own binary (own `main`, environment set before any thread).
 
+mod allowed_signers;
 mod change_search;
 mod config_safety;
 mod conflicts;

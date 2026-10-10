@@ -317,6 +317,13 @@ impl Workspace {
             }
             AppEvent::RepositoryMoved { from, to } => this.retarget(from, to, window, cx),
             AppEvent::StartupDone(record) => this.startup_finished(record, cx),
+            AppEvent::SignersChanged => {
+                for t in &this.tabs {
+                    if t.app != *app {
+                        t.app.update(cx, |a, cx| a.reverify_shown_signature(cx));
+                    }
+                }
+            }
             AppEvent::RemoveWorktree { main, wt, branch } => {
                 this.open(main.clone(), window, cx);
                 if let Some(app) = this.active_app() {
@@ -585,6 +592,7 @@ impl Workspace {
     }
 
     fn save(&self) {
+        crate::app::set_open_repos(self.tabs.iter().map(|t| t.path.clone()).collect());
         if self.scripted && std::env::var_os("GITTI_CONFIG_DIR").is_none() {
             return;
         }

@@ -982,6 +982,11 @@ impl UserDirs {
             .unwrap_or_else(|| self.home.join(".config"))
     }
 
+    /// The XDG `git` folder (`$XDG_CONFIG_HOME/git`, else `~/.config/git`).
+    pub fn xdg_git_dir(&self) -> PathBuf {
+        self.config_dir().join("git")
+    }
+
     /// The file `git config --global` writes: `GIT_CONFIG_GLOBAL`, else `~/.gitconfig`,
     /// else the XDG `git/config` when only that one exists.
     pub fn global_config_file(&self) -> PathBuf {

@@ -2,6 +2,7 @@
 //! Deliberately free of any UI dependency.
 
 pub mod about;
+pub mod allowed_signers;
 pub mod askpass;
 pub mod availability;
 pub mod blobs;

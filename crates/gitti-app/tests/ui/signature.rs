@@ -3,7 +3,9 @@
 //! private home and global config. The signature's context menu and its details window
 //! offer "Get Signing Keys from GitHub…"; the dialog lists the key ticked and says where it
 //! goes; Import writes the allowed signers file and the commit verifies — after which the
-//! entry is gone.
+//! entry is gone. With an allowed signers file at a usual place (but none set) they offer
+//! it instead: "for This Repository" writes the repository's config and the commit
+//! verifies.
 //!
 //! Own process (suite) because of the environment: `cargo test --workspace --test ui --
 //! signature[::FILTER]`.
@@ -49,7 +51,12 @@ pub fn main() {
         std::env::set_var("GITTI_TEST_GITHUB", &github);
     }
     ENV.with(|e| *e.borrow_mut() = Some(Env { home, github: github.clone() }));
-    let tests: &[(&str, Scenario)] = &[("github_keys_verify_the_commit", github_keys_verify_the_commit)];
+    // The signers file scenario first: it leaves the global config untouched (the GitHub
+    // one sets it).
+    let tests: &[(&str, Scenario)] = &[
+        ("a_signers_file_is_offered", a_signers_file_is_offered),
+        ("github_keys_verify_the_commit", github_keys_verify_the_commit),
+    ];
     common::run(tests, |name| repo(&base.join(name), &github));
 }
 
@@ -178,5 +185,79 @@ fn github_keys_verify_the_commit(ui: &mut Ui) {
     let (offered, labels) = menu_has_action(ui);
     if offered {
         fail!(ui, "a verified signature still offers {ACTION_LABEL:?}: {labels:?}");
+    }
+}
+
+/// `~/.ssh/allowed_signers` lists the commit's key, but no allowed signers file is set:
+/// the signature's menu offers it for this repository and for all; the details window's
+/// button opens the dialog, which says what it writes where; OK sets it in the
+/// repository's config and the commit verifies. The file is removed again afterwards (the
+/// next scenario wants none).
+fn a_signers_file_is_offered(ui: &mut Ui) {
+    let home = ENV.with(|e| e.borrow().as_ref().unwrap().home.clone());
+    let pubkey = std::fs::read_to_string(ui.repo.with_extension("key.pub")).unwrap();
+    let line: String = pubkey.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+    let signers = home.join(".ssh/allowed_signers");
+    std::fs::create_dir_all(signers.parent().unwrap()).unwrap();
+    std::fs::write(&signers, format!("layout@example.com namespaces=\"git\" {line}\n")).unwrap();
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(signers);
+
+    ui.step("select:1");
+    if !ui.wait_real(1500, signature_shown) {
+        fail!(ui, "no signature in the commit header");
+        return;
+    }
+    let (_, labels) = menu_has_action(ui);
+    for want in [
+        "Use ~/.ssh/allowed_signers for This Repository…",
+        "Use ~/.ssh/allowed_signers for All Repositories…",
+    ] {
+        if !labels.iter().any(|l| l == want) {
+            fail!(ui, "signature menu lacks {want:?}: {labels:?}");
+        }
+    }
+    // The details window's button: the file the user has beats fetching keys.
+    ui.click_on("commit-signature", MouseButton::Left);
+    ui.click_on("modal-extra", MouseButton::Left);
+    match ui.modal() {
+        Some((t, f)) if t == "Allowed Signers File" && f.first().map(String::as_str) == Some("~/.ssh/allowed_signers") => {}
+        other => fail!(ui, "no signers dialog: {other:?}"),
+    }
+    let ws = ui.ws.clone();
+    let live = ui.cx.update(|cx| gitti_app::testing_menus::modal_live(&ws, cx));
+    match &live {
+        Some((text, Some(ok), None, _))
+            if ok == "Use for This Repository"
+                && text.contains("It lists 1 key — of layout@example.com.")
+                && text.contains("`git config --local gpg.ssh.allowedSignersFile ")
+                && text.contains("not how you sign") => {}
+        other => fail!(ui, "dialog text: {other:?}"),
+    }
+    ui.check("signers dialog");
+    ui.step("modalok");
+    let verified = ui.wait_real(1500, |ui| {
+        ui.status().is_some_and(|(s, _)| s.contains("This repository now checks SSH signatures"))
+            && signature_shown(ui)
+    });
+    let config = std::fs::read_to_string(ui.repo.join(".git/config")).unwrap_or_default();
+    if !verified || !config.contains("allowedSignersFile") {
+        fail!(ui, "after OK: status {:?}, config {config}", ui.status());
+        return;
+    }
+    ui.click_on("commit-signature", MouseButton::Left);
+    let text = viewer_text(ui);
+    if !text.contains("Status: Good") {
+        fail!(ui, "after OK, details: {text}");
+    }
+    ui.quick("key:escape");
+    let (_, labels) = menu_has_action(ui);
+    if labels.iter().any(|l| l.starts_with("Use ~/")) {
+        fail!(ui, "a verified signature still offers the file: {labels:?}");
     }
 }
