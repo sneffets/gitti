@@ -86,7 +86,9 @@ fn merge_into_subtree_only_for_commits_from_elsewhere() {
         Commit { branch: "upstream", from: None, merge: None, msg: "lib 2", files: &[("x", "2\n")] },
     ]);
     let d = dir.path();
-    let script = "cmds;press:j;press:m;state;items;press:esc;press:j;press:m;state;items;press:esc;cmds";
+    // `key:j` waits for the commit's load and the prefetch it starts, so the `cmds` after
+    // each menu holds only what the menu ran.
+    let script = "key:j;cmds;key:m;state;items;key:esc;cmds;key:j;cmds;key:m;state;items;key:esc;cmds";
     let out = gitty(d, script);
     let lists = item_lists(&out);
     let states = states(&out);
@@ -103,5 +105,6 @@ fn merge_into_subtree_only_for_commits_from_elsewhere() {
         lists[head]
     );
     // No git for the menus.
-    assert_no_git(&cmds(&out)[1..], "the menus", &out);
+    let blocks = cmds(&out);
+    assert_no_git(&[blocks[1].clone(), blocks[3].clone()], "the menus", &out);
 }
