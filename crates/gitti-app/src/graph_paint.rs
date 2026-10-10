@@ -78,6 +78,11 @@ pub struct NavMark {
 const EDGE_W: f32 = 1.5;
 const FOCUSED_EDGE_W: f32 = 3.5;
 
+/// The width of the graph cell for `lanes` occupied lanes ([`graph_cell`]).
+pub fn graph_width(lanes: u16) -> Pixels {
+    Lanes::new(lanes).width()
+}
+
 /// The graph cell of commit-list row `ix` (`ix` names its layout probes).
 pub fn graph_cell(
     ix: usize,

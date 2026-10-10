@@ -359,6 +359,32 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
         }
     }
 
+    // 5a. The commit header's ref badges (all refs, wrapping): inside their row, none
+    //     over another. A commit row's badges: what shows of them inside the row.
+    let refs = all("header-ref");
+    if let Some(row) = get("header-refs") {
+        for (i, a) in refs.iter().enumerate() {
+            if !contains(&row.bounds, &a.bounds) {
+                out.push(format!("{} sticks out of the header's refs", a.name));
+            }
+            for b in &refs[i + 1..] {
+                if let Some(o) = overlap(&a.bounds, &b.bounds) {
+                    out.push(format!("{} and {} overlap ({o})", a.name, b.name));
+                }
+            }
+        }
+    }
+    for b in all("ref-badge").into_iter().chain(all("ref-more")) {
+        let row = b
+            .index()
+            .and_then(|i| probes.iter().find(|p| p.name == format!("commit-row:{i}")));
+        if let (Some(row), Some(v)) = (row, b.visible())
+            && !contains(&row.bounds, &v)
+        {
+            out.push(format!("{} is drawn outside {}", b.name, row.name));
+        }
+    }
+
     // 6. The commit box's content: the shrunk summary and the editor stay inside it.
     if let Some(b) = get("commit-box").and_then(Probe::visible) {
         for name in ["commit-summary", "commit-editor"] {
