@@ -300,10 +300,11 @@ impl GittiApp {
         }
     }
 
-    /// The facts the dialogs' live text needs, as shown now.
+    /// The facts the dialogs' live text needs, as shown now; the loaded history lets the
+    /// Merge dialog warn about a commit typed into it (`subtree::resolve_commit`).
     fn subtree_context(&self) -> subtree::Context {
         let workdir = self.repo.as_ref().map(|r| r.workdir().to_path_buf()).unwrap_or_default();
-        subtree::Context::of(
+        let mut ctx = subtree::Context::of(
             &workdir,
             &self.head,
             self.repo_state,
@@ -311,7 +312,9 @@ impl GittiApp {
             &self.subtrees,
             &self.remotes,
             &self.refs,
-        )
+        );
+        ctx.history = Some(self.history.clone());
+        ctx
     }
 
     /// The dialog of `req.action`, filled from `req`: its fields (`subtree::form`), the

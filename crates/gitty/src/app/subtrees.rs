@@ -185,9 +185,10 @@ impl App {
         }
     }
 
-    /// The facts the dialogs' live text needs, as shown now.
+    /// The facts the dialogs' live text needs, as shown now; the loaded history lets the
+    /// Merge dialog warn about a commit typed into it (`subtree::resolve_commit`).
     fn subtree_context(&self) -> subtree::Context {
-        subtree::Context::of(
+        let mut ctx = subtree::Context::of(
             self.repo.workdir(),
             &self.head,
             self.repo_state,
@@ -195,7 +196,9 @@ impl App {
             &self.subtrees,
             &self.remotes,
             &self.refs,
-        )
+        );
+        ctx.history = Some(self.history.clone());
+        ctx
     }
 
     /// The dialog of `req.action`, filled from `req`; under its fields what Enter does

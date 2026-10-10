@@ -206,6 +206,37 @@ fn merge_into_subtree_only_for_commits_from_elsewhere() {
     req.reference = "upstream".into();
     assert!(!gitti_core::subtree::plan(&req, &ctx).text.contains("Warning"));
 
+    // Typed into the dialog (menu bar / palette path): the commit is resolved like git
+    // would — a branch, a full ref, an abbreviated id — in the loaded history.
+    lib.split = Some(ids[fx.l2]);
+    let hist = std::sync::Arc::new(hist);
+    let typed = gitti_core::subtree::Context {
+        workdir: dir.clone(),
+        branch: Some("main".into()),
+        subtrees: vec![lib],
+        history: Some(hist.clone()),
+        refs: repo.refs().unwrap(),
+        ..Default::default()
+    };
+    let sq2_short = ids[fx.sq2].to_hex_with_len(9).to_string();
+    for (reference, warns) in [
+        ("squashes", true),
+        ("refs/heads/squashes", true),
+        (sq2_short.as_str(), true),
+        ("upstream", false),
+        (&ids[fx.l3].to_string(), false),
+        // Not a plain form: nothing can be told.
+        ("squashes~0", false),
+        ("nosuchbranch", false),
+    ] {
+        req.reference = reference.into();
+        let text = gitti_core::subtree::plan(&req, &typed).text;
+        assert_eq!(text.contains("\n\nWarning: "), warns, "{reference}: {text}");
+    }
+    let refs = repo.refs().unwrap();
+    assert_eq!(gitti_core::subtree::resolve_commit(&hist, &refs, &sq2_short), Some(ids[fx.sq2]));
+    assert_eq!(gitti_core::subtree::resolve_commit(&hist, &refs, "upstream"), Some(ids[fx.l3]));
+
     // The quick partial history can't tell about commits it didn't load.
     let quick = repo.history_newest(LogOrder::Topo, 2).unwrap();
     assert!(quick.partial);

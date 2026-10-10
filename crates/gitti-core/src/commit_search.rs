@@ -815,7 +815,7 @@ impl SearchReport {
 }
 
 /// `prefix` (lowercase hex) starts the hex form of `id` — without formatting the id.
-fn hex_prefix_of(prefix: &str, id: &ObjectId) -> bool {
+pub(crate) fn hex_prefix_of(prefix: &str, id: &ObjectId) -> bool {
     let bytes = id.as_bytes();
     prefix.bytes().enumerate().all(|(i, c)| {
         let Some(b) = bytes.get(i / 2) else {

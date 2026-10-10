@@ -183,6 +183,47 @@ pub fn merge_warning(history: &crate::History, s: &Subtree, target: &gix::oid, r
     })
 }
 
+/// The commit `reference` names, for the plain forms a Merge dialog takes, resolved like
+/// `git rev-parse` would: a full id; a ref (`refs/…`, then a tag, a local branch, a
+/// remote branch such as `origin/main`, `<remote>` for its `HEAD` — git's order); else an
+/// abbreviated id (at least 4 hex digits) of exactly one loaded commit. `None` for
+/// anything else (`main~2`, a commit not loaded) — then nothing can be told. No git.
+pub fn resolve_commit(history: &crate::History, refs: &[crate::RefInfo], reference: &str) -> Option<ObjectId> {
+    let r = reference.trim();
+    if r.is_empty() {
+        return None;
+    }
+    let hex = r.len() >= 4 && r.bytes().all(|b| b.is_ascii_hexdigit());
+    if hex && let Ok(id) = ObjectId::from_hex(r.as_bytes()) {
+        return Some(id);
+    }
+    let candidates = [
+        r.to_string(),
+        format!("refs/{r}"),
+        format!("refs/tags/{r}"),
+        format!("refs/heads/{r}"),
+        format!("refs/remotes/{r}"),
+        format!("refs/remotes/{r}/HEAD"),
+    ];
+    if let Some(id) = candidates
+        .iter()
+        .find_map(|full| refs.iter().find(|x| &x.full_name == full).map(|x| x.target))
+    {
+        return Some(id);
+    }
+    if !hex {
+        return None;
+    }
+    let prefix = r.to_ascii_lowercase();
+    let mut found = history
+        .commits
+        .iter()
+        .map(|c| c.id)
+        .filter(|id| !id.is_null() && crate::commit_search::hex_prefix_of(&prefix, id));
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
 /// A short commit id.
 pub fn short(id: ObjectId) -> String {
     id.to_hex_with_len(7).to_string()
