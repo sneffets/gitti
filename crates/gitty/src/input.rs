@@ -973,9 +973,16 @@ impl App {
                     self.focus = Focus::Commits;
                     let row = self.commit_offset + a.commit_at(m.row);
                     if row < self.history.commits.len() {
+                        // A click on "+N" says which refs it hides (gitti: its tooltip).
+                        let more = (!right)
+                            .then(|| self.badge_more.iter().find(|(r, _)| r.contains(pos)))
+                            .flatten()
+                            .map(|(_, hidden)| hidden.clone());
                         self.select_row(row);
                         if right {
                             self.context_menu();
+                        } else if let Some(hidden) = more {
+                            self.set_info(hidden);
                         }
                     }
                 } else if a.sidebar.contains(pos) {

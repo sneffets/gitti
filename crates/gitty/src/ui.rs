@@ -1007,6 +1007,7 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
         area.height.saturating_sub(top),
     );
     app.areas.commits = content;
+    app.badge_more.clear();
     // One or two text rows per commit (`ViewOpts::list_layout`; gitty's Auto stays
     // on one line: a terminal has few rows to spare).
     let two = app.opts.list_layout.two_lines(false);
@@ -1155,6 +1156,8 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             spans.push(Span::raw(" "));
         }
         let wt_spans = worktree_badges(&app.worktrees, c.id, bg, p);
+        // The "+N": its column from the text start, its width, what it hides.
+        let mut more: Option<(u16, u16, String)> = None;
         if let Some(refs) = history.refs_by_commit.get(&c.id) {
             // Room beside the subject's 16 columns (one line) or left of the date (two
             // lines), less the labels around them.
@@ -1166,7 +1169,14 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             };
             let others = Line::from(spans.clone()).width() + Line::from(wt_spans.clone()).width();
             let room = room.saturating_sub(others as u16);
-            spans.extend(badges(refs, app.current_branch(), &app.worktrees, bg, p, room));
+            let (b, hidden) = badges(refs, app.current_branch(), &app.worktrees, bg, p, room);
+            spans.extend(b);
+            // Where the "+N" (the last span so far) will be, from the row's text start.
+            if let Some(hidden) = hidden {
+                let w = spans.last().map_or(0, |s| s.content.width()) as u16;
+                let before = Line::from(spans.clone()).width() as u16 - w;
+                more = Some((before, w, hidden));
+            }
         }
         spans.extend(wt_spans);
         let subject_style = if c.stash_helper {
@@ -1189,10 +1199,16 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             put(buf, date_x, y2, end.saturating_sub(date_x), vec![date]);
             let avail = date_x.saturating_sub(text_x + 1);
             let badges_w = (Line::from(spans.clone()).width() as u16).min(avail);
+            if let Some((at, mw, hidden)) = more {
+                more_hit(&mut app.badge_more, text_x, y2, badges_w, at, mw, hidden);
+            }
             let bx = put(buf, text_x, y2, badges_w, spans);
             let aw = (text_x + avail).saturating_sub(bx);
             put(buf, bx, y2, aw, vec![Span::styled(fit_width(&meta.author, aw), muted)]);
             continue;
+        }
+        if let Some((at, mw, hidden)) = more {
+            more_hit(&mut app.badge_more, x, y, text_w, at, mw, hidden);
         }
         spans.push(subject);
         put(buf, x, y, text_w, spans);
@@ -1205,6 +1221,15 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
         if date_w > 0 {
             put_right(buf, rx, y, date_w, vec![date]);
         }
+    }
+}
+
+/// Records a row's "+N" for clicks: drawn from column `x` in a text `w` columns wide, at
+/// `at` from its start, `mw` wide (as far as it is shown).
+fn more_hit(hits: &mut Vec<(Rect, String)>, x: u16, y: u16, w: u16, at: u16, mw: u16, hidden: String) {
+    let shown = mw.min(w.saturating_sub(at));
+    if shown > 0 {
+        hits.push((Rect::new(x + at, y, shown, 1), hidden));
     }
 }
 
@@ -1349,7 +1374,7 @@ const LIST_BADGE_COLS: u16 = 20;
 
 /// A commit-list row's badges: current branch first, then locals, remotes, tags; at most
 /// `ref_badges::LIST_MAX` and as many as fit in `room` columns, the (first) tag always
-/// among them, the rest as "+N".
+/// among them, the rest as "+N" (the last span) — and what it hides, on one line.
 fn badges(
     refs: &[RefInfo],
     current: Option<&str>,
@@ -1357,7 +1382,7 @@ fn badges(
     bg: Color,
     p: &Palette,
     room: u16,
-) -> Vec<Span<'static>> {
+) -> (Vec<Span<'static>>, Option<String>) {
     use gitti_core::ref_badges;
     let sorted = badge_refs(refs, current);
     let cap = Some(LIST_BADGE_COLS);
@@ -1381,7 +1406,10 @@ fn badges(
             Style::new().fg(p.text_muted),
         ));
     }
-    out
+    let hidden = pick
+        .hidden_summary()
+        .map(|s| s.replacen(":\n", ": ", 1).replace('\n', ", "));
+    (out, hidden)
 }
 
 /// The commit header's "Refs" lines: every ref of the commit (not only the list's few),
