@@ -35,6 +35,7 @@ pub mod lfs_fetch;
 pub mod lfs_health;
 pub mod lfs_track;
 pub mod lfs_unused;
+pub mod links;
 pub mod lock;
 pub mod graph;
 pub mod header_ids;

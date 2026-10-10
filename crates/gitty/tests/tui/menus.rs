@@ -1,7 +1,7 @@
 //! Menus and dialogs: the worktree, commit, diff and sidebar menus — their keys and
 //! actions, the sidebar menus' entries against the shared table —, the stash dialog, the
 //! git command dialog with its history, output and error details, the view toggles, copy /
-//! open in editor and compare mode.
+//! open in editor and compare mode; the git log menu's web links.
 
 use crate::common;
 use crate::support;
@@ -539,4 +539,22 @@ fn header_ids_copy_from_their_menus_and_y() {
     assert!(st[2].contains(&format!("Copied {p1} {}", &p2[..8])), "y on Parents: {out}");
     assert!(st[3].contains(&format!("Copied {head}")), "y on the id: {out}");
     assert_no_git(&cmds(&out)[1..], "copying the header ids", &out);
+}
+
+/// A command whose output has a web link (as a push's "Create a pull request: https://…"):
+/// the git log's menu offers to open (the test sandbox only reports it) and copy it.
+#[gitti_test::test]
+fn git_log_menu_opens_and_copies_links() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let url = "https://example.com/o/r/pull/new/x";
+    let out = gitty(
+        dir.path(),
+        &format!(
+            "key::;type:rev-parse --sq-quote {url};key:enter;key:esc;key:L;\
+             key:shift-tab;key:shift-tab;key:m;items;key:o;state"
+        ),
+    );
+    assert!(out.contains(&format!("item: Open Link {url}")), "{out}");
+    assert!(out.contains(&format!("item: Copy Link {url}")), "{out}");
+    assert!(states(&out)[0].contains(&format!("status=\"Opened {url}\"")), "{out}");
 }

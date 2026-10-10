@@ -3419,17 +3419,50 @@ impl App {
 
     fn log_menu_spec(&self) -> (String, Vec<MenuItem>) {
         let reads = if self.log_reads { "on" } else { "off" };
-        (
-            "Git Command Log".to_string(),
-            vec![
-                MenuItem::new(format!("Show Queries: {reads}"), |app: &mut App| {
-                    app.log_reads = !app.log_reads
-                })
-                .key('r'),
-                MenuItem::new("Hide Log", |app: &mut App| app.toggle_log())
-                    .same_as('L', Command::ToggleGitLog),
-            ],
-        )
+        let mut items = vec![
+            MenuItem::new(format!("Show Queries: {reads}"), |app: &mut App| {
+                app.log_reads = !app.log_reads
+            })
+            .key('r'),
+            MenuItem::new("Hide Log", |app: &mut App| app.toggle_log())
+                .same_as('L', Command::ToggleGitLog),
+        ];
+        // Web links of the newest outputs (a push's "Create a pull request: https://…").
+        let links = self.log_links(3);
+        if !links.is_empty() {
+            items.push(MenuItem::separator());
+        }
+        for (i, url) in links.into_iter().enumerate() {
+            let u = url.clone();
+            let open = MenuItem::new(format!("Open Link {url}"), move |app: &mut App| {
+                match gitti_core::desktop::open_url(&u) {
+                    Ok(()) => app.set_info(format!("Opened {u}")),
+                    Err(e) => app.set_error(format!("Cannot open {u}: {e:#}")),
+                }
+            });
+            let u = url.clone();
+            let copy = MenuItem::new(format!("Copy Link {url}"), move |app: &mut App| app.copy(u));
+            // o / y for the newest link.
+            items.push(if i == 0 { open.key('o') } else { open });
+            items.push(if i == 0 { copy.key('y') } else { copy });
+        }
+        ("Git Command Log".to_string(), items)
+    }
+
+    /// The web links in the shown log entries' output, newest first, at most `max`.
+    pub fn log_links(&self, max: usize) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for e in self.log_entries().iter().rev() {
+            if !e.output.contains("://") {
+                continue;
+            }
+            for url in gitti_core::links::find_links(&e.output) {
+                if out.len() < max && !out.contains(&url) {
+                    out.push(url);
+                }
+            }
+        }
+        out
     }
 
     // ------------------------------------------------------------------ git log panel
