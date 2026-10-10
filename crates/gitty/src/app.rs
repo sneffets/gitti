@@ -920,8 +920,9 @@ impl App {
                         self.apply_snapshot(s)
                     }
                     Err(e) => {
-                        self.errors.failed("Refresh", format!("{e:#}"));
-                        self.set_error(format!("{e:#}"));
+                        let text = gitti_core::error_mark::refresh_failed(&format!("{e:#}"));
+                        self.errors.failed("Refresh", text.clone());
+                        self.set_error(text);
                         if let Some(d) = gitti_core::safe_directory::dubious_ownership(&e) {
                             self.offer_trust_directory(d);
                         }

@@ -15,7 +15,7 @@ use crate::progress::ProgressLines;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
-    #[error("failed to run git: {0}")]
+    #[error("failed to run git: {}", spawn_text(.0))]
     Spawn(#[from] std::io::Error),
     #[error("git {args}: {}", summarize(stderr))]
     Failed {
@@ -757,6 +757,21 @@ fn detach_from_terminal(cmd: &mut Command) {
 
 /// The most meaningful line of git's stderr (`fatal:`/`error:` preferred), followed by the
 /// complete text on the next lines for anyone who wants details.
+/// Why git couldn't be started, in plain words where the OS error alone doesn't say what
+/// to do.
+fn spawn_text(e: &std::io::Error) -> String {
+    if crate::fd_limit::is_too_many_open_files(e) {
+        let limit = crate::fd_limit::current()
+            .map(|n| format!(" (the limit is {n})"))
+            .unwrap_or_default();
+        return format!(
+            "too many files are open{limit}, so git could not be started — try again \
+             in a moment, or close some repository tabs ({e})"
+        );
+    }
+    e.to_string()
+}
+
 fn summarize(stderr: &str) -> String {
     let lines: Vec<&str> = stderr
         .lines()

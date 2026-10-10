@@ -130,6 +130,12 @@ impl ErrorMarks {
     }
 }
 
+/// The status text when reading the repository's state failed: it says that the read
+/// failed, not the operation run just before it (whose result is then only not shown yet).
+pub fn refresh_failed(details: &str) -> String {
+    format!("Couldn't read the repository's state — what is shown may be out of date: {details}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

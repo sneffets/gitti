@@ -94,7 +94,9 @@ impl GitCaps {
             },
             Err(e) => Self {
                 version: None,
-                missing: matches!(e, crate::git_cli::GitError::Spawn(_)),
+                // Not started for lack of file descriptors: git is there all the same.
+                missing: matches!(&e, crate::git_cli::GitError::Spawn(io)
+                    if !crate::fd_limit::is_too_many_open_files(io)),
                 probe: e.to_string(),
             },
         }

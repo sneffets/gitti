@@ -19,6 +19,7 @@ pub mod desktop;
 pub mod diff;
 pub mod editor;
 pub mod error_mark;
+pub mod fd_limit;
 pub mod folder_tree;
 pub mod git_cli;
 pub mod keybar;

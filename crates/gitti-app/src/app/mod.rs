@@ -888,7 +888,8 @@ impl GittiApp {
                         this.sync_prepared_message(prepared, window, cx);
                     }
                     Err(e) => {
-                        this.op_failed("Refresh", format!("{e:#}"));
+                        let text = gitti_core::error_mark::refresh_failed(&format!("{e:#}"));
+                        this.op_failed("Refresh", text);
                         if let Some(d) = gitti_core::safe_directory::dubious_ownership(&e) {
                             this.offer_trust_directory(d, window, cx);
                         }

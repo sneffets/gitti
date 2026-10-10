@@ -128,6 +128,8 @@ pub fn run() {
     if !scripted || std::env::var_os("GITTI_SCRIPT_STARTUP").is_some() {
         gitti_core::startup::begin("gitti", env!("CARGO_PKG_VERSION"));
     }
+    // Started from Finder / the Dock the open-file limit is 256 (`fd_limit`).
+    gitti_core::fd_limit::raise();
     // Panics go to <config dir>/logs/panic.log (no terminal when started from a launcher).
     gitti_core::panic_log::install("gitti", env!("CARGO_PKG_VERSION"));
     // Command logs from before their redaction go, once per machine.

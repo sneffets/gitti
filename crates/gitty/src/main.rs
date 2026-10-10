@@ -54,6 +54,8 @@ fn main() {
     // Panics also go to <config dir>/logs/panic.log (the terminal is restored first, see
     // `run_terminal`, whose hook runs this one afterwards).
     gitti_core::panic_log::install("gitty", env!("CARGO_PKG_VERSION"));
+    // Many git processes at once (refresh); a low open-file limit (`fd_limit`).
+    gitti_core::fd_limit::raise();
     // Command logs from before their redaction go, once per machine.
     gitti_core::redact::purge_unredacted_logs_in_config_dir();
     let result = run();
