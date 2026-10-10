@@ -53,6 +53,7 @@ mod signers;
 mod signing_keys;
 mod submodules;
 mod subtrees;
+mod terminal;
 mod unavailable;
 mod view_anchor;
 mod watching;
@@ -80,6 +81,8 @@ pub enum Msg {
     Signature(ObjectId, Box<(Option<SignatureInfo>, Option<signers::SignersOffer>)>),
     /// "Use … for This Repository / All Repositories": the `git config` ran.
     SignersSet(Result<String, String>),
+    /// "Open in Terminal" finished: the terminal's name, or why none opened.
+    TerminalOpened(Result<String, String>, std::path::PathBuf),
     /// "Get Signing Keys from GitHub…": a lookup or an import finished.
     SigningKeys(Box<signing_keys::KeysMsg>),
     OpDone {
@@ -435,6 +438,10 @@ pub struct App {
     signers_offer: Option<signers::SignersOffer>,
     /// A GitHub signing-key lookup or import is running (`app/signing_keys.rs`).
     pub keys_job: bool,
+    /// The shared setting `terminal_command` ("Open in Terminal"; `app/terminal.rs`).
+    pub terminal_command: String,
+    /// A terminal is being started (detection, macOS `open`).
+    pub terminal_job: bool,
     pub rows: Vec<DiffRow>,
     pub expansion: Expansion,
     /// Line totals of the working-directory sections / groups, summed when the rows
@@ -715,6 +722,8 @@ impl App {
             signature: None,
             signers_offer: None,
             keys_job: false,
+            terminal_command: settings.terminal_command.clone(),
+            terminal_job: false,
             prefetching: Default::default(),
             last_shown_row: 0,
             compare: Default::default(),
@@ -833,8 +842,7 @@ impl App {
             editor_command: self.settings.editor_command.clone(),
             syntax_highlight: self.opts.syntax,
             merge_single_view: self.merge_single,
-            // Not used by gitty (yet): kept as loaded.
-            terminal_command: self.settings.terminal_command.clone(),
+            terminal_command: self.terminal_command.clone(),
             show_sidebar: self.show_sidebar,
             spell_check: self.settings.spell_check,
             intraline_strength: self.opts.intraline_strength,
@@ -899,6 +907,7 @@ impl App {
         }
         self.log_reads = s.log_show_reads;
         self.merge_single = s.merge_single_view;
+        self.terminal_command = s.terminal_command.clone();
     }
 
     fn handle_msg(&mut self, msg: Msg) {
@@ -990,6 +999,7 @@ impl App {
             }
             Msg::SigningKeys(m) => self.signing_keys_msg(*m),
             Msg::SignersSet(result) => self.signers_set(result),
+            Msg::TerminalOpened(result, dir) => self.terminal_opened(result, dir),
             Msg::OpDone {
                 label,
                 result,
@@ -1214,6 +1224,7 @@ impl App {
             && !self.detail_pending
             && !self.signature_pending()
             && !self.keys_job
+            && !self.terminal_job
             && !self.hl_running
             && self.prefetching.lock().is_ok_and(|p| p.is_empty())
             && self.compare.idle()
@@ -3797,6 +3808,7 @@ impl App {
         items.push(self.signers_palette_item());
         items.extend(self.change_search_palette_items());
         items.extend(self.repo_palette_items());
+        items.extend(self.terminal_palette_items());
         items.extend(self.submodule_palette_items());
         items.extend(self.lfs_palette_items());
         items.extend(self.lfs_download_palette_items());

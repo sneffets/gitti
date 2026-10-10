@@ -1,11 +1,14 @@
 //! Handing a directory to the desktop: the file manager ("Open in Finder / Explorer") and
-//! a terminal ("Open in Terminal"). Programs start detached; nothing waits for them.
+//! a terminal ("Open in Terminal"; which one: `crate::terminal`). Programs start
+//! detached; nothing waits for them (but macOS `open`, which returns at once).
 
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result, bail};
+
+use crate::terminal;
 
 /// Name of the platform's file manager, for menu labels.
 pub fn file_manager_name() -> &'static str {
@@ -35,83 +38,72 @@ pub fn folder_argv(dir: &Path) -> Vec<String> {
     }
 }
 
-/// Terminal commands to try for `dir`, best first: the user's command — `GITTI_TERMINAL`
-/// if set (it overrides the setting, e.g. for one session), else the shared setting
-/// `terminal_command` — then `$TERMINAL` (Linux), then the platform's usual terminals. A
-/// user command is a command line; `{dir}` is replaced by the directory, and it runs in
-/// that directory either way.
-pub fn terminal_candidates(dir: &Path, setting: &str) -> Vec<Vec<String>> {
+/// What "Open in Terminal" starts for the shared setting `terminal_command`: the
+/// environment variable `GITTI_TERMINAL` if set (it overrides the setting, e.g. for one
+/// session), else the setting, else the detected default (see [`crate::terminal`]).
+/// Detects afresh: a terminal may have been installed meanwhile.
+pub fn terminal_choice(setting: &str) -> Result<terminal::Choice> {
     let env = std::env::var("GITTI_TERMINAL").ok();
-    terminal_candidates_with(dir, env.as_deref(), setting)
+    terminal::redetect().choose(setting, env.as_deref())
 }
 
-/// [`terminal_candidates`] with the environment variable passed in (testable).
-pub fn terminal_candidates_with(
-    dir: &Path,
-    env_override: Option<&str>,
-    setting: &str,
-) -> Vec<Vec<String>> {
-    let d = dir.to_string_lossy().into_owned();
-    let mut out = Vec::new();
-    let user = env_override
-        .filter(|t| !t.trim().is_empty())
-        .or(Some(setting).filter(|t| !t.trim().is_empty()));
-    if let Some(t) = user {
-        out.push(
-            crate::ops::split_command_line(t)
-                .into_iter()
-                .map(|a| a.replace("{dir}", &d))
-                .collect(),
+/// Opens a terminal in `dir` (see [`terminal_choice`]) and returns its name. A configured
+/// terminal that can't start is an error saying what to do — never silently another
+/// one. May wait a moment (macOS `open` reports a missing app only when it exits): call
+/// it off the UI thread.
+pub fn open_terminal(dir: &Path, setting: &str) -> Result<String> {
+    let choice = terminal_choice(setting)?;
+    let argv = choice.argv(dir);
+    let (whose, todo) = match choice.source {
+        terminal::Source::Override => (
+            "set by the environment variable GITTI_TERMINAL",
+            "Correct or unset GITTI_TERMINAL.",
+        ),
+        terminal::Source::Setting | terminal::Source::Auto => (
+            if choice.source == terminal::Source::Setting {
+                "the Terminal setting"
+            } else {
+                "detected"
+            },
+            "Install it, or choose another terminal (gitti: Settings ▸ Diff ▸ Terminal; \
+             gitty: palette ▸ Choose Terminal…).",
+        ),
+    };
+    if let Err(e) = launch(&argv, dir) {
+        bail!(
+            "Cannot open {} (`{}`, {whose}): {e}. {todo}",
+            choice.name,
+            choice.command
         );
     }
-    if cfg!(target_os = "macos") {
-        out.push(vec!["open".into(), "-a".into(), "Terminal".into(), d]);
-    } else if cfg!(windows) {
-        out.push(vec!["wt.exe".into(), "-d".into(), d]);
-        // `start` opens a new console window; the empty string is its title.
-        out.push(
-            ["cmd.exe", "/c", "start", "", "cmd.exe", "/k"]
-                .map(String::from)
-                .to_vec(),
-        );
-    } else {
-        // A command line like the setting (`kitty --single-instance`), not one program name.
-        if let Ok(t) = std::env::var("TERMINAL")
-            && !t.trim().is_empty()
-        {
-            out.push(crate::ops::split_command_line(&t));
-        }
-        for t in [
-            "x-terminal-emulator",
-            "gnome-terminal",
-            "konsole",
-            "xfce4-terminal",
-            "kitty",
-            "alacritty",
-            "foot",
-            "xterm",
-        ] {
-            out.push(vec![t.into()]);
-        }
-    }
-    out
+    Ok(choice.name)
 }
 
-/// Opens a terminal in `dir` (the first candidate that starts); `setting` = the shared
-/// setting `terminal_command` (empty = platform default).
-pub fn open_terminal(dir: &Path, setting: &str) -> Result<()> {
-    let mut tried = Vec::new();
-    for argv in terminal_candidates(dir, setting) {
-        match spawn(&argv, dir) {
-            Ok(()) => return Ok(()),
-            Err(_) => tried.push(argv[0].clone()),
+/// Starts `argv` in `dir`. macOS `open` is waited for (it returns at once, after
+/// handing the folder to the app) so that a missing app is reported.
+fn launch(argv: &[String], dir: &Path) -> std::result::Result<(), String> {
+    let program = argv.first().ok_or("empty command")?;
+    if cfg!(target_os = "macos") && program == "open" && !SANDBOX.load(Ordering::Relaxed) {
+        let out = Command::new(program)
+            .args(&argv[1..])
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        if out.status.success() {
+            return Ok(());
         }
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            format!("`open` failed ({})", out.status)
+        } else {
+            err
+        });
     }
-    bail!(
-        "no terminal found (tried {}); set the terminal command in Settings (or \
-         GITTI_TERMINAL), e.g. `ghostty --working-directory={{dir}}`",
-        tried.join(", ")
-    )
+    spawn_detached(argv, dir).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => format!("`{program}` was not found"),
+        _ => format!("cannot start `{program}`: {e}"),
+    })
 }
 
 fn spawn(argv: &[String], dir: &Path) -> Result<()> {
@@ -169,31 +161,5 @@ mod tests {
         assert!(spawn_detached(&missing, &dir).is_ok());
         let abs = [dir.join("gitti-no-such-opener-xyz").to_string_lossy().into_owned()];
         assert!(spawn_detached(&abs, &dir).is_err());
-    }
-
-    #[gitti_test::test]
-    fn platform_terminal_comes_after_the_override() {
-        let c = terminal_candidates_with(Path::new("/tmp/x y"), None, "");
-        assert!(!c.is_empty());
-        if cfg!(target_os = "macos") {
-            assert_eq!(c[0], ["open", "-a", "Terminal", "/tmp/x y"]);
-        }
-    }
-
-    #[gitti_test::test]
-    fn setting_then_env_override() {
-        let dir = Path::new("/tmp/x y");
-        let platform = terminal_candidates_with(dir, None, "");
-        // The setting comes first, `{dir}` replaced (one argument, spaces kept).
-        let c = terminal_candidates_with(dir, None, "kitty --directory {dir}");
-        assert_eq!(c[0], ["kitty", "--directory", "/tmp/x y"]);
-        assert_eq!(&c[1..], &platform[..]);
-        // GITTI_TERMINAL overrides the setting; blank values count as unset.
-        let c = terminal_candidates_with(dir, Some("wezterm start --cwd {dir}"), "kitty");
-        assert_eq!(c[0], ["wezterm", "start", "--cwd", "/tmp/x y"]);
-        assert_eq!(&c[1..], &platform[..], "the setting is not tried as well");
-        let c = terminal_candidates_with(dir, Some("  "), "kitty");
-        assert_eq!(c[0], ["kitty"]);
-        assert_eq!(terminal_candidates_with(dir, Some(""), " "), platform);
     }
 }

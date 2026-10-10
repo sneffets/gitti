@@ -48,6 +48,7 @@ pub fn main() {
         ("worktree_tab_menu", worktree_tab_menu),
         ("menu_entries", menu_entries),
         ("gitignore_dialog", gitignore_dialog),
+        ("terminal_chooser", terminal_chooser),
         ("folder_rule_files", folder_rule_files),
         ("clone_and_init", clone_and_init),
         ("clone_from_clipboard", clone_from_clipboard),
@@ -450,6 +451,84 @@ fn menu_entries(ui: &mut Ui) {
         }
         ui.quick("cancel");
     }
+}
+
+/// Settings ▸ Diff ▸ Terminal: the chooser's "Automatic" button empties the command; a
+/// typed command says live what it runs and warns when its program is missing; Save
+/// stores it (the shared setting) and the row warns too; Open in Terminal (sandboxed: not
+/// started) names it in the status line; the palette's "Choose Terminal…" opens the same
+/// chooser, back to Automatic. No git runs for any of it.
+fn terminal_chooser(ui: &mut Ui) {
+    use gitti_core::store::{SharedSettings, load_settings};
+    let live = |ui: &mut Ui| {
+        let ws = ui.ws.clone();
+        ui.cx.update(|cx| menus::modal_live(&ws, cx)).map(|l| l.0).unwrap_or_default()
+    };
+    let n = ui.n_git();
+    // The row is the section's last: scrolled into view (a wheel now and then doesn't
+    // reach the list in the first frame of the settings).
+    let reveal = |ui: &mut Ui, name: &str| {
+        for _ in 0..3 {
+            if find(&ui.frame(), name).and_then(Probe::visible).is_some() {
+                return;
+            }
+            ui.wheel("settings-body", 2000.);
+        }
+    };
+    ui.step("settings:diff");
+    reveal(ui, "setting:terminal");
+    ui.click_on("setting:terminal", MouseButton::Left);
+    match modal(ui) {
+        Some((t, f)) if t == "Terminal" && f == [""] => {}
+        other => fail!(ui, "terminal chooser: {other:?}"),
+    }
+    let text = live(ui);
+    if !text.starts_with("Automatic") {
+        fail!(ui, "the empty command should say what Automatic runs: {text:?}");
+    }
+    let custom = "gitti-no-such-term --dir {dir}";
+    ui.quick(&format!("field:0={custom}"));
+    let text = live(ui);
+    if !text.contains(&format!("Custom — runs {custom}")) || !text.contains("is not installed") {
+        fail!(ui, "a missing program should be named: {text:?}");
+    }
+    // The first button is Automatic: it empties the field.
+    ui.step("choice:0");
+    if modal(ui).map(|m| m.1) != Some(vec![String::new()]) {
+        let now = modal(ui);
+        fail!(ui, "Automatic did not empty the command: {now:?}");
+    }
+    ui.quick(&format!("field:0={custom}"));
+    ui.step("modalok");
+    let stored = load_settings::<SharedSettings>().terminal_command;
+    if stored != custom {
+        fail!(ui, "stored terminal command {stored:?}");
+    }
+    reveal(ui, "setting:terminal-warning");
+    let p = ui.frame();
+    match find(&p, "setting:terminal-warning").and_then(Probe::visible) {
+        Some(_) => {}
+        None => fail!(ui, "the settings row doesn't warn about the missing terminal"),
+    }
+    ui.step("key:escape");
+    ui.step("action:gitti::OpenTerminal");
+    match status(ui) {
+        Some((s, false)) if s.starts_with("Opened gitti-no-such-term in ") => {}
+        other => fail!(ui, "status after Open in Terminal: {other:?}"),
+    }
+    // Back to Automatic from the palette.
+    ui.step("palette:Choose Terminal");
+    if modal_title(ui).as_deref() != Some("Terminal") {
+        let now = modal(ui);
+        fail!(ui, "palette ▸ Choose Terminal… opened {now:?}");
+    }
+    ui.step("choice:0");
+    ui.step("modalok");
+    let stored = load_settings::<SharedSettings>().terminal_command;
+    if !stored.is_empty() {
+        fail!(ui, "Automatic stored {stored:?}");
+    }
+    ui.no_git_since(n, "the terminal chooser and Open in Terminal");
 }
 
 /// "Add to .gitignore…" is prefilled `/path`, the suggestion buttons fill the (editable)
