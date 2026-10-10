@@ -464,7 +464,56 @@ impl GittiApp {
                     .child(stat_pill(format!("+{add}"), p.bg_added, p.text_added))
                     .into_any_element(),
             ))
+            .children(self.render_header_refs(d.id, label_w, &p, cx))
             .child(self.render_message(&d.message, &p, cx))
+    }
+
+    /// The commit header's "Refs" row: every branch, remote branch and tag on the commit
+    /// (the list shows at most a few), wrapping onto more lines as needed — the header is
+    /// measured as laid out, so its `HeaderSpace` rows follow. A stash's own ref is left
+    /// out (the "Stash" row says it).
+    fn render_header_refs(
+        &self,
+        id: gitti_core::ObjectId,
+        label_w: Pixels,
+        p: &Palette,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let refs = self.history.refs_by_commit.get(&id)?;
+        let refs = gitti_core::ref_badges::ordered(
+            refs.iter().filter(|r| r.kind != gitti_core::RefKind::Stash),
+            self.head.branch.as_deref(),
+        );
+        if refs.is_empty() {
+            return None;
+        }
+        let badges = refs.iter().map(|r| {
+            self.ref_badge(r, None, format!("header-ref:{}", r.short_name), false, p, cx)
+        });
+        Some(
+            h_flex()
+                .items_start()
+                .gap_2()
+                .child(
+                    div()
+                        .w(label_w)
+                        .flex_none()
+                        .text_right()
+                        .italic()
+                        .text_color(p.text_muted)
+                        .child("Refs"),
+                )
+                .child(
+                    h_flex()
+                        .probe("header-refs")
+                        .flex_1()
+                        .min_w_0()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(badges),
+                )
+                .into_any_element(),
+        )
     }
 
     /// "✓ Signed · signer · date" etc.; click shows the verifier's output, right click its

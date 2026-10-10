@@ -24,6 +24,7 @@ pub fn main() {
     let wt_repo = make_worktrees_repo(&tmp.path().join("wt"));
     let folder_repo = make_folder_repo(&tmp.path().join("folders"));
     let remotes_repo = make_remotes_repo(&tmp.path().join("remotes"));
+    let refs_repo = make_refs_repo(&tmp.path().join("refs"));
     let tests: &[(&str, Scenario)] = &[
         ("merge_sync_scroll", merge_sync_scroll),
         ("merge_long_lines", merge_long_lines),
@@ -51,6 +52,7 @@ pub fn main() {
         ("toolbar_command_bar", toolbar_command_bar),
         ("palette_keys_column", palette_keys_column),
         ("commit_list_layouts", commit_list_layouts),
+        ("ref_badges_sweep", ref_badges_sweep),
     ];
     common::run(tests, |name| {
         if name == "merge_sync_scroll" {
@@ -67,6 +69,8 @@ pub fn main() {
             folder_repo.clone()
         } else if name == "toolbar_command_bar" {
             remotes_repo.clone()
+        } else if name == "ref_badges_sweep" {
+            refs_repo.clone()
         } else {
             repo.clone()
         }
@@ -817,9 +821,15 @@ fn sidebar_worktrees_sweep(ui: &mut Ui) {
                     "side:ref-refs/heads/feature/with-a-long-branch-name",
                 ),
             ] {
+                // A narrow row folds badges into its "+N".
+                let folded = row.strip_prefix("commit-row:").is_some_and(|i| {
+                    let more = format!("ref-more:{i}:");
+                    p.iter().any(|q| q.name.starts_with(&more) && q.visible().is_some())
+                });
                 match (shown(mark), shown(row)) {
                     (Some(m), Some(r)) if testing::contains(&r, &m) => {}
                     (None, None) => {}
+                    (None, Some(_)) if folded && mark.starts_with("wt-branch-badge:") => {}
                     other => ui.fail(format!("{ctx}: {mark} not inside {row}: {other:?}")),
                 }
             }
@@ -989,6 +999,106 @@ fn make_remotes_repo(dir: &std::path::Path) -> std::path::PathBuf {
     repo
 }
 
+
+/// HEAD's refs in [`make_refs_repo`] (row 1; `main` is checked out), in badge order.
+const HEAD_REFS: &[&str] = &[
+    "main",
+    "feature/a-rather-long-branch-name-for-the-badges",
+    "hotfix",
+    "next",
+    "release/2026.10",
+    "origin/feature/a-rather-long-branch-name-for-the-badges",
+    "origin/main",
+    "upstream/main",
+    "stable-release-candidate",
+    "v1.0",
+    "v1.0.0",
+];
+
+/// [`make_repo`] with many refs written as files (no git): HEAD carries [`HEAD_REFS`]
+/// (branches, remote branches, three tags), its parent four branches and one tag.
+fn make_refs_repo(dir: &std::path::Path) -> std::path::PathBuf {
+    let ids = make_repo_ids(dir);
+    let (head, parent) = (&ids[5], &ids[4]);
+    for name in &HEAD_REFS[1..] {
+        let full = if name.starts_with("origin/") || name.starts_with("upstream/") {
+            format!("refs/remotes/{name}")
+        } else if name.starts_with("v1") || name.starts_with("stable") {
+            format!("refs/tags/{name}")
+        } else {
+            format!("refs/heads/{name}")
+        };
+        write_ref(dir, &full, head);
+    }
+    for b in ["b1", "b2", "b3", "b4"] {
+        write_ref(dir, &format!("refs/heads/{b}"), parent);
+    }
+    write_ref(dir, "refs/tags/only-tag", parent);
+    dir.to_path_buf()
+}
+
+/// Many refs on one commit: the commit header shows every one of them — wrapping
+/// inside the header, which keeps its rows (the invariants: no badge overlaps another,
+/// all inside the header, the header over its `HeaderSpace` rows only) — at every window
+/// and font size; the list row shows at most three plus "+N", the commit's tag always
+/// among them (a single tag behind four branches too), not clipped away.
+fn ref_badges_sweep(ui: &mut Ui) {
+    ui.step("select:1");
+    for pt in points() {
+        let ctx = set_point(ui, pt);
+        let default = pt == (SIZES[0], FONTS[1]);
+        let p = ui.check(&format!("{ctx}, many refs"));
+        let header = find(&p, "commit-header").map(|h| h.bounds);
+        let shown: Vec<&str> = p
+            .iter()
+            .filter(|q| q.kind() == "header-ref")
+            .map(|q| &q.name["header-ref:".len()..])
+            .collect();
+        if shown != HEAD_REFS {
+            ui.fail(format!("{ctx}: header refs {shown:?}, want {HEAD_REFS:?}"));
+        }
+        for q in p.iter().filter(|q| q.kind() == "header-ref") {
+            if !header.is_some_and(|h| testing::contains(&h, &q.bounds)) {
+                ui.fail(format!("{ctx}: {} ({:?}) outside the commit header {header:?}", q.name, q.bounds));
+            }
+            if default && q.visible() != Some(q.bounds) {
+                ui.fail(format!("{ctx}: {} not whole on screen", q.name));
+            }
+        }
+        let rows = |name: &str| find(&p, name).map(|q| f32::from(q.bounds.size.height));
+        if let (Some(refs_h), Some(badge_h)) = (rows("header-refs"), rows("header-ref:main"))
+            && default
+            && refs_h < 2. * badge_h
+        {
+            ui.fail(format!("{ctx}: the refs did not wrap ({refs_h} px for badges {badge_h} px high)"));
+        }
+        // The list: three badges (fewer in a narrow row), the tag always among them, the
+        // "+N" counting the rest.
+        for (row, tag, total) in [(1, "stable-release-candidate", HEAD_REFS.len()), (2, "only-tag", 5)] {
+            let badge = format!("ref-badge:{row}:{tag}");
+            let shown: Vec<&str> = p
+                .iter()
+                .filter(|q| q.kind() == "ref-badge" && q.index() == Some(row))
+                .map(|q| q.detail())
+                .collect();
+            if !(1..=3).contains(&shown.len()) || (default && shown.len() != 3) || !shown.contains(&tag) {
+                ui.fail(format!("{ctx}: row {row} badges {shown:?}, want up to three with {tag}"));
+            }
+            let more = total - shown.len();
+            match find(&p, &badge).and_then(|b| Some((b.bounds, b.visible()?))) {
+                Some((b, v)) if default && v != b => {
+                    ui.fail(format!("{ctx}: {badge} clipped ({v:?} of {b:?})"))
+                }
+                Some(_) => {}
+                None => ui.fail(format!("{ctx}: {badge} not visible")),
+            }
+            if find(&p, &format!("ref-more:{row}:{more}")).and_then(Probe::visible).is_none() {
+                ui.fail(format!("{ctx}: row {row} shows no +{more}"));
+            }
+        }
+    }
+    reset_point(ui);
+}
 
 // ------------------------------------------------------------------ lean scenarios
 

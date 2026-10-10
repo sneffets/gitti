@@ -1105,10 +1105,21 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             spans.push(badge(gitti_core::history::MERGE_HEAD_BADGE, p.accent_text, p.warning));
             spans.push(Span::raw(" "));
         }
+        let wt_spans = worktree_badges(&app.worktrees, c.id, bg, p);
         if let Some(refs) = history.refs_by_commit.get(&c.id) {
-            spans.extend(badges(refs, app.current_branch(), &app.worktrees, bg, p));
+            // Room beside the subject's 16 columns (one line) or left of the date (two
+            // lines), less the labels around them.
+            let room = if two {
+                let date_w = format_time(meta.time).width() as u16 + 1;
+                (content.x + w).saturating_sub(text_x + date_w + 1)
+            } else {
+                text_w.saturating_sub(16)
+            };
+            let others = Line::from(spans.clone()).width() + Line::from(wt_spans.clone()).width();
+            let room = room.saturating_sub(others as u16);
+            spans.extend(badges(refs, app.current_branch(), &app.worktrees, bg, p, room));
         }
-        spans.extend(worktree_badges(&app.worktrees, c.id, bg, p));
+        spans.extend(wt_spans);
         let subject_style = if c.stash_helper {
             Style::new().fg(p.text_muted)
         } else if selected {
@@ -1239,51 +1250,123 @@ fn worktree_badges(
     out
 }
 
-/// Current branch first, then locals, remotes, tags; at most three. A branch checked out
-/// in another worktree gets [`WORKTREE_MARK`].
+/// The refs badges are drawn for, in badge order (`gitti_core::ref_badges::ordered`):
+/// branches, remote branches, tags — a stash is marked on its own.
+fn badge_refs<'a>(refs: &'a [RefInfo], current: Option<&str>) -> Vec<&'a RefInfo> {
+    gitti_core::ref_badges::ordered(
+        refs.iter()
+            .filter(|r| !matches!(r.kind, RefKind::Head | RefKind::Stash | RefKind::Other))
+            .filter(|r| !r.short_name.ends_with("/HEAD")),
+        current,
+    )
+}
+
+/// One ref's badge, its text cut to `max` columns with "…" (`None`: whole). A branch
+/// checked out in another worktree gets [`WORKTREE_MARK`], a tag "◆".
+fn ref_badge(
+    r: &RefInfo,
+    current: Option<&str>,
+    worktrees: &[gitti_core::worktree::Worktree],
+    bg: Color,
+    p: &Palette,
+    max: Option<u16>,
+) -> Span<'static> {
+    let (fg, b) = match r.kind {
+        _ if gitti_core::ref_badges::is_current(r, current) => (p.accent_text, p.accent),
+        RefKind::LocalBranch => (p.accent, blend(p.accent, bg, 0.2)),
+        RefKind::RemoteBranch => (p.remote, blend(p.remote, bg, 0.15)),
+        RefKind::Tag => (p.tag, blend(p.tag, bg, 0.18)),
+        _ => (p.text_muted, bg),
+    };
+    let elsewhere = r.kind == RefKind::LocalBranch
+        && gitti_core::worktree::branch_worktree(worktrees, &r.short_name).is_some();
+    let text = if r.kind == RefKind::Tag {
+        format!("◆ {}", r.short_name)
+    } else if elsewhere {
+        format!("{WORKTREE_MARK} {}", r.short_name)
+    } else {
+        r.short_name.clone()
+    };
+    // The badge pads its text with a space on each side.
+    let text = match max {
+        Some(m) => fit_width(&text, m.saturating_sub(2).max(1)),
+        None => text,
+    };
+    badge(&text, fg, b)
+}
+
+/// A list badge's text is cut ("…") beyond this many columns (gitti: 11 ems).
+const LIST_BADGE_COLS: u16 = 20;
+
+/// A commit-list row's badges: current branch first, then locals, remotes, tags; at most
+/// `ref_badges::LIST_MAX` and as many as fit in `room` columns, the (first) tag always
+/// among them, the rest as "+N".
 fn badges(
     refs: &[RefInfo],
     current: Option<&str>,
     worktrees: &[gitti_core::worktree::Worktree],
     bg: Color,
     p: &Palette,
+    room: u16,
 ) -> Vec<Span<'static>> {
-    let mut sorted: Vec<&RefInfo> = refs
-        .iter()
-        .filter(|r| !matches!(r.kind, RefKind::Head | RefKind::Stash | RefKind::Other))
-        .filter(|r| !r.short_name.ends_with("/HEAD"))
-        .collect();
-    let is_current =
-        |r: &RefInfo| r.kind == RefKind::LocalBranch && Some(r.short_name.as_str()) == current;
-    sorted.sort_by_key(|r| (!is_current(r), r.kind));
+    use gitti_core::ref_badges;
+    let sorted = badge_refs(refs, current);
+    let cap = Some(LIST_BADGE_COLS);
+    // Each badge is followed by a space: the gap is in its width.
+    let pick = ref_badges::fit_list(
+        &sorted,
+        ref_badges::LIST_MAX,
+        room as f32,
+        0.,
+        |r| ref_badge(r, current, worktrees, bg, p, cap).content.width() as f32 + 1.,
+        |n| format!("+{n} ").width() as f32,
+    );
     let mut out = Vec::new();
-    for r in sorted.iter().take(3) {
-        let (fg, b) = match r.kind {
-            _ if is_current(r) => (p.accent_text, p.accent),
-            RefKind::LocalBranch => (p.accent, blend(p.accent, bg, 0.2)),
-            RefKind::RemoteBranch => (p.remote, blend(p.remote, bg, 0.15)),
-            RefKind::Tag => (p.tag, blend(p.tag, bg, 0.18)),
-            _ => (p.text_muted, bg),
-        };
-        let elsewhere = r.kind == RefKind::LocalBranch
-            && gitti_core::worktree::branch_worktree(worktrees, &r.short_name).is_some();
-        let text = if r.kind == RefKind::Tag {
-            format!("◆ {}", r.short_name)
-        } else if elsewhere {
-            format!("{WORKTREE_MARK} {}", r.short_name)
-        } else {
-            r.short_name.clone()
-        };
-        out.push(badge(&text, fg, b));
+    for r in &pick.shown {
+        out.push(ref_badge(r, current, worktrees, bg, p, cap));
         out.push(Span::raw(" "));
     }
-    if sorted.len() > 3 {
+    if !pick.hidden.is_empty() {
         out.push(Span::styled(
-            format!("+{} ", sorted.len() - 3),
+            format!("+{} ", pick.hidden.len()),
             Style::new().fg(p.text_muted),
         ));
     }
     out
+}
+
+/// The commit header's "Refs" lines: every ref of the commit (not only the list's few),
+/// wrapped at `cols` (the detail pane's width; 0 = unknown, one line) under `first`, the
+/// label, with the following lines indented as far.
+fn header_ref_lines(
+    first: Span<'static>,
+    refs: &[&RefInfo],
+    current: Option<&str>,
+    worktrees: &[gitti_core::worktree::Worktree],
+    bg: Color,
+    p: &Palette,
+    cols: u16,
+) -> Vec<Line<'static>> {
+    let indent = first.content.width() as u16;
+    let avail = cols.saturating_sub(indent);
+    let max = (cols > 0).then_some(avail.max(3));
+    let mut lines = Vec::new();
+    let mut spans = vec![first];
+    let mut used = 0u16;
+    for r in refs {
+        let b = ref_badge(r, current, worktrees, bg, p, max);
+        let w = b.content.width() as u16;
+        if cols > 0 && used > 0 && used + w > avail {
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            spans.push(Span::raw(" ".repeat(indent as usize)));
+            used = 0;
+        }
+        spans.push(b);
+        spans.push(Span::raw(" "));
+        used += w + 1;
+    }
+    lines.push(Line::from(spans));
+    lines
 }
 
 pub fn format_time(secs: i64) -> String {
@@ -1422,18 +1505,20 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
             Style::new().fg(p.text_added).bg(p.bg_added),
         ),
     ]));
-    if let Some(refs) = app.history.refs_by_commit.get(&d.id)
-        && !refs.is_empty()
-    {
-        let mut spans = vec![label("Refs")];
-        spans.extend(badges(
-            refs,
-            app.current_branch(),
-            &app.worktrees,
-            p.bg_diff,
-            p,
-        ));
-        out.push(Line::from(spans));
+    // Every ref, wrapped at the pane's width (the list shows only a few).
+    if let Some(refs) = app.history.refs_by_commit.get(&d.id) {
+        let refs = badge_refs(refs, app.current_branch());
+        if !refs.is_empty() {
+            out.extend(header_ref_lines(
+                label("Refs"),
+                &refs,
+                app.current_branch(),
+                &app.worktrees,
+                p.bg_diff,
+                p,
+                app.header_cols,
+            ));
+        }
     }
     out.push(Line::default());
     let mut lines = d.message.trim_end().lines();
@@ -1539,6 +1624,11 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         Detail::Commit(_) => {}
     }
     app.areas.detail = content;
+    // The header's "Refs" lines wrap at the pane's width: rebuilt when it changes.
+    if app.header_cols != content.width {
+        app.header_cols = content.width;
+        app.rewrap_header();
+    }
     let buf = f.buffer_mut();
 
     // Gutter: old and new line numbers.

@@ -454,3 +454,84 @@ fn commit_list_layouts_from_the_palette() {
     let next = s[1].lines().skip_while(|l| !l.contains("Second commit")).nth(1).unwrap_or_default();
     assert!(next.contains("Initial commit"), "{out}");
 }
+
+/// HEAD's refs in [`many_refs_repo`] (`main` checked out), in badge order.
+const HEAD_REFS: &[&str] = &[
+    "main",
+    "feature/a-rather-long-branch-name-for-the-badges",
+    "hotfix",
+    "next",
+    "release/2026.10",
+    "origin/feature/a-rather-long-branch-name-for-the-badges",
+    "origin/main",
+    "upstream/main",
+    "stable-release-candidate",
+    "v1.0",
+    "v1.0.0",
+];
+
+/// Two commits: HEAD with [`HEAD_REFS`] (branches, remote branches, three tags), its
+/// parent with four branches and one tag — one fast-import.
+fn many_refs_repo() -> tempfile::TempDir {
+    let mut extra = String::new();
+    for name in &HEAD_REFS[1..] {
+        let full = if name.starts_with("origin/") || name.starts_with("upstream/") {
+            format!("refs/remotes/{name}")
+        } else if name.starts_with("v1") || name.starts_with("stable") {
+            format!("refs/tags/{name}")
+        } else {
+            format!("refs/heads/{name}")
+        };
+        extra.push_str(&format!("reset {full}\nfrom :2\n\n"));
+    }
+    for full in ["refs/heads/b1", "refs/heads/b2", "refs/heads/b3", "refs/heads/b4", "refs/tags/only-tag"] {
+        extra.push_str(&format!("reset {full}\nfrom :1\n\n"));
+    }
+    import_with(
+        &[
+            Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", "a\n")] },
+            Commit { branch: "main", from: None, merge: None, msg: "Rework the frobnicator", files: &[("a.txt", "b\n")] },
+        ],
+        &extra,
+    )
+}
+
+/// Many refs on one commit: the commit header lists every one of them, wrapped at the
+/// pane's width (again after a resize); a list row shows at most three, as many as fit
+/// beside the subject, the commit's tag always among them, the rest as "+N".
+#[gitti_test::test]
+fn ref_badges_all_in_the_header_tag_always_in_the_list() {
+    let dir = many_refs_repo();
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(dir.path(), config.path(), "160x40", "key:j;dump;check;resize:90x40;dump;check");
+    let s = screens(&out);
+    for (n, screen) in s.iter().enumerate() {
+        let lines: Vec<&str> = screen.lines().collect();
+        let refs_at = lines.iter().position(|l| l.contains(" Refs ")).unwrap_or_else(|| panic!("no Refs line: {out}"));
+        // Every ref, on the Refs line and the indented ones below it (long names cut "…").
+        // (The list rows are above it; below it, the message's subject ends the header.)
+        let block = lines[refs_at..]
+            .iter()
+            .take_while(|l| !l.contains("Rework the frobnicator"))
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in HEAD_REFS {
+            let head: String = name.chars().take(20).collect();
+            assert!(block.contains(&head), "screen {n}: {name} missing from the header:\n{block}\n{out}");
+        }
+        assert!(block.lines().count() >= 3, "screen {n}: the refs did not wrap:\n{block}");
+        // The list: the tags stay, "+N" counts the rest.
+        let row = |subject: &str| {
+            lines.iter().find(|l| l.contains(subject)).unwrap_or_else(|| panic!("no {subject} row: {out}")).to_string()
+        };
+        let head_row = row("◆ stable-release");
+        assert!(head_row.contains(" +"), "screen {n}: no +N in {head_row:?}");
+        let init_row = row("◆ only-tag");
+        assert!(init_row.contains(" +"), "screen {n}: no +N in {init_row:?}");
+    }
+    assert_eq!(s.len(), 2, "{out}");
+    assert_eq!(out.matches("check: ok").count(), 2, "{out}");
+    // Wide: the parent's row has room for three (b1 b2 only-tag +2).
+    assert!(s[0].lines().any(|l| l.contains(" b1   b2   ◆ only-tag  +2 ")), "{out}");
+}

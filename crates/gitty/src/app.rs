@@ -383,6 +383,9 @@ pub struct App {
     detail_pending: bool,
     /// Commit header lines (drawn over the `HeaderSpace` rows).
     pub header: Vec<Line<'static>>,
+    /// The detail pane's width the header's "Refs" lines wrap at (set by the renderer;
+    /// 0 until the first frame).
+    pub header_cols: u16,
     /// Commits being prefetched (`prefetch_around`).
     prefetching: Arc<std::sync::Mutex<std::collections::HashSet<ObjectId>>>,
     /// Row of the commit shown before, for the prefetch direction.
@@ -676,6 +679,7 @@ impl App {
             anchor_ids: 0,
             hscroll: 0,
             wrap_cols: None,
+            header_cols: 0,
             line_sel: None,
             message: TextEdit::multi(),
             merge_prefill: None,
@@ -1816,6 +1820,21 @@ impl App {
             move || repo.working_state_with(&opts),
             move |r| Msg::Working(generation, r),
         );
+    }
+
+    /// The commit header again at the pane's new width ([`Self::header_cols`]); when its
+    /// "Refs" lines wrap onto another number of lines, the rows follow (the view kept).
+    pub fn rewrap_header(&mut self) {
+        let Detail::Commit(cv) = &self.detail else {
+            return;
+        };
+        let cv = cv.clone();
+        let header = crate::ui::commit_header(self, &cv);
+        let resized = header.len() != self.header.len();
+        self.header = header;
+        if resized {
+            self.rebuild_rows_keep_view();
+        }
     }
 
     pub fn rebuild_rows(&mut self) {

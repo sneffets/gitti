@@ -3,7 +3,7 @@
 use std::ops::Range;
 use std::rc::Rc;
 
-use gitti_core::RefKind;
+use gitti_core::{RefKind, ref_badges};
 use gitti_core::graph::GraphRow;
 use gitti_core::list_layout::{AUTO_TWO_LINES_BELOW_EM, CommitListLayout};
 use gpui_kit::component::ActiveTheme as _;
@@ -270,75 +270,38 @@ impl GittiApp {
                         .into_any_element(),
                 );
             }
-            let mut hidden = 0;
+            let mut more = None;
             if let Some(refs) = self.history.refs_by_commit.get(&c.id) {
-                // Current branch first, then locals, remotes, tags; at most three badges.
-                let mut refs: Vec<_> = refs.iter().collect();
-                refs.sort_by_key(|r| (self.head.branch.as_deref() != Some(&r.short_name), r.kind));
-                hidden = refs.len().saturating_sub(3);
-                for r in refs.iter().take(3) {
-                    let current = r.kind == RefKind::LocalBranch
-                        && self.head.branch.as_deref() == Some(&r.short_name);
-                    if r.kind == RefKind::LocalBranch && branch_here.is_none() {
-                        branch_here = Some(r.short_name.clone());
-                    }
-                    let (fg, bg, border) = match r.kind {
-                        _ if current => (p.accent_text, p.accent, p.accent),
-                        RefKind::LocalBranch => {
-                            (p.accent, p.accent.opacity(0.12), p.accent.opacity(0.6))
-                        }
-                        RefKind::RemoteBranch => {
-                            (p.remote, p.remote.opacity(0.08), p.remote.opacity(0.4))
-                        }
-                        RefKind::Tag => (p.tag, p.tag.opacity(0.10), p.tag.opacity(0.6)),
-                        RefKind::Stash => (p.accent_text, p.warning, p.warning),
-                        _ => (p.text_muted, p.bg_list, p.border),
-                    };
-                    // A branch checked out in another worktree: a folder mark in its label
-                    // (like the sidebar), the folder in the tooltip.
-                    let elsewhere = (r.kind == RefKind::LocalBranch)
-                        .then(|| self.other_worktree_of(&r.short_name))
-                        .flatten();
-                    let badge = div()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(3.))
-                        .max_w(px(s.ui_font_size * 11.))
-                        .overflow_hidden()
-                        .px(px(5.))
-                        .rounded(BADGE_RADIUS)
-                        .text_size(s.ui_small())
-                        .border_1()
-                        .border_color(border)
-                        .bg(bg)
-                        .text_color(fg)
-                        .when(current, |d| d.font_weight(FontWeight::BOLD))
-                        .when(elsewhere.is_some(), |d| {
-                            d.child(Icon::new(IconName::Folder).xsmall().text_color(fg))
-                        })
-                        .child(div().min_w_0().truncate().child(if r.kind == RefKind::Stash {
-                            "stash".to_string()
-                        } else {
-                            r.short_name.clone()
-                        }));
-                    badges.push(match elsewhere {
-                        Some(wt) => {
-                            let tip = format!(
-                                "{} is checked out in the worktree {}\n{}",
-                                r.short_name,
-                                wt.name(),
-                                wt.path.display()
-                            );
-                            badge
-                                .probe(format!("wt-branch-badge:{}", r.short_name))
-                                .id(SharedString::from(format!("wt-branch:{}", r.short_name)))
-                                .tooltip(move |w, cx| Tooltip::new(tip.clone()).build(w, cx))
-                                .into_any_element()
-                        }
-                        None => badge.into_any_element(),
-                    });
+                // Current branch first, then locals, remotes, tags; at most
+                // `ref_badges::LIST_MAX`, a tag always among them (the rest: "+N").
+                let refs = ref_badges::ordered(refs, self.head.branch.as_deref());
+                branch_here = refs
+                    .iter()
+                    .find(|r| r.kind == RefKind::LocalBranch)
+                    .map(|r| r.short_name.clone());
+                // As many as fit beside the subject's minimum (narrow rows: fewer, the
+                // tag kept), each at its narrowest ("…").
+                let gap = f32::from(s.rem()) * 0.25;
+                let room = self.badge_room(two_line, lanes, c.id, cx);
+                let pick = ref_badges::fit_list(
+                    &refs,
+                    ref_badges::LIST_MAX,
+                    room,
+                    gap,
+                    |r| self.ref_badge_floor(r, cx),
+                    |n| self.small_text_w(&format!("+{n}"), false, cx) + 8.,
+                );
+                for r in &pick.shown {
+                    badges.push(self.ref_badge(
+                        r,
+                        Some(px(s.ui_font_size * 11.)),
+                        format!("ref-badge:{ix}:{}", r.short_name),
+                        true,
+                        &p,
+                        cx,
+                    ));
                 }
+                more = pick.hidden_summary().map(|tip| (pick.hidden.len(), tip));
             }
             // Other worktrees with a detached HEAD here: a label with their folder.
             for wt in gitti_core::worktree::detached_at(&self.worktrees, c.id) {
@@ -364,9 +327,11 @@ impl GittiApp {
                         .into_any_element(),
                 );
             }
-            if hidden > 0 {
+            if let Some((hidden, tip)) = more {
                 badges.push(
                     div()
+                        .id(SharedString::from(format!("ref-more:{ix}")))
+                        .probe(format!("ref-more:{ix}:{hidden}"))
                         .flex_none()
                         .px(px(4.))
                         .rounded(BADGE_RADIUS)
@@ -374,6 +339,7 @@ impl GittiApp {
                         .text_color(p.text_muted)
                         .bg(p.bg_list_hover)
                         .child(format!("+{hidden}"))
+                        .tooltip(move |w, cx| Tooltip::new(tip.clone()).build(w, cx))
                         .into_any_element(),
                 );
             }
@@ -385,7 +351,9 @@ impl GittiApp {
             subject = subject.child(
                 div()
                     .when(!two_line, |d| d.min_w(px(s.ui_font_size * 8.)))
-                    .flex_shrink(1.)
+                    // Gives way long before the badges beside it (flex shrinks by factor ×
+                    // width), down to its minimum; then they shrink, to their floors.
+                    .flex_shrink(100.)
                     .min_w_0()
                     .truncate()
                     .text_color(if c.stash_helper {
@@ -547,6 +515,134 @@ impl GittiApp {
                 super::compare::menu_items(menu, &app, ix, is_base, comparing)
             })
             .into_any_element()
+    }
+
+    /// One ref's badge (a commit-list row or the commit header): coloured by kind, the
+    /// current branch filled and bold; a branch checked out in another worktree gets a
+    /// folder mark (like the sidebar) and the folder in its tooltip (probe
+    /// `wt-branch-badge:NAME` when `wt_probe`). At most `max_w` wide (`None`: its line in
+    /// the header); when space runs short it gives way with "…", in the list down to
+    /// [`Self::ref_badge_floor`] so it stays recognisable.
+    pub(super) fn ref_badge(
+        &self,
+        r: &gitti_core::RefInfo,
+        max_w: Option<Pixels>,
+        probe: String,
+        wt_probe: bool,
+        p: &crate::theme::Palette,
+        cx: &App,
+    ) -> AnyElement {
+        let s = &self.settings;
+        let current = ref_badges::is_current(r, self.head.branch.as_deref());
+        let (fg, bg, border) = match r.kind {
+            _ if current => (p.accent_text, p.accent, p.accent),
+            RefKind::LocalBranch => (p.accent, p.accent.opacity(0.12), p.accent.opacity(0.6)),
+            RefKind::RemoteBranch => (p.remote, p.remote.opacity(0.08), p.remote.opacity(0.4)),
+            RefKind::Tag => (p.tag, p.tag.opacity(0.10), p.tag.opacity(0.6)),
+            RefKind::Stash => (p.accent_text, p.warning, p.warning),
+            _ => (p.text_muted, p.bg_list, p.border),
+        };
+        let elsewhere = (r.kind == RefKind::LocalBranch)
+            .then(|| self.other_worktree_of(&r.short_name))
+            .flatten();
+        let label = if r.kind == RefKind::Stash {
+            "stash".to_string()
+        } else {
+            r.short_name.clone()
+        };
+        let badge = div()
+            .flex()
+            // (The subject beside it shrinks first: see its factor.)
+            .flex_shrink(1.)
+            .map(|d| match max_w {
+                Some(w) => d.max_w(w).min_w(px(self.ref_badge_floor(r, cx))),
+                // The header: one badge per line at most, "…" when even that is too narrow.
+                None => d.max_w_full().min_w_0(),
+            })
+            .items_center()
+            .gap(px(3.))
+            .overflow_hidden()
+            .px(px(5.))
+            .rounded(BADGE_RADIUS)
+            .text_size(s.ui_small())
+            .border_1()
+            .border_color(border)
+            .bg(bg)
+            .text_color(fg)
+            .when(current, |d| d.font_weight(FontWeight::BOLD))
+            .probe(probe)
+            .when(elsewhere.is_some(), |d| {
+                d.child(Icon::new(IconName::Folder).xsmall().flex_none().text_color(fg))
+            })
+            .child(div().min_w_0().truncate().child(label));
+        match elsewhere {
+            Some(wt) => {
+                let tip = format!(
+                    "{} is checked out in the worktree {}\n{}",
+                    r.short_name,
+                    wt.name(),
+                    wt.path.display()
+                );
+                badge
+                    .when(wt_probe, |d| d.probe(format!("wt-branch-badge:{}", r.short_name)))
+                    .id(SharedString::from(format!("wt-branch:{}", r.short_name)))
+                    .tooltip(move |w, cx| Tooltip::new(tip.clone()).build(w, cx))
+                    .into_any_element()
+            }
+            None => badge.into_any_element(),
+        }
+    }
+
+    /// The width of `text` in the small UI font (the badges'), from the text system.
+    fn small_text_w(&self, text: &str, bold: bool, cx: &App) -> f32 {
+        let ts = cx.text_system();
+        let f = font(cx.theme().font_family.clone());
+        let id = ts.resolve_font(&if bold { f.bold() } else { f });
+        let size = self.settings.ui_small();
+        text.chars()
+            .map(|c| ts.advance(id, size, c).map(|a| f32::from(a.width)).unwrap_or(0.))
+            .sum()
+    }
+
+    /// The narrowest `r`'s badge gets ([`Self::ref_badge`]): its natural width (text,
+    /// padding, border, folder mark), at most three ems.
+    fn ref_badge_floor(&self, r: &gitti_core::RefInfo, cx: &App) -> f32 {
+        let s = &self.settings;
+        let label = if r.kind == RefKind::Stash { "stash" } else { r.short_name.as_str() };
+        let bold = ref_badges::is_current(r, self.head.branch.as_deref());
+        let mark = r.kind == RefKind::LocalBranch && self.other_worktree_of(&r.short_name).is_some();
+        let natural = self.small_text_w(label, bold, cx)
+            + 12.
+            + if mark { f32::from(s.ui_small()) + 3. } else { 0. };
+        natural.ceil().min(s.ui_font_size * 3.)
+    }
+
+    /// The room a row of commit `id` has for its ref badges (and the "+N"): what is left
+    /// of the list's width after the graph, the date, the gaps, the subject's minimum in
+    /// one-line rows (author and date have their own line part in two-line rows), and
+    /// the row's other labels (MERGE_HEAD, other worktrees' folders).
+    fn badge_room(&self, two_line: bool, lanes: u16, id: gitti_core::ObjectId, cx: &App) -> f32 {
+        let s = &self.settings;
+        let (em, rem) = (s.ui_font_size, f32::from(s.rem()));
+        let gap = rem * 0.25;
+        let mut used = f32::from(graph_paint::graph_width(lanes))
+            + rem * 0.5
+            + f32::from(self.date_col_w(cx));
+        used += if two_line {
+            // badges | author | date, `gap_2` apart.
+            2. * rem * 0.5
+        } else {
+            // subject (≥ 8 ems, a gap from the badges) | author | date.
+            em * 8. + gap + 2. * em * COL_GAP_EM + em * AUTHOR_COL_EM
+        };
+        if self.history.merge_heads.contains(&id) {
+            used += self.small_text_w(gitti_core::history::MERGE_HEAD_BADGE, false, cx) + 12. + gap;
+        }
+        for wt in gitti_core::worktree::detached_at(&self.worktrees, id) {
+            let w = self.small_text_w(&wt.name(), false, cx) + f32::from(s.ui_small()) + 15.;
+            used += w.min(em * 11.) + gap;
+        }
+        self.list_width.get() - used
     }
 
     pub(super) fn render_commit_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
