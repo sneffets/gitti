@@ -29,6 +29,7 @@ mod signature_keys;
 mod staging;
 mod submodules;
 mod subtrees;
+mod tab_marks;
 mod unix_fs;
 mod worktrees;
 

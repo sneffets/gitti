@@ -1013,6 +1013,12 @@ pub mod testing {
         ws.read(cx).script_tab_paths()
     }
 
+    /// Per repository tab: its marks ("●" uncommitted, "○" not pushed, "● ○", "") and
+    /// their tooltip.
+    pub fn tab_marks(ws: &Entity<Workspace>, cx: &App) -> Vec<(String, String)> {
+        ws.read(cx).script_tab_marks(cx)
+    }
+
     /// Restores `repos` as tabs the way a start does, the `active`th of them shown.
     pub fn restore_tabs(
         ws: &Entity<Workspace>,

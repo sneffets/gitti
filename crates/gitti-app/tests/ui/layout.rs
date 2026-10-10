@@ -24,6 +24,8 @@ pub fn main() {
     let wt_repo = make_worktrees_repo(&tmp.path().join("wt"));
     let folder_repo = make_folder_repo(&tmp.path().join("folders"));
     let remotes_repo = make_remotes_repo(&tmp.path().join("remotes"));
+    let marks_repo = make_marks_repo(&tmp.path().join("marks"));
+    let marks_sweep_repo = make_marks_repo(&tmp.path().join("marks-sweep"));
     let tests: &[(&str, Scenario)] = &[
         ("merge_sync_scroll", merge_sync_scroll),
         ("merge_long_lines", merge_long_lines),
@@ -42,6 +44,8 @@ pub fn main() {
         ("worktree_sweep", worktree_sweep),
         ("file_tabs_sweep", file_tabs_sweep),
         ("repo_tabs_reorder_and_list", repo_tabs_reorder_and_list),
+        ("repo_tab_marks_sweep", repo_tab_marks_sweep),
+        ("repo_tab_marks_follow", repo_tab_marks_follow),
         ("commit_box_collapse", commit_box_collapse),
         ("commit_view_sweep", commit_view_sweep),
         ("compare_view_sweep", compare_view_sweep),
@@ -68,6 +72,10 @@ pub fn main() {
             folder_repo.clone()
         } else if name == "toolbar_command_bar" {
             remotes_repo.clone()
+        } else if name == "repo_tab_marks_follow" {
+            marks_repo.clone()
+        } else if name == "repo_tab_marks_sweep" {
+            marks_sweep_repo.clone()
         } else {
             repo.clone()
         }
@@ -1237,6 +1245,126 @@ fn repo_tabs_reorder_and_list(ui: &mut Ui) {
     let (_, active) = tabs(ui);
     if active != 0 {
         ui.fail(format!("the ▾ list's first entry made tab {active} active"));
+    }
+}
+
+/// `main` one commit ahead of its upstream `origin/main`, the working tree clean. Three git
+/// processes.
+fn make_marks_repo(dir: &std::path::Path) -> std::path::PathBuf {
+    init_repo(dir);
+    let mut s = Stream::new();
+    let one = s.commit("refs/heads/main", "One", None, &[("a.txt", Some("one\n"))]);
+    s.reset("refs/remotes/origin/main", Some(one));
+    let two = s.commit("refs/heads/main", "Two", Some(one), &[("a.txt", Some("two\n"))]);
+    let ids = s.import(dir);
+    read_tree(dir, &ids[two]);
+    append_config(
+        dir,
+        "[remote \"origin\"]\n\turl = ../origin.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
+         [branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+    );
+    dir.to_path_buf()
+}
+
+/// Per repository tab: its marks and their tooltip.
+fn tab_marks(ui: &mut Ui) -> Vec<(String, String)> {
+    let ws = ui.ws.clone();
+    ui.cx.update(|cx| testing::tab_marks(&ws, cx))
+}
+
+/// Where tab `ix`'s name starts inside its tab, and its vertical centre.
+fn title_place(p: &[Probe], ix: usize) -> Option<(f32, f32)> {
+    let tab = find(p, &format!("repo-tab:{ix}"))?;
+    let t = find(p, &format!("repo-tab-title:{ix}"))?;
+    Some((
+        f32::from(t.bounds.left()) - f32::from(tab.bounds.left()),
+        f32::from(t.bounds.center().y),
+    ))
+}
+
+/// A tab's marks right of its name: a hollow circle for commits not pushed, a filled one
+/// for uncommitted changes, both side by side, the same size, centred on the name's line —
+/// inside the tab, never over the name (the layout invariants check every frame), the name
+/// where it is in a tab without marks; at the default and the biggest fonts in the default
+/// and the most cramped window, with a second tab open.
+fn repo_tab_marks_sweep(ui: &mut Ui) {
+    let other = ui.repo.parent().unwrap().join("marks-sweep-other");
+    if !other.exists() {
+        git(ui.repo.parent().unwrap(), &["init", "-q", "-b", "main", "marks-sweep-other"]);
+    }
+    ui.step(&format!("open:{}", other.display()));
+    ui.step("tab:0");
+    let marks = tab_marks(ui);
+    if marks.iter().map(|m| m.0.as_str()).collect::<Vec<_>>() != ["○", ""] {
+        ui.fail(format!("ahead of origin/main, clean / an empty repository: {marks:?}"));
+    }
+    std::fs::write(ui.repo.join("a.txt"), "changed\n").unwrap();
+    if !ui.wait_real(1500, |ui| ui.is_idle() && tab_marks(ui)[0].0 == "● ○") {
+        let marks = tab_marks(ui);
+        ui.fail(format!("after an outside change: {marks:?}"));
+        return;
+    }
+    for point in points() {
+        let ctx = set_point(ui, point);
+        let p = ui.check(&format!("{ctx}, both marks"));
+        let vis = |n: &str| find(&p, n).and_then(Probe::visible);
+        match (vis("tab-dirty:0"), vis("tab-unpushed:0"), title_place(&p, 0), title_place(&p, 1)) {
+            (Some(d), Some(u), Some((x0, cy)), Some((x1, _)))
+                // The probe of the hollow one is its inside (without the ring).
+                if d.right() <= u.left()
+                    && (0. ..=4.5).contains(&(f32::from(d.size.width) - f32::from(u.size.width)))
+                    && (f32::from(d.center().y) - cy).abs() <= 2.
+                    && (f32::from(u.center().y) - cy).abs() <= 2.
+                    && (x0 - x1).abs() < 0.5 => {}
+            other => {
+                let marks = tab_marks(ui);
+                ui.fail(format!(
+                    "{ctx}: filled + hollow circle side by side on the name's line, the name in place: {other:?}, marks {marks:?}"
+                ))
+            }
+        }
+    }
+    reset_point(ui);
+}
+
+/// The marks follow what happens: an outside change (the file watcher) adds the filled
+/// circle, staging keeps it, a commit takes it away and the hollow one counts two commits;
+/// a change in a background tab's folder shows on its tab. The empty repository next to it
+/// has none. Tooltips say it in words.
+fn repo_tab_marks_follow(ui: &mut Ui) {
+    let marks = tab_marks(ui);
+    if marks != [("○".to_string(), "1 commit not pushed to origin/main".to_string())] {
+        ui.fail(format!("ahead of origin/main, clean: {marks:?}"));
+    }
+    std::fs::write(ui.repo.join("outside.txt"), "x\n").unwrap();
+    let seen = ui.wait_real(1500, |ui| ui.is_idle() && tab_marks(ui)[0].0 == "● ○");
+    let marks = tab_marks(ui);
+    let want = "Uncommitted changes in 1 file: 1 untracked\n1 commit not pushed to origin/main";
+    if !seen || marks[0].1 != want {
+        ui.fail(format!("after an outside change: {marks:?}"));
+    }
+    ui.step("stagefile:outside.txt");
+    let marks = tab_marks(ui);
+    if marks[0].0 != "● ○" || !marks[0].1.starts_with("Uncommitted changes in 1 file: 1 staged") {
+        ui.fail(format!("after staging: {marks:?}"));
+    }
+    ui.step("msg:Add outside");
+    ui.step("commit");
+    let marks = tab_marks(ui);
+    if marks[0] != ("○".to_string(), "2 commits not pushed to origin/main".to_string()) {
+        ui.fail(format!("after the commit: {marks:?}"));
+    }
+    let other = ui.repo.parent().unwrap().join("marks-other");
+    if !other.exists() {
+        git(ui.repo.parent().unwrap(), &["init", "-q", "-b", "main", "marks-other"]);
+    }
+    ui.step(&format!("open:{}", other.display()));
+    // The first tab in the background: its watcher still reports.
+    std::fs::write(ui.repo.join("later.txt"), "x\n").unwrap();
+    let seen = ui.wait_real(1500, |ui| tab_marks(ui)[0].0 == "● ○");
+    let marks = tab_marks(ui);
+    if !seen || marks[1] != (String::new(), String::new()) {
+        ui.fail(format!("a change in the background tab: {marks:?}"));
     }
 }
 

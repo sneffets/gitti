@@ -38,6 +38,7 @@ mod spell_ui;
 mod startup_ui;
 mod submodules;
 mod subtrees;
+mod tab_marks;
 mod test_state;
 mod toolbar;
 mod unavailable;
@@ -198,6 +199,8 @@ pub struct GittiApp {
     stashes: Vec<StashInfo>,
     repo_state: RepoState,
     tracking: Vec<Tracking>,
+    /// The current branch's commits that are not pushed (the tab's hollow mark).
+    unpushed: Option<gitti_core::tab_marks::Unpushed>,
     /// Effective user.name / user.email.
     identity: (Option<String>, Option<String>),
     /// Names of "ours" / "theirs" while there are conflicted files.
@@ -564,6 +567,7 @@ impl GittiApp {
             stashes: Vec::new(),
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
+            unpushed: None,
             identity: (None, None),
             conflict_sides: None,
             worktrees: Vec::new(),
@@ -957,6 +961,7 @@ impl GittiApp {
         self.stashes = s.stashes;
         self.repo_state = s.state;
         self.tracking = s.tracking;
+        self.unpushed = s.unpushed;
         self.identity = s.identity;
         self.conflict_sides = s.conflict_sides;
         self.worktrees = s.worktrees;

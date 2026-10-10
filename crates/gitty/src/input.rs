@@ -937,6 +937,8 @@ impl App {
                     self.focus = Focus::Log;
                 } else if a.error_mark.contains(pos) {
                     self.show_error_details();
+                } else if a.repo_marks.contains(pos) {
+                    self.explain_repo_marks();
                 } else if a.status.contains(pos) && self.busy_name().is_some() {
                     // A running operation: "esc cancel" cancels, elsewhere the
                     // output window opens / closes.
