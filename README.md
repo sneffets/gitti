@@ -123,8 +123,10 @@ finds every command.
 - **Fast.** GPU-rendered; navigating and scrolling run no git at all; huge histories load their
   structure first and the details per visible row.
 - **Correct and complete.** Writes go through the git CLI, so your hooks, credential helpers,
-  signing and config just work. Worktrees, submodules, Git LFS, SHA-256 repositories, nested
-  `.gitignore` / `.gitattributes` — not only the common case.
+  signing and config just work. Worktrees, submodules, subtrees, Git LFS, SHA-256
+  repositories, nested `.gitignore` / `.gitattributes` — not only the common case. (Where a
+  subtree comes from isn't recorded by git; gitti remembers it in the repository's
+  `.git/config`, section `[gitti-subtree "<folder>"]`.)
 - **Explains itself.** Dialogs say in plain words what an action does and what follows from it;
   a missing tool or setup gives a clear message with what to do.
 - **Two front ends, one core.** `gitti-core` holds the logic; gitti and gitty get features
