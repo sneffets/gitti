@@ -18,7 +18,7 @@ use gitti_core::signature::SignatureInfo;
 use gitti_core::store::{self, PaneLayout, SharedSettings};
 use gitti_core::syntax::LineCategories;
 use gitti_core::discard::{DiscardOptions, DiscardPlan};
-use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget};
+use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget, SwitchWay};
 use gitti_core::pull::{DivergentPull, PullStrategy};
 use gitti_core::push::{PullBlock, PushBlock, pull_block, push_block};
 use gitti_core::watch::Change;
@@ -243,7 +243,10 @@ pub const BUSY_SHOW_DELAY: std::time::Duration = std::time::Duration::from_milli
 /// A commit load running this long replaces the previous commit with "Loading…" (a merge
 /// of 1700 files takes over a second; meanwhile the old one looked like the selected one).
 /// Width of the explanation lines in the Discard All menu.
-const DISCARD_NOTE_WIDTH: usize = 72;
+const DISCARD_NOTE_WIDTH: usize = 64;
+
+/// Width of the explanation lines in the blocked-switch menu.
+const SWITCH_NOTE_WIDTH: usize = 64;
 
 const SLOW_LOAD: std::time::Duration = std::time::Duration::from_millis(300);
 
@@ -3110,7 +3113,7 @@ impl App {
         let label = format!("Checkout {}", target.name());
         self.run_op(&label, true, After::Nothing, move |r| {
             match r.switch(&target)? {
-                SwitchOutcome::Done(msg) => Ok(msg),
+                SwitchOutcome::Done(done) => Ok(done.status_line()),
                 SwitchOutcome::Blocked(block) => Err(FollowUp::Switch(target, block).into()),
                 // TODO: offer to open that worktree (gitti does).
                 SwitchOutcome::InOtherWorktree(path) => Err(anyhow::anyhow!(
@@ -3148,44 +3151,35 @@ impl App {
         match f {
             FollowUp::SplitDone { prefix, id, message } => self.split_done(&prefix, id, &message),
             FollowUp::Switch(target, block) => {
+                // What blocks, then one entry per way out, each explained.
                 let name = target.name().to_string();
-                let list = |files: &[String]| {
-                    let mut s: String =
-                        files.iter().take(8).map(|f| format!("  {f}\n")).collect();
-                    if files.len() > 8 {
-                        s.push_str(&format!("  … and {} more\n", files.len() - 8));
-                    }
-                    s
-                };
-                let mut body = String::new();
-                if !block.untracked.is_empty() {
-                    body.push_str(&format!(
-                        "These untracked files exist in {name} and would be replaced:\n{}\
-                         Your versions are saved in a stash first; other untracked files stay.\n",
-                        list(&block.untracked)
-                    ));
-                }
-                if !block.local.is_empty() {
-                    if !body.is_empty() {
-                        body.push('\n');
-                    }
-                    body.push_str(&format!(
-                        "Your local changes to these files conflict with {name}:\n{}\
-                         They are stashed, the switch is done and they are re-applied (on \
-                         conflicts the stash is kept).\n",
-                        list(&block.local)
-                    ));
-                }
-                self.modal = Some(Modal::confirm(
-                    format!("Switch to {name}?"),
-                    body.trim_end().to_string(),
-                    "Stash & Switch",
-                    move |app| {
-                        app.run_op(&format!("Checkout {name}"), true, After::Nothing, move |r| {
-                            r.switch_moving_aside(&target, &block)
+                let mut items: Vec<MenuItem> = block
+                    .describe(&name)
+                    .lines()
+                    .flat_map(|l| {
+                        let indent = l.starts_with("    ");
+                        let mut notes = MenuItem::notes(l, SWITCH_NOTE_WIDTH);
+                        if indent && let Some(n) = notes.first_mut() {
+                            n.label = format!("  {}", n.label);
+                        }
+                        notes
+                    })
+                    .collect();
+                for (way, key) in SwitchWay::ALL.into_iter().zip(['s', 'd', 'f']) {
+                    items.push(MenuItem::separator());
+                    items.extend(MenuItem::notes(&way.explain(&block, &name), SWITCH_NOTE_WIDTH));
+                    let (target, block) = (target.clone(), block.clone());
+                    let label = format!("Checkout {}", target.name());
+                    items.push(
+                        MenuItem::new(way.label(&block), move |app: &mut App| {
+                            app.run_op(&label, true, After::Nothing, move |r| {
+                                r.switch_resolving(&target, &block, way)
+                            })
                         })
-                    },
-                ));
+                        .key(key),
+                    );
+                }
+                self.modal = Some(Modal::menu(format!("Switch to {name}?"), items));
             }
             FollowUp::ForceDelete(name) => {
                 self.modal = Some(Modal::confirm(
