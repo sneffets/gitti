@@ -153,9 +153,9 @@ pub enum Msg {
     LfsLocks(Result<Vec<gitti_core::lfs::LfsLock>>),
     /// "Track with Git LFS…" for this path: git-lfs as found (`app/lfs.rs`).
     LfsSetup(String, gitti_core::lfs_track::LfsSetup),
-    /// The repository location on the clipboard for the open Clone dialog
-    /// (`app/repo_cmds.rs`).
-    CloneClipboard(Option<String>),
+    /// The repository location on the clipboard for the open Clone / Add Submodule dialog
+    /// (its title; `app/repo_cmds.rs`).
+    CloneClipboard(&'static str, Option<String>),
 }
 
 /// What to do after an operation succeeded.
@@ -1183,7 +1183,7 @@ impl App {
                 self.loads_in_flight -= 1;
                 self.lfs_setup_read(path, setup);
             }
-            Msg::CloneClipboard(url) => self.clone_clipboard(url),
+            Msg::CloneClipboard(title, url) => self.clone_clipboard(title, url),
             Msg::Working(generation, result) => {
                 self.loads_in_flight -= 1;
                 if generation == self.working_gen {

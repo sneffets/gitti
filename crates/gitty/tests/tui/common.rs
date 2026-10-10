@@ -44,6 +44,9 @@ pub fn gitty_with(dir: &Path, config: &Path, size: &str, script: &str) -> String
         .env("GITTY_SCRIPT", script)
         .env("GITTY_SIZE", size)
         .env("GITTI_CONFIG_DIR", config)
+        // The GitHub CLI's defaults (`gh repo clone` on the clipboard).
+        .env("GH_CONFIG_DIR", config.join("gh"))
+        .env_remove("GH_HOST")
         .output()
         .expect("gitty runs");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();

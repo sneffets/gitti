@@ -761,7 +761,8 @@ fn bare_source(name: &str) -> PathBuf {
 /// The Clone dialog takes a repository location from the clipboard as if it was pasted:
 /// a forge's page URL cut back to the repository, selected (typing replaces it), the folder
 /// name derived, "From the clipboard" under it until it is changed; a local repository's
-/// path too; plain text not.
+/// path too; plain text not. Add Submodule… the same with URLs (`gh repo clone` too), not
+/// with a local path.
 fn clone_from_clipboard(ui: &mut Ui) {
     let ws = ui.ws.clone();
     let note = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_note(&ws, 0, cx));
@@ -811,6 +812,28 @@ fn clone_from_clipboard(ui: &mut Ui) {
     }
     if let Some(n) = note(ui) {
         fail!(ui, "clipboard note without a URL: {n:?}");
+    }
+    ui.quick("cancel");
+    // Add Submodule: a URL as in Clone, the path derived; a local repository's path not.
+    ui.quick("clip:gh repo clone octo/widgets");
+    ui.quick("action:gitti::AddSubmodule");
+    let url = "https://github.com/octo/widgets.git";
+    match modal(ui) {
+        Some((t, f)) if t == "Add Submodule" && f[0] == url && f[1] == "widgets" => {}
+        other => fail!(ui, "add submodule from the clipboard: {other:?}"),
+    }
+    if note(ui).as_deref() != Some(gitti_core::clone_source::CLIPBOARD_NOTE)
+        || selection(ui) != Some(0..url.len())
+    {
+        let (n, s) = (note(ui), selection(ui));
+        fail!(ui, "add submodule: clipboard URL without note / selection: {n:?} {s:?}");
+    }
+    ui.quick("cancel");
+    ui.quick(&format!("clip:{}", repo.display()));
+    ui.quick("action:gitti::AddSubmodule");
+    match modal(ui) {
+        Some((t, f)) if t == "Add Submodule" && f[0].is_empty() && f[1].is_empty() => {}
+        other => fail!(ui, "add submodule with a local path on the clipboard: {other:?}"),
     }
     ui.quick("cancel");
 }

@@ -184,10 +184,11 @@ impl App {
     }
 
     /// "Add Submodule…": URL, path (empty = git's default from the URL), branch to track
-    /// (optional) → `git submodule add`; staged, a commit records it.
+    /// (optional) → `git submodule add`; staged, a commit records it. A repository URL on
+    /// the clipboard fills the URL field as in Clone.
     pub fn add_submodule_dialog(&mut self) {
         self.modal = Some(Modal::input(
-            "Add Submodule (staged — commit to record it)".to_string(),
+            super::repo_cmds::ADD_SUBMODULE_TITLE.to_string(),
             vec![
                 ("Repository URL", ""),
                 ("Path (empty = from the URL)", ""),
@@ -206,6 +207,7 @@ impl App {
                 });
             },
         ));
+        self.read_clipboard_for(super::repo_cmds::ADD_SUBMODULE_TITLE);
     }
 
     /// `git submodule sync --recursive [-- paths]`.

@@ -347,20 +347,27 @@ impl GittiApp {
 
     /// "Add Submodule…": URL, path (git's default from the URL until edited), branch to
     /// track (optional) → `git submodule add`; the result is staged, a commit records it.
+    /// A repository URL on the clipboard (`clone_source::url_from_clipboard`) is put into
+    /// the URL field, selected, the path derived as if it was pasted — as in Clone.
     pub(super) fn add_submodule_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.repo.is_none() {
             return;
         }
-        let spec = ModalSpec::new("Add Submodule")
+        let from_clipboard = super::repo_actions::clipboard_text(cx)
+            .and_then(|t| gitti_core::clone_source::url_from_clipboard(&t));
+        let mut spec = ModalSpec::new("Add Submodule")
             .message(
                 "Clones the repository into a folder of this one and stages it with \
                  .gitmodules — commit to record it.",
             )
-            .field("Repository URL", "")
+            .field("Repository URL", from_clipboard.clone().unwrap_or_default())
             .field("Path in this repository", "")
             .derive(0, 1, gitti_core::submodule::default_path)
             .field("Branch to track (optional)", "")
             .ok("Add Submodule");
+        if from_clipboard.is_some() {
+            spec = spec.prefilled(0, gitti_core::clone_source::CLIPBOARD_NOTE);
+        }
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let url = res.values[0].trim().to_string();
             let path = res.values[1].trim().trim_matches('/').to_string();

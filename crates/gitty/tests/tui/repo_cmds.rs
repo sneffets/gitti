@@ -135,6 +135,27 @@ fn clone_url_from_the_clipboard() {
     assert!(s[4].contains("Clone Repository") && !s[4].contains("README") && !s[4].contains(note), "{out}");
 }
 
+/// Add Submodule… takes a repository URL from the clipboard like Clone (a `gh repo clone`
+/// line too, with gh's defaults), not a local repository's path.
+#[gitti_test::test]
+fn add_submodule_url_from_the_clipboard() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let open = format!("press:ctrl-p;{}press:enter;", presses("add submodule"));
+    let out = gitty(
+        dir.path(),
+        &format!(
+            "clip:gh repo clone octo/widgets lib;{open}dump;press:esc;\
+             clip:{};{open}dump",
+            dir.path().display()
+        ),
+    );
+    let s = screens(&out);
+    let note = gitti_core::clone_source::CLIPBOARD_NOTE;
+    assert!(s[0].contains("Add Submodule") && s[0].contains("https://github.com/octo/widgets.git"), "{out}");
+    assert!(s[0].contains(note), "{out}");
+    assert!(s[1].contains("Add Submodule") && !s[1].contains(note), "a local path is no submodule URL: {out}");
+}
+
 /// Init: the new repository is offered; n keeps gitty where it is.
 #[gitti_test::test]
 fn init_from_the_palette() {

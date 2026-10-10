@@ -54,6 +54,7 @@ pub fn main() {
         ("folder_picker_sweep", folder_picker_sweep),
         ("go_to_commit_picker", go_to_commit_picker),
         ("clone_clipboard_note", clone_clipboard_note),
+        ("modal_sizing_sweep", modal_sizing_sweep),
         ("toolbar_command_bar", toolbar_command_bar),
         ("palette_keys_column", palette_keys_column),
         ("commit_list_layouts", commit_list_layouts),
@@ -1780,11 +1781,13 @@ fn clone_clipboard_note(ui: &mut Ui) {
         ui.quick("action:gitti::CloneRepository");
         let p = ui.check(&format!("{ctx}, clone dialog"));
         let get = |n: &str| find(&p, n);
-        // (At the most cramped point the dialog has no room for its fields at all.)
-        let field_shown = get("modal-field:0").is_some_and(|f| f.visible().is_some());
+        // (At the most cramped point the note may be below the dialog's scrolled part.)
+        let below = get("modal-body").is_some_and(|b| {
+            get("modal-note:0").is_some_and(|n| n.bounds.bottom() > b.bounds.bottom())
+        });
         match (get("modal-note:0"), get("modal-field:0"), get("modal-field:1"), get("modal")) {
             (Some(n), Some(f), Some(next), Some(m))
-                if (n.visible() == Some(n.bounds) || !field_shown)
+                if (n.visible() == Some(n.bounds) || below)
                     && n.bounds.bottom() <= f.bounds.bottom() + px(1.)
                     && n.bounds.bottom() <= next.bounds.top()
                     && n.bounds.right() <= m.bounds.right() => {}
@@ -1796,6 +1799,93 @@ fn clone_clipboard_note(ui: &mut Ui) {
         ui.quick("cancel");
     }
     reset_point(ui);
+}
+
+/// Dialogs at the sweep points (the most cramped: 800x500 with fonts 28/32): the dialog
+/// whole in the window, its title and buttons whole, the part between them scrolling —
+/// every field and check (or the text box) reachable by the wheel, nothing of it under
+/// the buttons (invariant 9); at the default point the first and last shown at once.
+/// Representative dialogs: Clone (fields + a check), Add Worktree (options, many fields,
+/// a button beside one), Edit Commit Message (a text box).
+fn modal_sizing_sweep(ui: &mut Ui) {
+    let dialogs: [(&str, &str, &str); 3] = [
+        ("clone", "action:gitti::CloneRepository", "modal-check:0"),
+        ("add worktree", "action:gitti::AddWorktree", "modal-field:3"),
+        ("edit message", "action:gitti::EditCommitMessage", "modal-text"),
+    ];
+    for pt in points() {
+        let ctx = set_point(ui, pt);
+        for (what, open, last) in dialogs {
+            let ctx = format!("{ctx}, {what}");
+            ui.step("select:1");
+            ui.step("focuslist");
+            ui.quick("clip:git@github.com:team/a-rather-long-repository-name-for-the-dialog.git");
+            ui.step(open);
+            let p = ui.check(&format!("{ctx}, opened"));
+            modal_whole(ui, &p, &ctx);
+            let first = if what == "edit message" { "modal-text" } else { "modal-field:0" };
+            // Shown (enough of it to see what it is): whole, or 40 px of a bigger one.
+            let shown = |p: &[Probe], name: &str| {
+                find(p, name).is_some_and(|l| {
+                    l.visible().is_some_and(|v| v.size.height + px(0.5) >= l.bounds.size.height.min(px(40.)))
+                })
+            };
+            if pt == points()[0] && !(shown(&p, first) && shown(&p, last)) {
+                ui.fail(format!("{ctx}: {first} / {last} not shown at once"));
+            }
+            let Some(b) = find(&p, "modal-body").map(|b| b.bounds) else {
+                ui.fail(format!("{ctx}: no modal-body"));
+                ui.step("cancel");
+                continue;
+            };
+            let (x, y) = (f32::from(b.center().x), f32::from(b.center().y));
+            // Wheel down a page at a time: every field / check / the text box gets shown.
+            let parts: Vec<String> = p
+                .iter()
+                .filter(|q| matches!(q.kind(), "modal-field" | "modal-check") || q.name == "modal-text")
+                .map(|q| q.name.clone())
+                .collect();
+            let mut seen: Vec<String> = Vec::new();
+            let page = (f32::from(b.size.height) * 0.6).max(20.);
+            for step in 0..12 {
+                let p = if step == 0 { p.clone() } else {
+                    ui.step(&format!("wheel:{x},{y},{page}"));
+                    ui.check(&format!("{ctx}, scrolled {step}"))
+                };
+                modal_whole(ui, &p, &ctx);
+                seen.extend(parts.iter().filter(|n| shown(&p, n)).cloned());
+                if parts.iter().all(|n| seen.contains(n)) {
+                    break;
+                }
+            }
+            let missed: Vec<&String> = parts.iter().filter(|n| !seen.contains(n)).collect();
+            if !missed.is_empty() || !parts.iter().any(|n| n == last) {
+                ui.fail(format!("{ctx}: not reachable by scrolling: {missed:?} (of {parts:?})"));
+            }
+            ui.step("cancel");
+        }
+    }
+    reset_point(ui);
+}
+
+/// The open dialog whole in the window; its OK button whole; nothing of its scrolling part
+/// drawn over the buttons.
+fn modal_whole(ui: &mut Ui, p: &[Probe], ctx: &str) {
+    let (Some(m), Some(body)) = (find(p, "modal"), find(p, "modal-body")) else {
+        ui.fail(format!("{ctx}: no dialog"));
+        return;
+    };
+    if m.visible() != Some(m.bounds) {
+        ui.fail(format!("{ctx}: dialog {:?} not whole in the window ({:?})", m.bounds, m.visible()));
+    }
+    match find(p, "modal-ok") {
+        Some(ok) if ok.visible() == Some(ok.bounds) && body.bounds.bottom() <= ok.bounds.top() => {}
+        other => ui.fail(format!(
+            "{ctx}: OK not whole below the scrolling part {:?}: {:?}",
+            body.bounds,
+            other.map(|o| (o.bounds, o.visible()))
+        )),
+    }
 }
 
 /// Go to Commit with a file search: the note above the results and the match reasons in the
