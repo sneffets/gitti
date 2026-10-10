@@ -10,7 +10,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::GittiApp;
-use super::spell_ui::{SpellEditor, SpellLook, SpellTarget, editor_menu};
+use super::spell_ui::{SpellEditor, SpellLook, SpellTarget, editor_context_menu};
 use crate::probe::ProbeExt as _;
 use crate::theme::PaletteExt as _;
 
@@ -1296,10 +1296,11 @@ impl GittiApp {
                             .readonly(modal.viewer)
                             .h_full()
                             .when_some(self.spell_editor(SpellTarget::ModalText), |t, editor| {
-                                let spell = s.spell_check;
-                                t.context_menu(move |menu, _, cx| {
-                                    editor_menu(menu, SpellTarget::ModalText, &editor, spell, cx)
-                                })
+                                t.context_menu(editor_context_menu(
+                                    SpellTarget::ModalText,
+                                    editor,
+                                    s.spell_check,
+                                ))
                             }),
                     )
                     .children(self.spell_editor(SpellTarget::ModalText).and_then(|e| {
@@ -1380,11 +1381,11 @@ impl GittiApp {
         let Some(editor) = self.spell_editor(target) else {
             return super::text_input(input, s).into_any_element();
         };
-        let spell = s.spell_check;
-        let menu_editor = editor.clone();
-        let field = super::text_input(input, s).context_menu(move |menu, _, cx| {
-            editor_menu(menu, target, &menu_editor, spell, cx)
-        });
+        let field = super::text_input(input, s).context_menu(editor_context_menu(
+            target,
+            editor.clone(),
+            s.spell_check,
+        ));
         // One line: clipped left / right only (the text scrolls sideways).
         let look = SpellLook {
             font: None,

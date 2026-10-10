@@ -653,6 +653,12 @@ pub mod testing {
         true
     }
 
+    /// The last right-click menu of a spell-checked editor (taken): its editor and the
+    /// misspelled word it offered.
+    pub fn take_editor_menu() -> Option<(SpellTarget, Option<String>)> {
+        crate::app::take_last_editor_menu()
+    }
+
     /// Puts `text` into the text area of the active tab's open dialog (without confirming).
     pub fn modal_text(ws: &Entity<Workspace>, text: &str, window: &mut Window, cx: &mut App) {
         let app = ws.read(cx).active_app().expect("a repository tab");

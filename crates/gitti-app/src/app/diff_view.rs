@@ -13,7 +13,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::spell_ui::{SpellEditor, SpellLook, SpellTarget, editor_menu};
+use super::spell_ui::{SpellEditor, SpellLook, SpellTarget, editor_context_menu};
 use super::{CommitView, Detail, GittiApp, MAX_LINE_CHARS, format_time, format_time_full, short};
 use crate::highlight::segment_styles;
 use crate::probe::ProbeExt as _;
@@ -140,13 +140,11 @@ impl GittiApp {
                         Textarea::new(&self.message)
                             .text_size(self.settings.diff())
                             .line_height(self.settings.message_line_h())
-                            .context_menu({
-                                let editor = SpellEditor::Area(self.message.clone());
-                                let spell = self.settings.spell_check;
-                                move |menu, _, cx| {
-                                    editor_menu(menu, SpellTarget::Message, &editor, spell, cx)
-                                }
-                            }),
+                            .context_menu(editor_context_menu(
+                                SpellTarget::Message,
+                                SpellEditor::Area(self.message.clone()),
+                                self.settings.spell_check,
+                            )),
                     )
                     .child({
                         let editor_bounds = self.commit_editor_bounds.clone();

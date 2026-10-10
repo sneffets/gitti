@@ -909,6 +909,7 @@ fn spell_marks(ui: &mut Ui) {
     ui.step("fonts:13,13");
     ui.step("msg:Fix teh bug");
     ui.step("focusmsg");
+    right_click_menu(ui, "spell-mark:0", SpellTarget::Message, "commit editor");
     let offer = ui.cx.update(|cx| testing::spell_at(&ws, SpellTarget::Message, 5, cx));
     if offer != Some(("teh".into(), vec!["the".into(), "ten".into()])) {
         ui.fail(format!("menu at teh offers {offer:?}"));
@@ -943,6 +944,18 @@ fn spell_marks(ui: &mut Ui) {
     let p = ui.check("spell checking on again");
     if !p.iter().any(|q| q.kind() == "spell-mark") {
         ui.fail("no spell marks after switching spell checking on again".into());
+    }
+}
+
+/// A real right click on the marked word `mark` (the input builds the menu while its own
+/// state is being updated; reading the editor there aborted the app): the menu of
+/// `target` offers "teh".
+fn right_click_menu(ui: &mut Ui, mark: &str, target: SpellTarget, ctx: &str) {
+    testing::take_editor_menu();
+    ui.click_on(mark, MouseButton::Right);
+    let menu = testing::take_editor_menu();
+    if menu != Some((target, Some("teh".into()))) {
+        ui.fail(format!("{ctx}: right click on {mark} showed {menu:?}"));
     }
 }
 
@@ -1424,6 +1437,7 @@ fn spell_marks_dialogs(ui: &mut Ui) {
         ui.fail(format!("reword dialog marked {got:?}, expected teh, wrnog"));
     }
     inside(ui, "reword dialog", "modal-text", 2);
+    right_click_menu(ui, "modal-spell-mark:0", SpellTarget::ModalText, "reword dialog");
     let offer = ui.cx.update(|cx| testing::spell_at(&ws, SpellTarget::ModalText, 5, cx));
     if offer != Some(("teh".into(), vec!["the".into(), "ten".into()])) {
         ui.fail(format!("reword menu at teh offers {offer:?}"));
@@ -1445,6 +1459,7 @@ fn spell_marks_dialogs(ui: &mut Ui) {
         ui.fail(format!("tag dialog marked name {name:?}, message {msg:?}"));
     }
     inside(ui, "tag message", "modal-field:1", 1);
+    right_click_menu(ui, "modal-spell-mark:0", SpellTarget::ModalField(1), "tag message");
     ui.cx.update(|cx| testing::spell_at(&ws, SpellTarget::ModalField(1), 9, cx));
     ui.cx
         .update_window(ui.window, |_, window, cx| testing::spell_choose(&ws, SpellTarget::ModalField(1), 0, window, cx))

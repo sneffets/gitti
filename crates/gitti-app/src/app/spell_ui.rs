@@ -521,10 +521,40 @@ impl GittiApp {
     }
 }
 
+thread_local! {
+    /// Tests: the last editor menu shown — its editor and the misspelled word it offered.
+    static LAST_EDITOR_MENU: std::cell::RefCell<Option<(SpellTarget, Option<String>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Tests: takes the last editor menu shown (see [`LAST_EDITOR_MENU`]).
+pub(crate) fn take_last_editor_menu() -> Option<(SpellTarget, Option<String>)> {
+    LAST_EDITOR_MENU.with(|m| m.borrow_mut().take())
+}
+
+/// The `context_menu` builder of a checked editor. The input calls it while its own state
+/// is being updated, and reading that state then panics (in a native event handler: the
+/// app aborts) — so it returns an empty menu, which shows nothing, and builds and shows
+/// the real one ([`editor_menu`]) right after, at the mouse.
+pub(super) fn editor_context_menu(
+    target: SpellTarget,
+    editor: SpellEditor,
+    spell_check: bool,
+) -> impl Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu + 'static {
+    move |menu, window, cx| {
+        let editor = editor.clone();
+        window.defer(cx, move |window, cx| {
+            let position = window.mouse_position();
+            editor_menu(menu, target, &editor, spell_check, cx).show(position, window, cx);
+        });
+        NativeMenu::new()
+    }
+}
+
 /// A checked editor's right-click menu: for a misspelled word under the cursor its
 /// suggestions, Learn / Ignore; then Cut / Copy / Paste / Select All (the input's own
 /// entries, which a custom menu replaces).
-pub(super) fn editor_menu(
+fn editor_menu(
     menu: NativeMenu,
     target: SpellTarget,
     editor: &SpellEditor,
@@ -532,8 +562,12 @@ pub(super) fn editor_menu(
     cx: &App,
 ) -> NativeMenu {
     let has_selection = editor.has_selection(cx);
+    let misspelled = misspelled_at_cursor(editor, cx).filter(|_| spell_check);
+    LAST_EDITOR_MENU.with(|m| {
+        *m.borrow_mut() = Some((target, misspelled.as_ref().map(|(_, w, _)| w.clone())))
+    });
     let mut menu = menu;
-    if spell_check && let Some((r, word, suggestions)) = misspelled_at_cursor(editor, cx) {
+    if let Some((r, word, suggestions)) = misspelled {
         if suggestions.is_empty() {
             menu = menu.menu_with_disabled(
                 "No Guesses Found",
