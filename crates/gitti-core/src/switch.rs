@@ -738,6 +738,7 @@ mod tests {
                       \td\n\n\
                       error: The following untracked working tree files would be overwritten by checkout:\n\
                       \tg\n\tg\n\tg\n\
+                      Please move or remove them before you switch branches.\n\
                       Aborting\n";
         let block = SwitchBlock::parse(stderr).unwrap();
         assert_eq!(block.dirs, vec!["d"]);
