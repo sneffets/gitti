@@ -126,6 +126,8 @@ pub enum Msg {
     RewordChecked(ObjectId, Result<(Option<String>, String)>),
     /// What overwriting a remote branch does (`app/overwrite.rs`), read in the background.
     OverwritePlan(Box<Result<gitti_core::overwrite::Overwrite>>),
+    /// Push…'s force with lease: what each remote loses (`app/remote_cmds.rs`).
+    ForcePushPlan(Box<Result<gitti_core::overwrite::ForcePush>>),
     Ask(gitti_core::askpass::Prompt, Sender<Option<String>>),
     /// The helper of a shown or queued prompt went away: its dialog closes.
     AskGone,
@@ -1213,6 +1215,10 @@ impl App {
             Msg::OverwritePlan(plan) => {
                 self.loads_in_flight -= 1;
                 self.overwrite_planned(*plan);
+            }
+            Msg::ForcePushPlan(plan) => {
+                self.loads_in_flight -= 1;
+                self.force_push_planned(*plan);
             }
             Msg::FileLoaded(file, result) => {
                 self.loads_in_flight -= 1;

@@ -1455,8 +1455,9 @@ fn pull_diverged(ui: &mut Ui) {
 /// A push origin refuses (someone pushed, not fetched): the dialog says so in plain words
 /// and offers Pull (merge / rebase) or Fetch, Then Decide…; that one fetches and lists
 /// what origin/main loses (their commit, its author), then pushes with the lease pinned
-/// to it. Remote ▸ Reset Remote Branch to Selected Commit… moves origin's main back to
-/// Base (the upstream first in its picker); the local branch stays.
+/// to it. After an amend, Push…'s Options with "Force with lease" lists what origin/main
+/// loses before it pushes. Remote ▸ Reset Remote Branch to Selected Commit… moves origin's
+/// main back to Base (the upstream first in its picker); the local branch stays.
 fn push_refused_ways_out(ui: &mut Ui) {
     let dir = ui.workdir();
     let rev = |r: &str| git_out(&dir, &["rev-parse", r]).trim().to_string();
@@ -1498,6 +1499,29 @@ fn push_refused_ways_out(ui: &mut Ui) {
     let lease = format!("push --force-with-lease=refs/heads/main:{theirs} origin refs/heads/main:refs/heads/main");
     if !ui.git_commands().contains(&lease) {
         fail!(ui, "lease not pinned to what was listed: {:?}", ui.git_commands());
+    }
+
+    // Amended after the push: Push…'s Options with "Force with lease" confirms with the
+    // same list first (checks: origin, set upstream, force, …), then pushes.
+    git(&dir, &["commit", "--amend", "-qm", "Mine, amended"]);
+    ui.step("key:f5");
+    ui.step("action:gitti::PushTo");
+    ui.quick("pick:options");
+    ui.step("pickok");
+    ui.quick("checkbox:2");
+    ui.step("modalok");
+    match modal(ui) {
+        Some((t, _)) if t == "Overwrite origin/main with main?" => {}
+        other => fail!(ui, "no overwrite confirmation for Force with lease: {other:?} {:?}", status(ui)),
+    }
+    let message = ui.cx.update(|cx| gitti_app::testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("origin/main loses 1 commit") || !message.contains("amended or rebased") {
+        fail!(ui, "what Force with lease loses: {message}");
+    }
+    ui.step("modalok");
+    let mine = rev("main");
+    if on_origin() != mine {
+        fail!(ui, "not force-pushed: {:?} {:?}", ui.git_commands(), status(ui));
     }
 
     // Reset origin/main to Base from the menu bar.

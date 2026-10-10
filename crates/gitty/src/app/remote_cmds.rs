@@ -10,7 +10,7 @@ use gitti_core::push::{
 };
 use gitti_core::rows::DiffRow;
 
-use super::{After, App, Focus};
+use super::{After, App, Focus, Msg};
 use crate::modal::{Modal, PickItem};
 
 impl App {
@@ -21,6 +21,25 @@ impl App {
     pub(super) fn upstream_split(&self, branch: &str) -> Option<Upstream> {
         let short = self.tracking_of(branch)?.upstream.clone()?;
         Upstream::parse(&short, &self.remote_names())
+    }
+
+    /// Push…'s "Force with lease": reads (in the background, local git only) what each
+    /// remote's branch loses ([`Msg::ForcePushPlan`]), then confirms like Push with
+    /// Lease… — the leases pinned to what the list shows — and pushes.
+    fn plan_force_push(&mut self, opts: PushOptions) {
+        let repo = self.repo.clone();
+        self.start_load(move || repo.force_push_plan(opts), |p| Msg::ForcePushPlan(Box::new(p)));
+    }
+
+    pub(crate) fn force_push_planned(&mut self, plan: anyhow::Result<gitti_core::overwrite::ForcePush>) {
+        match plan {
+            Ok(fp) => {
+                let (title, body, ok) = (fp.title(), fp.describe(), fp.ok_label());
+                let opts = fp.opts;
+                self.modal = Some(Modal::confirm(title, body, ok, move |app: &mut App| app.run_push(opts)));
+            }
+            Err(e) => self.set_error(format!("{e:#}")),
+        }
     }
 
     fn run_push(&mut self, opts: PushOptions) {
@@ -150,7 +169,11 @@ impl App {
                     PUSH_CHOICES_KEY,
                     &opts.choices(),
                 );
-                app.run_push(opts);
+                if opts.force_with_lease {
+                    app.plan_force_push(opts);
+                } else {
+                    app.run_push(opts);
+                }
             },
         ));
     }

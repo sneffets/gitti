@@ -427,8 +427,42 @@ impl GittiApp {
             if let Some(repo) = this.repo.clone() {
                 gitti_core::store::save_repo_pref(repo.workdir(), PUSH_CHOICES_KEY, &opts.choices());
             }
-            this.run_push(opts, w, cx);
+            if opts.force_with_lease {
+                this.plan_force_push(opts, w, cx);
+            } else {
+                this.run_push(opts, w, cx);
+            }
         });
+    }
+
+    /// Push…'s "Force with lease": reads (in the background, local git only) what each
+    /// remote's branch loses, then confirms like Push with Lease… — the leases pinned to
+    /// what the list shows — and pushes.
+    fn plan_force_push(&mut self, opts: PushOptions, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let task = cx.background_executor().spawn(async move { repo.force_push_plan(opts) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(fp) => {
+                    let spec = ModalSpec::new(fp.title())
+                        .message(fp.describe())
+                        .ok(fp.ok_label())
+                        .danger();
+                    let opts = fp.opts;
+                    this.open_modal(spec, window, cx, move |this, _, w, cx| this.run_push(opts, w, cx));
+                    cx.notify();
+                }
+                Err(e) => {
+                    this.set_error(format!("{e:#}"));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// git refused a push (or the main Push knew it would): says why in plain words and
