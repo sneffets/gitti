@@ -3580,10 +3580,6 @@ pub fn help_text() -> String {
 }
 
 pub const HELP: &str = "\
-Top line
-  ● ○             after the repository name: uncommitted changes / commits not pushed
-                  (a click on them says what they are)
-
 Global
   ctrl-p          command palette (all commands)
   b / ctrl-b      switch branch
@@ -3658,6 +3654,10 @@ Menus, pickers and text windows
 Commit message
   ctrl-s, alt-⏎   commit         esc  leave the message box
   ctrl-w ctrl-u   delete word / to line start
+
+Top line
+  ● ○             after the repository name: uncommitted changes / commits not pushed
+                  (a click on them says what they are)
 ";
 
 /// Greedy word wrap to `cols` display columns (long words are split); keeps leading indent.
