@@ -6,10 +6,14 @@
 //! A push that wouldn't upload the LFS content (no LFS pre-push hook, `--no-verify`) asks
 //! first, offering to write the hooks.
 //!
-//! Checked in the background once per tab, when HEAD moves (checkout, pull, …) and after
-//! a fix (`Repo::lfs_health`: one `git config`, a `git check-attr` only when pointer files
-//! are found) — never per refresh or on navigation. Before a push only the hook files are
-//! read again.
+//! A repository that doesn't use LFS (any more) but has git-lfs's hooks gets the same
+//! banner: what the hooks cost on every push, "Remove LFS Hooks" (`gitti_core::lfs_unused`).
+//!
+//! Checked in the background once per tab, when HEAD moves (checkout, pull, …), when the
+//! repository starts or stops using LFS (the last pattern removed) and after a fix
+//! (`Repo::lfs_check`: in an LFS repository one `git config`, a `git check-attr` only when
+//! pointer files are found; otherwise in-process) — never per refresh or on navigation.
+//! Before a push only the hook files are read again.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -33,8 +37,9 @@ use crate::theme::PaletteExt as _;
 pub(super) struct LfsHealthUi {
     health: Option<Arc<LfsHealth>>,
     issues: Vec<LfsIssue>,
-    /// HEAD at the last check started (`None`: check on the next refresh).
-    checked_head: Option<Option<ObjectId>>,
+    /// HEAD and whether the repository used LFS at the last check started (`None`: check
+    /// on the next refresh).
+    checked: Option<(Option<ObjectId>, bool)>,
     in_flight: bool,
     /// The banner was hidden for these problems.
     dismissed: Option<Vec<String>>,
@@ -51,17 +56,11 @@ impl LfsHealthUi {
 }
 
 impl GittiApp {
-    /// A refresh's LFS state: the health is checked when the repository uses LFS and HEAD
-    /// moved since the last check (the first refresh included).
+    /// A refresh's LFS state: the health is checked when HEAD moved or the repository
+    /// started / stopped using LFS since the last check (the first refresh included).
     pub(super) fn lfs_health_after_refresh(&mut self, uses: bool, cx: &mut Context<Self>) {
-        if !uses {
-            if self.lfs.health.health.is_some() {
-                self.lfs.health = LfsHealthUi::default();
-            }
-            return;
-        }
-        let head = self.head.id;
-        if self.lfs.health.in_flight || self.lfs.health.checked_head == Some(head) {
+        let now = (self.head.id, uses);
+        if self.lfs.health.in_flight || self.lfs.health.checked == Some(now) {
             return;
         }
         self.start_lfs_health_check(cx);
@@ -71,15 +70,20 @@ impl GittiApp {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        let uses = self.lfs.state.uses;
         self.lfs.health.in_flight = true;
-        self.lfs.health.checked_head = Some(self.head.id);
+        self.lfs.health.checked = Some((self.head.id, uses));
         let task = cx
             .background_executor()
-            .spawn(async move { repo.lfs_health() });
+            .spawn(async move { repo.lfs_check(uses) });
         cx.spawn(async move |this, cx| {
             let health = task.await;
             this.update(cx, |this, cx| {
                 this.set_lfs_health(health);
+                // HEAD moved or LFS came / went while it ran: check again.
+                if this.lfs.health.checked.is_some_and(|c| c != (this.head.id, this.lfs.state.uses)) {
+                    this.start_lfs_health_check(cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -98,7 +102,7 @@ impl GittiApp {
 
     /// `fix` as an operation; the health is checked again after it.
     pub(super) fn run_lfs_fix(&mut self, fix: LfsFix, window: &mut Window, cx: &mut Context<Self>) {
-        self.lfs.health.checked_head = None;
+        self.lfs.health.checked = None;
         self.run_op(
             fix.label(),
             true,
@@ -106,7 +110,7 @@ impl GittiApp {
             cx,
             move |r| r.lfs_fix(fix),
             |this, msg, _, _| {
-                this.lfs.health.checked_head = None;
+                this.lfs.health.checked = None;
                 this.set_info(msg);
             },
         );
@@ -125,6 +129,7 @@ impl GittiApp {
                 LfsIssueKind::NotSetUp => "not-set-up",
                 LfsIssueKind::Hooks => "hooks",
                 LfsIssueKind::NotDownloaded => "not-downloaded",
+                LfsIssueKind::UnusedHooks => "unused-hooks",
             };
             let mut row = h_flex().gap_2().items_center().child(
                 div()
@@ -207,7 +212,7 @@ impl GittiApp {
                     cx.notify();
                     return;
                 }
-                this.lfs.health.checked_head = None;
+                this.lfs.health.checked = None;
             }
             push(this, w, cx)
         });
@@ -237,12 +242,9 @@ impl GittiApp {
         }
     }
 
-    /// Palette: the fixes of the current problems, "Check Git LFS Setup" in an LFS
-    /// repository.
+    /// Palette: the fixes of the current problems ("Remove LFS Hooks" also outside an
+    /// LFS repository), "Check Git LFS Setup" in an LFS repository.
     pub(super) fn lfs_health_palette_items(&self) -> Vec<PickerItem> {
-        if !self.lfs.state.uses {
-            return Vec::new();
-        }
         let mut items: Vec<PickerItem> = self
             .lfs
             .health
@@ -260,6 +262,9 @@ impl GittiApp {
                 })
             })
             .collect();
+        if !self.lfs.state.uses {
+            return items;
+        }
         items.push(PickerItem {
             label: "Check Git LFS Setup".into(),
             detail: "git-lfs, its filters, the hooks, files not downloaded".into(),
@@ -275,7 +280,8 @@ impl GittiApp {
         items
     }
 
-    /// `lfs:ACTION[,ARG]` — `fix,KEY` (setup / hooks / download), `dismiss`, `check`.
+    /// `lfs:ACTION[,ARG]` — `fix,KEY` (setup / hooks / download / remove-hooks), `dismiss`,
+    /// `check`.
     pub fn script_lfs(&mut self, action: &str, arg: &str, window: &mut Window, cx: &mut Context<Self>) {
         match action {
             "fix" => match LfsFix::from_key(arg) {

@@ -71,7 +71,10 @@ pub const EXPLANATION: &str = "Git LFS keeps the content of matching files out o
      repository: commits hold a small pointer, the content is uploaded to the LFS server \
      when you push. This adds the pattern to a .gitattributes file — commit it together \
      with the files. Committed files that match show as changed: staging and committing them \
-     moves their content to LFS (older commits keep it in git).";
+     moves their content to LFS (older commits keep it in git). It also installs the \
+     repository's Git LFS hooks (one set for all worktrees; pre-push uploads the content). \
+     They stay when the last LFS pattern is removed again — then \"Remove LFS Hooks\" is \
+     offered, as they would still contact the LFS server on every push.";
 
 /// git-lfs as far as tracking needs it.
 #[derive(Debug, Clone, PartialEq, Eq)]
