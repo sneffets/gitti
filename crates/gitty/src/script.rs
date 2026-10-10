@@ -1,7 +1,8 @@
 //! Headless scripted runs for tests and checks: `GITTY_SCRIPT="key:j;key:s;dump"` renders
 //! into an in-memory terminal (`GITTY_SIZE=WxH`, default 160x45) instead of the real one.
 //!
-//! Steps: `wait` (until no job is running), `sleep:MS`, `key:SPEC` (e.g. `j`, `S`, `enter`,
+//! Steps: `wait` (until no job is running), `sleep:MS`, `closed` (until no dialog is open —
+//! one that closes by itself; at most 5 s), `key:SPEC` (e.g. `j`, `S`, `enter`,
 //! `esc`, `tab`, `space`, `ctrl-p`, `alt-down`, `shift-up`, `f5`), `press:SPEC` (a key
 //! without waiting for the jobs it starts — e.g. Esc on a running operation), `type:TEXT`,
 //! `click:X,Y`, `rclick:X,Y`, `pressclick:X,Y` (a left click without waiting for the jobs
@@ -88,6 +89,13 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
             "sleep" => {
                 let until = Instant::now() + Duration::from_millis(arg.parse()?);
                 while Instant::now() < until {
+                    pump(app, &rx, Duration::from_millis(10));
+                }
+                term.draw(|f| crate::ui::draw(f, app))?;
+            }
+            "closed" => {
+                let until = Instant::now() + Duration::from_secs(5);
+                while app.modal.is_some() && Instant::now() < until {
                     pump(app, &rx, Duration::from_millis(10));
                 }
                 term.draw(|f| crate::ui::draw(f, app))?;

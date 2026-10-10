@@ -98,7 +98,7 @@ fn go_to_commit_finds_file_history_and_messages() {
     git(d, &["commit", "-qam", "Edit bar"]);
     let out = gitty(
         d,
-        "press:ctrl-g;type:bar.rs;dump;press:down;key:enter;state;press:ctrl-g;cmds;type:parser;cmds;dump;press:q;press:q;dump",
+        "press:ctrl-g;type:bar.rs;dump;press:down;key:enter;state;press:ctrl-g;cmds;type:parser;cmds;dump;press:q;key:q;dump",
     );
     let s = screens(&out);
     assert!(s[0].contains("Edit bar") && s[0].contains("Move the parser") && s[0].contains("Add the parser"), "{out}");

@@ -181,7 +181,7 @@ fn prompt_of_a_gone_helper_closes() {
             ssh.display()
         ),
     );
-    let out = gitty(d, "key:f;state;sleep:900;wait;state");
+    let out = gitty(d, "key:f;state;closed;wait;state");
     let st = crate::support::states(&out);
     assert!(st[0].contains("modal=Ask"), "{out}");
     assert!(!st[1].contains("modal="), "{out}");
