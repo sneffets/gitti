@@ -9,6 +9,7 @@ mod commit_flow;
 mod compare;
 mod context_lines;
 mod config_ui;
+mod conflict_ui;
 mod diff_view;
 mod file_tabs;
 mod folder_picker;

@@ -2812,40 +2812,44 @@ impl App {
         }
     }
 
-    /// The menu of conflicted file `file` (`None`: no such file).
+    /// The sides' names of the current conflicts ("ours" / "theirs" until known).
+    pub fn conflict_sides_or_default(&self) -> ConflictSides {
+        self.conflict_sides.clone().unwrap_or_else(|| ConflictSides {
+            ours: "ours".into(),
+            theirs: "theirs".into(),
+        })
+    }
+
+    /// The menu of conflicted file `file` (`None`: no such file): its kind's explanation and
+    /// choices ([`gitti_core::conflict::ConflictKind::choices`]) — merge editor / ours /
+    /// theirs for a content conflict, keep / delete for a file one side deleted.
     fn resolve_menu_spec(&self, file: usize) -> Option<(String, Vec<MenuItem>)> {
+        use gitti_core::conflict::{ConflictAction as A, ConflictKind};
         let wf = self.working.conflicted.get(file)?;
         let path = wf.entry.path.clone();
-        let (ours, theirs) = self
-            .conflict_sides
-            .as_ref()
-            .map(|s| (s.ours.clone(), s.theirs.clone()))
-            .unwrap_or_else(|| ("ours".into(), "theirs".into()));
-        let (p0, p1, p2, p3) = (path.clone(), path.clone(), path.clone(), path.clone());
-        Some((
-            format!("Resolve {path}"),
-            vec![
-                MenuItem::new("Open in Merge Editor", move |app| app.open_merge_editor(p0))
-                    .key('e'),
-                MenuItem::new(format!("Take Ours — {ours}"), move |app| {
-                    app.run_op("Take ours", false, After::Nothing, move |r| {
-                        r.resolve_with_side(&[p1], true)
-                    })
-                })
-                .key('o'),
-                MenuItem::new(format!("Take Theirs — {theirs}"), move |app| {
-                    app.run_op("Take theirs", false, After::Nothing, move |r| {
-                        r.resolve_with_side(&[p2], false)
-                    })
-                })
-                .key('t'),
-                MenuItem::new("Mark Resolved", move |app| {
+        let kind = ConflictKind::of(&wf.entry).unwrap_or(ConflictKind::BothModified);
+        let sides = self.conflict_sides_or_default();
+        let mut items = Vec::new();
+        if !kind.is_content() {
+            items.extend(MenuItem::notes(&kind.explain(&sides), 60));
+            items.push(MenuItem::separator());
+        }
+        for c in kind.choices(&sides) {
+            let p = path.clone();
+            let item = match c.action {
+                A::MergeEditor => {
+                    MenuItem::new("Open in Merge Editor", move |app| app.open_merge_editor(p))
+                        .key('e')
+                }
+                A::MarkResolved => {
+                    let shown = path.clone();
+                    MenuItem::new("Mark Resolved", move |app| {
                     let mark = move |app: &mut App| {
                         app.run_op("Mark resolved", false, After::Nothing, move |r| {
-                            r.mark_resolved(&[p3])
+                            r.mark_resolved(&[p])
                         })
                     };
-                    let path = path.clone();
+                    let path = shown.clone();
                     if app.repo.has_conflict_markers(&path) {
                         app.modal = Some(Modal::confirm(
                             "Mark Resolved",
@@ -2858,10 +2862,28 @@ impl App {
                     } else {
                         mark(app);
                     }
-                })
-                .key('r'),
-            ],
-        ))
+                    })
+                    .key('r')
+                }
+                action => {
+                    let (label, key) = match action {
+                        A::TakeOurs => ("Take ours", 'o'),
+                        A::TakeTheirs => ("Take theirs", 't'),
+                        A::Keep => ("Keep conflicted file", 'k'),
+                        A::Delete => ("Delete conflicted file", 'd'),
+                        _ => ("Restore base version", 'b'),
+                    };
+                    MenuItem::new(c.label, move |app| {
+                        app.run_op(label, false, After::Nothing, move |r| {
+                            r.resolve_conflict(&[p], action)
+                        })
+                    })
+                    .key(key)
+                }
+            };
+            items.push(item);
+        }
+        Some((format!("Resolve {path}"), items))
     }
 
     // ------------------------------------------------------------------ line selection

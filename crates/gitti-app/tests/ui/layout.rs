@@ -27,6 +27,7 @@ pub fn main() {
     let marks_repo = make_marks_repo(&tmp.path().join("marks"));
     let marks_sweep_repo = make_marks_repo(&tmp.path().join("marks-sweep"));
     let refs_repo = make_refs_repo(&tmp.path().join("refs"));
+    let delete_conflict_repo = make_delete_conflict_repo(&tmp.path().join("delete-conflict"));
     let tests: &[(&str, Scenario)] = &[
         ("merge_sync_scroll", merge_sync_scroll),
         ("merge_long_lines", merge_long_lines),
@@ -59,6 +60,7 @@ pub fn main() {
         ("palette_keys_column", palette_keys_column),
         ("commit_list_layouts", commit_list_layouts),
         ("ref_badges_sweep", ref_badges_sweep),
+        ("delete_conflict_choices", delete_conflict_choices),
     ];
     common::run(tests, |name| {
         if name == "merge_sync_scroll" {
@@ -81,6 +83,8 @@ pub fn main() {
             marks_sweep_repo.clone()
         } else if name == "ref_badges_sweep" {
             refs_repo.clone()
+        } else if name == "delete_conflict_choices" {
+            delete_conflict_repo.clone()
         } else {
             repo.clone()
         }
@@ -330,6 +334,77 @@ fn git_out(dir: &std::path::Path, args: &[&str]) -> String {
         .output()
         .unwrap();
     String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// `<dir>`: a merge where `feature` deleted `gone.txt` that `main` changed (a
+/// modify/delete conflict, `UD`).
+fn make_delete_conflict_repo(dir: &std::path::Path) -> std::path::PathBuf {
+    init_repo(dir);
+    let mut s = Stream::new();
+    let base = s.commit("refs/heads/main", "Base", None, &[("gone.txt", Some("base\n"))]);
+    s.commit("refs/heads/feature", "Delete it", Some(base), &[("gone.txt", None)]);
+    s.commit("refs/heads/main", "Change it", Some(base), &[("gone.txt", Some("main\n"))]);
+    s.import(dir);
+    git(dir, &["reset", "-q", "--hard"]);
+    let out = std::process::Command::new("git")
+        .args(["merge", "feature"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "expected a conflict");
+    dir.to_path_buf()
+}
+
+/// A file one side deleted: its header names the conflict ("deleted by feature, changed by
+/// main") and offers Keep File / Delete File instead of the merge editor, both whole at the
+/// default and the most cramped sweep point; Keep File stages it (`git add`: as main has
+/// it, nothing left to show).
+fn delete_conflict_choices(ui: &mut Ui) {
+    ui.step("select:0");
+    let mut checked = 0;
+    for pt in points() {
+        let ctx = set_point(ui, pt);
+        let p = ui.check(&ctx);
+        // The most cramped point leaves the diff no room under the commit box.
+        if !p.iter().any(|q| q.kind() == "diff-row" && q.detail() == "file" && q.visible().is_some())
+        {
+            continue;
+        }
+        checked += 1;
+        if !p.iter().any(|q| q.kind() == "conflict-kind") {
+            ui.fail(format!("{ctx}: no conflict kind in the file header"));
+        }
+        if p.iter().any(|q| q.kind() == "resolve-split") {
+            ui.fail(format!("{ctx}: a deleted file offers the merge editor"));
+        }
+        for want in ["Keep", "Delete"] {
+            match p.iter().find(|q| q.kind() == "conflict-choice" && q.detail() == want) {
+                // Whole in width (a ghost button may overhang the row by half a pixel).
+                Some(b) if b.visible().is_some_and(|v| v.size.width == b.bounds.size.width) => {}
+                _ => ui.fail(format!("{ctx}: {want} is not (fully) visible")),
+            }
+        }
+    }
+    if checked == 0 {
+        ui.fail("the conflicted file's header was never in view".into());
+    }
+    reset_point(ui);
+    let p = ui.frame();
+    let Some(keep) = p
+        .iter()
+        .find(|q| q.kind() == "conflict-choice" && q.detail() == "Keep")
+        .map(|q| q.name.clone())
+    else {
+        ui.fail("no Keep File button".into());
+        return;
+    };
+    ui.click_on(&keep, MouseButton::Left);
+    let dir = ui.workdir();
+    if !ui.wait_real(1500, |ui| ui.is_idle() && git_out(&dir, &["status", "--porcelain"]).is_empty())
+    {
+        let st = git_out(&dir, &["status", "--porcelain"]);
+        ui.fail(format!("Keep File: status {st:?}, want gone.txt resolved as main has it"));
+    }
 }
 
 /// During a merge the working-directory row is the pending merge commit — a dashed edge

@@ -318,30 +318,35 @@ fn remote_reset_items(menu: PopupMenu, app: &AppHandle, rev: &str, cx: &App) -> 
     menu
 }
 
-/// "Resolve Conflicts" dropdown of a conflicted file.
+/// "Resolve Conflicts" dropdown of a conflicted file: its kind's choices
+/// ([`gitti_core::conflict::ConflictKind::choices`]) — merge editor / ours / theirs for a
+/// content conflict, keep / delete for a file one side deleted.
 pub(super) fn conflict_menu(
     menu: PopupMenu,
     app: &AppHandle,
     file: usize,
-    sides: Option<&gitti_core::ops::ConflictSides>,
+    choices: Vec<gitti_core::conflict::ConflictChoice>,
 ) -> PopupMenu {
-    let (ours, theirs) = sides
-        .map(|s| (s.ours.clone(), s.theirs.clone()))
-        .unwrap_or_else(|| ("HEAD".into(), "incoming".into()));
-    menu.item(item("Open in Merge Editor…", app, move |this, w, cx| {
-        this.open_merge_editor(file, w, cx)
-    }))
-    .separator()
-        .item(item(format!("Take Ours — {ours}"), app, move |this, w, cx| {
-            this.resolve_conflict(file, Some(true), w, cx)
-        }))
-        .item(item(format!("Take Theirs — {theirs}"), app, move |this, w, cx| {
-            this.resolve_conflict(file, Some(false), w, cx)
-        }))
-        .separator()
-        .item(item("Mark Resolved (stage as is)", app, move |this, w, cx| {
-            this.resolve_conflict(file, None, w, cx)
-        }))
+    use gitti_core::conflict::ConflictAction as A;
+    let mut menu = menu;
+    let mut prev: Option<A> = None;
+    for c in choices {
+        // Merge editor | the sides | stage as is.
+        let group = |a: A| match a {
+            A::MergeEditor => 0,
+            A::MarkResolved => 2,
+            _ => 1,
+        };
+        if prev.is_some_and(|p| group(p) != group(c.action)) {
+            menu = menu.separator();
+        }
+        prev = Some(c.action);
+        let action = c.action;
+        menu = menu.item(item(c.label, app, move |this, w, cx| {
+            this.run_conflict_choice(file, action, w, cx)
+        }));
+    }
+    menu
 }
 
 /// Right-click in the diff panel: view options.

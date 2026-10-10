@@ -3,7 +3,9 @@
 //! worktree (state detection in the worktree's own git dir), concluding a resolved merge
 //! with its prepared message, unrelated histories and `conflict-marker-size`; the
 //! message git leaves for the next commit (`MERGE_MSG` / `SQUASH_MSG`) after
-//! `cherry-pick -n -x`, a conflicting `cherry-pick -x` and `merge --squash`.
+//! `cherry-pick -n -x`, a conflicting `cherry-pick -x` and `merge --squash`; the kinds of
+//! conflict about a file's existence (deleted / renamed on one or both sides) and their
+//! resolutions.
 
 use std::fs;
 use std::path::Path;
@@ -336,4 +338,98 @@ fn squash_merge_message_in_a_linked_worktree() {
 
     r.abort_conflicts().unwrap();
     assert_eq!(r.prepared_message(), None);
+}
+
+/// A merge whose conflicts are about files' existence, beside a content conflict: main
+/// changed `md.txt` that feature deleted (`UD`), deleted `dm.txt` that feature changed
+/// (`DU`), and both renamed `r.txt` to different names (`DD` for the old name, `AU` /
+/// `UA` for the new ones). Each kind gets its own choices; keep = `git add`, delete =
+/// `git rm`, restore = the base version; keeping a file that isn't there is refused (a
+/// plain `git add` would stage its deletion).
+#[gitti_test::test]
+fn delete_and_rename_conflicts_resolve_by_keeping_or_deleting() {
+    use gitti_core::conflict::{ConflictAction as A, ConflictKind as K};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    fx::init(p);
+    let mut i = Import::new();
+    let renamed = "line one\nline two\nline three\nline four\n";
+    let base = i.commit(
+        "main",
+        None,
+        &[],
+        "init",
+        &[put("md.txt", "m\n"), put("dm.txt", "d\n"), put("r.txt", renamed), put("c.txt", "c\n")],
+    );
+    i.commit(
+        "feature",
+        Some(&base),
+        &[],
+        "feature",
+        &[
+            fx::Op::Del("md.txt"),
+            put("dm.txt", "d\nfeature\n"),
+            fx::Op::Mv("r.txt", "r-feature.txt"),
+            put("c.txt", "feature\n"),
+        ],
+    );
+    i.commit(
+        "main",
+        None,
+        &[],
+        "main",
+        &[
+            put("md.txt", "m\nmain\n"),
+            fx::Op::Del("dm.txt"),
+            fx::Op::Mv("r.txt", "r-main.txt"),
+            put("c.txt", "main\n"),
+        ],
+    );
+    i.run(p);
+    fx::checkout(p);
+    fx::git_fails(p, &["merge", "feature"]);
+
+    let r = Repo::open(p).unwrap();
+    let kinds = |r: &Repo| -> Vec<(String, K)> {
+        let mut v: Vec<_> = r
+            .working_state()
+            .unwrap()
+            .conflicted
+            .iter()
+            .map(|f| (f.path().to_string(), K::of(&f.entry).unwrap()))
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    };
+    assert_eq!(
+        kinds(&r),
+        [
+            ("c.txt".to_string(), K::BothModified),
+            ("dm.txt".into(), K::DeletedByUs),
+            ("md.txt".into(), K::DeletedByThem),
+            ("r-feature.txt".into(), K::AddedByThem),
+            ("r-main.txt".into(), K::AddedByUs),
+            ("r.txt".into(), K::BothDeleted),
+        ]
+    );
+    let sides = r.conflict_sides();
+    assert_eq!(K::DeletedByThem.short(&sides), "deleted by feature, changed by main");
+
+    let one = |p: &str| vec![p.to_string()];
+    // r.txt is in no working directory: nothing to keep; nothing changes.
+    let e = r.resolve_conflict(&one("r.txt"), A::Keep).unwrap_err();
+    assert!(format!("{e:#}").contains("nothing to keep"), "{e:#}");
+    r.resolve_conflict(&one("md.txt"), A::Keep).unwrap();
+    assert_eq!(read(p, "md.txt"), "m\nmain\n");
+    r.resolve_conflict(&one("dm.txt"), A::Delete).unwrap();
+    assert!(!p.join("dm.txt").exists());
+    r.resolve_conflict(&one("r.txt"), A::RestoreBase).unwrap();
+    assert_eq!(read(p, "r.txt"), renamed);
+    r.resolve_conflict(&one("r-feature.txt"), A::Delete).unwrap();
+    r.resolve_conflict(&one("r-main.txt"), A::Keep).unwrap();
+    assert_eq!(kinds(&r), [("c.txt".to_string(), K::BothModified)]);
+    // Staged as chosen: md + the restored r.txt kept, dm and r-feature gone.
+    assert_eq!(fx::git(p, &["show", ":md.txt"]), "m\nmain");
+    assert_eq!(fx::git(p, &["ls-files", "--", "dm.txt", "r-feature.txt"]), "");
+    assert_eq!(fx::git(p, &["ls-files", "--", "r.txt", "r-main.txt"]), "r-main.txt\nr.txt");
 }

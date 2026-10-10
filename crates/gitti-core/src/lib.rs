@@ -14,6 +14,7 @@ pub mod commit_files;
 pub mod commit_search;
 pub mod commits;
 pub mod compare;
+pub mod conflict;
 pub mod context;
 pub mod create;
 pub mod custom_command;
