@@ -234,6 +234,7 @@ fn log_lines_stay_whole_with_concurrent_writers() {
                         // Long lines (~800 bytes): more than one write each if not atomic.
                         output: "[main 1234567] change\n 1 file changed".repeat(20),
                         previous_session: false,
+                        in_process: false,
                     });
                 }
             })

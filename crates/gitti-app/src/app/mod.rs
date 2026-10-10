@@ -63,6 +63,7 @@ use std::sync::Arc;
 
 use gitti_core::commit_cache::CommitData;
 use gitti_core::diff::FileDiff;
+use gitti_core::discard::{DiscardOptions, DiscardPlan};
 use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, StashInfo, Tracking};
 use gitti_core::patch::{PatchMode, Selection};
 use gitti_core::{
@@ -1874,6 +1875,21 @@ impl GittiApp {
         cx: &mut Context<Self>,
         op: impl FnOnce(&Repo) -> anyhow::Result<()> + Send + 'static,
     ) {
+        self.work_op_noted(label, paths, window, cx, move |r| op(r).map(|()| None));
+    }
+
+    /// [`Self::work_op`] whose `op` may say something besides success (`Some(note)`: the
+    /// status line shows it, e.g. what a discard kept). Runs with a progress sink (the
+    /// status bar shows what a long op reports, e.g. the meter of deleting 10 000
+    /// untracked files) and can be cancelled like any operation.
+    fn work_op_noted(
+        &mut self,
+        label: &str,
+        paths: Option<Vec<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        op: impl FnOnce(&Repo) -> anyhow::Result<Option<String>> + Send + 'static,
+    ) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -1892,8 +1908,12 @@ impl GittiApp {
             .syntax_highlight
             .then(|| self.hl_cache.clone());
         let prev_subs = self.submodules.clone();
+        let cancel = self.start_cancellable();
+        let sink = self.progress_sink(cx);
         let task = cx.background_executor().spawn(async move {
-            let done = op(&repo);
+            let done = gitti_core::process::with_cancel(&cancel, || {
+                gitti_core::process::with_progress(sink, || op(&repo))
+            });
             let stale = (done.as_ref().err())
                 .and_then(|e| gitti_core::lock::stale_lock(e, repo.workdir()));
             let index = repo.index_stamp();
@@ -1932,7 +1952,13 @@ impl GittiApp {
                     this.submodules = subs;
                 }
                 match done {
-                    Ok(()) => this.errors.succeeded(&label),
+                    Ok(note) => {
+                        this.errors.succeeded(&label);
+                        if let Some(note) = note {
+                            this.set_info(note);
+                        }
+                    }
+                    Err(_) if this.op_cancelled() => this.set_info(format!("{label} cancelled")),
                     Err(e) => this.op_failed(&label, format!("{e:#}")),
                 }
                 if let Some(lock) = stale {
@@ -2314,20 +2340,42 @@ impl GittiApp {
         let Some(wf) = self.working.unstaged.get(file).cloned() else {
             return;
         };
-        self.confirm(
-            format!("Discard all changes in {}?", wf.path()),
-            Some("This cannot be undone.".into()),
-            "Discard",
-            window,
-            cx,
-            move |this, window, cx| {
-                this.set_pending(Src::Unstaged, file, None, "Discarding");
-                let paths = Some(vec![wf.path().to_string()]);
-                this.work_op("Discarding", paths, window, cx, move |r| {
-                    r.discard_paths(&[&wf.entry])
-                });
-            },
-        );
+        // A folder that is a repository of its own: Discard would keep it (as `git
+        // clean` does); deleting it is asked for in plain words.
+        let nested = self
+            .repo
+            .as_ref()
+            .is_some_and(|r| gitti_core::discard::is_nested_repo(r.workdir(), &wf.entry));
+        let (message, detail, button, opts) = if nested {
+            (
+                format!("Delete the repository folder {}?", wf.path()),
+                format!(
+                    "{} is a separate git repository (it has its own .git). Deleting it \
+                     deletes its files, its history and everything not pushed from it. \
+                     This cannot be undone.",
+                    wf.path()
+                ),
+                "Delete Repository",
+                DiscardOptions {
+                    delete_nested_repos: true,
+                },
+            )
+        } else {
+            (
+                format!("Discard all changes in {}?", wf.path()),
+                "This cannot be undone.".to_string(),
+                "Discard",
+                DiscardOptions::default(),
+            )
+        };
+        self.confirm(message, Some(detail), button, window, cx, move |this, window, cx| {
+            this.set_pending(Src::Unstaged, file, None, "Discarding");
+            let paths = Some(vec![wf.path().to_string()]);
+            this.work_op_noted("Discarding", paths, window, cx, move |r| {
+                let report = r.discard_with(&[&wf.entry], opts)?;
+                Ok(report.note())
+            });
+        });
     }
 
     /// Discards every unstaged change (tracked files restored from the index, untracked
@@ -2377,18 +2425,10 @@ impl GittiApp {
             cx.notify();
             return;
         }
-        let untracked = entries.iter().filter(|e| e.untracked).count();
-        let tracked = entries.len() - untracked;
-        let mut detail = String::new();
-        if tracked > 0 {
-            detail.push_str(&format!(
-                "{tracked} file(s) will be reset to their staged / committed state.\n"
-            ));
-        }
-        if untracked > 0 {
-            detail.push_str(&format!("{untracked} untracked file(s) will be deleted.\n"));
-        }
-        detail.push_str("Staged changes are kept. This cannot be undone.");
+        let plan = match &self.repo {
+            Some(r) => DiscardPlan::of(r.workdir(), &entries),
+            None => return,
+        };
         let n = entries.len();
         let (title, done) = match group {
             None => (
@@ -2404,20 +2444,31 @@ impl GittiApp {
                 "Untracked files deleted",
             ),
         };
-        self.confirm(
-            title,
-            Some(detail),
-            "Discard All",
-            window,
-            cx,
-            move |this, window, cx| {
-                let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
-                this.set_info(done);
-                this.work_op("Discarding", paths, window, cx, move |r| {
-                    r.discard_paths(&entries.iter().collect::<Vec<_>>())
-                });
-            },
-        );
+        let run = move |this: &mut Self, opts: DiscardOptions, window: &mut Window, cx: &mut Context<Self>| {
+            let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
+            this.work_op_noted("Discarding", paths, window, cx, move |r| {
+                let report = r.discard_with(&entries.iter().collect::<Vec<_>>(), opts)?;
+                Ok(Some(gitti_core::discard::done_note(done, &report)))
+            });
+        };
+        if plan.nested.is_empty() {
+            self.confirm(title, Some(plan.detail()), "Discard All", window, cx, move |this, w, cx| {
+                run(this, DiscardOptions::default(), w, cx)
+            });
+            return;
+        }
+        // Nested repositories: kept unless the box is ticked.
+        let spec = modal::ModalSpec::new(title)
+            .message(plan.detail())
+            .check(plan.nested_check(), false)
+            .ok("Discard All")
+            .danger();
+        self.open_modal(spec, window, cx, move |this, res, w, cx| {
+            let opts = DiscardOptions {
+                delete_nested_repos: res.checks.first().copied().unwrap_or(false),
+            };
+            run(this, opts, w, cx)
+        });
     }
 
     fn toggle_amend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3025,7 +3076,8 @@ impl GittiApp {
             r.command_log()
                 .snapshot()
                 .into_iter()
-                .filter(|e| !e.previous_session)
+                // git processes only (not work done without git, `in_process`).
+                .filter(|e| !e.previous_session && !e.in_process)
                 .map(|e| e.args.join(" "))
                 .collect()
         })

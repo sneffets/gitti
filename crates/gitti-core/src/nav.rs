@@ -239,6 +239,7 @@ mod tests {
             user: false,
             output: String::new(),
             previous_session: false,
+            in_process: false,
         })
     }
 

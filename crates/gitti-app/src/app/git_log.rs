@@ -32,6 +32,16 @@ pub fn command_line(args: &[String]) -> String {
     out
 }
 
+/// The command line an entry shows: shell-quoted git arguments, or the description of
+/// work done without git.
+fn entry_line(e: &LogEntry) -> String {
+    if e.in_process {
+        e.command_line()
+    } else {
+        command_line(&e.args)
+    }
+}
+
 /// `(log generation, show reads, filtered entries)` the git log panel shows.
 pub(super) type LogView = (u64, bool, Rc<[Arc<LogEntry>]>);
 
@@ -252,7 +262,7 @@ impl GittiApp {
         };
         let old = e.previous_session;
         let ok = e.code == 0;
-        let cmd = command_line(&e.args);
+        let cmd = entry_line(&e);
         let first_out = e
             .output
             .lines()
@@ -313,7 +323,7 @@ impl GittiApp {
             .on_click(cx.listener(move |this, _, window, cx| {
                 let detail = format!(
                     "$ {}\n# exit {} · {} ms · {time}\n\n{}",
-                    command_line(&e.args),
+                    entry_line(&e),
                     e.code,
                     e.duration.as_millis(),
                     if e.output.is_empty() {

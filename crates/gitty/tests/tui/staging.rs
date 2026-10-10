@@ -87,12 +87,34 @@ fn stage_all_unstage_all_discard_all_with_confirmations() {
     assert!(st[0].contains("unstaged=0 staged=3"), "{out}");
     let s = screens(&out);
     assert!(s[0].contains("Discard All"), "{out}");
-    assert!(s[0].contains("1 untracked files will be deleted"), "{out}");
+    assert!(s[0].contains("1 untracked file will be deleted"), "{out}");
     assert!(st[1].contains("unstaged=3 staged=0"), "U, then n / N / q / esc keep everything: {out}");
     assert!(st[2].contains("unstaged=0 staged=0"), "{out}");
     assert!(!d.join("u.txt").exists());
     assert_eq!(git(d, &["status", "--porcelain"]), "");
     assert!(st[3].contains("Staging works in the working directory"), "{out}");
+}
+
+/// D with an untracked folder that is a repository of its own: the menu says it is kept
+/// unless asked; `d` discards the rest and the status line names what was kept, `x`
+/// deletes it too.
+#[gitti_test::test]
+fn discard_all_keeps_a_nested_repository_unless_asked() {
+    let dir = two_file_repo();
+    let d = dir.path();
+    git(d, &["init", "-q", "nested"]);
+    std::fs::write(d.join("nested/n.txt"), "n\n").unwrap();
+    std::fs::write(d.join("u.txt"), "untracked\n").unwrap();
+    let out = gitty(d, "press:D;dump;key:d;state;press:D;key:x;state");
+    let s = screens(&out);
+    let st = states(&out);
+    assert!(s[0].contains("separate git repository (own .git): nested/"), "{out}");
+    assert!(s[0].contains("Discard, keep the nested repositories"), "{out}");
+    assert!(s[0].contains("Discard and delete the repository nested/"), "{out}");
+    assert!(st[0].contains("nested/ was kept"), "{out}");
+    assert!(st[0].contains("unstaged=1"), "only nested/ is left: {out}");
+    assert!(!d.join("u.txt").exists() && !d.join("nested").exists(), "{out}");
+    assert!(st[1].contains("unstaged=0"), "{out}");
 }
 
 /// On the section headers: s stages all, u unstages all, d asks (Esc keeps).

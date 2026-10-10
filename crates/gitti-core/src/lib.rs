@@ -18,6 +18,7 @@ pub mod context;
 pub mod create;
 pub mod desktop;
 pub mod diff;
+pub mod discard;
 pub mod editor;
 pub mod error_mark;
 pub mod fd_limit;

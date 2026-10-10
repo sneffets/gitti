@@ -604,7 +604,9 @@ fn working_state_after_whole_files_match_a_full_read() {
     });
     c.step(&["[x] y.txt"], "unstage glob name", |r| r.unstage_paths(&["[x] y.txt"]).unwrap());
     let entry = c.prev.unstaged.iter().find(|w| w.path() == "b.txt").unwrap().entry.clone();
-    c.step(&["b.txt"], "discard b.txt", |r| r.discard_paths(&[&entry]).unwrap());
+    c.step(&["b.txt"], "discard b.txt", |r| {
+        r.discard_paths(&[&entry]).unwrap();
+    });
 }
 
 /// The watcher re-reads a changed directory as a whole (a new one, one removed or

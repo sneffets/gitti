@@ -17,6 +17,7 @@ use gitti_core::rows::{DiffRow, Expansion, LineSel, Src};
 use gitti_core::signature::SignatureInfo;
 use gitti_core::store::{self, PaneLayout, SharedSettings};
 use gitti_core::syntax::LineCategories;
+use gitti_core::discard::{DiscardOptions, DiscardPlan};
 use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget};
 use gitti_core::pull::{DivergentPull, PullStrategy};
 use gitti_core::push::{PullBlock, PushBlock, pull_block, push_block};
@@ -94,7 +95,8 @@ pub enum Msg {
     /// `paths` (`None`: all of it) and those files' highlights.
     WorkDone {
         label: String,
-        result: Result<()>,
+        /// `Some(note)`: what the status line says besides success.
+        result: Result<Option<String>>,
         working: Result<WorkingState>,
         highlights: Option<HashMap<(Src, String), FileHighlight>>,
         paths: Option<Vec<String>>,
@@ -240,6 +242,9 @@ pub const BUSY_SHOW_DELAY: std::time::Duration = std::time::Duration::from_milli
 
 /// A commit load running this long replaces the previous commit with "Loading…" (a merge
 /// of 1700 files takes over a second; meanwhile the old one looked like the selected one).
+/// Width of the explanation lines in the Discard All menu.
+const DISCARD_NOTE_WIDTH: usize = 72;
+
 const SLOW_LOAD: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// A shown commit: the cached, shared data (derefs to [`CommitData`]: `details`, `files`,
@@ -1075,6 +1080,7 @@ impl App {
             } => {
                 self.busy = None;
                 self.op_output = None;
+                let cancelled = self.op_cancel.take().is_some_and(|t| t.is_cancelled());
                 self.working_gen += 1;
                 self.watch_filter.own_index(index);
                 // Our own writes to those files (discard) are read already.
@@ -1082,7 +1088,13 @@ impl App {
                     self.watch_filter.paths_read(p, read_at);
                 }
                 match result {
-                    Ok(()) => self.errors.succeeded(&label),
+                    Ok(note) => {
+                        self.errors.succeeded(&label);
+                        if let Some(note) = note {
+                            self.set_info(note);
+                        }
+                    }
+                    Err(_) if cancelled => self.set_info(format!("{label} cancelled")),
                     Err(e) => {
                         self.errors.failed(&label, format!("{e:#}"));
                         self.set_error(format!("{label} failed: {e:#}"));
@@ -2130,6 +2142,19 @@ impl App {
         paths: Option<Vec<String>>,
         op: impl FnOnce(&Repo) -> Result<()> + Send + 'static,
     ) {
+        self.work_op_noted(label, paths, move |r| op(r).map(|()| None));
+    }
+
+    /// [`Self::work_op`] whose `op` may say something besides success (`Some(note)`: the
+    /// status line shows it, e.g. what a discard kept). Runs with a progress sink (the
+    /// status line shows what a long op reports, e.g. the meter of deleting 10 000
+    /// untracked files) and can be cancelled like any operation.
+    pub fn work_op_noted(
+        &mut self,
+        label: &str,
+        paths: Option<Vec<String>>,
+        op: impl FnOnce(&Repo) -> Result<Option<String>> + Send + 'static,
+    ) {
         if self.busy.is_some() {
             self.refuse_busy();
             return;
@@ -2142,10 +2167,18 @@ impl App {
         let opts = self.opts.diff_options();
         self.work_opts = opts;
         let cache = self.opts.syntax.then(|| self.hl_cache.clone());
+        let cancel = gitti_core::process::CancelToken::new();
+        self.op_cancel = Some(cancel.clone());
+        let tx = self.tx.clone();
+        let sink: gitti_core::process::ProgressSink = std::sync::Arc::new(move |line: &str| {
+            let _ = tx.send(Msg::Progress(line.to_string()));
+        });
         spawn(
             &self.tx,
             move || {
-                let result = op(&repo);
+                let result = gitti_core::process::with_cancel(&cancel, || {
+                    gitti_core::process::with_progress(sink, || op(&repo))
+                });
                 let stale = (result.as_ref().err())
                     .and_then(|e| gitti_core::lock::stale_lock(e, repo.workdir()));
                 let index = repo.index_stamp();
@@ -2474,37 +2507,64 @@ impl App {
         if entries.is_empty() {
             return;
         }
-        let untracked = entries.iter().filter(|e| e.untracked).count();
+        let plan = DiscardPlan::of(self.repo.workdir(), &entries);
         let n = entries.len();
-        let (title, body) = match group {
+        let (title, question, done) = match group {
             None => (
                 "Discard All",
-                format!(
-                    "Discard all unstaged changes in {n} files?{}\nStaged changes are kept. This cannot be undone.",
-                    if untracked > 0 {
-                        format!(" {untracked} untracked files will be deleted.")
-                    } else {
-                        String::new()
-                    }
-                ),
+                format!("Discard all unstaged changes in {n} files?"),
+                "All unstaged changes discarded",
             ),
             Some(gitti_core::rows::Group::Tracked) => (
                 "Discard Tracked",
-                format!(
-                    "Discard the changes of {n} tracked files?\nStaged changes are kept. This cannot be undone."
-                ),
+                format!("Discard the changes of {n} tracked files?"),
+                "Changes of tracked files discarded",
             ),
             Some(gitti_core::rows::Group::Untracked) => (
                 "Delete Untracked",
-                format!("Delete {n} untracked files?\nThis cannot be undone."),
+                format!("Delete {n} untracked files?"),
+                "Untracked files deleted",
             ),
         };
-        self.modal = Some(Modal::confirm(title, body, "Discard", move |app| {
+        let run = move |app: &mut App, opts: DiscardOptions| {
             let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
-            app.git_op("Discard all", paths, move |r| {
-                r.discard_paths(&entries.iter().collect::<Vec<_>>())
+            app.work_op_noted("Discard all", paths, move |r| {
+                let report = r.discard_with(&entries.iter().collect::<Vec<_>>(), opts)?;
+                Ok(Some(gitti_core::discard::done_note(done, &report)))
             })
-        }));
+        };
+        let body = format!("{question}\n{}", plan.detail());
+        if plan.nested.is_empty() {
+            self.modal = Some(Modal::confirm(title, body, "Discard", move |app| {
+                run(app, DiscardOptions::default())
+            }));
+            return;
+        }
+        // Nested repositories: kept, unless the second entry is chosen.
+        let run = std::rc::Rc::new(std::cell::RefCell::new(Some(run)));
+        let again = run.clone();
+        let mut items: Vec<MenuItem> = body
+            .lines()
+            .flat_map(|l| MenuItem::notes(l, DISCARD_NOTE_WIDTH))
+            .collect();
+        items.push(MenuItem::separator());
+        items.push(
+            MenuItem::new("Discard, keep the nested repositories", move |app: &mut App| {
+                if let Some(run) = run.borrow_mut().take() {
+                    run(app, DiscardOptions::default())
+                }
+            })
+            .key('d'),
+        );
+        items.push(
+            MenuItem::new(plan.nested_check().replacen("Also delete", "Discard and delete", 1), move |app: &mut App| {
+                if let Some(run) = again.borrow_mut().take() {
+                    run(app, DiscardOptions { delete_nested_repos: true })
+                }
+            })
+            .key('x'),
+        );
+        self.modal = Some(Modal::menu(title, items));
     }
 
     /// Stage / unstage / discard, driven by the line selection or the diff cursor.
@@ -2588,20 +2648,33 @@ impl App {
                 })
             }
             PatchMode::Discard => {
-                let what = if entry.untracked {
-                    format!("Delete the untracked file {path}?")
+                // A folder that is a repository of its own: Discard would keep it (as
+                // `git clean` does); deleting it is asked for in plain words.
+                let nested = gitti_core::discard::is_nested_repo(self.repo.workdir(), &entry);
+                let (title, what, button) = if nested {
+                    (
+                        "Delete Repository Folder",
+                        format!(
+                            "{path} is a separate git repository (it has its own .git). \
+                             Delete it? That deletes its files, its history and everything \
+                             not pushed from it. This cannot be undone."
+                        ),
+                        "Delete Repository",
+                    )
+                } else if entry.untracked {
+                    ("Discard File", format!("Delete the untracked file {path}?"), "Discard")
                 } else {
-                    format!("Discard all unstaged changes in {path}?")
+                    ("Discard File", format!("Discard all unstaged changes in {path}?"), "Discard")
                 };
-                self.modal = Some(Modal::confirm(
-                    "Discard File",
-                    what,
-                    "Discard",
-                    move |app| {
-                        let paths = Some(vec![entry.path.clone()]);
-                        app.git_op("Discard file", paths, move |r| r.discard_paths(&[&entry]))
-                    },
-                ));
+                let opts = DiscardOptions {
+                    delete_nested_repos: nested,
+                };
+                self.modal = Some(Modal::confirm(title, what, button, move |app| {
+                    let paths = Some(vec![entry.path.clone()]);
+                    app.work_op_noted("Discard file", paths, move |r| {
+                        Ok(r.discard_with(&[&entry], opts)?.note())
+                    })
+                }));
             }
         }
     }
