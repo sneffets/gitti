@@ -70,6 +70,10 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
         Gitty::No("the palette itself"),
     ),
     both("ToggleSidebar", "Toggle Sidebar"),
+    both(
+        "ToggleMainWorktreeAlone",
+        "Toggle Main Worktree When It Is the Only One",
+    ),
     gitti("ToggleFullScreen", "a terminal"),
     both("ToggleGitLog", "Toggle Git Command Log"),
     both("RunGitCommand", "Run Git Command…"),
