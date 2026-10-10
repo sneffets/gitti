@@ -8,6 +8,7 @@
 //! opens, stages a line and commits like a SHA-1 one. The message git prepared
 //! (`cherry-pick -n -x` on the command line) fills an empty box and commits; next to the
 //! user's own text a note offers it instead (Keep Mine — kept across a reopen —, Use It).
+//! The hooks' output shows in the status bar while the commit runs.
 //!
 //! Own `main` like `layout.rs`: `cargo test --workspace --test ui -- commit[::FILTER]`.
 
@@ -33,6 +34,7 @@ pub fn main() {
         ("sha256_stage_a_line_and_commit", sha256_stage_a_line_and_commit),
         ("close_tab_while_git_runs_asks", close_tab_while_git_runs_asks),
         ("prepared_message_after_cherry_pick", prepared_message_after_cherry_pick),
+        ("hook_output_shows_while_committing", hook_output_shows_while_committing),
     ];
     common::run(tests, |name| {
         let dir = BASE.with(|b| b.borrow().join(name));
@@ -321,6 +323,59 @@ fn nothing_staged_choices(ui: &mut Ui) {
     if !subjects(ui).starts_with("Tracked only\n") || files.trim() != "new.txt" || status.trim() != "?? untracked.txt" {
         let s = subjects(ui);
         ui.fail(format!("after Stage Tracked: log {s:?}, files {files:?}, status {status:?}"));
+    }
+}
+
+/// The commit's hooks (pre-commit, commit-msg) print: their lines reach the running
+/// operation's output (the status bar's last line and output window) while the commit is
+/// still the running operation, and the commit lands. gpui's test executor runs the job to
+/// its end in one go, so the scenario steps the executor task by task and looks between
+/// the lines' delivery and the end of the busy state; that the lines leave git while the
+/// hook still runs (before its `sleep`) is core's
+/// `runner::hook_output_streams_while_the_commit_runs`, the status bar's look
+/// `toolbar::busy_area_shows_progress`, gitty's live view
+/// `progress::slow_hook_output_shows_while_committing`.
+fn hook_output_shows_while_committing(ui: &mut Ui) {
+    let dir = ui.repo.clone();
+    let hooks = dir.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    for (name, body) in [
+        ("pre-commit", "echo running lint\nsleep 0.1\n"),
+        ("commit-msg", "echo checking message >&2\n"),
+    ] {
+        let hook = hooks.join(name);
+        std::fs::write(&hook, format!("#!/bin/sh\n{body}")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    ui.quick("msg:Linted");
+    let ws = ui.ws.clone();
+    ui.cx
+        .update_window(ui.window, |_, window, cx| testing::step(&ws, "commit", window, cx))
+        .unwrap();
+    // Task by task (no clock advance: that runs everything): the job, then the lines'
+    // delivery, then the end of the busy state.
+    let mut seen = None;
+    for _ in 0..10_000 {
+        let output = ui.cx.update(|cx| testing::busy_output(&ws, cx));
+        if let Some(output) = output.filter(|o| !o.is_empty()) {
+            seen = Some(output);
+            break;
+        }
+        if !ui.cx.executor().tick() {
+            break;
+        }
+    }
+    ui.settle();
+    if !seen.as_deref().is_some_and(|o| o.contains("running lint\nchecking message")) {
+        ui.fail(format!("output while committing: {seen:?}"));
+    }
+    if !subjects(ui).starts_with("Linted\n") {
+        let s = subjects(ui);
+        ui.fail(format!("after the commit: log {s:?}"));
     }
 }
 
