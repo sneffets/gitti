@@ -209,6 +209,11 @@ pub struct GittiApp {
     tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the tab's hollow mark).
     unpushed: Option<gitti_core::tab_marks::Unpushed>,
+    /// The other worktrees' marks by folder (`tab_marks.rs`), a read running / asked for
+    /// again.
+    worktree_marks: Vec<(std::path::PathBuf, gitti_core::tab_marks::Marks)>,
+    worktree_marks_loading: bool,
+    worktree_marks_queued: bool,
     /// Effective user.name / user.email.
     identity: (Option<String>, Option<String>),
     /// Names of "ours" / "theirs" while there are conflicted files.
@@ -602,6 +607,9 @@ impl GittiApp {
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
             unpushed: None,
+            worktree_marks: Vec::new(),
+            worktree_marks_loading: false,
+            worktree_marks_queued: false,
             identity: (None, None),
             conflict_sides: None,
             worktrees: Vec::new(),
@@ -985,6 +993,8 @@ impl GittiApp {
         self.apply_lfs_state(s.lfs, cx);
         // Only when HEAD moved (in-process, in the background).
         self.refresh_subtrees(false, cx);
+        // The other worktrees' sidebar marks (in the background, only when shown).
+        self.refresh_worktree_marks(cx);
         // Refs moved behind our back → the history may have changed too (the first
         // refresh loads it anyway).
         if refs_changed && self.loaded_once {
@@ -3187,6 +3197,8 @@ impl GittiApp {
             && !self.paths_in_flight
             && self.paths_queued.is_none()
             && !self.change_search.busy()
+            && !self.worktree_marks_loading
+            && !self.worktree_marks_queued
     }
 
     pub fn script_workdir(&self) -> PathBuf {

@@ -5,7 +5,8 @@
 //! change a worktree's sparse folders, move one (gitty follows its own folder), repair
 //! worktrees moved by hand, and switch gitty to another worktree. The flow is
 //! gitti's, on the same core (`gitti_core::worktree`). The WORKTREES list in the sidebar
-//! and its menu: `sidebar.rs`, `app/sidebar_menu.rs`. Not here (yet): gitti's folder tree
+//! and its menu: `sidebar.rs`, `app/sidebar_menu.rs`; the entries' marks (uncommitted /
+//! not pushed, as after the repository name) are read here. Not here (yet): gitti's folder tree
 //! picker (folders are typed, comma separated).
 
 use std::path::PathBuf;
@@ -17,7 +18,9 @@ use gitti_core::worktree::{
     suggested_path,
 };
 
-use super::{After, App, FollowUp};
+use gitti_core::tab_marks::Marks;
+
+use super::{After, App, FollowUp, Msg};
 use crate::modal::{Live, Modal, PickItem};
 
 impl App {
@@ -122,6 +125,58 @@ impl App {
                 (c.id.to_string(), short, label)
             }
             None => ("HEAD".into(), "HEAD".into(), "HEAD".into()),
+        }
+    }
+
+    /// The mark of the sidebar's worktree entry `index`: gitty's own for its worktree,
+    /// else what [`App::refresh_worktree_marks`] read last.
+    pub fn worktree_marks(&self, index: usize) -> Option<Marks> {
+        let wt = self.worktrees.get(index)?;
+        if wt.is_current {
+            return Some(Marks::of(&self.working.status, self.unpushed.as_ref()));
+        }
+        self.worktree_marks
+            .iter()
+            .find(|(p, _)| *p == wt.path)
+            .map(|(_, m)| m.clone())
+    }
+
+    /// Reads the other worktrees' marks in the background (one `git status` each,
+    /// `gitti_core::tab_marks::other_worktrees`) — after a refresh and when the WORKTREES
+    /// section unfolds; only while it is shown unfolded with other worktrees in it. Never
+    /// on navigation. One read at a time; asked for meanwhile, it runs once more after.
+    pub(crate) fn refresh_worktree_marks(&mut self) {
+        let shown = gitti_core::worktree::section_shown(&self.worktrees, self.main_worktree_alone)
+            && !self.collapsed.contains("worktrees");
+        let others = self
+            .worktrees
+            .iter()
+            .any(|w| !w.is_current && !w.bare && w.prunable.is_none());
+        if !shown || !others {
+            return;
+        }
+        if self.worktree_marks_loading {
+            self.worktree_marks_queued = true;
+            return;
+        }
+        self.worktree_marks_loading = true;
+        self.loads_in_flight += 1;
+        let repo = self.repo.clone();
+        let (worktrees, tracking) = (self.worktrees.clone(), self.tracking.clone());
+        super::spawn(
+            &self.tx,
+            move || gitti_core::tab_marks::other_worktrees(&repo, &worktrees, &tracking),
+            Msg::WorktreeMarks,
+        );
+    }
+
+    /// What [`App::refresh_worktree_marks`] read.
+    pub(super) fn on_worktree_marks(&mut self, marks: Vec<(PathBuf, Marks)>) {
+        self.loads_in_flight -= 1;
+        self.worktree_marks_loading = false;
+        self.worktree_marks = marks;
+        if std::mem::take(&mut self.worktree_marks_queued) {
+            self.refresh_worktree_marks();
         }
     }
 

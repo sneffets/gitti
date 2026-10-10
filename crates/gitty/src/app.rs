@@ -149,6 +149,8 @@ pub enum Msg {
     ChangeSearchDue,
     /// "Check Out Commit in Submodule…": the history of the submodule at that path.
     SubmoduleHistory(String, Result<Vec<gitti_core::submodule::SubmoduleCommit>>),
+    /// The other worktrees' marks for the sidebar (`app/worktrees.rs`).
+    WorktreeMarks(Vec<(std::path::PathBuf, gitti_core::tab_marks::Marks)>),
     /// The subtrees of HEAD's history, read for that HEAD (`app/subtrees.rs`).
     Subtrees(Option<ObjectId>, Result<Vec<gitti_core::subtree::Subtree>>),
     /// The Git LFS health check's result (`app/lfs_health.rs`).
@@ -424,6 +426,11 @@ pub struct App {
     pub tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the ○ after the repository name).
     pub unpushed: Option<gitti_core::tab_marks::Unpushed>,
+    /// The other worktrees' marks by folder (`app/worktrees.rs`), a read running / asked
+    /// for again.
+    pub worktree_marks: Vec<(std::path::PathBuf, gitti_core::tab_marks::Marks)>,
+    worktree_marks_loading: bool,
+    worktree_marks_queued: bool,
     pub identity: (Option<String>, Option<String>),
     pub conflict_sides: Option<ConflictSides>,
     pub loaded: bool,
@@ -740,6 +747,9 @@ impl App {
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
             unpushed: None,
+            worktree_marks: Vec::new(),
+            worktree_marks_loading: false,
+            worktree_marks_queued: false,
             identity: (None, None),
             conflict_sides: None,
             loaded: false,
@@ -1190,6 +1200,7 @@ impl App {
             Msg::ChangeScanDone(generation) => self.on_change_scan_done(generation),
             Msg::ChangeSearchDue => self.change_search_due(),
             Msg::Subtrees(head, result) => self.on_subtrees(head, result),
+            Msg::WorktreeMarks(marks) => self.on_worktree_marks(marks),
             Msg::SubmoduleHistory(path, result) => {
                 self.loads_in_flight -= 1;
                 self.on_submodule_history(&path, result);
@@ -1513,6 +1524,8 @@ impl App {
             self.subtrees_dirty = false;
         }
         self.refresh_subtrees(force);
+        // The other worktrees' sidebar marks (in the background, only when shown).
+        self.refresh_worktree_marks();
         // The working directory is row 0 of every history: its state shows before the
         // history has loaded.
         if matches!(self.detail, Detail::Empty) && self.selected == 0 {
@@ -1777,6 +1790,12 @@ impl App {
                     gitti_core::allowed_signers::HELP_LABEL
                 )),
                 None => {}
+            }
+            if self.own_signers_offered().is_some() {
+                text.push_str(&format!(
+                    "\nAn allowed signers file with your own key: m on the Signature line → {}",
+                    gitti_core::allowed_signers::OWN_LABEL.trim_end_matches('…')
+                ));
             }
             if self.signing_keys_offered() {
                 text.push_str(&format!(

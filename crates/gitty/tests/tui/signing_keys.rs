@@ -4,7 +4,8 @@
 //! dialog lists the key ticked and says where it goes, ⏎ writes the allowed signers file,
 //! sets it in the global config, and the commit verifies. With an allowed signers file at
 //! a usual place (but none set), it is offered instead and "for This Repository" makes the
-//! commit verify.
+//! commit verify. Signed with the user's own key and no file anywhere: a file with that key
+//! is offered, created and set.
 
 use std::path::Path;
 use std::process::Command;
@@ -83,7 +84,7 @@ fn allowed_signers_file_is_offered_and_used() {
     assert!(out.contains("item: Use ~/.ssh/allowed_signers for All Repositories…"), "{out}");
     assert!(states(&out)[0].contains("Input \"Allowed Signers File\""), "{out}");
     let dialog = s[1].split_whitespace().collect::<Vec<_>>().join(" ");
-    for want in ["~/.ssh/allowed_signers", "1 key — of t@example.com", "git config --local gpg.ssh.allowedSignersFile", "not how you sign"] {
+    for want in ["~/.ssh/allowed_signers", "1 key — of t@example.com", "git config --local --replace-all", "not how you sign"] {
         assert!(dialog.contains(want), "{want:?}: {out}");
     }
     let config = std::fs::read_to_string(d.join(".git/config")).unwrap();
@@ -114,6 +115,8 @@ fn signing_keys_from_github_verify_the_commit() {
         ),
     );
     git(d, &["commit", "-q", "-S", "-am", "signed"]);
+    // Not the user's own key (no SSH signing configured): GitHub is the way here.
+    git(d, &["config", "--unset", "gpg.format"]);
     let sha = git(d, &["rev-parse", "HEAD"]).trim().to_string();
     let pubkey = std::fs::read_to_string(key.with_extension("pub")).unwrap();
     let line: String = pubkey.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
@@ -148,4 +151,43 @@ fn signing_keys_from_github_verify_the_commit() {
     assert!(s[2].contains("✓ Signed · t@example.com"), "{out}");
     let requests = std::fs::read_to_string(github.path().join("requests.log")).unwrap();
     assert_eq!(requests.lines().count(), 3, "{requests}");
+}
+
+/// Signed with the user's own key (`user.signingKey`), no allowed signers file anywhere:
+/// the commit menu offers a file with that key, the palette's
+/// "Use an Allowed Signers File…" opens its dialog (all repositories ticked) saying what
+/// it creates; ⏎ creates `~/.config/git/allowed_signers` with the key, sets it in the
+/// global config, and the commit verifies.
+#[gitti_test::test]
+fn allowed_signers_file_with_the_users_own_key() {
+    let keys = tempfile::tempdir().unwrap();
+    let (dir, line) = signed_repo(keys.path());
+    let d = dir.path();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let github = tempfile::tempdir().unwrap();
+    let script = format!(
+        "press:j;wait;dump;key:m;items;press:esc;press:ctrl-p;{}key:enter;dump;state;key:enter;wait;dump;state",
+        presses("allowed signers file")
+    );
+    let out = run(d, home.path(), github.path(), &script);
+    let s = screens(&out);
+    assert!(s[0].contains("? Signed, not verified"), "{out}");
+    assert!(out.contains("item: Create Allowed Signers File with Your Key…"), "{out}");
+    assert!(states(&out)[0].contains("Input \"Allowed Signers File with Your Key\""), "{out}");
+    // The dialog's text, its box's borders left out (wrapped lines joined).
+    let dialog = s[1].replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in [
+        "This creates ~/.config/git/allowed_signers with one line, for your own signing key",
+        "t@example.com namespaces=\"git\" ssh-ed25519",
+        "global git config",
+    ] {
+        assert!(dialog.contains(want), "{want:?}: {out}");
+    }
+    let written = std::fs::read_to_string(home.path().join(".config/git/allowed_signers")).unwrap();
+    assert!(written.ends_with(&format!("t@example.com namespaces=\"git\" {line}\n")), "{written}");
+    let global = std::fs::read_to_string(home.path().join("global.gitconfig")).unwrap();
+    assert!(global.contains("allowedSignersFile"), "{global}");
+    assert!(s[2].contains("✓ Signed · t@example.com"), "{out}");
+    assert!(states(&out)[1].contains("now lists your key"), "{out}");
 }

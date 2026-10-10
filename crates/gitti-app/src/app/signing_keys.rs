@@ -86,13 +86,22 @@ impl GittiApp {
         };
         let details = info.details();
         let mut spec = ModalSpec::new("Signature").ok("Close").cancel(None);
-        // One button: an allowed signers file the user has beats fetching keys, which
-        // beats how to set one up.
+        // One button: an allowed signers file the user has beats a new one with the user's
+        // own key when that key signed, then fetching keys, a file with the own key, how
+        // to set one up.
         let files = self.signers_files_known();
+        let own = self.own_signers_offered();
+        let own_button = |spec: ModalSpec| {
+            spec.extra(gitti_core::allowed_signers::OWN_LABEL, |this, w, cx| this.own_signers_dialog(w, cx))
+        };
         if files.is_some_and(|n| n > 0) {
             spec = spec.extra(super::signers::USE_LABEL, |this, w, cx| this.use_allowed_signers_file(w, cx));
+        } else if own == Some(true) {
+            spec = own_button(spec);
         } else if self.signing_key_offer().is_some() {
             spec = spec.extra(sk::ACTION_LABEL, |this, w, cx| this.get_signing_keys(None, w, cx));
+        } else if own.is_some() {
+            spec = own_button(spec);
         } else if files.is_some() {
             spec = spec.extra(gitti_core::allowed_signers::HELP_LABEL, |this, w, cx| {
                 this.allowed_signers_help(w, cx)

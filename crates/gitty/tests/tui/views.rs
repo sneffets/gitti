@@ -495,6 +495,50 @@ fn repo_marks_after_the_name() {
     assert!(top(1).contains(" ●  ⎇ main"), "staged: {out}");
 }
 
+/// The sidebar's worktree entries carry the same marks: ● a worktree with uncommitted
+/// changes, ○ one whose branch has commits no remote has, none on gitty's own (clean,
+/// pushed); moving onto one says what its mark means. The other worktrees are read with
+/// one `git status` each, none while moving through the sidebar.
+#[gitti_test::test]
+fn worktree_entries_carry_the_marks() {
+    let dir = import_with(
+        &[
+            Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "a\n")] },
+            Commit { branch: "ahead", from: Some(1), merge: None, msg: "two", files: &[("a.txt", "b\n")] },
+        ],
+        "reset refs/remotes/origin/main\nfrom :1\n\n",
+    );
+    let d = dir.path();
+    add_config(d, "[remote \"origin\"]\n\turl = ../origin.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n");
+    let wt = tempfile::tempdir().unwrap();
+    let (ahead, dirty) = (wt.path().join("ahead-wt"), wt.path().join("dirty-wt"));
+    git(d, &["worktree", "add", "-q", ahead.to_str().unwrap(), "ahead"]);
+    git(d, &["worktree", "add", "-q", "--detach", dirty.to_str().unwrap(), "main"]);
+    std::fs::write(dirty.join("new.txt"), "n\n").unwrap();
+    // Rows: 0 BRANCHES, 1 ahead, 2 main, 3 WORKTREES, 4–6 the worktrees.
+    let out = gitty(
+        d,
+        "press:backtab;cmds;press:g;press:j;press:j;press:j;press:j;dump;state;press:j;state;press:j;state;cmds",
+    );
+    let s = screens(&out);
+    // The sidebar's rows (the commit list's worktree badges name them too).
+    let line = |name: &str| {
+        let row = s[0].lines().skip(1).find(|l| l.starts_with(&format!("   ● {name}")) || l.starts_with(&format!("     {name}")));
+        row.unwrap_or_default().to_string()
+    };
+    assert!(line("dirty-wt").contains("dirty-wt ● detached"), "{out}");
+    assert!(line("ahead-wt").contains("○ ⎇ ahead"), "{out}");
+    let own = line(&d.file_name().unwrap().to_string_lossy());
+    assert!(own.contains("⎇ main") && !own.contains("○") && !own.contains("● ⎇"), "gitty's own is clean: {out}");
+    let st = states(&out).join("\n");
+    assert!(st.contains("ahead-wt: 1 commit on no remote (ahead has no upstream branch)"), "{out}");
+    assert!(st.contains("dirty-wt: Uncommitted changes in 1 file: 1 untracked"), "{out}");
+    let c = cmds(&out);
+    let others = |c: &[String]| c.iter().filter(|c| c.starts_with("status ") && !c.contains("--branch")).count();
+    assert_eq!(others(&c[0]), 2, "the start reads the two others: {out}");
+    assert_eq!(others(&c[1]), 0, "moving through the sidebar reads none: {out}");
+}
+
 /// HEAD's refs in [`many_refs_repo`] (`main` checked out), in badge order.
 const HEAD_REFS: &[&str] = &[
     "main",

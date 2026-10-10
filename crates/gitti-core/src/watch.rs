@@ -6,6 +6,11 @@
 //! Set up on its own thread (the first frame does not wait for it). On Linux every
 //! directory gets its own inotify watch and git-ignored trees (`target/`,
 //! `node_modules/`) none at all ([`PER_DIR`]); elsewhere the OS watches recursively.
+//!
+//! Submodules: a commit (or `git add`) inside one changes no file of the work tree — only
+//! its git dir, `.git/modules/<name>/` (`HEAD`, `index`, refs; a nested submodule's below
+//! `modules/<name>/modules/`), or an embedded `<path>/.git/`. Those are watched too and
+//! reported as a change of the submodule's path ([`module_change`], [`git_change`]).
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -506,9 +511,45 @@ impl Tree {
 
     /// A directory below a git dir whose changes count.
     fn wanted_git_dir(&self, dir: &Path) -> bool {
+        let modules = self.dirs.git_dir.join("modules");
+        if let Ok(rel) = dir.strip_prefix(&modules) {
+            return wanted_in_modules(&modules, &parts(rel));
+        }
+        if let Some((git_dir, rest)) = self.embedded_git_dir(dir) {
+            return wanted_in_git_dir(&git_dir, &rest);
+        }
         self.git_roots()
             .iter()
             .any(|root| dir.strip_prefix(root).is_ok_and(wanted_git_subdir))
+    }
+
+    /// A path inside a nested repository's own `.git` directory in the work tree (an
+    /// embedded clone, a submodule not absorbed into `.git/modules`): that directory and
+    /// the path below it.
+    fn embedded_git_dir<'a>(&self, p: &'a Path) -> Option<(PathBuf, Vec<&'a OsStr>)> {
+        let rel = p.strip_prefix(&self.workdir).ok()?;
+        let all = parts(rel);
+        let i = all.iter().position(|c| *c == ".git").filter(|&i| i > 0)?;
+        let git_dir: PathBuf = std::iter::once(self.workdir.as_os_str()).chain(all[..=i].iter().copied()).collect();
+        Some((git_dir, all[i + 1..].to_vec()))
+    }
+
+    /// A changed path below `.git/modules/` (this worktree's submodules' git dirs): what
+    /// `git status` of the work tree sees of it — the submodule's path, or `Some(None)`
+    /// (the whole working state) for a nested submodule (its parent's status names it) or
+    /// one whose work tree isn't known. `None`: it doesn't count (objects, logs, …).
+    fn module_scope(&self, p: &Path, lookup: &mut Lookup) -> Option<Option<String>> {
+        let modules = self.dirs.git_dir.join("modules");
+        let rel = p.strip_prefix(&modules).ok()?;
+        let (git_dir, nested) = module_change(&modules, &parts(rel))?;
+        if nested {
+            return Some(None);
+        }
+        Some(
+            module_worktree(&git_dir)
+                .and_then(|wt| self.scope(&wt, lookup))
+                .unwrap_or(None),
+        )
     }
 
     /// Watches `start` (a git dir or a new directory below one) and the directories
@@ -567,7 +608,12 @@ impl Tree {
                     };
                     let p = e.path();
                     if ft.is_dir() {
-                        if e.file_name() != ".git" && !roots.contains(&p) {
+                        if e.file_name() == ".git" {
+                            // A nested repository's own: HEAD, index, refs (its commits).
+                            if !roots.contains(&p) {
+                                self.add_git_dirs(&p, since, gap);
+                            }
+                        } else if !roots.contains(&p) {
                             next.push(p);
                         }
                     } else if since.is_some_and(|s| changed_since(&p, s)) {
@@ -658,11 +704,20 @@ impl Tree {
                         rules = true;
                         out.push((p, PathKind::Rules));
                     }
-                    GitPath::Ignore => {}
+                    // A submodule's git dir: its commit, staging, branch switch.
+                    GitPath::Ignore => {
+                        if let Some(scope) = self.module_scope(&p, &mut lookup) {
+                            out.push((p, PathKind::Worktree(scope)));
+                        }
+                    }
                 }
             } else if p.starts_with(&self.workdir) {
                 if self.per_dir {
-                    if is_new_dir() {
+                    if self.embedded_git_dir(&p).is_some() {
+                        if is_new_dir() && self.wanted_git_dir(&p) {
+                            new_git_dirs.push(p.clone());
+                        }
+                    } else if is_new_dir() {
                         new_dirs.push(p.clone());
                     } else if self.watched.contains(&p) && std::fs::symlink_metadata(&p).is_err() {
                         // Gone (notify dropped its watches); recreated, it is new again.
@@ -711,7 +766,7 @@ impl Tree {
     /// relative path — or, inside a nested repository, that repository's path (status
     /// doesn't look into one; a pathspec below it matches nothing) — `Some(None)` for
     /// the whole working state, `None` when it doesn't count (a nested repository's git
-    /// files other than its HEAD and index).
+    /// files other than its HEAD, index and refs — [`git_change`]).
     fn scope(&self, p: &Path, lookup: &mut Lookup) -> Option<Option<String>> {
         let rel = p.strip_prefix(&self.workdir).ok()?;
         let parts: Vec<&OsStr> = rel.iter().collect();
@@ -720,10 +775,15 @@ impl Tree {
         }
         let mut cut = parts.len();
         if let Some(i) = parts.iter().position(|c| *c == ".git") {
-            if !matches!(parts[i + 1..], [n] if n == "HEAD" || n == "index") {
-                return None;
+            let git_dir: PathBuf = std::iter::once(self.workdir.as_os_str())
+                .chain(parts[..=i].iter().copied())
+                .collect();
+            match git_change(&git_dir, &parts[i + 1..]) {
+                None => return None,
+                // Its own submodule's: the whole working state (nested flags).
+                Some(true) => return Some(None),
+                Some(false) => cut = i,
             }
-            cut = i;
         }
         let mut dir = self.workdir.clone();
         for (i, part) in parts[..cut].iter().enumerate().take(cut.saturating_sub(1)) {
@@ -769,8 +829,88 @@ fn changed_since(p: &Path, since: SystemTime) -> bool {
         .is_ok_and(|m| m >= since)
 }
 
+/// The components of `rel`.
+fn parts(rel: &Path) -> Vec<&OsStr> {
+    rel.iter().collect()
+}
+
+/// A git dir: `HEAD` and the object store (a linked worktree's: `commondir`).
+fn is_git_dir(d: &Path) -> bool {
+    d.join("HEAD").is_file() && (d.join("objects").is_dir() || d.join("commondir").is_file())
+}
+
+/// A change at `rest` below the git dir `git_dir` of a nested repository (a submodule):
+/// whether it moves what `git status` of the superproject reports of it — its `HEAD`,
+/// `index`, refs (loose, packed, reftable: a commit on a branch moves only the branch) —
+/// `Some(false)`, or that of a submodule of its own (`modules/…`) — `Some(true)`. `None`:
+/// it doesn't count (objects, logs, lock files, …).
+fn git_change(git_dir: &Path, rest: &[&OsStr]) -> Option<bool> {
+    if rest.last()?.to_string_lossy().ends_with(".lock") {
+        return None;
+    }
+    let first = rest[0].to_str()?;
+    match first {
+        "HEAD" | "index" | "packed-refs" if rest.len() == 1 => Some(false),
+        "refs" | "reftable" if rest.len() > 1 => Some(false),
+        "modules" => {
+            let modules = git_dir.join("modules");
+            module_change(&modules, &rest[1..]).map(|_| true)
+        }
+        _ => None,
+    }
+}
+
+/// A change at `rel` below a `modules` directory (`.git/modules`, where git keeps the
+/// submodules' git dirs by name — names may have `/` in them): the submodule git dir it
+/// is in and whether it is a nested submodule's ([`git_change`]). `None`: it doesn't
+/// count.
+fn module_change(modules: &Path, rel: &[&OsStr]) -> Option<(PathBuf, bool)> {
+    let mut dir = modules.to_path_buf();
+    for (i, c) in rel.iter().enumerate() {
+        dir.push(c);
+        if is_git_dir(&dir) {
+            return git_change(&dir, &rel[i + 1..]).map(|nested| (dir, nested));
+        }
+    }
+    None
+}
+
+/// The work tree of the submodule git dir `git_dir`: its `core.worktree` (git writes it
+/// there, relative to the git dir).
+fn module_worktree(git_dir: &Path) -> Option<PathBuf> {
+    let config =
+        gix::config::File::from_path_no_includes(git_dir.join("config"), gix::config::Source::Local).ok()?;
+    let value = config.string_by("core", None, "worktree")?;
+    let wt = gix::path::try_from_bstr(value.as_bstr()).ok()?;
+    Some(crate::paths::canonical(&git_dir.join(wt)))
+}
+
+/// Directories at `rel` below a nested repository's git dir `git_dir` to watch: the git
+/// dir itself (`HEAD`, `index`, `packed-refs`), its refs and its own submodules' git dirs.
+fn wanted_in_git_dir(git_dir: &Path, rel: &[&OsStr]) -> bool {
+    match rel.first().and_then(|c| c.to_str()) {
+        None | Some("refs" | "reftable") => true,
+        Some("modules") => wanted_in_modules(&git_dir.join("modules"), &rel[1..]),
+        Some(_) => false,
+    }
+}
+
+/// Directories at `rel` below a `modules` directory to watch: the folders of the names
+/// up to each submodule's git dir, then what [`wanted_in_git_dir`] wants of it.
+fn wanted_in_modules(modules: &Path, rel: &[&OsStr]) -> bool {
+    let mut dir = modules.to_path_buf();
+    for (i, c) in rel.iter().enumerate() {
+        dir.push(c);
+        if is_git_dir(&dir) {
+            return wanted_in_git_dir(&dir, &rel[i + 1..]);
+        }
+    }
+    true
+}
+
 /// Directories below a git dir (`rel` from it) whose changes count: refs, reftable,
-/// `info/` (exclude) and the worktrees' metadata — not objects, logs, hooks, modules.
+/// `info/` (exclude) and the worktrees' metadata — not objects, logs, hooks (the
+/// submodules' git dirs below `modules/`: [`Tree::wanted_git_dir`]).
 fn wanted_git_subdir(rel: &Path) -> bool {
     let parts: Vec<&str> = rel.iter().map(|c| c.to_str().unwrap_or("")).collect();
     matches!(
@@ -1099,6 +1239,71 @@ mod tests {
             assert!(!w(no), "{no}");
         }
         assert!(!w("worktrees/w1/logs"));
+    }
+
+    /// Submodules' git dirs below `.git/modules` (names with `/`, nested ones below
+    /// `modules/<name>/modules/`) and embedded `.git` dirs: HEAD, index, refs count (a
+    /// nested submodule's as such), objects / logs / locks don't; only the git dirs, their
+    /// refs and the folders leading to them are watched; the work tree is `core.worktree`.
+    #[gitti_test::test]
+    fn submodule_git_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let modules = dir.path().join("modules");
+        let git_dir = |d: &Path| {
+            std::fs::create_dir_all(d.join("objects/ab")).unwrap();
+            std::fs::create_dir_all(d.join("refs/heads")).unwrap();
+            std::fs::create_dir_all(d.join("logs")).unwrap();
+            std::fs::write(d.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        };
+        let lib = modules.join("libs/lib");
+        let inner = lib.join("modules/vendor/inner");
+        git_dir(&lib);
+        git_dir(&inner);
+        // A remote's HEAD below refs isn't a git dir.
+        std::fs::create_dir_all(lib.join("refs/remotes/origin")).unwrap();
+        std::fs::write(lib.join("refs/remotes/origin/HEAD"), "x").unwrap();
+        fn rel(p: &str) -> Vec<&OsStr> {
+            p.split('/').map(OsStr::new).collect()
+        }
+        let change = |p: &str| module_change(&modules, &rel(p));
+        assert_eq!(change("libs/lib/HEAD"), Some((lib.clone(), false)));
+        assert_eq!(change("libs/lib/index"), Some((lib.clone(), false)));
+        assert_eq!(change("libs/lib/packed-refs"), Some((lib.clone(), false)));
+        assert_eq!(change("libs/lib/refs/heads/main"), Some((lib.clone(), false)));
+        assert_eq!(change("libs/lib/refs/remotes/origin/main"), Some((lib.clone(), false)));
+        assert_eq!(change("libs/lib/modules/vendor/inner/HEAD"), Some((lib.clone(), true)));
+        for no in [
+            "libs/lib/refs/heads/main.lock",
+            "libs/lib/objects/ab/cd",
+            "libs/lib/logs/HEAD",
+            "libs/lib/config",
+            "libs/lib",
+            "libs",
+            "libs/lib/modules/vendor/inner/objects/ab/cd",
+        ] {
+            assert_eq!(change(no), None, "{no}");
+        }
+        let wanted = |p: &str| wanted_in_modules(&modules, &rel(p));
+        assert!(wanted_in_modules(&modules, &[]));
+        for yes in ["libs", "libs/lib", "libs/lib/refs/heads", "libs/lib/modules/vendor", "libs/lib/modules/vendor/inner/refs"] {
+            assert!(wanted(yes), "{yes}");
+        }
+        for no in ["libs/lib/objects", "libs/lib/objects/ab", "libs/lib/logs", "libs/lib/modules/vendor/inner/logs"] {
+            assert!(!wanted(no), "{no}");
+        }
+        // An embedded `.git` of a nested repository: the same rules.
+        assert_eq!(git_change(&lib, &rel("HEAD")), Some(false));
+        assert_eq!(git_change(&lib, &rel("modules/vendor/inner/index")), Some(true));
+        assert_eq!(git_change(&lib, &rel("hooks/pre-commit")), None);
+        assert_eq!(git_change(&lib, &[]), None);
+        // The work tree: `core.worktree`, relative to the git dir.
+        std::fs::write(lib.join("config"), "[core]\n\tworktree = ../../../work/libs/lib\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("work/libs/lib")).unwrap();
+        assert_eq!(
+            module_worktree(&lib),
+            Some(crate::paths::canonical(&dir.path().join("work/libs/lib")))
+        );
+        assert_eq!(module_worktree(&inner), None);
     }
 
     #[gitti_test::test]

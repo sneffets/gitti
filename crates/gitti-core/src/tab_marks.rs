@@ -9,14 +9,19 @@
 //! ones only as far as `status.showUntrackedFiles` lists them); "not pushed" is the
 //! branch's `ahead` count against its upstream, or — without an upstream, or with one that
 //! is gone — the commits no remote-tracking branch has, counted in-process
-//! ([`unpushed`]). A detached HEAD and a repository without any remote get no hollow
-//! circle: there is no branch to push, or nowhere to push it.
+//! ([`unpushed`]). A branch whose upstream is another local branch (`branch.<name>.remote
+//! = .`) counts its commits that branch doesn't have yet — git's `ahead` against it, the
+//! same as `git status` reports. A detached HEAD and a repository without any remote get
+//! no hollow circle: there is no branch to push, or nowhere to push it.
+
+use std::path::PathBuf;
 
 use gix::ObjectId;
 
 use crate::ops::Tracking;
 use crate::repo::Repo;
-use crate::status::Status;
+use crate::status::{Status, UntrackedFiles, parse_porcelain_v2};
+use crate::worktree::Worktree;
 
 /// Commits counted at most without an upstream ("10000+").
 pub const COUNT_LIMIT: usize = 10_000;
@@ -26,6 +31,9 @@ pub const COUNT_LIMIT: usize = 10_000;
 pub enum PushTarget {
     /// Ahead of its upstream (`origin/main`).
     Upstream(String),
+    /// Ahead of its upstream, a local branch of this repository (`branch.<name>.remote =
+    /// .`, e.g. after `git branch --track topic main`): commits that branch doesn't have.
+    LocalUpstream(String),
     /// The branch has no upstream: commits that no remote-tracking branch has.
     NoUpstream { branch: String },
     /// The upstream is configured, but its remote branch is gone: commits that no
@@ -49,6 +57,9 @@ impl Unpushed {
         let s = plural(self.count);
         match &self.target {
             PushTarget::Upstream(up) => format!("{n} commit{s} not pushed to {up}"),
+            PushTarget::LocalUpstream(up) => {
+                format!("{n} commit{s} not in {up} (the local branch it tracks)")
+            }
             PushTarget::NoUpstream { branch } => {
                 format!("{n} commit{s} on no remote ({branch} has no upstream branch)")
             }
@@ -130,15 +141,27 @@ pub fn describe_uncommitted(status: &Status) -> Option<String> {
 }
 
 /// The commits of the current branch that are not pushed, from the `tracking` a refresh
-/// read: its `ahead` count when it has an upstream; without one (or with a gone one) the
-/// commits that no remote-tracking branch has, counted in-process (no git process; at
-/// most [`COUNT_LIMIT`]). `None`: nothing to push, a detached or unborn HEAD, or no remote
-/// at all.
+/// read: its `ahead` count when it has an upstream (a remote one or a local branch);
+/// without one (or with a gone one) the commits that no remote-tracking branch has,
+/// counted in-process (no git process; at most [`COUNT_LIMIT`]). `None`: nothing to
+/// push, a detached or unborn HEAD, or no remote at all (and no local upstream).
 pub fn unpushed(repo: &Repo, tracking: &[Tracking]) -> Option<Unpushed> {
     let gix = repo.gix().ok()?;
     let name = gix.head_name().ok()??;
     let branch = name.as_bstr().to_string();
-    let branch = branch.strip_prefix("refs/heads/")?.to_string();
+    let branch = branch.strip_prefix("refs/heads/")?;
+    let head = gix.head_id().ok()?.detach();
+    unpushed_of(&gix, branch, head, tracking)
+}
+
+/// [`unpushed`] of branch `branch` (short name) at `head` — any worktree's: refs and
+/// configuration are shared by all worktrees of a repository.
+fn unpushed_of(
+    gix: &gix::Repository,
+    branch: &str,
+    head: ObjectId,
+    tracking: &[Tracking],
+) -> Option<Unpushed> {
     let t = tracking.iter().find(|t| t.branch == branch);
     if let Some(Tracking {
         upstream: Some(up),
@@ -147,21 +170,124 @@ pub fn unpushed(repo: &Repo, tracking: &[Tracking]) -> Option<Unpushed> {
         ..
     }) = t
     {
-        return (*ahead > 0).then(|| Unpushed {
+        let target = if is_local_upstream(gix, branch) {
+            PushTarget::LocalUpstream(up.clone())
+        } else {
+            PushTarget::Upstream(up.clone())
+        };
+        return (*ahead > 0).then_some(Unpushed {
             count: *ahead as usize,
-            target: PushTarget::Upstream(up.clone()),
+            target,
         });
     }
     if gix.remote_names().is_empty() {
         return None;
     }
-    let head = gix.head_id().ok()?.detach();
-    let count = count_on_no_remote(&gix, head);
+    let count = count_on_no_remote(gix, head);
     let target = match t.and_then(|t| t.upstream.clone()) {
         Some(upstream) => PushTarget::Gone { upstream },
-        None => PushTarget::NoUpstream { branch },
+        None => PushTarget::NoUpstream {
+            branch: branch.to_string(),
+        },
     };
     (count > 0).then_some(Unpushed { count, target })
+}
+
+/// What one repository's (or worktree's) mark stands for, in words.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Marks {
+    /// [`describe_uncommitted`]; `None`: nothing uncommitted.
+    pub uncommitted: Option<String>,
+    pub unpushed: Option<Unpushed>,
+}
+
+impl Marks {
+    pub fn of(status: &Status, unpushed: Option<&Unpushed>) -> Marks {
+        Marks {
+            uncommitted: describe_uncommitted(status),
+            unpushed: unpushed.cloned(),
+        }
+    }
+
+    /// The one mark shown (as [`mark`]).
+    pub fn mark(&self) -> Option<Mark> {
+        if self.uncommitted.is_some() {
+            Some(Mark::Uncommitted)
+        } else {
+            self.unpushed.as_ref().map(|_| Mark::Unpushed)
+        }
+    }
+
+    /// What it means, one line each (both when both hold); empty without a mark.
+    pub fn describe(&self) -> String {
+        let mut lines: Vec<String> = self.uncommitted.iter().cloned().collect();
+        lines.extend(self.unpushed.as_ref().map(Unpushed::describe));
+        lines.join("\n")
+    }
+}
+
+/// The marks of the worktrees other than the one `repo` was opened in (its own come with
+/// every refresh), by folder: one `git status` in each — in parallel, with the
+/// worktree's own `status.showUntrackedFiles` — and its unpushed commits counted
+/// in-process from `tracking` (refs are shared by all worktrees). Bare worktrees and ones
+/// whose folder is gone are left out, as is one whose status can't be read.
+pub fn other_worktrees(
+    repo: &Repo,
+    worktrees: &[Worktree],
+    tracking: &[Tracking],
+) -> Vec<(PathBuf, Marks)> {
+    let others: Vec<&Worktree> = worktrees
+        .iter()
+        .filter(|w| !w.is_current && !w.bare && w.prunable.is_none())
+        .collect();
+    if others.is_empty() {
+        return Vec::new();
+    }
+    let gix = repo.gix().ok();
+    std::thread::scope(|s| {
+        let jobs: Vec<_> = others
+            .iter()
+            .map(|wt| s.spawn(|| worktree_status(repo, wt)))
+            .collect();
+        others
+            .iter()
+            .zip(jobs)
+            .filter_map(|(wt, job)| {
+                let status = job.join().ok()??;
+                let unpushed = match (&gix, &wt.branch, wt.head) {
+                    (Some(gix), Some(branch), Some(head)) if !wt.detached => {
+                        unpushed_of(gix, branch, head, tracking)
+                    }
+                    _ => None,
+                };
+                Some((wt.path.clone(), Marks::of(&status, unpushed.as_ref())))
+            })
+            .collect()
+    })
+}
+
+/// `git status` in worktree `wt`, listing untracked files as its configuration says
+/// (unset: every file, as [`Repo::untracked_files`]).
+fn worktree_status(repo: &Repo, wt: &Worktree) -> Option<Status> {
+    let opts = gix::open::Options::default().permissions(crate::repo::gix_permissions());
+    let untracked = gix::open_opts(&wt.path, opts)
+        .ok()
+        .map(|r| {
+            let value = r.config_snapshot().string("status.showUntrackedFiles");
+            UntrackedFiles::from_config(value.map(|v| v.to_string()).as_deref())
+        })
+        .unwrap_or_default();
+    let git = repo.git().with_workdir(&wt.path);
+    let out = git
+        .run(&["status", "--porcelain=v2", "-z", untracked.arg()])
+        .ok()?;
+    Some(parse_porcelain_v2(&out.stdout))
+}
+
+/// The branch's upstream is a branch of this repository: `branch.<name>.remote` is `.`.
+fn is_local_upstream(repo: &gix::Repository, branch: &str) -> bool {
+    repo.branch_remote_name(branch, gix::remote::Direction::Fetch)
+        .is_some_and(|r| r.as_bstr() == ".")
 }
 
 /// Commits reachable from `head` that no remote-tracking branch has (at most
@@ -282,6 +408,14 @@ mod tests {
                 upstream: "origin/feature".into(),
             },
         };
+        let local = Unpushed {
+            count: 2,
+            target: PushTarget::LocalUpstream("main".into()),
+        };
+        assert_eq!(
+            local.describe(),
+            "2 commits not in main (the local branch it tracks)"
+        );
         assert_eq!(
             gone.describe(),
             "1 commit on no remote (the upstream origin/feature is gone)"

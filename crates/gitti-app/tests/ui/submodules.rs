@@ -6,7 +6,8 @@
 //! dirty state (refresh only, no git on navigation), Update to Remote Branch, the diff
 //! menu's submodule part, Remove Submodule… with its warning about local work. Check Out
 //! Commit in Submodule… (history picker without git calls, detached checkout, pointer
-//! change staged + committed records it, the warning before losing work).
+//! change staged + committed records it, the warning before losing work). A commit made
+//! inside a submodule (only its git dir changes) is seen by the file watcher.
 //!
 //! Lean scenarios (well under 2 s): the superproject is built once per suite (fast-import,
 //! one `submodule update`) and copied per scenario; font sweeps at the default and the
@@ -70,6 +71,7 @@ pub fn main() {
         ("add_local_path_asks", add_local_path_asks),
         ("sidebar_menus", sidebar_menus),
         ("checkout_commit", checkout_commit),
+        ("own_commit_is_seen", own_commit_is_seen),
         // Last: it commits to the template's `lib` (the submodules' origin).
         ("stage2_nested_remote_remove", stage2_nested_remote_remove),
     ];
@@ -642,5 +644,31 @@ fn checkout_commit(ui: &mut Ui) {
     ui.step("modalok");
     if submodules(ui).first().map(String::as_str) != Some("libs/lib modified") {
         fail!(ui, "after Check Out Anyway: {:?}", submodules(ui));
+    }
+}
+
+/// A commit inside a submodule changes no file of the work tree, only its git dir below
+/// `.git/modules/` (`libs/lib` is on a branch: its branch ref moves; the nested `inner`
+/// is detached: its HEAD): the file watcher sees both and the superproject shows the
+/// new state without a refresh by hand.
+fn own_commit_is_seen(ui: &mut Ui) {
+    let sup = ui.repo.clone();
+    let lib = sup.join("libs/lib");
+    git(&lib, &["commit", "-q", "--allow-empty", "-m", "lib: own commit"]);
+    let seen = ui.wait_real(1500, |ui| {
+        submodules(ui).first().map(String::as_str) == Some("libs/lib modified")
+            && working(ui).iter().any(|l| l.contains("libs/lib"))
+    });
+    if !seen {
+        let (s, w) = (submodules(ui), working(ui));
+        fail!(ui, "the submodule's own commit wasn't seen: {s:?} {w:?}");
+    }
+    let inner = lib.join("vendor/inner");
+    git(&inner, &["commit", "-q", "--allow-empty", "-m", "inner: own commit"]);
+    let seen = ui.wait_real(1500, |ui| {
+        submodules(ui).get(1).map(String::as_str) == Some("libs/lib/vendor/inner modified")
+    });
+    if !seen {
+        fail!(ui, "the nested submodule's own commit wasn't seen: {:?}", submodules(ui));
     }
 }

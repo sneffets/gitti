@@ -946,8 +946,16 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                 } else {
                     Style::new().fg(p.text)
                 };
-                // A sparse worktree: its mark before what it has checked out.
+                // Its mark (● uncommitted changes, else ○ commits not pushed — as after
+                // the repository name), a sparse worktree's mark, what it has checked out.
                 let mut right = Vec::new();
+                if let Some(mark) = app.worktree_marks(*index).and_then(|m| m.mark()) {
+                    let color = match mark {
+                        gitti_core::tab_marks::Mark::Uncommitted => p.warning,
+                        gitti_core::tab_marks::Mark::Unpushed => p.accent,
+                    };
+                    right.push(Span::styled(format!("{} ", mark.glyph()), Style::new().fg(color)));
+                }
                 if wt.sparse.is_some() {
                     let mark = gitti_core::worktree::Sparse::MARK;
                     right.push(Span::styled(format!("{mark} "), Style::new().fg(p.text_faint)));
@@ -1563,8 +1571,12 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
                 };
                 let more = if app.signers_files_known().is_some_and(|n| n > 0) {
                     "⏎: details · m: use an allowed signers file"
+                } else if app.own_signers_offered() == Some(true) {
+                    "⏎: details · m: allowed signers file with your key"
                 } else if app.signing_keys_offered() {
                     "⏎: details · m: Get Signing Keys from GitHub"
+                } else if app.own_signers_offered().is_some() {
+                    "⏎: details · m: allowed signers file with your key"
                 } else if app.signers_files_known().is_some() {
                     "⏎: details · m: how to check SSH signatures"
                 } else {
