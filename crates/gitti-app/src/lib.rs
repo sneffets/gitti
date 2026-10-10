@@ -836,6 +836,12 @@ pub mod testing {
         app.read(cx).script_submodules()
     }
 
+    /// The custom commands the active tab offers (`name [repo] git|sh: command`).
+    pub fn custom_commands(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_custom_commands()
+    }
+
     /// The subtrees the active tab knows (`prefix [squash] [removed] update [source]`).
     pub fn subtrees(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
         let app = ws.read(cx).active_app().expect("a repository tab");
@@ -1324,6 +1330,9 @@ actions!(
 // View ▸ Auto / One-Line / Two-Line Commit List; handlers in `app/commit_list.rs`.
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
+// Repository ▸ Run Custom Command… / Custom Commands…; handlers in `app/custom_commands.rs`.
+actions!(gitti, [RunCustomCommand, CustomCommands]);
+
 // Remote commands with a choice: the palette's second step (a remote, or the push options
 // dialog); handlers in `app/toolbar.rs`.
 actions!(gitti, [PushTo, PullFrom, PullWith, FetchFrom]);
@@ -1561,6 +1570,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Edit Global Config File…", EditGlobalConfig),
                 MenuItem::separator(),
                 MenuItem::action("Run Git Command…", RunGitCommand),
+                MenuItem::action("Run Custom Command…", RunCustomCommand),
+                MenuItem::action("Custom Commands…", CustomCommands),
                 MenuItem::action("Write Commit-Graph", WriteCommitGraph),
             ],
         ),

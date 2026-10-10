@@ -31,7 +31,8 @@
 //! `folders:ACTION[,PATH]` (the folder picker: expand / toggle / ok / cancel);
 //! `submodule:ACTION,PATH` (update / sync / open a submodule, `*` = all; `dismiss` the
 //! out-of-date banner); `subtree:ACTION,PREFIX` (the add / pull / merge / push / split
-//! dialog for a subtree); `ignore:PATH` ("Add to .gitignore…"
+//! dialog for a subtree); `custom:ACTION[,NAME]` (custom commands: `new`, `manage`,
+//! `edit,NAME`, `run,NAME`); `ignore:PATH` ("Add to .gitignore…"
 //! for a working-directory file), `lfstrack:PATH` ("Track with Git LFS…" for it; the
 //! dialog opens after a background check of git-lfs), `lfs:ACTION[,ARG]` (Git LFS
 //! health: `fix,setup|hooks|download`, `dismiss` the banner, `check` again),
@@ -485,6 +486,12 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
         "subtree" => {
             let (action, prefix) = arg.split_once(',').unwrap_or((arg, ""));
             app.update(cx, |a, cx| a.script_subtree(action, prefix, window, cx));
+        }
+        // `custom:ACTION[,NAME]` — custom commands: `new` / `manage` / `edit,NAME` /
+        // `run,NAME`.
+        "custom" => {
+            let (action, name) = arg.split_once(',').unwrap_or((arg, ""));
+            app.update(cx, |a, cx| a.script_custom(action, name, window, cx));
         }
         "modalok" => app.update(cx, |a, cx| a.script_confirm_modal(window, cx)),
         // `ask:PROMPT[|COMMAND]` — a credential prompt as the askpass helper forwards it,

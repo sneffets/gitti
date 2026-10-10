@@ -170,6 +170,11 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
 }
 
 impl Picker {
+    /// Greys entries with their reason (parallel to the items; see `disabled`).
+    pub(super) fn set_disabled(&mut self, disabled: Vec<Option<&'static str>>) {
+        self.disabled = disabled;
+    }
+
     /// For the key tests (`GittiApp::script_state`).
     pub(super) fn has_focus(&self, window: &Window, cx: &App) -> bool {
         self.input.read(cx).focus_handle(cx).is_focused(window)
@@ -764,8 +769,16 @@ impl GittiApp {
                 it.keys = crate::shortcuts::hint(action.as_ref(), cx);
             }
         }
+        // Custom commands last: their reasons go after the menu commands'.
+        let custom_from = items.len();
+        let custom_off = self.custom_palette_items(&mut items);
         // What can't act now stays findable, greyed with the reason.
-        let disabled = self.mark_unavailable(&mut items);
+        let mut disabled = self.mark_unavailable(&mut items);
+        for (i, why) in custom_off.into_iter().enumerate() {
+            if let (Some(why), Some(d)) = (why, disabled.get_mut(custom_from + 2 + i)) {
+                *d = Some(why);
+            }
+        }
         self.open_picker("Type a command…", items, window, cx);
         if let Some(p) = self.picker.as_mut() {
             p.synonyms = true;

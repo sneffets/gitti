@@ -501,7 +501,20 @@ impl GittiApp {
             .context_menu(move |menu, window, cx| {
                 let menu = match (&menu_ctx, stash) {
                     (_, Some(n)) => super::menus::stash_menu(menu, &app, n),
-                    (Some(c), None) => super::menus::commit_menu(menu, &app, c, window, cx),
+                    (Some(c), None) => {
+                        let menu = super::menus::commit_menu(menu, &app, c, window, cx);
+                        let given = super::custom_commands::Given {
+                            commit: Some(c.rev.clone()),
+                            ..Default::default()
+                        };
+                        super::custom_commands::menu_items(
+                            menu,
+                            &app,
+                            gitti_core::custom_command::Menu::Commit,
+                            given,
+                            cx,
+                        )
+                    }
                     (None, None) if helper => menu.item(
                         gpui_kit::component::menu::PopupMenuItem::new("Copy SHA").on_click({
                             let sha = sha.clone();

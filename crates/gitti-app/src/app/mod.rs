@@ -42,6 +42,7 @@ mod spell_ui;
 mod startup_ui;
 mod submodules;
 mod subtrees;
+mod custom_commands;
 mod tab_marks;
 mod test_state;
 mod toolbar;
@@ -3540,6 +3541,7 @@ impl Render for GittiApp {
         let root = self.worktree_actions(root, cx);
         let root = self.submodule_actions(root, cx);
         let root = self.subtree_actions(root, cx);
+        let root = self.custom_command_actions(root, cx);
         let root = self.spell_actions(root, cx);
         let root = self.toolbar_actions(root, cx);
         if self.repo.is_none() {

@@ -32,10 +32,10 @@ pub fn command_line(args: &[String]) -> String {
     out
 }
 
-/// The command line an entry shows: shell-quoted git arguments, or the description of
-/// work done without git.
+/// The command line an entry shows: shell-quoted git arguments, the description of work
+/// done without git, or a custom command's shell line (`sh: …`).
 fn entry_line(e: &LogEntry) -> String {
-    if e.in_process {
+    if e.in_process || e.program.is_some() {
         e.command_line()
     } else {
         command_line(&e.args)

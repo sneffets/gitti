@@ -558,8 +558,13 @@ impl GittiApp {
                 }
                 cx.notify();
             }))
-            .context_menu(move |menu, _, _| {
-                super::menus::remote_menu(menu, &app, &remote, head.clone())
+            .context_menu(move |menu, _, cx| {
+                let given = super::custom_commands::Given {
+                    remote: Some(remote.name.clone()),
+                    ..Default::default()
+                };
+                let menu = super::menus::remote_menu(menu, &app, &remote, head.clone());
+                super::custom_commands::menu_items(menu, &app, gitti_core::custom_command::Menu::Remote, given, cx)
             })
     }
 
@@ -683,7 +688,39 @@ impl GittiApp {
                     upstream: upstream.clone(),
                     head: head_branch.clone(),
                 };
-                super::menus::ref_menu(menu, &app, &menu_ref, &ctx, window, cx)
+                let menu = super::menus::ref_menu(menu, &app, &menu_ref, &ctx, window, cx);
+                // A branch's custom commands: a remote branch by its name there, with its
+                // remote.
+                let given = match menu_ref.kind {
+                    RefKind::LocalBranch => Some(super::custom_commands::Given {
+                        commit: Some(menu_ref.target.to_string()),
+                        branch: Some(menu_ref.short_name.clone()),
+                        ..Default::default()
+                    }),
+                    RefKind::RemoteBranch => {
+                        let (remote, branch) = gitti_core::custom_command::split_remote_branch(
+                            &menu_ref.short_name,
+                            &remotes,
+                        );
+                        Some(super::custom_commands::Given {
+                            commit: Some(menu_ref.target.to_string()),
+                            branch: Some(branch),
+                            remote,
+                            ..Default::default()
+                        })
+                    }
+                    _ => None,
+                };
+                match given {
+                    Some(g) => super::custom_commands::menu_items(
+                        menu,
+                        &app,
+                        gitti_core::custom_command::Menu::Branch,
+                        g,
+                        cx,
+                    ),
+                    None => menu,
+                }
             })
     }
 }

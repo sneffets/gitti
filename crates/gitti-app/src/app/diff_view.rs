@@ -850,7 +850,15 @@ impl GittiApp {
                         super::menus::diff_menu(menu, &app, &s, worktree, can_copy, &versions, cx);
                     let menu = super::lfs::diff_menu_items(menu, &app, cx);
                     let menu = super::lfs_fetch::diff_menu_items(menu, &app, cx);
-                    super::submodules::diff_menu_items(menu, &app, cx)
+                    let menu = super::submodules::diff_menu_items(menu, &app, cx);
+                    // The file right-clicked on (else the diff cursor's): its commands.
+                    super::custom_commands::menu_items(
+                        menu,
+                        &app,
+                        gitti_core::custom_command::Menu::File,
+                        Default::default(),
+                        cx,
+                    )
                 }
             })
     }
