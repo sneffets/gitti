@@ -41,6 +41,7 @@ mod compare;
 mod context_lines;
 mod custom_commands;
 mod file_list;
+mod from_commit;
 mod fs_paths;
 mod keybar;
 mod lfs;
@@ -157,6 +158,9 @@ pub enum Msg {
     /// The repository location on the clipboard for the open Clone / Add Submodule dialog
     /// (its title; `app/repo_cmds.rs`).
     CloneClipboard(&'static str, Option<String>),
+    /// A background load's result, applied to the app (`App::start_load` with a closure:
+    /// "Branches and Tags Containing…", a restore's plan — `app/from_commit.rs`).
+    Apply(Box<dyn FnOnce(&mut App) + Send>),
 }
 
 /// What to do after an operation succeeded.
@@ -1213,6 +1217,10 @@ impl App {
             Msg::OverwritePlan(plan) => {
                 self.loads_in_flight -= 1;
                 self.overwrite_planned(*plan);
+            }
+            Msg::Apply(f) => {
+                self.loads_in_flight -= 1;
+                f(self);
             }
             Msg::FileLoaded(file, result) => {
                 self.loads_in_flight -= 1;
@@ -3597,6 +3605,7 @@ impl App {
         items.push(
             MenuItem::new("Edit Commit Message…", move |app| app.edit_commit_message(&s)).key('e'),
         );
+        items.extend(self.restore_contains_items(c.id));
         items.push(MenuItem::separator());
         items.extend(self.subtree_ref_items(&sha, ObjectId::from_hex(sha.as_bytes()).ok(), None));
         items.push(MenuItem::separator());
@@ -3743,6 +3752,7 @@ impl App {
                 } else {
                     Vec::new()
                 };
+                items.extend(self.restore_file_items(src, file));
                 items.extend(self.lfs_menu_items());
                 items.push(MenuItem::new("Copy Path", move |app| app.copy(path)));
                 // The file's custom commands (the diff cursor's file).
@@ -3969,6 +3979,7 @@ impl App {
         items.extend(self.fs_paths_palette_items());
         items.extend(self.worktree_palette_items());
         items.extend(self.menu_palette_items());
+        items.extend(self.restore_contains_palette_items());
         items.extend(self.prepared_palette_items());
         if self.repo_state != RepoState::Clean || !self.working.conflicted.is_empty() {
             let clean = self.repo_state == RepoState::Clean;

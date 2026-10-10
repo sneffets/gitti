@@ -60,6 +60,7 @@ pub fn main() {
         ("branch_commit_stash_menus", branch_commit_stash_menus),
         ("open_recent", open_recent),
         ("open_this_version", open_this_version),
+        ("restore_and_containing", restore_and_containing),
         ("merge_unrelated_histories", merge_unrelated_histories),
         ("pull_diverged", pull_diverged),
         ("push_refused_ways_out", push_refused_ways_out),
@@ -294,7 +295,7 @@ fn startup_timings(ui: &mut Ui) {
         fail!(ui, "Start-up Timings: dialog {:?}", modal_title(ui));
     }
     let ws = ui.ws.clone();
-    let text = ui.cx.update(|cx| gitti_app::testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+    let text = ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
     let newest = text.find("gitti 9.9.2 — usable after 15.31 s — slow");
     let older = text.find("gitti 9.9.1 — usable after 2.54 s");
     if !matches!((newest, older), (Some(a), Some(b)) if a < b) {
@@ -1307,6 +1308,103 @@ fn open_this_version(ui: &mut Ui) {
     if editor_lines() != before {
         ui.fail("an editor was started for the working directory".into());
     }
+}
+
+/// Commit ▸ "Restore File or Folder from Selected Commit…": the path and the version
+/// before the commit, then a dialog saying what it writes; over a local change OK waits
+/// for the check box. Commit ▸ "Branches and Tags Containing Selected Commit…" lists
+/// them from the loaded history without git.
+fn restore_and_containing(ui: &mut Ui) {
+    let ids = ids_of(ui);
+    let dir = ui.workdir();
+    let numbered = |tag: &str| -> String { (0..30).map(|i| format!("line {i} {tag}\n")).collect() };
+    let live = |ui: &mut Ui| {
+        let ws = ui.ws.clone();
+        ui.cx.update(|cx| menus::modal_live(&ws, cx))
+    };
+    ui.step("select:1");
+    // The commit's menu and its file's menu in the diff offer them.
+    testing::menu_labels();
+    ui.click_on("commit-row:1", MouseButton::Right);
+    let labels = testing::menu_labels();
+    for want in [gitti_core::containing::MENU_LABEL, gitti_core::restore::PICK_LABEL] {
+        if !labels.iter().any(|l| l == want) {
+            fail!(ui, "commit menu lacks {want}: {labels:?}");
+        }
+    }
+    ui.quick("key:escape");
+    let file_row = ui
+        .frame()
+        .into_iter()
+        .find(|p| p.name.starts_with("diff-row:") && p.name.ends_with(":file") && p.visible().is_some())
+        .map(|p| p.name);
+    if let Some(row) = file_row {
+        testing::menu_labels();
+        ui.click_on(&row, MouseButton::Right);
+        let labels = testing::menu_labels();
+        for want in [gitti_core::restore::THIS_LABEL, gitti_core::restore::BEFORE_LABEL] {
+            if !labels.iter().any(|l| l == want) {
+                fail!(ui, "file menu lacks {want}: {labels:?}");
+            }
+        }
+        ui.quick("key:escape");
+    } else {
+        ui.fail("no file row of the commit shown".into());
+    }
+    ui.quick("action:gitti::RestoreFromCommit");
+    match modal_title(ui) {
+        Some(t) if t == format!("Restore from {}", &ids[5][..7]) => {}
+        other => fail!(ui, "path dialog: {other:?} {:?}", status(ui)),
+    }
+    ui.quick("field:0=f0.txt");
+    ui.quick("option:1");
+    ui.step("modalok");
+    match modal_title(ui) {
+        Some(t) if t == format!("Restore f0.txt from {}", &ids[4][..7]) => {}
+        other => fail!(ui, "restore dialog: {other:?} {:?}", status(ui)),
+    }
+    match live(ui) {
+        Some((text, _, None, _)) if text.contains("No uncommitted changes are overwritten") => {}
+        other => fail!(ui, "restore dialog says: {other:?}"),
+    }
+    ui.step("modalok");
+    if std::fs::read_to_string(dir.join("f0.txt")).unwrap_or_default() != numbered("v0") {
+        ui.fail("f0.txt is not the version before the commit".into());
+    }
+    match status(ui) {
+        Some((s, false)) if s.starts_with("Restored f0.txt from") => {}
+        other => fail!(ui, "status after the restore: {other:?}"),
+    }
+    // Back to the commit's version over that (now uncommitted) change: OK waits for the
+    // check box; with the index too.
+    ui.quick("action:gitti::RestoreFromCommit");
+    ui.quick("field:0=f0.txt");
+    ui.step("modalok");
+    match live(ui) {
+        Some((text, _, Some(_), _)) if text.contains("  f0.txt (modified)") => {}
+        other => fail!(ui, "lost change not asked for: {other:?}"),
+    }
+    ui.quick("check:0");
+    ui.quick("option:1");
+    match live(ui) {
+        Some((_, Some(ok), None, _)) if ok == "Restore and Stage" => {}
+        other => fail!(ui, "after ticking the box: {other:?}"),
+    }
+    ui.step("modalok");
+    if std::fs::read_to_string(dir.join("f0.txt")).unwrap_or_default() != numbered("w0") {
+        ui.fail("f0.txt is not the commit's version".into());
+    }
+
+    let n = ui.n_git();
+    ui.step("action:gitti::ShowContaining");
+    ui.no_git_since(n, "Branches and Tags Containing");
+    let ws = ui.ws.clone();
+    let text = ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx));
+    match (modal_title(ui), text) {
+        (Some(t), Some(text)) if t.starts_with("Branches and tags containing") && text.contains("  main (checked out)") => {}
+        other => fail!(ui, "containing window: {other:?}"),
+    }
+    ui.quick("modalok");
 }
 
 /// Merging a branch with its own history: git refuses, the error offers "Merge anyway

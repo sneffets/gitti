@@ -1327,6 +1327,10 @@ actions!(
     ]
 );
 
+// Commit ▸ Branches and Tags Containing / Restore File or Folder from Selected Commit;
+// handlers in `app/from_commit.rs`.
+actions!(gitti, [ShowContaining, RestoreFromCommit]);
+
 // View ▸ Auto / One-Line / Two-Line Commit List; handlers in `app/commit_list.rs`.
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
@@ -1609,6 +1613,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Open This Version in Editor (read-only)", OpenThisVersion),
                 MenuItem::action("Open Old Version in Editor (read-only)", OpenOldVersion),
+                MenuItem::action(gitti_core::restore::MENU_LABEL, RestoreFromCommit),
+                MenuItem::action(gitti_core::containing::SELECTED_LABEL, ShowContaining),
                 MenuItem::separator(),
                 MenuItem::action("Mark for Comparison", MarkCompare),
                 MenuItem::action("Swap Comparison Sides", SwapCompare),

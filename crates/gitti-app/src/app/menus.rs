@@ -279,6 +279,7 @@ pub(super) fn commit_menu(
             this.edit_commit_message(rev.clone(), w, cx)
         })
     });
+    let menu = super::from_commit::commit_menu_items(menu.separator(), app, &rev);
     let commit_id = gitti_core::ObjectId::from_hex(subtree_rev.as_bytes()).ok();
     super::subtrees::ref_items(menu, app, &subtree_rev, commit_id, None, window, cx)
     .separator()
@@ -380,6 +381,8 @@ pub(super) fn diff_menu(
             }));
         }
     }
+    // A commit's file into the working tree, as it is here or was before.
+    let menu = super::from_commit::diff_menu_items(menu, app, cx);
     let mut menu = menu
         .separator()
         .item(

@@ -25,6 +25,7 @@ mod push;
 mod repo_ops;
 mod repo_setup;
 mod repo_shapes;
+mod restore;
 mod runner;
 mod search;
 mod sha256;
