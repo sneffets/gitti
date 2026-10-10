@@ -104,6 +104,8 @@ impl GittiApp {
         let merging = self.repo_state == gitti_core::ops::RepoState::Merging;
         let blocker =
             gitti_core::ops::commit_blocker(self.repo_state, self.working.conflicted.len());
+        // The editor's rows for this frame's message, width and limit.
+        self.sync_editor_rows(cx);
         // Its natural height; the area around it shrinks it (`render_commit_area`).
         let app = cx.entity().downgrade();
         let have_h = self.commit_box_h;
@@ -148,9 +150,16 @@ impl GittiApp {
                     )
                     .child({
                         let editor_bounds = self.commit_editor_bounds.clone();
-                        canvas(move |b, _, _| editor_bounds.set(Some(b)), |_, _, _, _| {})
-                            .absolute()
-                            .inset_0()
+                        let visible = self.editor_rows.visible.clone();
+                        canvas(
+                            move |b, window, _| {
+                                editor_bounds.set(Some(b));
+                                visible.set(Some(b.intersect(&window.content_mask().bounds)));
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0()
                     })
                     .children(self.render_subject_overlay(cx))
                     .children({
@@ -257,11 +266,14 @@ impl GittiApp {
 
     /// The message's first line in bold over the editor's own (gpui-component's textarea
     /// has no styling hook for its text): same font, size and line height — bold
-    /// monospace keeps the advance — at the editor's text origin (incl. its scroll, as of
-    /// the last paint), clipped to its text area. No hitbox: editing, the cursor and
-    /// selections work underneath as before. Only for a subject that fits on one row
-    /// with room to spare: the textarea's wrap points are not exposed (it wraps narrower
-    /// than its text bounds), so a wrapping subject stays regular rather than doubled.
+    /// monospace keeps the advance — at the editor's text origin, clipped to its text
+    /// area. Painted after the textarea, from where it painted its text in the same frame
+    /// (incl. its scroll): positioned while rendering, from the previous paint, it trailed
+    /// one frame behind every scroll step — a doubled, jittering first line. No hitbox:
+    /// editing, the cursor and selections work underneath as before. Only for a subject
+    /// that fits on one row with room to spare: the textarea's wrap points are not exposed
+    /// (it wraps narrower than its text bounds), so a wrapping subject stays regular
+    /// rather than doubled.
     fn render_subject_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         use gpui_kit::component::ActiveTheme as _;
         let m = self.message.read(cx);
@@ -271,41 +283,66 @@ impl GittiApp {
             return None;
         }
         let text = m.text_bounds()?;
-        let wrapper = self.commit_editor_bounds.get()?;
         if first.contains('\t') || first.chars().any(|c| c >= '\u{2e80}') {
             return None;
         }
+        let mono = font(mono_font());
+        let font_size = self.settings.diff();
         let ts = cx.text_system();
-        let advance = ts
-            .advance(ts.resolve_font(&font(mono_font())), self.settings.diff(), 'm')
-            .ok()?
-            .width;
+        let advance = ts.advance(ts.resolve_font(&mono), font_size, 'm').ok()?.width;
         if advance * first.chars().count() as f32 > text.size.width - px(32.) {
             return None;
         }
-        let (pad_x, pad_y) = (px(1. + COMMIT_EDITOR_PAD_X), px(1. + COMMIT_EDITOR_PAD_Y));
-        let offset = text.origin - wrapper.origin - point(pad_x, pad_y);
+        let first = SharedString::from(first.to_string());
+        let run = TextRun {
+            len: first.len(),
+            font: Font {
+                weight: FontWeight::BOLD,
+                ..mono
+            },
+            color: cx.theme().foreground,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let line_h = self.settings.message_line_h();
+        let editor = self.message.clone();
         Some(
-            div()
-                .absolute()
-                .top(pad_y)
-                .bottom(pad_y)
-                .left(pad_x)
-                .right(pad_x)
-                .overflow_hidden()
-                .child(
-                    div()
-                        .absolute()
-                        .left(offset.x)
-                        .top(offset.y)
-                        .w(text.size.width)
-                        .text_size(self.settings.diff())
-                        .line_height(self.settings.message_line_h())
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(cx.theme().foreground)
-                        .child(first.to_string()),
-                )
-                .into_any_element(),
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, cx| {
+                    let Some(text) = editor.read(cx).text_bounds() else {
+                        return;
+                    };
+                    let inset = textarea_inset();
+                    let clip = Bounds {
+                        origin: bounds.origin + inset,
+                        size: size(
+                            bounds.size.width - inset.x * 2.,
+                            bounds.size.height - inset.y * 2.,
+                        ),
+                    };
+                    let line = window.text_system().shape_line(
+                        first.clone(),
+                        font_size,
+                        std::slice::from_ref(&run),
+                        None,
+                    );
+                    window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+                        line.paint(text.origin, line_h, TextAlign::Left, None, window, cx).ok();
+                        if crate::probe::enabled() {
+                            crate::probe::record(
+                                "message-subject".into(),
+                                Bounds::new(text.origin, size(line.width, line_h)),
+                                window.content_mask().bounds,
+                            );
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .inset_0()
+            .into_any_element(),
         )
     }
 
@@ -990,21 +1027,28 @@ impl GittiApp {
         }
     }
 
+    /// The commit box is shrunk to its summary line (no editor shown).
+    pub(super) fn commit_box_collapsed(&self) -> bool {
+        let shown = self.commit_box_shown_h();
+        !self.message_focused.get() && shown < self.commit_box_h && shown <= self.commit_box_min_h()
+    }
+
     /// The commit box above the worktree diff, clipped to `commit_box_shown_h`; fully
     /// shrunk it is the bold first line (`render_commit_summary`). It sits above the list,
     /// never over it, so it hides no diff rows.
     fn render_commit_area(&self, cx: &mut Context<Self>) -> AnyElement {
         let full = self.commit_box_h;
         let shown = self.commit_box_shown_h();
-        let collapsed =
-            !self.message_focused.get() && shown < full && shown <= self.commit_box_min_h();
+        let collapsed = self.commit_box_collapsed();
         v_flex()
             .id("commit-box")
             .flex_none()
             .probe("commit-box")
             .overflow_hidden()
-            // Unmeasured yet: its natural height.
-            .when(full > px(0.), |d| d.h(shown))
+            // Shown whole (or unmeasured yet): its natural height. Its height as measured
+            // would lag a frame behind when the editor grows by a row (typing, a longer
+            // message): the bottom row with the Commit button cut for that frame.
+            .when(full > px(0.) && shown < full, |d| d.h(shown))
             .when(shown < full, |d| d.border_b_1().border_color(cx.palette().border))
             .when(collapsed, |d| d.child(self.render_commit_summary(cx)))
             .when(!collapsed, |d| d.child(self.render_commit_box(cx)))
@@ -1014,7 +1058,8 @@ impl GittiApp {
     /// Wheel over the worktree detail panel: scrolling down first shrinks the commit box,
     /// scrolling up at the list's top grows it back; only then the list scrolls. A
     /// capture-phase window listener, so it runs before the list (and the editor) take the
-    /// event; not while the editor has the focus (the box stays whole then).
+    /// event; not while the editor has the focus (the box stays whole then), nor over an
+    /// editor with more text than it shows (it scrolls its text).
     fn commit_box_wheel_handler(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let app = cx.entity().downgrade();
         canvas(
@@ -1026,7 +1071,7 @@ impl GittiApp {
                     }
                     let dy = ev.delta.pixel_delta(window.line_height()).y;
                     let consumed = app
-                        .update(cx, |this, cx| this.commit_box_wheel(dy, cx))
+                        .update(cx, |this, cx| this.commit_box_wheel(dy, ev.position, cx))
                         .unwrap_or(false);
                     if consumed {
                         cx.stop_propagation();
@@ -1038,10 +1083,14 @@ impl GittiApp {
         .inset_0()
     }
 
-    /// Applies a wheel step of `dy` (negative = down) to the commit box; returns whether it
-    /// was used up there.
-    fn commit_box_wheel(&mut self, dy: Pixels, cx: &mut Context<Self>) -> bool {
-        if self.message_focused.get() || self.commit_box_h <= px(0.) {
+    /// Applies a wheel step of `dy` (negative = down) at `pos` to the commit box; returns
+    /// whether it was used up there. Over a message editor with more text than it shows,
+    /// the editor scrolls instead.
+    fn commit_box_wheel(&mut self, dy: Pixels, pos: Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        if self.message_focused.get()
+            || self.commit_box_h <= px(0.)
+            || self.wheel_scrolls_message(pos)
+        {
             return false;
         }
         let max = (self.commit_box_h - self.commit_box_min_h()).max(px(0.));

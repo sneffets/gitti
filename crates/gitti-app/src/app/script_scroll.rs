@@ -49,6 +49,11 @@ impl GittiApp {
             settings_y: -f32::from(self.settings_scroll.offset().y),
             settings_max: f32::from(self.settings_scroll.max_offset().y),
             message_y: -f32::from(self.message.read(cx).scroll_offset().y),
+            message_cursor: self
+                .message
+                .read(cx)
+                .cursor_layout()
+                .map(|(b, _)| (f32::from(b.top()), f32::from(b.bottom()))),
             picker: self.picker.as_ref().map(|p| p.script_selection()),
             collapsed,
             wrap: self.settings.wrap_lines,

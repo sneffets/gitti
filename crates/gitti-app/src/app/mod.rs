@@ -21,6 +21,7 @@ mod lfs_fetch;
 mod lfs_health;
 mod menu_cmds;
 mod menus;
+mod message_editor;
 mod modal;
 mod nav_keys;
 mod navigate;
@@ -406,6 +407,8 @@ pub struct GittiApp {
     /// Row limit of the growing message editor: the commit box takes at most about half of
     /// the panel (`fit_commit_editor`).
     editor_max_rows: usize,
+    /// Rows the message editor is fixed at, counted by gitti (`message_editor.rs`).
+    editor_rows: message_editor::EditorRows,
     /// Height of the worktree detail panel at the last `fit_commit_editor`.
     detail_panel_h: Pixels,
     /// How far the commit box is shrunk (0 = full): scrolling down over the worktree diff
@@ -689,6 +692,7 @@ impl GittiApp {
             commit_box_h: px(0.),
             commit_editor_bounds: Rc::default(),
             editor_max_rows: EDITOR_MAX_ROWS,
+            editor_rows: Default::default(),
             detail_panel_h: px(0.),
             commit_box_collapse: Cell::new(px(0.)),
             message_focused: Cell::new(false),
@@ -1165,8 +1169,9 @@ impl GittiApp {
         let rows = ((panel_h * 0.5 - chrome) / line_h).floor().clamp(2., EDITOR_MAX_ROWS as f32)
             as usize;
         if rows != self.editor_max_rows {
+            // The editor takes it over on the next render (`sync_editor_rows`).
             self.editor_max_rows = rows;
-            self.message.update(cx, |m, cx| m.set_auto_grow(1, rows, cx));
+            cx.notify();
         }
     }
 

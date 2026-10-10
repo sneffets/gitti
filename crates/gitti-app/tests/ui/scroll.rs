@@ -44,6 +44,9 @@ pub fn main() {
         ("diff_stage_whole_file_shows_the_next", diff_stage_whole_file_shows_the_next),
         ("sidebar_scroll", sidebar_scroll),
         ("commit_message_editor", commit_message_editor),
+        ("commit_message_long_scroll", commit_message_long_scroll),
+        ("commit_message_long_resize", commit_message_long_resize),
+        ("commit_message_rows_exact", commit_message_rows_exact),
         ("merge_editor_ends_and_keys", merge_editor_ends_and_keys),
         ("settings_scroll", settings_scroll),
         ("picker_keys_palette", picker_keys_palette),
@@ -63,6 +66,7 @@ pub fn main() {
         if matches!(
             name,
             "commit_list_reload"
+                | "commit_message_long_resize"
                 | "diff_stays_on_refresh_and_stage"
                 | "diff_stage_whole_file_shows_the_next"
         ) {
@@ -763,6 +767,258 @@ fn commit_message_editor(ui: &mut Ui) {
     ui.expect_no_git(git_before, "wheel over the editor");
     ui.step("msg:");
     ui.step("focuslist");
+}
+
+/// A subject and 30 body lines that wrap: longer than the editor shows.
+fn long_message() -> String {
+    let mut msg = String::from("Subject of a long message");
+    for i in 0..30 {
+        msg.push_str(&format!("\\nbody line {i} {}", "with some more words to wrap ".repeat(4)));
+    }
+    msg
+}
+
+/// Height of the commit message editor in a fresh frame.
+fn editor_h(ui: &mut Ui) -> Option<f32> {
+    find(&ui.frame(), "commit-editor").map(|e| f32::from(e.bounds.size.height))
+}
+
+/// A wheel step over `target`, every frame drawn until things settle.
+fn wheel_frames(ui: &mut Ui, target: &str, dy: f32) -> Vec<Vec<Probe>> {
+    let p = ui.frame();
+    let Some(r) = find(&p, target).and_then(Probe::visible) else {
+        ui.fail(format!("wheel: no visible {target}"));
+        return Vec::new();
+    };
+    let position = r.center();
+    testing::clear_probes();
+    ui.last_step = format!("wheel {dy} over {target}");
+    ui.cx
+        .update_window(ui.window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position,
+                    delta: ScrollDelta::Pixels(point(px(0.), px(-dy))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+    let mut frames = testing::take_frames();
+    ui.render();
+    frames.extend(testing::take_frames());
+    ui.settle();
+    frames.push(ui.frame());
+    frames
+}
+
+/// A message longer than the editor shows, with unstaged and staged changes below: wheel
+/// over the editor scrolls its text whether it has the focus or not (unfocused, the
+/// commit box shrank under the pointer instead), the box keeps its size; the bold
+/// subject drawn over the first line moves with the text in every frame (it trailed a
+/// frame behind: a doubled, jittering line while scrolling); typing at the end keeps the
+/// cursor in view. No git.
+fn commit_message_long_scroll(ui: &mut Ui) {
+    ui.step("select:0");
+    ui.quick(&format!("msg:{}", long_message()));
+    ui.quick("focusmsg");
+    let git_before = ui.git_commands().len();
+    let p = ui.frame();
+    let (Some(editor), Some(subject), Some(cbox)) = (
+        find(&p, "commit-editor"),
+        find(&p, "message-subject"),
+        find(&p, "commit-box"),
+    ) else {
+        ui.fail("no commit editor / bold subject / commit box".into());
+        return;
+    };
+    let subject_dy = top(&subject.bounds) - top(&editor.bounds);
+    let box_h = f32::from(cbox.bounds.size.height);
+    for focus in ["focusmsg", "focuslist"] {
+        ui.quick(focus);
+        let before = ui.scroll().message_y;
+        let frames = wheel_frames(ui, "commit-editor", 45.);
+        let y = ui.scroll().message_y;
+        if !close(y, before + 45.) {
+            ui.fail(format!("{focus}: wheel 45 over the editor moved its text {before} → {y}"));
+        }
+        for (k, f) in frames.iter().enumerate() {
+            if let (Some(e), Some(sub)) = (find(f, "commit-editor"), find(f, "message-subject")) {
+                let want = top(&e.bounds) + subject_dy - y;
+                if (top(&sub.bounds) - want).abs() > 0.5 {
+                    ui.fail(format!(
+                        "{focus}: frame {k} after the wheel: bold subject at {}, its line at {want}",
+                        top(&sub.bounds)
+                    ));
+                    break;
+                }
+            }
+        }
+        let p = ui.frame();
+        let h = find(&p, "commit-box").map(|b| f32::from(b.bounds.size.height));
+        if h != Some(box_h) || find(&p, "commit-summary").is_some() {
+            ui.fail(format!("{focus}: wheel over the editor changed the commit box: {box_h} → {h:?}"));
+        }
+        ui.wheel("commit-editor", -1e5);
+    }
+    // Typing at the end (page down to it): the cursor stays inside the editor.
+    ui.quick("focusmsg");
+    for _ in 0..6 {
+        ui.stroke("pagedown");
+    }
+    ui.type_text("x");
+    ui.stroke("enter");
+    ui.type_text("one more line");
+    let p = ui.frame();
+    let s = ui.scroll();
+    match (find(&p, "commit-editor").and_then(Probe::visible), s.message_cursor) {
+        (Some(e), Some((ct, cb))) if ct - s.message_y >= top(&e) && cb - s.message_y <= bottom(&e) => {}
+        (e, c) => ui.fail(format!(
+            "typed at the end: cursor {c:?} (scrolled by {}) outside the editor {e:?}",
+            s.message_y
+        )),
+    }
+    ui.expect_no_git(git_before, "scrolling and typing in the commit message");
+    ui.quick("msg:");
+    ui.quick("focuslist");
+}
+
+/// A message longer than the editor shows keeps the editor at its row limit over a window
+/// resize and a font size change (it dropped to one row until typed into), and a refresh
+/// by the file watcher leaves its rows, scroll position and cursor alone.
+fn commit_message_long_resize(ui: &mut Ui) {
+    let msg = long_message();
+    ui.step("select:0");
+    ui.quick(&format!("msg:{msg}"));
+    ui.quick("focusmsg");
+    let fresh_rows = |ui: &mut Ui, ctx: &str| {
+        let h = editor_h(ui);
+        // Set anew, the editor counts its rows from scratch.
+        ui.quick(&format!("msg:{msg}"));
+        let fresh = editor_h(ui);
+        let line_h = ui.metrics().message_line_h;
+        if h != fresh || fresh.is_none_or(|f| f < 2. * line_h) {
+            ui.fail(format!("{ctx}: editor {h:?} px high, {fresh:?} with the message set anew"));
+        }
+    };
+    for (w, h) in [(1100., 700.), (1500., 950.)] {
+        ui.resize(w, h);
+        fresh_rows(ui, &format!("resized to {w}x{h}"));
+    }
+    for fonts in ["20,22", "13,13"] {
+        ui.step(&format!("fonts:{fonts}"));
+        fresh_rows(ui, &format!("fonts {fonts}"));
+    }
+    ui.stroke("pagedown");
+    ui.wheel("commit-editor", 50.);
+    let before = (ui.scroll().message_y, ui.scroll().message_cursor, editor_h(ui));
+    let dir = ui.repo.clone();
+    std::fs::write(dir.join("outside.txt"), "x\n").unwrap();
+    let seen = ui.wait_real(1500, |ui| {
+        ui.is_idle() && ui.ui_state().unstaged.iter().any(|f| f == "outside.txt")
+    });
+    ui.settle();
+    let after = (ui.scroll().message_y, ui.scroll().message_cursor, editor_h(ui));
+    if !seen || before != after {
+        ui.fail(format!(
+            "refresh (seen {seen}): editor (scroll, cursor, height) {before:?} → {after:?}"
+        ));
+    }
+    ui.quick("msg:");
+    ui.quick("focuslist");
+}
+
+/// The editor's rows are the message's rows as the editor wraps it (gitti counts them
+/// itself, `message_editor.rs`): with the cursor at the end, the last row sits at the
+/// editor's bottom (no empty row below it), and an editor below its row limit does not
+/// scroll (no row hidden); a new line grows the editor and the box without a frame of
+/// the box cut at its old height. Messages whose lines wrap at different points, at two
+/// window sizes and font sizes.
+fn commit_message_rows_exact(ui: &mut Ui) {
+    ui.step("select:0");
+    // Lines of growing length out of words of different lengths: some end right before,
+    // at or after a wrap point. 3 lines stay below the row limit, 6 reach it.
+    let words = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff", "ggggggg"];
+    let message = |lines: usize| {
+        let mut msg = String::from("Subject");
+        for i in 0..lines {
+            let mut line = String::new();
+            let mut k = i;
+            while line.len() < 40 + i * 23 {
+                line.push_str(words[k % words.len()]);
+                line.push(' ');
+                k += 3;
+            }
+            msg.push_str(&format!("\\n{}", line.trim_end()));
+        }
+        msg
+    };
+    for (w, h, fonts) in [(1500., 950., "20,22"), (1000., 640., "13,13")] {
+        ui.resize(w, h);
+        ui.step(&format!("fonts:{fonts}"));
+        let line_h = ui.metrics().message_line_h;
+        ui.quick(&format!("msg:{}", long_message()));
+        let limit = editor_h(ui).unwrap_or_default();
+        ui.quick("focusmsg");
+        for lines in [3, 6] {
+            let ctx = format!("{w}x{h}, fonts {fonts}, {lines} lines");
+            ui.quick(&format!("msg:{}", message(lines)));
+            for _ in 0..4 {
+                ui.stroke("pagedown");
+            }
+            let p = ui.frame();
+            let s = ui.scroll();
+            let (Some(e), Some((_, cb))) = (find(&p, "commit-editor"), s.message_cursor) else {
+                ui.fail(format!("{ctx}: no editor / cursor"));
+                continue;
+            };
+            let gap = bottom(&e.bounds) - 8.5 - (cb - s.message_y);
+            if !(0. ..line_h).contains(&gap) {
+                ui.fail(format!("{ctx}: the last row ends {gap} px above the editor's text bottom"));
+            }
+            let eh = f32::from(e.bounds.size.height);
+            if eh < limit - 0.5 && s.message_y != 0. {
+                ui.fail(format!("{ctx}: editor {eh} px (limit {limit}) scrolls by {}", s.message_y));
+            }
+            if lines == 3 && eh >= limit - 0.5 {
+                ui.fail(format!("{ctx}: a short message fills the editor ({eh} px, limit {limit})"));
+            }
+            if lines == 3 {
+                // A new line grows the editor and the box: the Commit button stays whole
+                // in every frame (no frame of the box clipped at its old height).
+                testing::clear_probes();
+                let k = Keystroke::parse("enter").unwrap();
+                ui.cx
+                    .update_window(ui.window, |_, window, cx| window.dispatch_keystroke(k, cx))
+                    .unwrap();
+                ui.cx.run_until_parked();
+                let mut frames = testing::take_frames();
+                ui.render();
+                frames.extend(testing::take_frames());
+                ui.settle();
+                for (i, f) in frames.iter().enumerate() {
+                    let b = find(f, "commit-button");
+                    if b.is_none_or(|b| b.visible() != Some(b.bounds)) {
+                        ui.fail(format!("{ctx}: frame {i} after a new line: Commit button {b:?}"));
+                        break;
+                    }
+                }
+                if editor_h(ui).is_none_or(|h| h < eh + line_h - 0.5) {
+                    ui.fail(format!("{ctx}: the editor did not grow by a row for a new line"));
+                }
+            }
+        }
+        ui.quick("focuslist");
+    }
+    ui.quick("msg:");
+    ui.step("fonts:13,13");
+    ui.resize(1500., 950.);
 }
 
 // ------------------------------------------------------------------ merge editor
