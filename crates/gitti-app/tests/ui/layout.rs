@@ -55,6 +55,7 @@ pub fn main() {
         ("go_to_commit_picker", go_to_commit_picker),
         ("clone_clipboard_note", clone_clipboard_note),
         ("modal_sizing_sweep", modal_sizing_sweep),
+        ("modal_tab_reveals_field", modal_tab_reveals_field),
         ("toolbar_command_bar", toolbar_command_bar),
         ("palette_keys_column", palette_keys_column),
         ("commit_list_layouts", commit_list_layouts),
@@ -1865,6 +1866,60 @@ fn modal_sizing_sweep(ui: &mut Ui) {
             ui.step("cancel");
         }
     }
+    reset_point(ui);
+}
+
+/// Tab / Shift-Tab through a scrolling dialog (Add Worktree in the most cramped point,
+/// 800x500 with fonts 28/32): every field the focus lands on is scrolled whole into view
+/// of the scrolling part (its top at least, if taller), down and back up.
+fn modal_tab_reveals_field(ui: &mut Ui) {
+    let ctx = set_point(ui, (SIZES[2], FONTS[FONTS.len() - 1]));
+    ui.step("select:1");
+    ui.step("focuslist");
+    ui.step("action:gitti::AddWorktree");
+    let p = ui.check(&format!("{ctx}, opened"));
+    let fields = p.iter().filter(|q| q.kind() == "modal-field").count();
+    let scrolls = match (find(&p, "modal-body"), p.iter().rfind(|q| q.kind() == "modal-field")) {
+        (Some(b), Some(f)) => f.bounds.bottom() > b.bounds.bottom(),
+        _ => false,
+    };
+    if fields < 3 || !scrolls {
+        ui.fail(format!("{ctx}: want a scrolling dialog with fields, got {fields} fields, scrolls {scrolls}"));
+    }
+    // The first field has the focus when the dialog opens.
+    let mut seen: std::collections::BTreeSet<usize> =
+        find(&p, "modal-focus").is_some().then_some(0).into_iter().collect();
+    // `focusnext` / `focusprev`: Tab / Shift-Tab (the test window has no gpui-base `Root`).
+    for (dir, key) in [("down", "focusnext"), ("up", "focusprev")] {
+        for n in 0..fields * 3 {
+            ui.step(key);
+            let p = ui.check(&format!("{ctx}, {dir} {n}"));
+            let (Some(f), Some(body)) = (find(&p, "modal-focus"), find(&p, "modal-body")) else {
+                continue; // a button has the focus
+            };
+            let ix = p
+                .iter()
+                .filter(|q| q.kind() == "modal-field")
+                .find(|q| q.bounds == f.bounds)
+                .and_then(|q| q.index());
+            let top_shown = f.bounds.top() + px(0.5) >= body.bounds.top();
+            let whole = f.visible() == Some(f.bounds) && f.bounds.bottom() <= body.bounds.bottom() + px(0.5);
+            let taller = f.bounds.size.height > body.bounds.size.height;
+            if !(whole || (taller && top_shown)) {
+                ui.fail(format!(
+                    "{ctx}: {dir} {n}: focused field {ix:?} {:?} not in view of {:?}",
+                    f.bounds, body.bounds
+                ));
+            }
+            if dir == "down" {
+                seen.extend(ix);
+            }
+        }
+    }
+    if seen.len() < fields {
+        ui.fail(format!("{ctx}: Tab reached only fields {seen:?} of {fields}"));
+    }
+    ui.step("cancel");
     reset_point(ui);
 }
 

@@ -16,7 +16,8 @@
 //! `mergeeditor:N` (open the merge editor for conflicted file N), `clipboard` (print the
 //! clipboard text; merge window), `clip:TEXT` (the clipboard text the Clone dialog takes —
 //! a scripted run never reads the system clipboard for it), `fonts:UI,DIFF` (font sizes), `focusmsg` / `focuslist` /
-//! `focusdiff` (commit message editor / commit list / diff), `clickon:NAME[@X,Y]` /
+//! `focusdiff` (commit message editor / commit list / diff), `focusnext` / `focusprev` (what
+//! Tab / Shift-Tab do: the next / previous focusable element), `clickon:NAME[@X,Y]` /
 //! `rclickon:` / `dclickon:` (the probe NAME of a fresh frame — `NAME*` = first one
 //! starting with NAME — at its centre, or X,Y from its top left; a negative X / Y counts
 //! from its right / bottom edge), `clickrel:DX,DY`
@@ -447,6 +448,9 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
         "focuslist" => app.update(cx, |a, cx| a.script_focus_list(window, cx)),
         "focusdiff" => app.update(cx, |a, cx| a.script_focus_diff(window, cx)),
         "focuslog" => app.update(cx, |a, cx| a.script_focus_log(window, cx)),
+        // What Tab / Shift-Tab do (gpui-base's `Root`; the headless tests' window has none).
+        "focusnext" => window.focus_next(cx),
+        "focusprev" => window.focus_prev(cx),
         "discardall" => app.update(cx, |a, cx| a.script_discard_all(window, cx)),
         "field" => {
             let (n, text) = arg.split_once('=').unwrap_or((arg, ""));
