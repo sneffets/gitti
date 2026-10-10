@@ -474,9 +474,10 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
                     out.push(format!("{} is drawn outside {cell}", t.name));
                 }
             }
-            "merge-bar-text" => {
-                // 0–3 in the toolbar, 4–7 in the single view's folded sides bar.
-                let bar = if t.index().unwrap_or(0) < 4 {
+            "merge-bar-text" | "merge-encoding" => {
+                // 0–3 (and the encoding) in the toolbar, 4–7 in the single view's folded
+                // sides bar.
+                let bar = if t.kind() == "merge-encoding" || t.index().unwrap_or(0) < 4 {
                     "merge-toolbar"
                 } else {
                     "merge-folded"

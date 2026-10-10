@@ -154,6 +154,26 @@ fn merge_editor_save_single_view_questions_editor_and_resolve() {
     assert!(text.trim_end().ends_with("a.txt 2"), "{text}");
 }
 
+/// A file that is not UTF-8 (Latin-1 here, by its `working-tree-encoding`): the editor
+/// names the encoding, shows the text decoded and saves the result as the file's exact
+/// bytes.
+#[gitti_test::test]
+fn merge_editor_saves_a_latin1_file_exactly() {
+    let attrs = "a.txt working-tree-encoding=ISO-8859-1\n";
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "init", files: &[(".gitattributes", attrs), ("a.txt", "one\ntwo\nthree\n")] },
+        Commit { branch: "feat", from: Some(1), merge: None, msg: "feat", files: &[("a.txt", "one\nfeät\nthree\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "main", files: &[("a.txt", "one\nmäin\nthree\n")] },
+    ]);
+    let d = dir.path();
+    merge_feat(d);
+    let out = gitty(d, &format!("{OPEN};dump;press:2;press:s;state"));
+    let screen = screens(&out)[0];
+    assert!(screen.contains("Latin-1") && screen.contains("mäin") && screen.contains("feät"), "{out}");
+    assert!(states(&out)[0].contains("Saved a.txt"), "{out}");
+    assert_eq!(std::fs::read(d.join("a.txt")).unwrap(), b"one\nfe\xe4t\nthree\n");
+}
+
 /// ctrl-c + y quits without saving.
 #[gitti_test::test]
 fn merge_editor_quit_without_saving() {
@@ -198,7 +218,7 @@ fn merge_editor_conflict_keys_and_edit_mode_keys() {
 
 /// Single view, edit mode on the `<<<<<<<` line: ctrl-k empties a line, delete /
 /// backspace join, typing; ctrl-z undoes the last run of typing, ctrl-y redoes; S saves
-/// and marks resolved. The single view is remembered (a shared setting).
+/// and marks resolved.
 #[gitti_test::test]
 fn merge_editor_edits_the_result_in_place_in_the_single_view() {
     let dir = conflicted_repo();
@@ -225,8 +245,15 @@ fn merge_editor_edits_the_result_in_place_in_the_single_view() {
         "one\nmain\nfeat both\nthree\nFOUR\nfive\nsix\nseven\n"
     );
     assert_eq!(git(d, &["diff", "--name-only", "--diff-filter=U"]), "");
-    // Remembered: the next merge editor opens in the single view.
+}
+
+/// The single view is remembered (a shared setting): the next merge editor opens in it.
+/// (Apart from the editing run above: two gitty runs in one test came near its time limit.)
+#[gitti_test::test]
+fn merge_editor_remembers_the_single_view() {
+    let config = tempfile::tempdir().unwrap();
     let dir = conflicted_repo();
+    gitty_with(dir.path(), config.path(), "120x30", &format!("{OPEN};press:v;press:q"));
     let out = gitty_with(dir.path(), config.path(), "120x30", &format!("{OPEN};dump"));
     assert!(out.contains("single view — v or click here shows the sides"), "{out}");
 }

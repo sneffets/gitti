@@ -16,6 +16,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::Repo;
+use crate::diff::encoding::{decode_exact, encode_exact};
 use crate::merge::{
     ChunkKind, MergeDoc, Resolution, has_conflict_markers_sized, is_marker_line_sized,
     marker_kind, remap_regions,
@@ -68,17 +69,22 @@ pub struct MergeSession {
     /// in ours / theirs.
     pub top_rows: Vec<TopRow>,
     pub line_start: Vec<(usize, usize)>,
-    /// The result: the file as it will be saved (LF line endings, see `crlf`).
+    /// The result: the file as it will be saved (decoded, [`MergeDoc::encoding`]; LF line
+    /// endings when `crlf`).
     text: String,
     regions: Vec<Range<usize>>,
     states: Vec<ChunkState>,
     /// Runs of result lines (in changed chunks) by origin.
     runs: Vec<(Range<usize>, Origin)>,
-    /// The file's raw content as we last read / wrote it; anything else on disk was
-    /// written outside and gets taken in.
-    on_disk: Option<String>,
-    /// The file uses CRLF line endings: the session works with LF, saving converts back.
+    /// The file's bytes as we last read / wrote them; anything else on disk was written
+    /// outside and gets taken in.
+    on_disk: Option<Vec<u8>>,
+    /// Every line of every version ends with CRLF: the session works with LF, saving
+    /// converts back. (Mixed line endings stay in the text as they are.)
     crlf: bool,
+    /// The file on disk was changed outside to bytes [`MergeDoc::encoding`] can't hold
+    /// exactly: nothing was taken in and saving is refused (it would overwrite them).
+    foreign: Option<String>,
 }
 
 /// Conflict marker lines (of `size` characters) without their labels (git writes `HEAD`,
@@ -153,36 +159,51 @@ pub enum DiskChange {
     Same,
     /// Taken in: the frontend applies this edit to its editor (if it has one).
     TookIn(TextEdit),
+    /// Changed outside to bytes the file's encoding can't hold exactly (the note says
+    /// so): nothing taken in, saving is refused until the file is readable again.
+    Foreign(String),
+}
+
+/// Why a file changed outside can't be taken in ([`DiskChange::Foreign`]).
+fn foreign_note(doc: &MergeDoc) -> String {
+    format!(
+        "{} on disk is no longer {} text — not taken in, and Save would overwrite it; \
+         close the merge editor and open it again",
+        doc.path,
+        doc.encoding.label().unwrap_or("UTF-8")
+    )
 }
 
 impl MergeSession {
     /// Loads the conflict stages of `path`. If the file was edited since git wrote the
     /// conflict (by hand, an editor, an earlier save), the file on disk is the starting
     /// point, so nothing of it gets lost.
+    /// The file is read and written as exact bytes in one encoding chosen for all
+    /// versions ([`Repo::merge_doc_with_disk`]): nothing changes that wasn't edited.
     pub fn open(repo: Arc<Repo>, path: &str, sides: ConflictSides) -> Result<Self> {
-        let doc = repo.merge_doc(path)?;
-        // The file is the starting point when edited; one that is not UTF-8 (re-encoded
-        // by hand?) would be saved back with U+FFFD for its bytes: refused.
-        let on_disk = match std::fs::read(crate::paths::join_repo_path(repo.workdir(), path)) {
-            Ok(bytes) => {
-                Some(String::from_utf8(bytes).map_err(|_| crate::merge::not_utf8(path))?)
-            }
-            Err(_) => None,
-        };
+        let on_disk = std::fs::read(crate::paths::join_repo_path(repo.workdir(), path)).ok();
+        let doc = repo.merge_doc_with_disk(path, on_disk.as_deref())?;
         Ok(Self::new(repo, doc, sides, on_disk))
     }
 
+    /// `on_disk`: the file's bytes; if [`MergeDoc::encoding`] can't decode them the
+    /// session starts from the stages and refuses to save ([`Self::file_bytes`]).
     pub fn new(
         repo: Arc<Repo>,
         mut doc: MergeDoc,
         sides: ConflictSides,
-        on_disk: Option<String>,
+        on_disk: Option<Vec<u8>>,
     ) -> Self {
-        let crlf = doc
-            .chunks
-            .iter()
-            .flat_map(|c| c.ours.iter().chain(&c.theirs))
-            .any(|l| l.ends_with("\r\n"));
+        let disk_text = on_disk.as_deref().map(|b| decode_exact(b, doc.encoding));
+        let foreign = matches!(disk_text, Some(None)).then(|| foreign_note(&doc));
+        let disk_text = disk_text.flatten();
+        // CRLF only when no version has a line ending in a bare LF: then LF ↔ CRLF is exact.
+        let ends_crlf = |l: &str| !l.ends_with('\n') || l.ends_with("\r\n");
+        let stage_lines =
+            || doc.chunks.iter().flat_map(|c| c.base.iter().chain(&c.ours).chain(&c.theirs));
+        let crlf = stage_lines().any(|l| l.ends_with("\r\n"))
+            && stage_lines().all(|l| ends_crlf(l))
+            && disk_text.as_deref().is_none_or(|t| t.split_inclusive('\n').all(ends_crlf));
         if crlf {
             for c in &mut doc.chunks {
                 for l in c.base.iter_mut().chain(&mut c.ours).chain(&mut c.theirs) {
@@ -192,7 +213,8 @@ impl MergeSession {
         }
         let (generated, generated_regions) =
             doc.result_with_regions(&[], (&sides.ours, &sides.theirs));
-        let (text, regions) = match on_disk.as_deref().map(to_lf) {
+        let disk_lf = disk_text.map(|t| if crlf { to_lf(&t) } else { t });
+        let (text, regions) = match disk_lf {
             Some(disk)
                 if normalize_markers(&disk, doc.marker_size)
                     != normalize_markers(&generated, doc.marker_size) =>
@@ -230,6 +252,7 @@ impl MergeSession {
             runs: Vec::new(),
             on_disk,
             crlf,
+            foreign,
         };
         this.recompute();
         this
@@ -455,26 +478,60 @@ impl MergeSession {
         crate::paths::join_repo_path(self.repo.workdir(), &self.doc.path)
     }
 
-    /// The text as it goes to disk.
-    pub fn file_text(&self) -> String {
-        if self.crlf {
-            self.text.replace('\n', "\r\n")
-        } else {
-            self.text.clone()
+    /// The bytes as they go to disk: the text with its line endings, encoded exactly
+    /// ([`MergeDoc::encoding`]). `Err` when a character can't be written in the file's
+    /// encoding (typed or pasted, or a branch name in a conflict marker), or the file was
+    /// changed outside to something the editor can't hold (saving would overwrite it).
+    pub fn file_bytes(&self) -> Result<Vec<u8>> {
+        if let Some(note) = &self.foreign {
+            anyhow::bail!("{note}");
         }
+        let text = if self.crlf {
+            std::borrow::Cow::Owned(self.text.replace('\n', "\r\n"))
+        } else {
+            std::borrow::Cow::Borrowed(self.text.as_str())
+        };
+        let enc = self.doc.encoding;
+        encode_exact(&text, enc).map_err(|c| {
+            let line = self.text[..self.text.find(c).unwrap_or(0)].matches('\n').count() + 1;
+            anyhow::anyhow!(
+                "'{c}' (line {line}) can't be written in {} — the file's encoding; replace \
+                 it, or edit the file in an external editor",
+                enc.label().unwrap_or("UTF-8")
+            )
+        })
+    }
+
+    /// Why saving is refused: the file was changed outside to bytes the editor can't hold
+    /// ([`DiskChange::Foreign`]).
+    pub fn foreign(&self) -> Option<&str> {
+        self.foreign.as_deref()
+    }
+
+    /// The text of `bytes` as the session holds it (decoded, LF when `crlf`); `None` when
+    /// the file's encoding can't hold them exactly.
+    fn session_text(&self, bytes: &[u8]) -> Option<String> {
+        let text = decode_exact(bytes, self.doc.encoding)?;
+        Some(if self.crlf { to_lf(&text) } else { text })
     }
 
     /// Takes in a change of the file made outside since we last read / wrote it.
     pub fn disk_change(&mut self) -> DiskChange {
-        let disk = std::fs::read_to_string(self.full_path()).ok();
+        let disk = std::fs::read(self.full_path()).ok();
         if disk == self.on_disk {
             return DiskChange::None;
         }
         self.on_disk = disk.clone();
         let Some(disk) = disk else {
+            self.foreign = None;
             return DiskChange::Deleted;
         };
-        let new = to_lf(&disk);
+        let Some(new) = self.session_text(&disk) else {
+            let note = foreign_note(&self.doc);
+            self.foreign = Some(note.clone());
+            return DiskChange::Foreign(note);
+        };
+        self.foreign = None;
         if new == self.text {
             return DiskChange::Same;
         }
@@ -489,7 +546,9 @@ impl MergeSession {
         match &self.on_disk {
             Some(disk) => {
                 let size = self.doc.marker_size;
-                normalize_markers(&to_lf(disk), size) != normalize_markers(&self.text, size)
+                self.session_text(disk).is_none_or(|disk| {
+                    normalize_markers(&disk, size) != normalize_markers(&self.text, size)
+                })
             }
             None => true,
         }
@@ -498,19 +557,19 @@ impl MergeSession {
     /// Records that `written` is what we put on disk (so the next [`Self::disk_change`]
     /// doesn't mistake our own write for an outside one); returns what was recorded before,
     /// for [`Self::restore_on_disk`] if the write fails.
-    pub fn note_written(&mut self, written: String) -> Option<String> {
+    pub fn note_written(&mut self, written: Vec<u8>) -> Option<Vec<u8>> {
         self.on_disk.replace(written)
     }
 
-    pub fn restore_on_disk(&mut self, before: Option<String>) {
+    pub fn restore_on_disk(&mut self, before: Option<Vec<u8>>) {
         self.on_disk = before;
     }
 
     /// Writes the result to the working tree file now (on the calling thread).
     pub fn write(&mut self) -> Result<()> {
-        let text = self.file_text();
-        self.repo.write_worktree_file(&self.doc.path, &text)?;
-        self.on_disk = Some(text);
+        let bytes = self.file_bytes()?;
+        self.repo.write_worktree_file(&self.doc.path, &bytes)?;
+        self.on_disk = Some(bytes);
         Ok(())
     }
 
@@ -578,12 +637,13 @@ mod tests {
             ours_deleted: false,
             theirs_deleted: false,
             marker_size: crate::merge::DEFAULT_MARKER_SIZE,
+            encoding: Default::default(),
         };
         let sides = ConflictSides {
             ours: "o".into(),
             theirs: "t".into(),
         };
-        MergeSession::new(repo, doc, sides, on_disk.map(str::to_string))
+        MergeSession::new(repo, doc, sides, on_disk.map(|d| d.as_bytes().to_vec()))
     }
 
     #[gitti_test::test]
@@ -640,7 +700,43 @@ mod tests {
     fn crlf_is_kept_on_save() {
         let s = session("a\r\nx\r\n", "a\r\no\r\n", "a\r\nt\r\n", None);
         assert!(!s.text().contains('\r'));
-        assert!(s.file_text().contains("\r\n<<<<<<< o\r\n"));
+        let bytes = s.file_bytes().unwrap();
+        assert_eq!(bytes, b"a\r\n<<<<<<< o\r\no\r\n=======\r\nt\r\n>>>>>>> t\r\n");
+        // Mixed line endings: kept line by line (an LF line doesn't become CRLF).
+        let mut s = session("a\r\nb\nx\r\n", "a\r\nb\no\r\n", "a\r\nb\nt\r\n", None);
+        assert!(s.text().contains("a\r\nb\n"));
+        s.choose(1, Some(Resolution::Theirs));
+        assert_eq!(s.file_bytes().unwrap(), b"a\r\nb\nt\r\n");
+    }
+
+    /// A Latin-1 file: held decoded (one char per byte), written back byte for byte; a
+    /// typed character Latin-1 has no byte for is refused with the line; an outside change
+    /// to bytes UTF-8 can't hold is not taken in and blocks saving.
+    #[gitti_test::test]
+    fn eight_bit_file_is_written_exactly() {
+        let dec = |b: &[u8]| crate::diff::encoding::decode_8bit(b);
+        let mut s = session(&dec(b"a\n\xe9\n"), &dec(b"a\n\xf6o\n"), &dec(b"a\n\xe4t\n"), None);
+        s.doc.encoding = crate::diff::TextEncoding::Latin1;
+        s.choose(1, Some(Resolution::TheirsThenOurs));
+        assert_eq!(s.file_bytes().unwrap(), b"a\n\xe4t\n\xf6o\n");
+        s.set_text("a\n中\n".into());
+        let err = s.file_bytes().unwrap_err().to_string();
+        assert!(err.contains("'中' (line 2) can't be written in Latin-1"), "{err}");
+
+        let mut s = session("a\nx\n", "a\no\n", "a\nt\n", None);
+        // `session` drops its temp dir: a fresh one at the same place for the file.
+        let dir = s.repo.workdir().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        s.write().unwrap();
+        std::fs::write(s.full_path(), b"a\n\xe4\n").unwrap();
+        assert!(matches!(s.disk_change(), DiskChange::Foreign(n) if n.contains("no longer UTF-8")));
+        assert!(s.text().contains("<<<<<<<"));
+        assert!(s.write().is_err() && s.file_bytes().is_err());
+        // Readable again: taken in, saving works.
+        std::fs::write(s.full_path(), b"a\nfixed\n").unwrap();
+        assert!(matches!(s.disk_change(), DiskChange::TookIn(_)));
+        assert_eq!(s.file_bytes().unwrap(), b"a\nfixed\n");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[gitti_test::test]
@@ -671,7 +767,8 @@ mod tests {
         let git = "a\n<<<<<<<<<< HEAD\no\n==========\nt\n>>>>>>>>>> other\n";
         let mut doc = s.doc.clone();
         doc.marker_size = 10;
-        let again = MergeSession::new(s.repo.clone(), doc, s.sides.clone(), Some(git.into()));
+        let disk = Some(git.as_bytes().to_vec());
+        let again = MergeSession::new(s.repo.clone(), doc, s.sides.clone(), disk);
         assert_eq!(again.text(), "a\n<<<<<<<<<< o\no\n==========\nt\n>>>>>>>>>> t\n");
         assert!(!again.is_modified());
     }

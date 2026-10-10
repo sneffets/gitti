@@ -12,6 +12,8 @@ use similar::{Algorithm, DiffOp, capture_diff_slices};
 
 use crate::Repo;
 use crate::blobs::Version;
+use crate::diff::TextEncoding;
+use crate::diff::encoding::decode_exact;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkKind {
@@ -82,6 +84,9 @@ pub struct MergeDoc {
     /// Length of the conflict markers: the file's `conflict-marker-size` attribute, else
     /// [`DEFAULT_MARKER_SIZE`] (git writes and recognises markers of exactly this length).
     pub marker_size: usize,
+    /// How the versions' bytes are held as text ([`merge_encoding`]); the result is
+    /// written back in it ([`crate::diff::encoding::encode_exact`]).
+    pub encoding: TextEncoding,
 }
 
 impl MergeDoc {
@@ -329,12 +334,107 @@ fn push_chunk(chunks: &mut Vec<Chunk>, kind: ChunkKind, b: &[String], o: &[Strin
     });
 }
 
-/// Why the merge editor does not open a file that is not valid UTF-8.
-pub fn not_utf8(path: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "{path} is not UTF-8 — the merge editor would change its bytes; \
-         take ours / theirs or edit it in an external editor"
-    )
+/// The attributes of a conflicted file the merge editor needs, from one `check-attr`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeAttrs {
+    /// `conflict-marker-size` (default [`DEFAULT_MARKER_SIZE`]).
+    pub marker_size: usize,
+    /// `working-tree-encoding`, if set.
+    pub worktree_encoding: Option<String>,
+    /// An attribute that makes git convert the file on checkout (`text`, `eol`, `crlf`,
+    /// `ident`, `filter`, `working-tree-encoding`): the index stages are not the bytes the
+    /// working tree file has.
+    pub converts: bool,
+}
+
+impl Default for MergeAttrs {
+    fn default() -> Self {
+        MergeAttrs { marker_size: DEFAULT_MARKER_SIZE, worktree_encoding: None, converts: false }
+    }
+}
+
+/// The attributes `Repo::merge_attrs` asks for.
+const MERGE_ATTRS: [&str; 7] =
+    ["conflict-marker-size", "text", "eol", "crlf", "ident", "filter", "working-tree-encoding"];
+
+impl MergeAttrs {
+    /// From `git check-attr -z <MERGE_ATTRS…> -- path` output (`path NUL attr NUL value NUL`
+    /// per attribute).
+    pub fn parse(check_attr: &[u8]) -> Self {
+        let mut out = MergeAttrs::default();
+        let fields: Vec<&[u8]> = check_attr.split(|b| *b == 0).collect();
+        for [_path, attr, value] in fields.as_chunks::<3>().0 {
+            let (attr, value) = (*attr, String::from_utf8_lossy(value));
+            if value == "unspecified" {
+                continue;
+            }
+            match attr {
+                b"conflict-marker-size" => {
+                    out.marker_size = value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .unwrap_or(DEFAULT_MARKER_SIZE)
+                }
+                b"working-tree-encoding" => {
+                    out.converts = true;
+                    out.worktree_encoding = Some(value.into_owned());
+                }
+                // `-text` / `-crlf` / `-ident` / `-filter`: nothing converted.
+                _ if value == "unset" => {}
+                _ => out.converts = true,
+            }
+        }
+        out
+    }
+}
+
+/// The encoding a `working-tree-encoding` value names, if it is UTF-16: `UTF-16LE`,
+/// `UTF-16LE-BOM` → LE, `UTF-16BE…` → BE, plain `UTF-16` by the byte order mark of `first`
+/// (big-endian without one, as RFC 2781 says).
+fn utf16_encoding(name: &str, first: Option<&[u8]>) -> Option<TextEncoding> {
+    let n: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let rest = n.strip_prefix("UTF16")?;
+    Some(if rest.starts_with("LE") {
+        TextEncoding::Utf16Le
+    } else if rest.starts_with("BE") {
+        TextEncoding::Utf16Be
+    } else if first.is_some_and(|b| b.starts_with(&[0xFF, 0xFE])) {
+        TextEncoding::Utf16Le
+    } else {
+        TextEncoding::Utf16Be
+    })
+}
+
+/// The one encoding the merge editor holds a file in, so that every version (the three
+/// stages and the file on disk) decodes exactly ([`decode_exact`]): UTF-8 when they all are,
+/// UTF-16 for a `working-tree-encoding` naming it, else the 8-bit decoding (any bytes, e.g.
+/// Latin-1, Windows-1252, or Shift-JIS / mixed files shown as Windows-1252). `Err`: a
+/// UTF-16 version that isn't valid UTF-16.
+pub fn merge_encoding(
+    path: &str,
+    versions: &[&[u8]],
+    worktree_encoding: Option<&str>,
+) -> Result<TextEncoding> {
+    if let Some(enc) = worktree_encoding.and_then(|n| utf16_encoding(n, versions.first().copied()))
+    {
+        if versions.iter().all(|v| decode_exact(v, enc).is_some()) {
+            return Ok(enc);
+        }
+        anyhow::bail!(
+            "{path} is not valid {} (its working-tree-encoding) — the merge editor would \
+             change its bytes; take ours / theirs or edit it in an external editor",
+            enc.label().unwrap_or("UTF-16")
+        );
+    }
+    if versions.iter().all(|v| std::str::from_utf8(v).is_ok()) {
+        return Ok(TextEncoding::Utf8);
+    }
+    Ok(crate::diff::encoding::eight_bit(versions.iter().copied()))
 }
 
 impl Repo {
@@ -347,54 +447,126 @@ impl Repo {
             .unwrap_or(DEFAULT_MARKER_SIZE)
     }
 
-    /// Loads the three index stages of a conflicted file and merges them.
-    pub fn merge_doc(&self, path: &str) -> Result<MergeDoc> {
-        let v = self.read_version_bytes(&[
-            (Version::Stage(1), path.to_string()),
-            (Version::Stage(2), path.to_string()),
-            (Version::Stage(3), path.to_string()),
-        ])?;
-        // The editor works on text and saves the whole file: a stage that is not UTF-8
-        // would come back with U+FFFD for its bytes. Refused until the editor
-        // keeps bytes; the plain conflict actions (take ours / theirs) still work.
-        let v: Vec<Option<String>> = v
-            .into_iter()
-            .map(|b| b.map(String::from_utf8).transpose())
-            .collect::<Result<_, _>>()
-            .map_err(|_| not_utf8(path))?;
-        let [base, ours, theirs]: [Option<String>; 3] = v.try_into().map_err(|_| {
-            anyhow::anyhow!("could not read the conflict stages of {path}")
-        })?;
-        let unmerged = self
-            .git()
-            .run(&["ls-files", "-u", "--", path])?
-            .stdout_str();
-        let has_stage = |n: &str| {
-            unmerged
-                .lines()
-                .any(|l| l.split_whitespace().nth(2) == Some(n))
-        };
-        if (has_stage("2") && ours.is_none()) || (has_stage("3") && theirs.is_none()) {
-            anyhow::bail!("{path} is binary or too large for the merge editor");
-        }
-        Ok(MergeDoc {
-            path: path.to_string(),
-            chunks: merge_chunks(
-                base.as_deref().unwrap_or(""),
-                ours.as_deref().unwrap_or(""),
-                theirs.as_deref().unwrap_or(""),
-            ),
-            ours_deleted: !has_stage("2"),
-            theirs_deleted: !has_stage("3"),
-            marker_size: self.conflict_marker_size(path),
+    /// The attributes of `path` the merge editor needs (one `check-attr`).
+    pub fn merge_attrs(&self, path: &str) -> MergeAttrs {
+        let mut args = vec!["check-attr", "-z"];
+        args.extend(MERGE_ATTRS);
+        args.extend(["--", path]);
+        self.git()
+            .run(&args)
+            .map(|o| MergeAttrs::parse(&o.stdout))
+            .unwrap_or_default()
+    }
+
+    /// `core.autocrlf=true`: git writes text files with CRLF on checkout (in-process).
+    fn autocrlf_on_checkout(&self) -> bool {
+        self.gix().is_ok_and(|r| {
+            let v = r.config_snapshot().string("core.autocrlf");
+            let v = v.map(|v| v.to_string().to_ascii_lowercase());
+            matches!(v.as_deref(), Some("true" | "yes" | "on" | "1"))
         })
     }
 
-    /// Writes the merge result to the working tree file (whole: the text is the file, so
-    /// only text read exactly — [`Self::merge_doc`] refuses files that are not UTF-8).
-    pub fn write_worktree_file(&self, path: &str, text: &str) -> Result<()> {
-        std::fs::write(crate::paths::join_repo_path(self.workdir(), path), text)?;
+    /// Loads the three index stages of a conflicted file and merges them.
+    pub fn merge_doc(&self, path: &str) -> Result<MergeDoc> {
+        self.merge_doc_with_disk(path, None)
+    }
+
+    /// [`Self::merge_doc`] of the stages as the working tree file has them: git converts a
+    /// file on checkout (CRLF line endings with `core.autocrlf` / `eol`, its
+    /// `working-tree-encoding`, `ident`, a filter's smudge) — then each stage is read
+    /// through those conversions (`cat-file --filters`), so the result is written as is and
+    /// `git add` turns it back into what the index holds. `disk`: the file's bytes, which
+    /// the chosen [`MergeDoc::encoding`] must decode exactly too.
+    pub fn merge_doc_with_disk(&self, path: &str, disk: Option<&[u8]>) -> Result<MergeDoc> {
+        let unmerged = self.git().run(&["ls-files", "-u", "-z", "--", path])?.stdout;
+        // `mode oid stage\tpath`
+        let mut oids: [Option<String>; 3] = Default::default();
+        for entry in unmerged.split(|b| *b == 0) {
+            let head = entry.split(|b| *b == b'\t').next().unwrap_or_default();
+            let fields: Vec<&[u8]> = head.split(|b| *b == b' ').collect();
+            let stage = |b: &[u8]| std::str::from_utf8(b).ok()?.parse::<usize>().ok();
+            if let [_, oid, n] = fields[..]
+                && let Some(n @ 1..=3) = stage(n)
+            {
+                oids[n - 1] = Some(String::from_utf8_lossy(oid).into_owned());
+            }
+        }
+        let attrs = self.merge_attrs(path);
+        let stages: Vec<Option<Vec<u8>>> = if attrs.converts || self.autocrlf_on_checkout() {
+            let utf16 = (attrs.worktree_encoding.as_deref())
+                .is_some_and(|n| utf16_encoding(n, None).is_some());
+            self.read_stages_filtered(path, &oids, utf16)?
+        } else {
+            self.read_version_bytes(&[
+                (Version::Stage(1), path.to_string()),
+                (Version::Stage(2), path.to_string()),
+                (Version::Stage(3), path.to_string()),
+            ])?
+        };
+        let [base, ours, theirs]: [Option<Vec<u8>>; 3] = stages
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("could not read the conflict stages of {path}"))?;
+        if (oids[1].is_some() && ours.is_none()) || (oids[2].is_some() && theirs.is_none()) {
+            anyhow::bail!("{path} is binary or too large for the merge editor");
+        }
+        let versions: Vec<&[u8]> = [base.as_deref(), ours.as_deref(), theirs.as_deref(), disk]
+            .into_iter()
+            .flatten()
+            .collect();
+        let encoding = merge_encoding(path, &versions, attrs.worktree_encoding.as_deref())?;
+        let text = |b: Option<Vec<u8>>| -> String {
+            b.and_then(|b| decode_exact(&b, encoding)).unwrap_or_default()
+        };
+        Ok(MergeDoc {
+            path: path.to_string(),
+            chunks: merge_chunks(&text(base), &text(ours), &text(theirs)),
+            ours_deleted: oids[1].is_none(),
+            theirs_deleted: oids[2].is_none(),
+            marker_size: attrs.marker_size,
+            encoding,
+        })
+    }
+
+    /// Writes the merge result to the working tree file: its exact bytes, the whole file
+    /// ([`crate::merge_session::MergeSession::file_bytes`] encodes the text).
+    pub fn write_worktree_file(&self, path: &str, contents: impl AsRef<[u8]>) -> Result<()> {
+        std::fs::write(crate::paths::join_repo_path(self.workdir(), path), contents)?;
         Ok(())
+    }
+
+    /// The stages (by their ids) in working-tree form (`cat-file --filters`), one git each,
+    /// run side by side; `None` for a missing, binary or oversized stage. A file whose
+    /// working-tree-encoding is UTF-16 has NUL bytes there: not binary.
+    fn read_stages_filtered(
+        &self,
+        path: &str,
+        oids: &[Option<String>; 3],
+        utf16: bool,
+    ) -> Result<Vec<Option<Vec<u8>>>> {
+        let path_arg = format!("--path={path}");
+        std::thread::scope(|s| {
+            let jobs: Vec<_> = oids
+                .iter()
+                .map(|oid| {
+                    let path_arg = &path_arg;
+                    oid.as_ref().map(|oid| {
+                        s.spawn(move || {
+                            self.git().run_raw(&["cat-file", "--filters", path_arg, oid], None)
+                        })
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|job| {
+                    let Some(job) = job else { return Ok(None) };
+                    let out = job.join().map_err(|_| anyhow::anyhow!("cat-file panicked"))??;
+                    let bytes = out.stdout;
+                    let binary = !utf16 && bytes.iter().take(8000).any(|b| *b == 0);
+                    Ok((!binary && bytes.len() <= crate::blobs::MAX_BLOB_BYTES).then_some(bytes))
+                })
+                .collect()
+        })
     }
 }
 
@@ -420,6 +592,7 @@ mod tests {
             ours_deleted: false,
             theirs_deleted: false,
             marker_size: DEFAULT_MARKER_SIZE,
+            encoding: TextEncoding::Utf8,
         };
         assert_eq!(doc.conflicts().count(), 0);
         assert_eq!(doc.result_text(&[], ("o", "t")), "a\nB\nc\nd\nE\n");
@@ -436,6 +609,7 @@ mod tests {
             ours_deleted: false,
             theirs_deleted: false,
             marker_size: DEFAULT_MARKER_SIZE,
+            encoding: TextEncoding::Utf8,
         };
         use ChunkKind::*;
         assert_eq!(kinds(&doc.chunks), vec![Stable, Conflict, Stable]);
@@ -474,6 +648,7 @@ mod tests {
             ours_deleted: false,
             theirs_deleted: false,
             marker_size: DEFAULT_MARKER_SIZE,
+            encoding: TextEncoding::Utf8,
         };
         assert_eq!(
             doc.result_text(&[], ("o", "t")),
@@ -488,6 +663,7 @@ mod tests {
             ours_deleted: false,
             theirs_deleted: false,
             marker_size: DEFAULT_MARKER_SIZE,
+            encoding: TextEncoding::Utf8,
         }
     }
 
@@ -504,6 +680,38 @@ mod tests {
         let (text, regions) = d.result_with_regions(&[], ("o", "t"));
         assert_eq!(text, "a\nz\n");
         assert_eq!(regions, vec![0..1, 1..1, 1..2]);
+    }
+
+    /// `check-attr` output → what the merge editor needs: a conversion on checkout, the
+    /// working-tree-encoding and the marker size; `-text` converts nothing. The encoding of
+    /// the versions: UTF-8, UTF-16 by the attribute (plain `UTF-16` by the BOM), else 8-bit.
+    #[gitti_test::test]
+    fn merge_attrs_and_encoding() {
+        let out = |pairs: &[(&str, &str)]| -> Vec<u8> {
+            pairs.iter().flat_map(|(a, v)| format!("f\0{a}\0{v}\0").into_bytes()).collect()
+        };
+        let none = out(&[
+            ("conflict-marker-size", "unspecified"),
+            ("text", "unset"),
+            ("filter", "unspecified"),
+        ]);
+        assert_eq!(MergeAttrs::parse(&none), MergeAttrs::default());
+        let some = out(&[("conflict-marker-size", "12"), ("working-tree-encoding", "UTF-16")]);
+        let a = MergeAttrs::parse(&some);
+        let got = (a.marker_size, a.worktree_encoding.as_deref(), a.converts);
+        assert_eq!(got, (12, Some("UTF-16"), true));
+        assert!(MergeAttrs::parse(&out(&[("eol", "crlf")])).converts);
+
+        let enc = |v: &[&[u8]], w: Option<&str>| merge_encoding("f", v, w).unwrap();
+        assert_eq!(enc(&["ä".as_bytes(), b"a"], None), TextEncoding::Utf8);
+        assert_eq!(enc(&[b"\xe4", "ä".as_bytes()], None), TextEncoding::Latin1);
+        assert_eq!(enc(&[b"\x80"], None), TextEncoding::Windows1252);
+        assert_eq!(enc(&[b"\xff\xfea\x00"], Some("utf-16")), TextEncoding::Utf16Le);
+        assert_eq!(enc(&[b"\x00a"], Some("UTF-16")), TextEncoding::Utf16Be);
+        assert_eq!(enc(&[b"a\x00"], Some("UTF-16LE-BOM")), TextEncoding::Utf16Le);
+        assert_eq!(enc(&[b"\xe4"], Some("ISO-8859-1")), TextEncoding::Latin1);
+        let err = merge_encoding("f", &[b"a"], Some("UTF-16LE")).unwrap_err().to_string();
+        assert!(err.contains("f is not valid UTF-16 LE"), "{err}");
     }
 
     #[gitti_test::test]
