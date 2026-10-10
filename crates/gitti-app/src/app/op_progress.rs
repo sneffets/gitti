@@ -457,6 +457,11 @@ impl GittiApp {
         Some(s)
     }
 
+    /// Tests: the running operation's whole output so far (`None` while idle).
+    pub(crate) fn script_busy_output(&self) -> Option<String> {
+        self.busy.as_ref().map(|_| self.op_progress.output_text())
+    }
+
     /// Tests: whether the output window is open.
     pub(crate) fn script_output_open(&self) -> bool {
         self.op_output.open

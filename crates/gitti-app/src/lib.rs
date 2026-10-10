@@ -816,6 +816,12 @@ pub mod testing {
         app.read(cx).script_busy_text()
     }
 
+    /// The active tab's running operation's whole output so far (`None` while idle).
+    pub fn busy_output(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        let app = ws.read(cx).active_app()?;
+        app.read(cx).script_busy_output()
+    }
+
     /// Whether the active tab's output window of the running operation is open.
     pub fn busy_output_open(ws: &Entity<Workspace>, cx: &App) -> bool {
         ws.read(cx)
