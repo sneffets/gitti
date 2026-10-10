@@ -58,6 +58,22 @@ pub struct LogEntry {
     /// Loaded from the log file (earlier session), not run by this process.
     #[serde(skip)]
     pub previous_session: bool,
+    /// Work gitti did itself without git (deleting untracked files): `args` is a plain
+    /// description, not git arguments ([`LogEntry::command_line`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub in_process: bool,
+}
+
+impl LogEntry {
+    /// What the log shows for the entry: `git <args>`, or for work done without git its
+    /// description (`delete 10234 untracked files (in-process, no git)`).
+    pub fn command_line(&self) -> String {
+        if self.in_process {
+            format!("{} (in-process, no git)", self.args.join(" "))
+        } else {
+            format!("git {}", self.args.join(" "))
+        }
+    }
 }
 
 /// A command's run time in at most 7 characters (the log's time column): `840 ms`,
@@ -647,11 +663,41 @@ impl Git {
                 user,
                 output,
                 previous_session: false,
+                in_process: false,
             };
             // Before it is shown or persisted.
             redact_entry(&mut entry);
             log.push(entry);
         }
+    }
+
+    /// Logs work done without git that changes the repository (gitti deleting untracked
+    /// files itself) like a command: the Git Log shows it, the log file keeps it.
+    /// `what` describes it (`delete 10234 untracked files`), `output` says what failed.
+    pub fn log_in_process(&self, what: &str, start: Instant, ok: bool, output: &str) {
+        let Some(log) = &self.log else {
+            return;
+        };
+        let mut output = output.trim().to_string();
+        if output.len() > LOG_OUTPUT_LIMIT {
+            let mut cut = LOG_OUTPUT_LIMIT;
+            while !output.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            output.truncate(cut);
+            output.push_str("\n…");
+        }
+        log.push(LogEntry {
+            args: vec![what.to_string()],
+            code: if ok { 0 } else { 1 },
+            duration: start.elapsed(),
+            at: SystemTime::now(),
+            read_only: false,
+            user: false,
+            output,
+            previous_session: false,
+            in_process: true,
+        });
     }
 
     /// Runs git once. Inside a [`crate::process::with_progress`] scope a writing command
@@ -995,6 +1041,7 @@ mod log_file_tests {
             user: true,
             output: "To https://u:pw@h/r".into(),
             previous_session: false,
+            in_process: false,
         };
         std::fs::write(&path, serde_json::to_string(&old).unwrap() + "\n").unwrap();
         let again = CommandLog::default();

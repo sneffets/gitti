@@ -373,6 +373,42 @@ fn switch_blocked_by_an_untracked_file_stashes_it() {
     assert!(git(d, &["stash", "list"]).contains("untracked files replaced"));
 }
 
+/// The blocked switch offers the three ways out, each explained; `d` (Delete & Switch)
+/// deletes only the blocking file and switches.
+#[gitti_test::test]
+fn switch_blocked_offers_delete_and_force() {
+    let dir = feat_ahead();
+    let d = dir.path();
+    write_files(d, &[("x.txt", "ours\n"), ("keep.txt", "mine\n")]);
+    let out = gitty(d, "press:b;press:f;press:e;press:a;press:t;key:enter;dump;key:d;state");
+    let s = screens(&out);
+    assert!(s[0].contains("Stash & Switch") && s[0].contains("Delete & Switch"), "{out}");
+    assert!(s[0].contains("Force Switch") && s[0].contains("--discard-changes"), "{out}");
+    assert_eq!(git(d, &["branch", "--show-current"]).trim(), "feat");
+    assert_eq!(std::fs::read_to_string(d.join("x.txt")).unwrap(), "theirs\n");
+    assert_eq!(std::fs::read_to_string(d.join("keep.txt")).unwrap(), "mine\n");
+    assert_eq!(git(d, &["stash", "list"]), "", "deleted, not stashed");
+}
+
+/// Switching from a branch that ignores `target/` to one without that rule: the build
+/// output shows as untracked there, and the status line says why.
+#[gitti_test::test]
+fn switch_to_fewer_ignore_rules_says_why_files_are_untracked() {
+    let dir = import(&[
+        Commit { branch: "plain", from: None, merge: None, msg: "init", files: &[("a.txt", "a\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "ignore", files: &[(".gitignore", "target/\n")] },
+    ]);
+    let d = dir.path();
+    write_files(d, &[("target/debug/x.o", "x"), ("target/debug/y.o", "y")]);
+    let out = gitty(d, "press:b;press:p;press:l;press:a;press:i;key:enter;state");
+    let st = states(&out);
+    assert!(
+        st[0].contains("Switched to plain. 2 files that main ignores are not ignored in plain"),
+        "{out}"
+    );
+    assert!(st[0].contains("unstaged=2"), "{out}");
+}
+
 /// Deleting a branch not merged into HEAD (the sidebar's menu): git refuses, Force
 /// Delete is offered.
 #[gitti_test::test]

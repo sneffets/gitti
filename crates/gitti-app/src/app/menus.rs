@@ -3,14 +3,14 @@
 
 use gitti_core::ops::{CherryPickOptions, FastForward, MergeOptions, RemoteInfo, ResetMode};
 use gitti_core::ops::{UnrelatedHistories, UnrelatedRetry};
-use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget};
+use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget, SwitchWay};
 use gitti_core::worktree::BranchDeletion;
 use gitti_core::{RefInfo, RefKind};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 
 use super::{GittiApp, last_line};
-use super::modal::ModalSpec;
+use super::modal::{ModalLive, ModalSpec};
 
 type AppHandle = WeakEntity<GittiApp>;
 
@@ -1135,7 +1135,7 @@ impl GittiApp {
             cx,
             move |r| r.switch(&t),
             move |this, outcome, w, cx| match outcome {
-                SwitchOutcome::Done(msg) => this.set_info(last_line(&msg, "Checkout done")),
+                SwitchOutcome::Done(done) => this.set_info(done.status_line()),
                 SwitchOutcome::Blocked(block) => this.switch_blocked_dialog(target, block, w, cx),
                 SwitchOutcome::InOtherWorktree(path) => {
                     let name = target.name().to_string();
@@ -1145,6 +1145,8 @@ impl GittiApp {
         );
     }
 
+    /// git refused the switch: says what blocks it and offers the ways out
+    /// ([`SwitchWay`]: stash, delete / discard, force), each explained.
     fn switch_blocked_dialog(
         &mut self,
         target: SwitchTarget,
@@ -1153,40 +1155,25 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) {
         let name = target.name().to_string();
-        let list = |files: &[String]| {
-            let mut s: String = files.iter().take(8).map(|f| format!("    {f}\n")).collect();
-            if files.len() > 8 {
-                s.push_str(&format!("    … and {} more\n", files.len() - 8));
-            }
-            s
-        };
-        let mut message = String::new();
-        if !block.untracked.is_empty() {
-            message.push_str(&format!(
-                "These untracked files exist in {name} and would be replaced:\n{}\
-                 Your versions are saved in a stash first; all other untracked files stay.\n",
-                list(&block.untracked)
-            ));
-        }
-        if !block.local.is_empty() {
-            if !message.is_empty() {
-                message.push('\n');
-            }
-            message.push_str(&format!(
-                "Your local changes to these files conflict with {name}:\n{}\
-                 They are stashed, the switch is done and they are re-applied (on conflicts \
-                 the stash is kept).\n",
-                list(&block.local)
-            ));
-        }
+        let labels: Vec<&str> = SwitchWay::ALL.iter().map(|w| w.label(&block)).collect();
+        let live_block = block.clone();
+        let live_name = name.clone();
         let spec = ModalSpec::new(format!("Switch to {name}?"))
-            .message(message.trim_end().to_string())
-            .ok("Stash & Switch");
-        self.open_modal(spec, window, cx, move |this, _, w, cx| {
-            let (target, block) = (target.clone(), block.clone());
-            this.git_op("Checkout", w, cx, move |r| {
-                r.switch_moving_aside(&target, &block)
+            .message(block.describe(&name))
+            .options(&labels, 0)
+            .live(move |res| {
+                let way = SwitchWay::ALL[res.option.min(SwitchWay::ALL.len() - 1)];
+                ModalLive {
+                    text: way.explain(&live_block, &live_name),
+                    ok_label: Some(way.label(&live_block).to_string()),
+                    ..Default::default()
+                }
             })
+            .ok(SwitchWay::Stash.label(&block));
+        self.open_modal(spec, window, cx, move |this, res, w, cx| {
+            let way = SwitchWay::ALL[res.option.min(SwitchWay::ALL.len() - 1)];
+            let (target, block) = (target.clone(), block.clone());
+            this.git_op("Checkout", w, cx, move |r| r.switch_resolving(&target, &block, way))
         });
     }
 

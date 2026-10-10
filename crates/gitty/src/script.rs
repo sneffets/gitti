@@ -267,7 +267,8 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                     .command_log()
                     .snapshot()
                     .into_iter()
-                    .filter(|e| !e.previous_session)
+                    // git processes only (not work gitti did itself, `in_process`).
+                    .filter(|e| !e.previous_session && !e.in_process)
                     .collect();
                 let new = &entries[cmds_seen.min(entries.len())..];
                 println!("cmds: {}", new.len());

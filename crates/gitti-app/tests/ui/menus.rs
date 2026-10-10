@@ -49,6 +49,8 @@ pub fn main() {
         ("menu_entries", menu_entries),
         ("gitignore_dialog", gitignore_dialog),
         ("terminal_chooser", terminal_chooser),
+        ("discard_all_nested_repository", discard_all_nested_repository),
+        ("switch_blocked_ways", switch_blocked_ways),
         ("folder_rule_files", folder_rule_files),
         ("clone_and_init", clone_and_init),
         ("clone_from_clipboard", clone_from_clipboard),
@@ -77,6 +79,18 @@ pub fn main() {
             return d;
         }
         let ids = make_repo_ids(&d);
+        if name == "discard_all_nested_repository" {
+            // A cloned project inside the repository: an untracked folder with its own .git.
+            git(&d, &["init", "-q", "nested"]);
+            std::fs::write(d.join("nested/n.txt"), "n\n").unwrap();
+        }
+        if name == "switch_blocked_ways" {
+            // Branch `feat` (HEAD's commit + x.txt); an untracked x.txt here blocks it.
+            let mut s = Stream::new();
+            s.commit_on("refs/heads/feat", "Add x", &ids[5], &[("x.txt", Some("theirs\n"))]);
+            s.import(&d);
+            std::fs::write(d.join("x.txt"), "ours\n").unwrap();
+        }
         if name == "detached_head_greys_branch_commands" {
             // HEAD on the commit itself, written as git would (no git process).
             std::fs::write(d.join(".git/HEAD"), format!("{}\n", ids[5])).unwrap();
@@ -581,6 +595,92 @@ fn gitignore_dialog(ui: &mut Ui) {
     let w = ui.working();
     if !w.iter().any(|l| l.starts_with("S big.txt")) {
         fail!(ui, "removal of big.txt not staged: {w:?}");
+    }
+}
+
+/// Discard All with an untracked folder that is a repository of its own: the dialog says
+/// it is kept and offers a box to delete it too; unticked, everything else goes and the
+/// status line names what was kept (before, `git clean` skipped it silently and it stayed
+/// listed as if Discard had worked only partly); ticked, it goes too.
+fn discard_all_nested_repository(ui: &mut Ui) {
+    let dir = base().join("discard_all_nested_repository");
+    ui.quick("discardall");
+    match modal_title(ui) {
+        Some(t) if t.starts_with("Discard all unstaged changes in 3 file(s)?") => {}
+        other => fail!(ui, "Discard All with a nested repository: {other:?}"),
+    }
+    let ws = ui.ws.clone();
+    let message = ui.cx.update(|cx| testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("nested/") || !message.contains("separate git repository") {
+        fail!(ui, "the dialog does not name the nested repository: {message:?}");
+    }
+    ui.step("modalok");
+    ui.settle();
+    if !dir.join("nested/n.txt").exists() || dir.join("new.txt").exists() {
+        ui.fail("unticked: nested/ must stay, new.txt must go".into());
+    }
+    match status(ui) {
+        Some((s, false)) if s.contains("nested/ was kept") => {}
+        other => fail!(ui, "status after Discard All: {other:?}"),
+    }
+    let w = ui.working();
+    if w.iter().any(|l| l.starts_with("U ") && !l.contains("nested/")) {
+        fail!(ui, "left besides nested/: {w:?}");
+    }
+    ui.quick("discardall");
+    ui.quick("checkbox:0");
+    ui.step("modalok");
+    ui.settle();
+    if dir.join("nested").exists() {
+        ui.fail("ticked: nested/ must be deleted".into());
+    }
+    let w = ui.working();
+    if w.iter().any(|l| l.starts_with("U ")) {
+        fail!(ui, "left after deleting nested/: {w:?}");
+    }
+}
+
+/// A switch git refuses (an untracked x.txt that `feat` has): the dialog says what blocks
+/// it and offers the three ways out, each explained as it is chosen; Delete & Switch
+/// deletes only that file and switches.
+fn switch_blocked_ways(ui: &mut Ui) {
+    let dir = base().join("switch_blocked_ways");
+    ui.quick("palette:Switch Branch");
+    ui.quick("pick:feat");
+    ui.step("pickok");
+    ui.settle();
+    if modal_title(ui).as_deref() != Some("Switch to feat?") {
+        let t = modal_title(ui);
+        fail!(ui, "no dialog for the blocked switch: {t:?}");
+        return;
+    }
+    let ws = ui.ws.clone();
+    let message = ui.cx.update(|cx| testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("x.txt") || !message.contains("would be replaced") {
+        fail!(ui, "the dialog does not say what blocks: {message:?}");
+    }
+    let live = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_live(&ws, cx)).unwrap_or_default();
+    let first = live(ui);
+    if !first.0.starts_with("Stash & Switch:") || first.1.as_deref() != Some("Stash & Switch") {
+        fail!(ui, "first way: {first:?}");
+    }
+    ui.quick("option:2");
+    let force = live(ui);
+    if !force.0.contains("--discard-changes") || force.1.as_deref() != Some("Force Switch") {
+        fail!(ui, "third way: {force:?}");
+    }
+    ui.quick("option:1");
+    ui.step("modalok");
+    ui.settle();
+    let head = git_out(&dir, &["branch", "--show-current"]);
+    if head.trim() != "feat" {
+        fail!(ui, "Delete & Switch did not switch: {head:?}");
+    }
+    if std::fs::read_to_string(dir.join("x.txt")).unwrap_or_default() != "theirs\n" {
+        ui.fail("x.txt is not feat's version".into());
+    }
+    if !dir.join("new.txt").exists() {
+        ui.fail("an untracked file not in the way was deleted".into());
     }
 }
 

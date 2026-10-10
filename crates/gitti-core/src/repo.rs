@@ -1267,7 +1267,7 @@ impl Repo {
     /// git with every pathspec taken literally: a path is just that file, no glob (`[x]
     /// y.txt` must not also match `x y.txt`) and no magic (a file called `:x` is not the
     /// pathspec `:x`).
-    fn git_literal(&self) -> Git {
+    pub(crate) fn git_literal(&self) -> Git {
         self.git.with_env(&[("GIT_LITERAL_PATHSPECS", "1")])
     }
 
@@ -1349,64 +1349,6 @@ impl Repo {
         self.git
             .run_stdin(&args, Some(patch))
             .with_context(|| format!("patch was:\n{}", String::from_utf8_lossy(patch)))?;
-        Ok(())
-    }
-
-    /// Discards worktree changes of tracked files and deletes untracked ones. Untracked
-    /// files go first, and directories they leave empty with them: a tracked directory
-    /// replaced by an untracked file of the same name (or a file by a directory) can only
-    /// come back once that is out of the way. A submodule goes back to its recorded commit
-    /// (`git submodule update`); uncommitted changes inside it are left alone, as git does.
-    pub fn discard_paths(&self, entries: &[&StatusEntry]) -> Result<()> {
-        // An untracked folder entry (`dir/`, `status.showUntrackedFiles=normal`): `git
-        // clean` deletes the untracked files in it — not the ignored ones (a plain
-        // recursive delete would) and not a nested repository.
-        let folders: Vec<&str> = entries
-            .iter()
-            .filter(|e| e.untracked && e.path.ends_with('/'))
-            .map(|e| e.path.as_str())
-            .collect();
-        for chunk in folders.chunks(200) {
-            let mut args = vec!["clean", "-f", "-d", "-q", "--"];
-            args.extend_from_slice(chunk);
-            self.git_literal().run(&args)?;
-        }
-        for e in entries.iter().filter(|e| e.untracked && !e.path.ends_with('/')) {
-            let full = crate::paths::join_repo_path(&self.workdir, &e.path);
-            match std::fs::remove_file(&full) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err).with_context(|| format!("deleting {}", e.path)),
-            }
-            let mut dir = full.parent();
-            while let Some(d) = dir.filter(|d| *d != self.workdir && d.starts_with(&self.workdir)) {
-                if std::fs::remove_dir(d).is_err() {
-                    break; // not empty (or gone)
-                }
-                dir = d.parent();
-            }
-        }
-        let is_sub = |e: &StatusEntry| e.submodule.is_some() && !e.untracked;
-        let tracked: Vec<&str> = entries
-            .iter()
-            .filter(|e| !e.untracked && !is_sub(e))
-            .map(|e| e.path.as_str())
-            .collect();
-        let moved: Vec<&str> = entries
-            .iter()
-            .filter(|e| is_sub(e) && e.submodule.is_some_and(|f| f.commit_changed))
-            .map(|e| e.path.as_str())
-            .collect();
-        if !moved.is_empty() {
-            self.update_submodules(&moved)?;
-        }
-        // Chunked: command lines are limited (Windows: 32k characters).
-        let git = self.git_literal();
-        for chunk in tracked.chunks(200) {
-            let mut args = vec!["restore", "--worktree", "--"];
-            args.extend_from_slice(chunk);
-            git.run(&args)?;
-        }
         Ok(())
     }
 

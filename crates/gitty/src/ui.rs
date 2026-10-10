@@ -2833,7 +2833,7 @@ fn draw_log(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                     Style::new().fg(fg(if ok { p.success } else { p.danger })),
                 ),
                 Span::styled(
-                    format!("git {}", e.args.join(" ")),
+                    e.command_line(),
                     Style::new().fg(fg(p.text)),
                 ),
                 Span::styled(
