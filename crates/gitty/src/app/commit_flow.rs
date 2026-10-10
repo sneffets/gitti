@@ -266,6 +266,49 @@ impl App {
         items
     }
 
+    // ------------------------------------------------------------------ cherry-pick
+
+    /// "Cherry-pick with Options…" (as gitti's dialog): `-x` and / or `--no-commit`, each
+    /// combination a menu entry saying what follows.
+    pub(super) fn cherry_pick_options(&mut self, rev: String, short: String, merge: bool) {
+        use gitti_core::ops::CherryPickOptions;
+        let choices = [
+            (
+                "-x — commit, with \"(cherry picked from commit …)\" in the message",
+                'x',
+                CherryPickOptions { record_origin: true, no_commit: false },
+            ),
+            (
+                "--no-commit — only apply the changes; the message waits in the commit box",
+                'n',
+                CherryPickOptions { record_origin: false, no_commit: true },
+            ),
+            (
+                "--no-commit -x — both: the message with its origin line waits in the box",
+                'b',
+                CherryPickOptions { record_origin: true, no_commit: true },
+            ),
+        ];
+        let items = choices
+            .into_iter()
+            .map(|(label, key, opts)| {
+                let rev = rev.clone();
+                MenuItem::new(label, move |app: &mut App| {
+                    app.run_op("Cherry-pick", true, After::Nothing, move |r| {
+                        r.cherry_pick_with(&rev, merge, opts)
+                    })
+                })
+                .key(key)
+            })
+            .collect();
+        let title = if merge {
+            format!("Cherry-pick {short} (a merge: its changes against the first parent)")
+        } else {
+            format!("Cherry-pick {short}")
+        };
+        self.modal = Some(Modal::menu(title, items));
+    }
+
     // ------------------------------------------------------------------ quitting
 
     /// q / ctrl-c / Quit: asks first while an operation runs (it may be left unfinished).

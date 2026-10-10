@@ -1474,7 +1474,7 @@ impl GittiApp {
                 last.record_origin,
             )
             .check(
-                "--no-commit — only apply the changes to index and working directory",
+                "--no-commit — apply the changes only; the message waits in the commit box",
                 last.no_commit,
             )
             .ok("Cherry-pick");

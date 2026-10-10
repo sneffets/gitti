@@ -3272,6 +3272,14 @@ impl App {
             .key('c')
             .unless(head_or_busy),
         );
+        let (s, sh) = (sha.clone(), short.clone());
+        items.push(
+            MenuItem::new("Cherry-pick with Options…", move |app| {
+                app.cherry_pick_options(s, sh, merge)
+            })
+            .key('x')
+            .unless(head_or_busy),
+        );
         let s = sha.clone();
         items.push(
             MenuItem::new(format!("Revert {short}"), move |app| {
