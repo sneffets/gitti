@@ -21,6 +21,8 @@ use gix::bstr::ByteSlice as _;
 use crate::Repo;
 use crate::status::{Status, SubmoduleFlags};
 
+pub mod add;
+
 /// Nested submodules deeper than this are not listed (cycles through odd setups).
 const MAX_DEPTH: usize = 8;
 /// Commits counted per side of a pointer change; more show as "10000+".
@@ -1204,22 +1206,6 @@ impl Repo {
             &hex,
             "--",
         ])?;
-        Ok(format!("{}{}", out.stdout_str(), out.stderr))
-    }
-
-    /// `git submodule add [-b branch] -- <url> <path>`: clones `url` into `path` and stages
-    /// `.gitmodules` + the pointer (a commit records them). An empty `path` = git's
-    /// default (the URL's last component).
-    pub fn add_submodule(&self, url: &str, path: &str, branch: &str) -> Result<String> {
-        let mut args = vec!["submodule", "add"];
-        if !branch.is_empty() {
-            args.extend(["-b", branch]);
-        }
-        args.extend(["--", url]);
-        if !path.is_empty() {
-            args.push(path);
-        }
-        let out = self.git().run(&args)?;
         Ok(format!("{}{}", out.stdout_str(), out.stderr))
     }
 }

@@ -456,7 +456,7 @@ fn add_submodule_stages_it_with_its_default_path_and_branch() {
     let url = slash(&other);
     assert_eq!(gitti_core::submodule::default_path(&url), "other");
     // Empty path = git's default (the URL's last component), a tracked branch.
-    repo.add_submodule(&url, "", "dev").unwrap();
+    repo.add_submodule(&url, "", "dev", false).unwrap();
     let ws = repo.working_state().unwrap();
     let staged: Vec<_> = ws.staged.iter().map(|f| f.path()).collect();
     assert!(staged.contains(&".gitmodules") && staged.contains(&"other"), "{staged:?}");
@@ -467,9 +467,53 @@ fn add_submodule_stages_it_with_its_default_path_and_branch() {
     assert_eq!(added.checked_out, Some(fx.ids[fx.c.lib_four]));
 
     // An explicit path; a second add of the same path is git's error.
-    repo.add_submodule(&slash(&fx.lib), "vendor/lib2", "").unwrap();
+    repo.add_submodule(&slash(&fx.lib), "vendor/lib2", "", false).unwrap();
     assert!(sup.join("vendor/lib2/l.txt").is_file());
-    assert!(repo.add_submodule(&url, "other", "").is_err());
+    assert!(repo.add_submodule(&url, "other", "", false).is_err());
+}
+
+/// A local path where git refuses the `file` transport for submodules (here:
+/// `protocol.file.allow = user` from the environment git runs with; this repository's own
+/// `always` doesn't count — the submodule's clone doesn't read it): the dialog's context
+/// says so, a plain add fails with the refusal explained, an add the user allowed runs
+/// with `-c protocol.file.allow=always` and stores no such setting; `.gitmodules` records
+/// the path as typed.
+#[gitti_test::test]
+fn add_submodule_from_a_local_path_asks_for_the_file_transport() {
+    use gitti_core::submodule::add::FilePermission;
+    let fx = setup();
+    let sup = &fx.sup;
+    let config = sup.join(".git/config");
+    let mut text = fs::read_to_string(&config).unwrap();
+    text.push_str("[protocol \"file\"]\n\tallow = always\n");
+    fs::write(&config, &text).unwrap();
+    let mut repo = Repo::open(sup).unwrap();
+    // No global / system config of this machine.
+    repo.set_env(
+        [
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "protocol.file.allow"),
+            ("GIT_CONFIG_VALUE_0", "user"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect(),
+    );
+    let url = slash(&fx.lib);
+    let ctx = repo.submodule_add_context();
+    assert_eq!(ctx.file_allow.as_deref(), Some("user"));
+    assert_eq!(ctx.needs_permission(&url), FilePermission::Ask);
+    assert_eq!(ctx.needs_permission("https://example.com/lib.git"), FilePermission::NotNeeded);
+    let err = repo.add_submodule(&url, "vendor/a", "", false).unwrap_err().to_string();
+    assert!(err.contains("protocol.file.allow") && err.contains("not allowed"), "{err}");
+    repo.add_submodule(&url, "vendor/a", "", true).unwrap();
+    assert!(sup.join("vendor/a/l.txt").is_file());
+    let gitmodules = fs::read_to_string(sup.join(".gitmodules")).unwrap();
+    assert!(gitmodules.contains(&format!("url = {url}")), "{gitmodules}");
+    let after = fs::read_to_string(&config).unwrap();
+    assert_eq!(after.matches("always").count(), 1, "only this add allowed it: {after}");
 }
 
 /// `git status` calls of the nested-submodule kind (`--untracked-files=normal`) so far.

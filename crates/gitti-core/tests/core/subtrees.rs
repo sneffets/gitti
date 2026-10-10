@@ -152,6 +152,45 @@ fn subtrees_come_from_the_trailers_and_merges() {
     let _ = (fx.pull, fx.l2, fx.tip);
 }
 
+/// The commit header's subtree line: every commit that brought a subtree in (the add, the
+/// plain pull merge, the squash commit and its merge, the rejoin), none for an ordinary
+/// merge; a commit outside HEAD's history by its own trailers.
+#[gitti_test::test]
+fn commit_marks_name_every_subtree_update() {
+    use gitti_core::subtree::commit_mark;
+    let (h, fx) = history();
+    let (_tmp, dir, ids) = repo_with(&h);
+    let list = Repo::open(&dir).unwrap().subtrees().unwrap();
+    let mark = |c: C| commit_mark(&list, &ids[c], "");
+    assert_eq!(commit_mark(&list, &list[0].added, "").as_deref(), Some("Subtree lib/ added"));
+    assert_eq!(mark(fx.pull).as_deref(), Some("Subtree update of lib/"));
+    assert_eq!(mark(fx.rejoin).as_deref(), Some("Subtree lib/ split + rejoined"));
+    assert_eq!(mark(fx.sq2).as_deref(), Some("Subtree update of vendor/y/"));
+    assert_eq!(mark(fx.sq_merge2).as_deref(), Some("Subtree update of vendor/y/"));
+    assert_eq!(mark(fx.old_add).as_deref(), Some("Subtree old/ added"));
+    assert_eq!(mark(fx.tip), None);
+    assert_eq!(mark(fx.l2), None, "the subtree's own commits are no updates");
+    let lib = &list[0];
+    assert_eq!(lib.updates.len(), 3, "add, pull, rejoin: {:?}", lib.updates);
+    // Not in HEAD's history (the next pull): its trailers, if any.
+    let msg = trailers("Squashed 'tools/' changes from a..b", "tools", None, FAKE1);
+    assert_eq!(commit_mark(&[], &ids[fx.l3], &msg).as_deref(), Some("Subtree update of tools/"));
+    assert_eq!(commit_mark(&[], &ids[fx.l3], "lib 3"), None);
+}
+
+/// Split's folder chooser in gitty: every folder of a tree, level by level, with a limit.
+#[gitti_test::test]
+fn all_folders_of_a_tree() {
+    let (h, _) = history();
+    let (_tmp, dir, _) = repo_with(&h);
+    let repo = Repo::open(&dir).unwrap();
+    let (all, more) = repo.all_folders("HEAD", 100).unwrap();
+    assert_eq!(all, ["lib", "vendor", "vendor/y"]);
+    assert!(!more);
+    assert_eq!(repo.all_folders("main~1", 2).unwrap(), (vec!["lib".to_string(), "old".to_string()], true));
+    assert!(repo.all_folders("no-such-rev", 10).is_err());
+}
+
 /// "Merge into Subtree…" is offered for commits outside HEAD's history only, decided from
 /// the loaded history (no git); the dialog warns about a commit that doesn't continue the
 /// subtree's history.

@@ -494,7 +494,9 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
     }
 
     // 9. A dialog: inside the window's view of it; its title and buttons always shown
-    //    whole (the part between them scrolls), and what that part draws stays in it.
+    //    whole (the part between them scrolls), and what that part draws stays in it —
+    //    clear of its scrollbar's strip at the right edge (Linux / Windows draw the bar
+    //    all the time; it covered the fields' right edge).
     if let (Some(m), Some(body)) = (get("modal"), get("modal-body")) {
         if m.visible() != Some(m.bounds) {
             out.push(format!("modal {:?} is not whole in the window", m.bounds));
@@ -512,6 +514,11 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
                 && !contains(&body.bounds, &v)
             {
                 out.push(format!("{} is drawn outside modal-body", part.name));
+            }
+            if f32::from(part.bounds.right())
+                > f32::from(body.bounds.right()) - crate::scroll_guard::TRACK + TOL
+            {
+                out.push(format!("{} reaches under modal-body's scrollbar", part.name));
             }
         }
     }

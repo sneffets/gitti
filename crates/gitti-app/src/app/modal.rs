@@ -71,6 +71,10 @@ pub struct Modal {
     text_h: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// The part between title and buttons, scrolled when the window is too small for it.
     body_scroll: ScrollHandle,
+    /// Each field's bounds as last drawn (`None`: not shown), and the field whose focus
+    /// was last scrolled into view: Tab to a field out of view scrolls it in.
+    field_bounds: std::rc::Rc<std::cell::RefCell<Vec<Option<Bounds<Pixels>>>>>,
+    focus_shown: Option<usize>,
     ok_label: String,
     cancel_label: Option<String>,
     danger: bool,
@@ -474,6 +478,9 @@ impl GittiApp {
             Some((_, first)) => first.update(cx, |s, cx| s.focus(window, cx)),
             None => focus.focus(window, cx),
         }
+        // The first field has the focus and stays where it is: a long message above it is
+        // read first.
+        let focus_shown = (!fields.is_empty()).then_some(0);
         self.modal = Some(Modal {
             secret: any_secret,
             title: spec.title,
@@ -484,6 +491,8 @@ impl GittiApp {
             viewer: false,
             text_h: Default::default(),
             body_scroll: ScrollHandle::new(),
+            field_bounds: Default::default(),
+            focus_shown,
             ok_label: spec.ok_label,
             cancel_label: spec.cancel_label,
             danger: spec.danger,
@@ -1134,9 +1143,15 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let folders = self.render_folder_picker(window, cx);
+        self.reveal_modal_focus(window, cx);
         let modal = self.modal.as_ref()?;
         let p = cx.palette().clone();
         let s = self.settings.clone();
+        // The dialog's right padding holds the scrolling part's scrollbar: that part reaches
+        // into it and keeps its content clear of the bar, so no field's right edge lies
+        // under it (Linux / Windows draw the bar all the time) and nothing reflows when the
+        // part starts to scroll.
+        let gutter = window.rem_size().max(px(crate::scroll_guard::TRACK));
         let mut body = v_flex()
             .id("modal")
             .probe("modal")
@@ -1151,6 +1166,7 @@ impl GittiApp {
             .max_w(relative(0.95))
             .max_h(relative(0.85))
             .p_4()
+            .pr(gutter)
             .gap_3()
             .bg(p.bg_modal)
             .border_1()
@@ -1191,15 +1207,16 @@ impl GittiApp {
             .id("modal-body")
             .gap_3()
             .min_h_0()
+            .pr(gutter)
             .overflow_y_scroll()
             .track_scroll(&modal.body_scroll);
+        // The whole text: a long one scrolls with the rest of this part (its own scrolling
+        // box showed no bar — a cut text looked complete).
         if let Some(m) = &modal.message {
             middle = middle.child(
                 div()
                     .id("modal-message")
                     .flex_none()
-                    .max_h(px(260.))
-                    .overflow_y_scroll()
                     .whitespace_normal()
                     .text_color(p.text)
                     .child(m.clone()),
@@ -1217,7 +1234,8 @@ impl GittiApp {
                         .on_click(cx.listener(move |this, _, w, cx| this.modal_option(i, w, cx))),
                 )
             });
-            middle = middle.child(h_flex().flex_none().gap_1().children(buttons));
+            // Many options wrap (they ran under the scrollbar, past the dialog's edge).
+            middle = middle.child(h_flex().flex_none().flex_wrap().gap_1().children(buttons));
         }
         let mut fields = v_flex().id("modal-fields").flex_none().gap_3();
         // A field (and its fill-in buttons) only shown for some options.
@@ -1228,14 +1246,38 @@ impl GittiApp {
                 .and_then(Option::as_ref)
                 .is_some_and(|o| !o.contains(&modal.option))
         };
+        {
+            let mut b = modal.field_bounds.borrow_mut();
+            b.clear();
+            b.resize(modal.fields.len(), None);
+        }
         for (ix, (label, input)) in modal.fields.iter().enumerate() {
             if hidden(ix) {
                 continue;
             }
+            let bounds = modal.field_bounds.clone();
+            let focused = input.read(cx).focus_handle(cx).is_focused(window);
             fields = fields.child(
                 v_flex()
                     .probe(format!("modal-field:{ix}"))
+                    .relative()
                     .gap_1()
+                    .child(
+                        canvas(
+                            move |b, _, _| {
+                                if let Some(slot) = bounds.borrow_mut().get_mut(ix) {
+                                    *slot = Some(b);
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                    // Which field has the focus (for the tests: Tab scrolls it into view).
+                    .when(focused, |d| {
+                        d.child(div().absolute().inset_0().probe("modal-focus"))
+                    })
                     .when(!label.is_empty(), |d| {
                         d.child(
                             div()
@@ -1439,6 +1481,7 @@ impl GittiApp {
                     .probe("modal-body")
                     .relative()
                     .min_h_0()
+                    .mr(-gutter)
                     .child(middle)
                     .children(crate::scroll_guard::scrollbar("modal-body", &modal.body_scroll, false)),
             )
@@ -1462,6 +1505,43 @@ impl GittiApp {
 }
 
 impl GittiApp {
+    /// When the focus moved to another field of the open dialog (Tab, a click, a script)
+    /// and that field is not whole in view of the scrolling part, scrolls it in — by as
+    /// little as needed, before this frame is laid out (the bounds are the last frame's;
+    /// moving the focus changes no layout).
+    fn reveal_modal_focus(&mut self, window: &Window, cx: &App) {
+        let Some(m) = self.modal.as_mut() else {
+            return;
+        };
+        let focused = m
+            .fields
+            .iter()
+            .position(|(_, f)| f.read(cx).focus_handle(cx).is_focused(window));
+        if focused == m.focus_shown {
+            return;
+        }
+        let Some(ix) = focused else {
+            m.focus_shown = None;
+            return;
+        };
+        // Not drawn yet (the dialog just opened): next frame.
+        let Some(field) = m.field_bounds.borrow().get(ix).copied().flatten() else {
+            return;
+        };
+        m.focus_shown = Some(ix);
+        let view = m.body_scroll.bounds();
+        if let Some(y) = reveal_offset(
+            f32::from(m.body_scroll.offset().y),
+            f32::from(m.body_scroll.max_offset().y),
+            (f32::from(view.top()), f32::from(view.bottom())),
+            (f32::from(field.top()), f32::from(field.bottom())),
+        ) {
+            let mut offset = m.body_scroll.offset();
+            offset.y = px(y);
+            m.body_scroll.set_offset(offset);
+        }
+    }
+
     /// Field `ix` of the open dialog as drawn: a plain input, or with spell checking
     /// (`ModalSpec::spell`) its right-click menu and the marks over it.
     fn modal_field_input(
@@ -1548,4 +1628,43 @@ fn choice_button(i: usize, c: &Choice, cx: &mut Context<GittiApp>) -> AnyElement
                 .on_click(cx.listener(move |this, _, w, cx| this.modal_choice(i, w, cx))),
         )
         .into_any_element()
+}
+
+/// The scroll offset (negative or zero, px) that shows an element spanning `item` (top,
+/// bottom) in a scrolling part spanning `view` at offset `offset` (both as drawn at that
+/// offset), moving as little as needed; `None` when it is whole in view already. Taller
+/// than the view: its top is shown. Clamped to `0..=max` scrolled.
+fn reveal_offset(offset: f32, max: f32, view: (f32, f32), item: (f32, f32)) -> Option<f32> {
+    let (top, bottom) = view;
+    let delta = if item.0 < top {
+        top - item.0
+    } else if item.1 > bottom {
+        // Up by what sticks out below, but never past the item's top.
+        -((item.1 - bottom).min(item.0 - top))
+    } else {
+        return None;
+    };
+    let y = (offset + delta).clamp(-max.max(0.), 0.);
+    (y != offset).then_some(y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reveal_offset;
+
+    #[gitti_test::test]
+    fn reveal_offset_moves_as_little_as_needed() {
+        let view = (100., 300.);
+        // Whole in view: nothing.
+        assert_eq!(reveal_offset(0., 500., view, (120., 160.)), None);
+        // Below: up until its bottom is the view's bottom.
+        assert_eq!(reveal_offset(0., 500., view, (320., 360.)), Some(-60.));
+        // Above (scrolled past): down until its top is the view's top.
+        assert_eq!(reveal_offset(-200., 500., view, (40., 80.)), Some(-140.));
+        // Taller than the view: its top at the view's top.
+        assert_eq!(reveal_offset(0., 500., view, (350., 700.)), Some(-250.));
+        // Clamped to what can be scrolled.
+        assert_eq!(reveal_offset(0., 30., view, (320., 360.)), Some(-30.));
+        assert_eq!(reveal_offset(0., 0., view, (320., 360.)), None);
+    }
 }

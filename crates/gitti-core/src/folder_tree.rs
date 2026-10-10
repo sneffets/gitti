@@ -6,6 +6,10 @@
 //! Checking follows git's cone mode: a checked folder comes with everything below it, so
 //! the folders inside it show as included and are not listed again; a folder with checked
 //! folders below it is "partial" (git checks out its own files, not its other folders).
+//! [`FolderPicker::single`] picks one folder instead (Split Subtree's folder): checking
+//! one unchecks the other, the folders above it show partial.
+//!
+//! [`Repo::all_folders`]: every folder of a tree as one list (gitty's searchable list).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -73,6 +77,42 @@ impl Repo {
         }
         Ok(out)
     }
+
+    /// Every folder of `rev`'s tree (`a`, `a/b`, …; no submodules), level by level, each
+    /// level sorted case-insensitively — at most `limit`; `true` when there were more.
+    pub fn all_folders(&self, rev: &str, limit: usize) -> Result<(Vec<String>, bool)> {
+        let repo = self.gix()?;
+        let root = repo
+            .rev_parse_single(rev)
+            .map_err(gx)?
+            .object()
+            .map_err(gx)?
+            .peel_to_tree()
+            .map_err(gx)?;
+        let mut out = Vec::new();
+        let mut queue = std::collections::VecDeque::from([(String::new(), root.id)]);
+        while let Some((dir, id)) = queue.pop_front() {
+            let tree = repo.find_tree(id).map_err(gx)?;
+            let mut level = Vec::new();
+            for entry in tree.iter() {
+                let entry = entry.map_err(gx)?;
+                if entry.mode().is_tree() {
+                    let name = entry.filename().to_string();
+                    let path = if dir.is_empty() { name } else { format!("{dir}/{name}") };
+                    level.push((path, entry.object_id()));
+                }
+            }
+            level.sort_by_cached_key(|(p, _)| (p.to_lowercase(), p.clone()));
+            for (path, id) in level {
+                if out.len() == limit {
+                    return Ok((out, true));
+                }
+                out.push(path.clone());
+                queue.push_back((path, id));
+            }
+        }
+        Ok((out, false))
+    }
 }
 
 /// How a folder row's checkbox looks.
@@ -131,6 +171,8 @@ pub struct FolderPicker {
     checked: BTreeSet<String>,
     /// Path of the row with the cursor (`""` = the first row).
     cursor: String,
+    /// One folder at most ([`Self::single`]).
+    pub single: bool,
     /// Reading the tree failed.
     pub error: Option<String>,
 }
@@ -170,6 +212,33 @@ impl FolderPicker {
         }
         if let Some(first) = p.checked.iter().next() {
             p.cursor = first.clone();
+        }
+        p
+    }
+
+    /// A picker of one folder (`current`, empty = none) of `rev`'s tree: its parents start
+    /// expanded, the cursor on it.
+    pub fn single(rev: impl Into<String>, current: &str) -> Self {
+        let mut p = Self {
+            rev: rev.into(),
+            single: true,
+            ..Self::default()
+        };
+        p.expanded.insert(String::new());
+        let folder: String = current
+            .trim()
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != ".")
+            .collect::<Vec<_>>()
+            .join("/");
+        if !folder.is_empty() {
+            let mut dir = parent_of(&folder);
+            while !dir.is_empty() {
+                p.expanded.insert(dir.to_string());
+                dir = parent_of(dir);
+            }
+            p.cursor = folder.clone();
+            p.checked.insert(folder);
         }
         p
     }
@@ -215,7 +284,7 @@ impl FolderPicker {
     pub fn check_of(&self, path: &str) -> Check {
         if self.checked.contains(path) {
             Check::On
-        } else if self.checked.iter().any(|c| is_below(path, c)) {
+        } else if !self.single && self.checked.iter().any(|c| is_below(path, c)) {
             Check::Implied
         } else if self.checked.iter().any(|c| is_below(c, path)) {
             Check::Partial
@@ -262,6 +331,14 @@ impl FolderPicker {
     /// Checks / unchecks `path`. Checking takes the place of checked folders inside it; an
     /// implied folder (inside a checked one) doesn't change. Returns whether it changed.
     pub fn toggle(&mut self, path: &str) -> bool {
+        if self.single {
+            let was = self.checked.contains(path);
+            self.checked.clear();
+            if !was {
+                self.checked.insert(path.to_string());
+            }
+            return true;
+        }
         match self.check_of(path) {
             Check::Implied => false,
             Check::On => {
@@ -483,6 +560,28 @@ mod tests {
         assert_eq!(p.cursor_index(&p.rows()), p.rows().len() - 1);
         // Collapsed again, expanding src/app needs no new read.
         assert!(!p.set_expanded("src/app", true));
+    }
+
+    #[gitti_test::test]
+    fn single_folder_picks_one() {
+        let mut p = FolderPicker::single("HEAD", "./src/app/");
+        assert_eq!(p.to_load(), ["", "src"]);
+        p.loaded(vec![
+            (String::new(), Some(vec![entry("docs", false), entry("src", true)])),
+            ("src".into(), Some(vec![entry("app", true), entry("core", false)])),
+        ]);
+        assert_eq!(p.text(), "src/app");
+        let rows = p.rows();
+        assert_eq!(rows[p.cursor_index(&rows)].path, "src/app");
+        assert_eq!(p.check_of("src"), Check::Partial);
+        // Another folder takes its place, inside it too (nothing is implied).
+        assert!(p.toggle("src/app/deep"));
+        assert_eq!(p.folders(), ["src/app/deep"]);
+        assert!(p.toggle("docs"));
+        assert_eq!(p.text(), "docs");
+        assert!(p.toggle("docs"));
+        assert_eq!(p.text(), "");
+        assert!(FolderPicker::single("HEAD", "").text().is_empty());
     }
 
     #[gitti_test::test]

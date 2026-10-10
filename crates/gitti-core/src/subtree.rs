@@ -66,6 +66,9 @@ pub struct Subtree {
     pub update: Update,
     /// The commit that added it.
     pub added: ObjectId,
+    /// Every commit of this history that brought it in (add, pulls / merges — with
+    /// `--squash` the squash commit and its merge —, rejoins), oldest first.
+    pub updates: Vec<(ObjectId, Update)>,
     /// The folder is in HEAD's tree (it may have been removed since).
     pub present: bool,
     /// Where it comes from, as remembered by gitti / gitty ([`source`]).
@@ -222,6 +225,36 @@ pub fn resolve_commit(history: &crate::History, refs: &[crate::RefInfo], referen
         .filter(|id| !id.is_null() && crate::commit_search::hex_prefix_of(&prefix, id));
     let first = found.next()?;
     found.next().is_none().then_some(first)
+}
+
+/// The commit header's line for commit `id` with `message` when it brought a subtree in
+/// ("Subtree update of lib/"): from the subtrees of HEAD's history (also plain `-Xsubtree`
+/// merges, which have no trailers), else from its own `git-subtree-*` trailers (a commit
+/// of another branch). In-process, no git.
+pub fn commit_mark(subtrees: &[Subtree], id: &gix::oid, message: &str) -> Option<String> {
+    let found: Vec<String> = subtrees
+        .iter()
+        .filter_map(|s| {
+            let (_, update) = s.updates.iter().find(|(c, _)| c.as_ref() == id)?;
+            Some(match update {
+                Update::Added => format!("Subtree {}/ added", s.prefix),
+                Update::Merged => format!("Subtree update of {}/", s.prefix),
+                Update::Rejoined => format!("Subtree {}/ split + rejoined", s.prefix),
+            })
+        })
+        .collect();
+    if !found.is_empty() {
+        return Some(found.join(" · "));
+    }
+    let t = detect::parse_trailers(message)?;
+    let subject = message.lines().next().unwrap_or_default();
+    Some(if subject.starts_with("Add '") {
+        format!("Subtree {}/ added", t.dir)
+    } else if subject.starts_with("Split '") {
+        format!("Subtree {}/ split + rejoined", t.dir)
+    } else {
+        format!("Subtree update of {}/", t.dir)
+    })
 }
 
 /// A short commit id.

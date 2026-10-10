@@ -127,6 +127,7 @@ impl App {
                 ok_label: plan.ok_label,
                 blocked: plan.blocked,
                 matches: others.clone(),
+                ..Default::default()
             }
         });
         self.modal = Some(modal);

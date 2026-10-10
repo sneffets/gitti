@@ -67,13 +67,14 @@ pub fn main() {
         ("sidebar_banner_update", sidebar_banner_update),
         ("pointer_diff_rows", pointer_diff_rows),
         ("no_submodules", no_submodules),
+        ("add_local_path_asks", add_local_path_asks),
         ("sidebar_menus", sidebar_menus),
         ("checkout_commit", checkout_commit),
         // Last: it commits to the template's `lib` (the submodules' origin).
         ("stage2_nested_remote_remove", stage2_nested_remote_remove),
     ];
     common::run(tests, |name| {
-        if name == "no_submodules" {
+        if name == "no_submodules" || name == "add_local_path_asks" {
             make_repo(&base().join(name))
         } else {
             let dir = base().join(name).join("super");
@@ -314,6 +315,62 @@ fn no_submodules(ui: &mut Ui) {
     }
     if !visible(&ui.frame(), "side-section:submodules") {
         ui.fail("no SUBMODULES section after Add Submodule".into());
+    }
+}
+
+/// Add Submodule… with a local path where git refuses the `file` transport for
+/// submodules (the suite's global config says `protocol.file.allow = user` meanwhile; this
+/// repository's own `always` doesn't count — the submodule's clone doesn't read it): the
+/// dialog says so under the fields, OK asks first — what allowing does, what lands in
+/// .gitmodules — and "Allow for This Add" adds it with `-c protocol.file.allow=always`. A
+/// URL gets no note.
+fn add_local_path_asks(ui: &mut Ui) {
+    let dir = workdir(ui);
+    let config = dir.join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[protocol \"file\"]\n\tallow = always\n");
+    std::fs::write(&config, text).unwrap();
+    let global = PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").unwrap());
+    let saved = std::fs::read_to_string(&global).unwrap();
+    std::fs::write(&global, "[protocol \"file\"]\n\tallow = user\n").unwrap();
+    add_local_path_asks_steps(ui);
+    std::fs::write(&global, saved).unwrap();
+}
+
+fn add_local_path_asks_steps(ui: &mut Ui) {
+    let src = base().join("local-src");
+    init(&src);
+    commit_file(&src, "a.txt", "a\n", "local src one");
+    ui.step("palette:Add Submodule…");
+    ui.quick("field:0=https://example.com/team/lib.git");
+    let p = ui.check("add submodule, URL");
+    if visible(&p, "modal-live") {
+        ui.fail("a note under a URL".into());
+    }
+    ui.quick(&format!("field:0={}", src.display()));
+    ui.quick("field:1=deps/local");
+    let p = ui.check("add submodule, local path");
+    if !visible(&p, "modal-live") {
+        ui.fail("no note under a local path".into());
+    }
+    ui.step("modalok");
+    let title = modal_title(ui);
+    let message = modal_message(ui);
+    if title.as_deref() != Some("Allow a Local Path for This Submodule?")
+        || !message.contains("protocol.file.allow = user")
+        || !message.contains(".gitmodules will record")
+    {
+        fail!(ui, "no confirmation before the add: {title:?} {message}");
+    }
+    if !submodules(ui).is_empty() {
+        fail!(ui, "added before the confirmation: {:?}", submodules(ui));
+    }
+    ui.step("modalok");
+    if submodules(ui) != ["deps/local up to date"] {
+        fail!(ui, "after Allow for This Add: {:?}", submodules(ui));
+    }
+    if !ui.git_commands().iter().any(|c| c.contains("protocol.file.allow=always") && c.contains("submodule add")) {
+        fail!(ui, "no -c protocol.file.allow=always: {:?}", ui.git_commands());
     }
 }
 

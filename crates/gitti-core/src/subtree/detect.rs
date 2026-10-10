@@ -69,6 +69,8 @@ struct Found {
     time: i64,
     update: Update,
     added: ObjectId,
+    /// Every commit that brought it in, oldest first.
+    updates: Vec<(ObjectId, Update)>,
 }
 
 /// The subtrees found in the history of one HEAD, kept to fold newer commits into.
@@ -102,6 +104,7 @@ impl Scan {
                 time: f.time,
                 update: f.update,
                 added: f.added,
+                updates: f.updates.clone(),
                 present: true,
                 source: None,
             })
@@ -156,6 +159,8 @@ impl Scan {
                 Some(k) => (Update::Merged, k.added),
                 None => (Update::Added, e.id),
             };
+            let mut updates = known.map(|k| k.updates).unwrap_or_default();
+            updates.push((e.id, update));
             self.found.insert(
                 t.dir.clone(),
                 Found {
@@ -165,6 +170,7 @@ impl Scan {
                     time: e.time,
                     update,
                     added,
+                    updates,
                 },
             );
             return;
@@ -185,6 +191,8 @@ impl Scan {
             (Some(k), Update::Rejoined) => k.added,
             _ => e.id,
         };
+        let mut updates = known.map(|k| k.updates).unwrap_or_default();
+        updates.push((e.id, update));
         self.found.insert(
             t.dir.clone(),
             Found {
@@ -194,6 +202,7 @@ impl Scan {
                 time: e.time,
                 update,
                 added,
+                updates,
             },
         );
     }
@@ -207,6 +216,7 @@ impl Scan {
             if let Some(f) = self.found.get_mut(&dir) {
                 f.commit = e.id;
                 f.time = e.time;
+                f.updates.push((e.id, f.update));
             }
             return;
         }
@@ -240,6 +250,7 @@ impl Scan {
                 f.commit = e.id;
                 f.time = e.time;
                 f.update = Update::Merged;
+                f.updates.push((e.id, Update::Merged));
             }
         }
     }

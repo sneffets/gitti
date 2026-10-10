@@ -1629,6 +1629,10 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
             ));
         }
     }
+    // A commit that brought a subtree in (`subtree::commit_mark`).
+    if let Some(mark) = gitti_core::subtree::commit_mark(&app.subtrees, &d.id, &d.message) {
+        out.push(Line::from(vec![label("Subtree"), val(mark)]));
+    }
     out.push(Line::default());
     let mut lines = d.message.trim_end().lines();
     if let Some(subject) = lines.next() {
@@ -3014,6 +3018,8 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
             checks,
             focus,
             note,
+            pick,
+            extra,
             ..
         } => {
             const W: u16 = 64;
@@ -3119,8 +3125,45 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                 if active {
                     cursor = Some((input.x + 1 + (col - skip) as u16, y));
                 }
-                // Its note ("From the clipboard") in the gap under it.
-                if let Some(note) = field.note_now() {
+                // Its fill values ("Remotes (ctrl-n): origin · upstream", the one it holds
+                // marked), else its note ("From the clipboard"), in the gap under it.
+                let fills: Vec<&str> = live
+                    .iter()
+                    .flat_map(|l| l.fills.iter())
+                    .filter(|(f, _)| *f == i)
+                    .map(|(_, v)| v.as_str())
+                    .collect();
+                if !fills.is_empty() {
+                    let label = live.as_ref().map(|l| l.fills_label.as_str()).unwrap_or_default();
+                    let now = field.edit.text();
+                    let mut spans = vec![Span::styled(
+                        format!("{label} ({}): ", crate::modal::FILL_KEY_LABEL),
+                        Style::new().fg(p.text_muted),
+                    )];
+                    for (k, v) in fills.iter().enumerate() {
+                        if k > 0 {
+                            spans.push(Span::styled(" · ", Style::new().fg(p.text_faint)));
+                        }
+                        let style = if *v == now {
+                            Style::new().fg(p.accent).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::new().fg(p.text)
+                        };
+                        spans.push(Span::styled(v.to_string(), style));
+                    }
+                    put(buf, inner.x + 1, y + 1, inner.width.saturating_sub(2), spans);
+                } else if let Some(pk) = pick.as_ref().filter(|pk| pk.field == i) {
+                    put(
+                        buf,
+                        inner.x + 1,
+                        y + 1,
+                        inner.width.saturating_sub(2),
+                        vec![Span::styled(
+                            format!("{}: {}", crate::modal::PICK_KEY_LABEL, pk.hint),
+                            Style::new().fg(p.text_muted),
+                        )],
+                    );
+                } else if let Some(note) = field.note_now() {
                     put(
                         buf,
                         inner.x + 1,
@@ -3182,13 +3225,25 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                 inner.x,
                 inner.y + inner.height.saturating_sub(1),
                 inner.width.saturating_sub(1),
-                vec![
-                    Span::styled(ok, ok_style),
-                    Span::styled(
-                        " · esc cancel · tab next · space toggle",
-                        Style::new().fg(p.text_faint),
-                    ),
-                ],
+                {
+                    let extra = extra
+                        .as_ref()
+                        .map(|x| format!(" · ctrl-{} {}", x.key, x.label))
+                        .unwrap_or_default();
+                    // The navigation keys go first when the line is too long.
+                    let full = " · esc cancel · tab next · space toggle";
+                    let room = inner.width.saturating_sub(1) as usize;
+                    let rest = if (ok.as_str().width() + extra.as_str().width() + full.width()) <= room {
+                        full
+                    } else {
+                        " · esc cancel"
+                    };
+                    vec![
+                        Span::styled(ok, ok_style),
+                        Span::styled(extra, Style::new().fg(p.text_faint)),
+                        Span::styled(rest, Style::new().fg(p.text_faint)),
+                    ]
+                },
             );
         }
         Modal::Confirm {

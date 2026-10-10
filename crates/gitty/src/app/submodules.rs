@@ -7,6 +7,7 @@
 //! toolbar's out-of-date badge and the pointer-change rows of diffs are drawn in `ui.rs`.
 
 use gitti_core::ObjectId;
+use gitti_core::submodule::add::FilePermission;
 use gitti_core::submodule::{HISTORY_LIMIT, SubmoduleCommit, SubmoduleState, short_id};
 
 use super::{After, App, Msg};
@@ -185,8 +186,12 @@ impl App {
 
     /// "Add Submodule…": URL, path (empty = git's default from the URL), branch to track
     /// (optional) → `git submodule add`; staged, a commit records it. A repository URL on
-    /// the clipboard fills the URL field as in Clone.
+    /// the clipboard fills the URL field as in Clone. A local path git refuses for
+    /// submodules (`submodule::add`): OK asks before it allows the `file` transport for
+    /// this one add.
     pub fn add_submodule_dialog(&mut self) {
+        let ctx = self.repo.submodule_add_context();
+        let live_ctx = ctx.clone();
         self.modal = Some(Modal::input(
             super::repo_cmds::ADD_SUBMODULE_TITLE.to_string(),
             vec![
@@ -202,12 +207,42 @@ impl App {
                     app.set_error("Add submodule: the repository URL is empty".into());
                     return;
                 }
-                app.run_op("Add submodule", true, After::Nothing, move |r| {
-                    r.add_submodule(&url, &path, &branch)
-                });
+                match ctx.needs_permission(&url) {
+                    FilePermission::NotNeeded => app.add_submodule(url, path, branch, false),
+                    FilePermission::Ask => {
+                        let body = gitti_core::submodule::add::permission_text(&ctx, &url);
+                        app.modal = Some(Modal::confirm(
+                            "Allow a local path for this submodule?",
+                            body,
+                            "Allow for This Add",
+                            move |app: &mut App| app.add_submodule(url, path, branch, true),
+                        ));
+                    }
+                    FilePermission::Blocked => app.set_error(
+                        gitti_core::submodule::add::permission_text(&ctx, &url),
+                    ),
+                }
             },
-        ));
+        )
+        .with_live(move |v, _| {
+            let note = v.first().and_then(|u| gitti_core::submodule::add::live_note(&live_ctx, u.trim()));
+            crate::modal::Live {
+                text: note.filter(|n| !n.1).map(|n| n.0.to_string()).unwrap_or_default(),
+                ok_label: if note.is_some() { "Add Submodule…" } else { "Add Submodule" }.into(),
+                blocked: note.filter(|n| n.1).map(|n| n.0.to_string()),
+                matches: Vec::new(),
+                ..Default::default()
+            }
+        }));
         self.read_clipboard_for(super::repo_cmds::ADD_SUBMODULE_TITLE);
+    }
+
+    /// Runs `git submodule add` (see `Repo::add_submodule`; `allow_file`: the user agreed
+    /// to the `file` transport for this add).
+    fn add_submodule(&mut self, url: String, path: String, branch: String, allow_file: bool) {
+        self.run_op("Add submodule", true, After::Nothing, move |r| {
+            r.add_submodule(&url, &path, &branch, allow_file)
+        });
     }
 
     /// `git submodule sync --recursive [-- paths]`.

@@ -45,13 +45,37 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_folder_picker_with(FolderPicker::new(rev, current), what, field, window, cx)
+    }
+
+    /// The picker of one folder (`FolderPicker::single`) — Split Subtree's folder.
+    pub(super) fn open_single_folder_picker(
+        &mut self,
+        rev: String,
+        what: String,
+        field: usize,
+        current: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_folder_picker_with(FolderPicker::single(rev, current), what, field, window, cx)
+    }
+
+    fn open_folder_picker_with(
+        &mut self,
+        picker: FolderPicker,
+        what: String,
+        field: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let focus = cx.focus_handle();
         let Some(m) = self.modal.as_mut() else {
             return;
         };
         focus.focus(window, cx);
         m.folders = Some(FolderPick {
-            picker: FolderPicker::new(rev, current),
+            picker,
             what,
             field,
             focus,
@@ -316,10 +340,12 @@ impl GittiApp {
             .into_any_element()
         };
         let folders = fp.picker.folders();
-        let summary = if folders.is_empty() {
-            "Nothing checked: the complete tree".to_string()
-        } else {
-            format!("Only: {}", folders.join(", "))
+        let single = fp.picker.single;
+        let summary = match (single, folders.is_empty()) {
+            (true, true) => "No folder chosen".to_string(),
+            (true, false) => format!("Folder: {}", folders.join(", ")),
+            (false, true) => "Nothing checked: the complete tree".to_string(),
+            (false, false) => format!("Only: {}", folders.join(", ")),
         };
         let missing = fp.picker.missing();
         let focus = fp.focus.clone();
@@ -360,17 +386,23 @@ impl GittiApp {
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(p.text_strong)
                                 .truncate()
-                                .child(format!("Folders of {}", fp.what)),
+                                .child(format!(
+                                    "{} of {}",
+                                    if single { "Folder" } else { "Folders" },
+                                    fp.what
+                                )),
                         )
                         .child(
                             div()
                                 .text_size(small)
                                 .text_color(p.text_muted)
                                 .whitespace_normal()
-                                .child(
+                                .child(if single {
+                                    "→ opens a folder, Space (or a click) chooses it."
+                                } else {
                                     "A checked folder comes with everything below it. \
-                                     → opens a folder, Space checks it.",
-                                ),
+                                     → opens a folder, Space checks it."
+                                }),
                         )
                         .child(
                             div()
@@ -421,7 +453,11 @@ impl GittiApp {
                                 .child(
                                     div().probe("folder-picker-ok").child(
                                         Button::new("folder-picker-ok")
-                                            .label("Use These Folders")
+                                            .label(if single {
+                                                "Use This Folder"
+                                            } else {
+                                                "Use These Folders"
+                                            })
                                             .small()
                                             .primary()
                                             .on_click(cx.listener(|this, _, w, cx| {

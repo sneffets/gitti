@@ -18,7 +18,8 @@ pub type LiveFn = Box<dyn Fn(&[String], &[bool]) -> Live>;
 pub type SubmitText = Box<dyn FnOnce(&mut App, String)>;
 
 /// What an input dialog says live about its current input: a sentence under the fields,
-/// Enter's label, why Enter can't run now (it does nothing then), matching names.
+/// Enter's label, why Enter can't run now (it does nothing then), matching names, values
+/// to fill fields with (ctrl-n in the field, like gitti's fill buttons).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Live {
     pub text: String,
@@ -26,6 +27,39 @@ pub struct Live {
     pub blocked: Option<String>,
     /// Existing names matching the focused text (listed; gitty has no completion key).
     pub matches: Vec<String>,
+    /// Values for field `.0`, listed under it; ctrl-n there puts the next one in.
+    pub fills: Vec<(usize, String)>,
+    /// What they are ("Remotes"), in front of the list.
+    pub fills_label: String,
+}
+
+/// A field's chooser ([`Modal::with_pick`]).
+pub struct Pick {
+    pub field: usize,
+    pub hint: String,
+    pub f: Submit,
+}
+
+/// A dialog's further action ([`Modal::with_extra`]).
+pub struct Extra {
+    pub key: char,
+    pub label: String,
+    pub f: Action,
+}
+
+/// The key that opens a field's chooser ([`Modal::with_pick`]) and its label.
+pub const PICK_KEY: char = 'o';
+pub const PICK_KEY_LABEL: &str = "ctrl-o";
+
+/// The key that puts the next of a field's [`Live::fills`] into it (and its label).
+pub const FILL_KEY: char = 'n';
+pub const FILL_KEY_LABEL: &str = "ctrl-n";
+
+/// The fill after the one field `field` holds now (`text`), or the first.
+pub fn next_fill<'a>(fills: &'a [(usize, String)], field: usize, text: &str) -> Option<&'a str> {
+    let mine: Vec<&str> = fills.iter().filter(|(f, _)| *f == field).map(|(_, v)| v.as_str()).collect();
+    let next = mine.iter().position(|v| *v == text).map_or(0, |i| (i + 1) % mine.len().max(1));
+    mine.get(next).copied()
 }
 
 pub struct Field {
@@ -263,6 +297,10 @@ pub enum Modal {
         note: Option<String>,
         /// What the dialog says live under its fields ([`Modal::with_live`]).
         live: Option<LiveFn>,
+        /// A field filled from a chooser of its own ([`Modal::with_pick`]).
+        pick: Option<Pick>,
+        /// A further action beside Enter ([`Modal::with_extra`]), e.g. Delete….
+        extra: Option<Extra>,
     },
     Confirm {
         title: String,
@@ -364,7 +402,41 @@ impl Modal {
             submit: Some(Box::new(submit)),
             note: None,
             live: None,
+            pick: None,
+            extra: None,
         }
+    }
+
+    /// A further action of the dialog on ctrl-`key` (`label` beside Enter's in the bottom
+    /// line): it closes the dialog and runs `f` (which asks first where it must).
+    pub fn with_extra(mut self, key: char, label: impl Into<String>, f: impl FnOnce(&mut App) + 'static) -> Self {
+        if let Modal::Input { extra, .. } = &mut self {
+            *extra = Some(Extra {
+                key,
+                label: label.into(),
+                f: Box::new(f),
+            });
+        }
+        self
+    }
+
+    /// [`PICK_KEY`] in field `field` closes the dialog and runs `f` with its values (it
+    /// opens a chooser, which opens the dialog again with the choice); `hint` says what
+    /// it chooses, under the field.
+    pub fn with_pick(
+        mut self,
+        field: usize,
+        hint: impl Into<String>,
+        f: impl FnOnce(&mut App, Vec<String>, Vec<bool>) + 'static,
+    ) -> Self {
+        if let Modal::Input { pick, .. } = &mut self {
+            *pick = Some(Pick {
+                field,
+                hint: hint.into(),
+                f: Box::new(f),
+            });
+        }
+        self
     }
 
     /// An input dialog that says live what Enter will do with the values entered so far

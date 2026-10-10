@@ -43,7 +43,7 @@ fn define_and_run_a_git_command() {
     // Enter on a blocked form keeps it open.
     assert!(st[1].contains("modal=Input \"New Custom Command\""), "{out}");
     assert!(out.contains("Runs: git log -1 --format=%s {commit}"), "{out}");
-    assert!(out.contains("Also in the commit menu"), "{out}");
+    assert!(out.contains("Also in the commit / tag menu"), "{out}");
     assert!(!st[2].contains("modal="), "{out}");
     // The working directory is selected: greyed with the reason.
     assert!(out.contains("off: Subject = no commit selected"), "{out}");
@@ -78,4 +78,33 @@ fn shell_command_is_confirmed_and_quotes_names() {
     assert!(st[1].contains("modal=Text \"Output of Echo files\""), "{out}");
     assert!(out.matches(NASTY).count() >= 2, "{out}");
     assert!(!d.join("pwned").exists(), "the file name ran as a command\n{out}");
+}
+
+/// A command with `{tag}` is in a tag's menu and runs with that tag; its edit form deletes
+/// it with ctrl-d (asks first), like gitti's Delete… button.
+#[gitti_test::test]
+fn tag_menu_and_delete_from_the_edit_form() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let d = dir.path();
+    git(d, &["tag", "v1.0"]);
+    let script = format!(
+        "press:ctrl-p;{}key:enter;key:enter;paste:Tag subject;press:tab;paste:log -1 --format=%s {{tag}};key:enter;\
+         press:backtab;press:G;press:k;press:enter;press:j;press:m;items;cmds;press:up;key:enter;key:y;cmds;press:esc;\
+         press:ctrl-p;{}key:enter;press:down;key:enter;press:e;dump;press:ctrl-d;state;dump;key:y;state;\
+         press:ctrl-p;{}key:enter;items",
+        presses("custom commands"),
+        presses("custom commands"),
+        presses("custom commands"),
+    );
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(d, config.path(), "120x45", &script);
+    let lists = item_lists(&out);
+    assert!(lists[0].contains(&"Tag subject"), "the tag's menu: {out}");
+    let c = cmds(&out);
+    assert!(c[1].iter().any(|l| l == "log -1 --format=%s v1.0"), "{out}");
+    assert!(out.contains("⏎ Save · ctrl-d Delete… · esc cancel"), "{out}");
+    let st = states(&out);
+    assert!(st[0].contains("modal=Confirm \"Delete Custom Command\""), "{out}");
+    assert!(st[1].contains("Deleted the custom command"), "{out}");
+    assert_eq!(lists.last().unwrap(), &vec!["New Custom Command…"], "{out}");
 }

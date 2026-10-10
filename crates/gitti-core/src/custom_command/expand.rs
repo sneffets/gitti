@@ -14,13 +14,15 @@ pub enum Placeholder {
     Remote,
     File,
     Files,
+    Tag,
 }
 
 impl Placeholder {
-    pub const ALL: [Placeholder; 6] = [
+    pub const ALL: [Placeholder; 7] = [
         Placeholder::Repo,
         Placeholder::Commit,
         Placeholder::Branch,
+        Placeholder::Tag,
         Placeholder::Remote,
         Placeholder::File,
         Placeholder::Files,
@@ -35,6 +37,7 @@ impl Placeholder {
             Placeholder::Remote => "remote",
             Placeholder::File => "file",
             Placeholder::Files => "files",
+            Placeholder::Tag => "tag",
         }
     }
 
@@ -42,7 +45,7 @@ impl Placeholder {
     pub fn meaning(self) -> &'static str {
         match self {
             Placeholder::Repo => "the repository's folder",
-            Placeholder::Commit => "the selected commit's id",
+            Placeholder::Commit => "the selected commit's id (a tag's or branch's menu: its commit)",
             Placeholder::Branch => {
                 "the branch whose menu it runs from (a remote branch: its name there), else the \
                  current branch"
@@ -59,6 +62,10 @@ impl Placeholder {
                 "every file the view shows — the selected commit's, or the changed ones of the \
                  working directory — each as its own argument"
             }
+            Placeholder::Tag => {
+                "the tag whose menu it runs from, else a tag on the selected commit (the first \
+                 by name)"
+            }
         }
     }
 
@@ -71,6 +78,7 @@ impl Placeholder {
             Placeholder::Remote => "no remote",
             Placeholder::File => "no file selected",
             Placeholder::Files => "no files shown",
+            Placeholder::Tag => "no tag on the selected commit",
         }
     }
 
@@ -193,6 +201,7 @@ pub struct Values {
     pub remote: Option<String>,
     pub file: Option<String>,
     pub files: Vec<String>,
+    pub tag: Option<String>,
 }
 
 impl Values {
@@ -204,6 +213,7 @@ impl Values {
             Placeholder::Commit => one(&self.commit),
             Placeholder::Branch => one(&self.branch),
             Placeholder::Remote => one(&self.remote),
+            Placeholder::Tag => one(&self.tag),
             Placeholder::File => one(&self.file).map(|v| v.into_iter().map(path_arg).collect()),
             Placeholder::Files => {
                 (!self.files.is_empty()).then(|| self.files.iter().cloned().map(path_arg).collect())
@@ -556,7 +566,15 @@ mod tests {
             remote: Some("origin".into()),
             file: Some("a b.txt".into()),
             files: vec!["a b.txt".into(), "-rf".into(), "it's".into()],
+            tag: Some("v1.0".into()),
         }
+    }
+
+    #[gitti_test::test]
+    fn tag_placeholder() {
+        assert_eq!(used("git push {remote} {tag}"), vec![Placeholder::Remote, Placeholder::Tag]);
+        assert_eq!(git_args("push {remote} {tag}", &vals()).unwrap(), ["push", "origin", "v1.0"]);
+        assert!(placeholder_list().contains("{tag}"));
     }
 
     #[gitti_test::test]

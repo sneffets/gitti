@@ -141,3 +141,36 @@ fn merge_dialog_warns_about_a_typed_commit_from_elsewhere() {
     assert!(!s[1].contains("Warning:"), "{out}");
     assert_no_git(&[cmds(&out)[1].clone()], "the Merge dialog", &out);
 }
+
+/// The remotes fill the repository field with ctrl-n (gitti's fill buttons), listed under
+/// it; Split's ctrl-o chooses the folder from the tree (a searchable list) and opens the
+/// dialog again with it; the commit that added the subtree says so in its header.
+#[gitti_test::test]
+fn remotes_fill_split_chooses_a_folder_and_the_header_marks_subtree_commits() {
+    let dir = fixture(&[("README", "app\n")], &[]);
+    let d = dir.path();
+    write_files(d, &[("lib/x", "1\n"), ("docs/guide/a.md", "a\n")]);
+    commit_all(d, TRAILERS);
+    git(d, &["remote", "add", "origin", "../up"]);
+    git(d, &["remote", "add", "mirror", "../mirror"]);
+    let script = format!(
+        "key:j;dump;key:h;press:ctrl-p;{}key:enter;press:tab;dump;press:ctrl-n;dump;press:ctrl-n;dump;press:esc;\
+         press:ctrl-p;{}key:enter;press:ctrl-o;dump;{}key:enter;dump;state",
+        presses("add subtree"),
+        presses("split subtree"),
+        presses("guide"),
+    );
+    let out = gitty(d, &script);
+    let s = screens(&out);
+    assert!(s[0].contains("Subtree") && s[0].contains("Subtree lib/ added"), "{out}");
+    assert!(s[1].contains("Remotes (ctrl-n): mirror · origin"), "{out}");
+    let field = |screen: &str| {
+        let lines: Vec<&str> = screen.lines().collect();
+        let i = lines.iter().position(|l| l.contains("Repository: URL")).unwrap();
+        lines[i + 1].to_string()
+    };
+    assert!(field(s[2]).contains("mirror"), "{out}");
+    assert!(field(s[3]).contains("origin"), "{out}");
+    assert!(s[4].contains("Split which folder of HEAD?") && s[4].contains("docs/guide/"), "{out}");
+    assert!(s[5].contains("Split Subtree") && s[5].contains("docs/guide"), "{out}");
+}

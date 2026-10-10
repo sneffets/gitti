@@ -37,7 +37,7 @@ use gpui_kit::component::scroll::{ScrollbarHandle, ScrollbarMode};
 use gpui_kit::*;
 
 /// gpui-base `scrollbar.rs` `WIDTH`: the track's width.
-const TRACK: f32 = 16.;
+pub const TRACK: f32 = 16.;
 /// gpui-base `MIN_THUMB_SIZE`.
 const MIN_THUMB: f32 = 48.;
 /// gpui-base `THUMB_INSET` (also the gap right of the thumb's pressable area).
