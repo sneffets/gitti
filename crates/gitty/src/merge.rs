@@ -184,6 +184,7 @@ impl MergeView {
                 "The file was deleted on disk — s writes it again".into(),
                 true,
             )),
+            DiskChange::Foreign(note) => Some((note, true)),
             DiskChange::TookIn(_) => {
                 self.undo.push(before);
                 self.redo.clear();
@@ -881,6 +882,9 @@ fn draw_folded_sides(buf: &mut Buffer, area: Rect, m: &MergeView, p: &Palette) {
             Style::new().fg(if open > 0 { p.warning } else { p.success }),
         ));
     }
+    if let Some(label) = m.session.doc.encoding.label() {
+        spans.push(Span::styled(format!("   {label}"), Style::new().fg(p.text_muted)));
+    }
     spans.push(Span::styled(
         "   single view — v or click here shows the sides",
         Style::new().fg(p.text_faint),
@@ -908,7 +912,8 @@ fn draw_sides(buf: &mut Buffer, area: Rect, m: &mut MergeView, p: &Palette) {
         (_, true) => " · theirs deleted the file",
         _ => "",
     };
-    title(buf, left, format!("Ours — {ours}"), format!("{state}{deleted}"), focused, p);
+    let encoding = m.session.doc.encoding.label().map(|l| format!(" · {l}")).unwrap_or_default();
+    title(buf, left, format!("Ours — {ours}"), format!("{state}{deleted}{encoding}"), focused, p);
     title(buf, right, format!("Theirs — {theirs}"), String::new(), focused, p);
     buf.set_style(
         Rect::new(area.x + half, area.y + 1, 1, area.height - 1),

@@ -705,3 +705,64 @@ fn untracked_preview_matches_git_diff_no_index() {
         assert_eq!(gitti_core::repo::file_diff_text(name, data, exec, true, gix::hash::Kind::Sha1), find(&deleted), "{name} deleted");
     }
 }
+
+/// Indices of the change lines in hunk `h` whose exact bytes equal one of `lines`.
+fn pick_bytes(f: &FileDiff, h: usize, lines: &[&[u8]]) -> Vec<usize> {
+    f.hunks[h]
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.is_change() && lines.contains(&l.bytes()))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Line staging is byte-exact for content that is not UTF-8 (`non_utf8.rs` has the
+/// encoding matrix; this is the staging suite's representative): Latin-1 lines as context
+/// and as selected lines with CRLF endings (no autocrlf: the CR is content), a selected
+/// removal and addition, and Shift-JIS lines whose second bytes are `\` (0x5C). The index
+/// and the working tree get exactly the expected bytes after stage, unstage and discard.
+#[gitti_test::test]
+fn non_utf8_lines_stage_unstage_discard_byte_exact() {
+    let fx = fixture(&[]);
+    let p = fx.repo.workdir().to_path_buf();
+    let index = |name: &str| -> Vec<u8> {
+        let out = std::process::Command::new("git")
+            .current_dir(&p)
+            .args(["show", &format!(":{name}")])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        out.stdout
+    };
+    let sjis_old: &[u8] = b"\x83\x5c\x83\x74\x83\x67\nkeep\n";
+    fs::write(p.join("c.txt"), b"caf\xe9\r\nmid\r\nna\xefve\r\n").unwrap();
+    fs::write(p.join("s.txt"), sjis_old).unwrap();
+    sh(&p, &["add", "-A"]);
+    sh(&p, &["commit", "-q", "-m", "init"]);
+    fs::write(p.join("c.txt"), b"caf\xe9\r\nMID\r\n\xe4 new\r\nna\xefve\r\n").unwrap();
+    fs::write(p.join("s.txt"), b"\x83\x5c\x83\x74\x83\x67\nkept\n\x95\x5c\x8e\xa6\n").unwrap();
+
+    let d = fx.unstaged("c.txt");
+    let sel = Selection::lines(0, pick_bytes(&d, 0, &[b"mid\r", b"\xe4 new\r"]));
+    fx.repo.apply_selection(&d, &sel, PatchMode::Stage).unwrap();
+    assert_eq!(index("c.txt"), b"caf\xe9\r\n\xe4 new\r\nna\xefve\r\n");
+    let d = fx.unstaged("s.txt");
+    let sel = Selection::lines(0, pick_bytes(&d, 0, &[b"\x95\x5c\x8e\xa6"]));
+    fx.repo.apply_selection(&d, &sel, PatchMode::Stage).unwrap();
+    assert_eq!(index("s.txt"), b"\x83\x5c\x83\x74\x83\x67\nkeep\n\x95\x5c\x8e\xa6\n");
+
+    let s = fx.staged("c.txt");
+    let sel = Selection::lines(0, pick_bytes(&s, 0, &[b"\xe4 new\r"]));
+    fx.repo.apply_selection(&s, &sel, PatchMode::Unstage).unwrap();
+    assert_eq!(index("c.txt"), b"caf\xe9\r\nna\xefve\r\n");
+
+    let d = fx.unstaged("c.txt");
+    let sel = Selection::lines(0, pick_bytes(&d, 0, &[b"MID\r"]));
+    fx.repo.apply_selection(&d, &sel, PatchMode::Discard).unwrap();
+    assert_eq!(fs::read(p.join("c.txt")).unwrap(), b"caf\xe9\r\n\xe4 new\r\nna\xefve\r\n");
+    let d = fx.unstaged("s.txt");
+    let sel = Selection::lines(0, pick_bytes(&d, 0, &[b"keep", b"kept"]));
+    fx.repo.apply_selection(&d, &sel, PatchMode::Discard).unwrap();
+    assert_eq!(fs::read(p.join("s.txt")).unwrap(), b"\x83\x5c\x83\x74\x83\x67\nkeep\n\x95\x5c\x8e\xa6\n");
+}

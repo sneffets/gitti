@@ -1,7 +1,8 @@
 //! Files that are not UTF-8: hunk / line staging, unstaging and
 //! discarding move their exact bytes (patches are built from the lines' bytes, the shown
-//! text is a decoding), and the diff says which encoding it shows. Refused only: a file
-//! whose *name* is not UTF-8 (paths are strings app-wide), and the merge editor.
+//! text is a decoding), and the diff says which encoding it shows; the merge editor
+//! writes them back byte for byte. Refused only: a file whose *name* is not UTF-8 (paths
+//! are strings app-wide).
 
 use std::fs;
 use std::path::Path;
@@ -232,27 +233,142 @@ fn names_that_are_not_utf8_are_refused() {
     assert_eq!(r.command_log().snapshot().len(), before);
 }
 
-/// A conflicted Latin-1 file: the merge editor (text, saved whole) refuses it instead of
-/// writing U+FFFD back; the file stays as git wrote it.
-#[gitti_test::test]
-fn merge_editor_refuses_non_utf8_conflicts() {
-    let mut h = History::new();
-    let root = h.commit("main", &[], "init", &[("f.txt", f("a\nb\nc\n"))]);
-    h.commit("side", &[root], "side", &[("f.txt", E::File(b"a\n\xe4side\nc\n"))]);
-    h.commit("main", &[root], "main", &[("f.txt", E::File(b"a\n\xf6main\nc\n"))]);
-    let (_tmp, p, _) = repo_with(&h);
-    let r = std::sync::Arc::new(Repo::open(&p).unwrap());
-    assert!(r.merge("side").is_err());
-    let on_disk = fs::read(p.join("f.txt")).unwrap();
+/// A repository with `history` imported and checked out under `config` (appended before
+/// the checkout, so `core.autocrlf` / attributes shape the working tree): three git
+/// processes, like `repo_with`.
+fn repo_with_config(history: &History, config: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = gitti_core::paths::canonical(tmp.path()).join("repo");
+    crate::fixture_kit::init(&dir);
+    crate::fixture_kit::append_config(&dir, config);
+    history.import(&dir);
+    crate::fixture_kit::sh(&dir, &["reset", "-q", "--hard"]);
+    (tmp, dir)
+}
 
-    let err = r.merge_doc("f.txt").unwrap_err();
-    assert!(err.to_string().contains("f.txt is not UTF-8"), "{err}");
+/// A file of [`conflicted`]: name, base, ours, theirs.
+type Versions<'a> = (&'a str, &'a [u8], &'a [u8], &'a [u8]);
+
+/// `base` → `ours` on main, `base` → `theirs` on side (each file of `files`), merged into
+/// main with a conflict.
+fn conflicted(
+    files: &[Versions],
+    config: &str,
+) -> (tempfile::TempDir, std::path::PathBuf, std::sync::Arc<Repo>) {
+    let mut h = History::new();
+    let pick = |i: usize| -> Vec<(&str, E)> {
+        files.iter().map(|f| (f.0, E::File([f.1, f.2, f.3][i]))).collect()
+    };
+    let root = h.commit("main", &[], "init", &pick(0));
+    h.commit("side", &[root], "side", &pick(2));
+    h.commit("main", &[root], "main", &pick(1));
+    let (tmp, p) = repo_with_config(&h, config);
+    let r = std::sync::Arc::new(Repo::open(&p).unwrap());
+    assert!(r.merge("side").is_err(), "a conflict");
+    (tmp, p, r)
+}
+
+fn open_merge(r: &std::sync::Arc<Repo>, name: &str) -> gitti_core::merge_session::MergeSession {
     let sides = gitti_core::ops::ConflictSides { ours: "main".into(), theirs: "side".into() };
-    let err = gitti_core::merge_session::MergeSession::open(r.clone(), "f.txt", sides)
-        .err()
-        .expect("refused");
-    assert!(err.to_string().contains("not UTF-8"), "{err}");
-    assert_eq!(fs::read(p.join("f.txt")).unwrap(), on_disk);
+    gitti_core::merge_session::MergeSession::open(r.clone(), name, sides).unwrap()
+}
+
+/// The merge editor holds a file that is not UTF-8 in one exact encoding and writes it
+/// back byte for byte: a Latin-1 conflict (git's markers on disk count as unedited), and a
+/// mixed file (UTF-8 and Latin-1 lines, Shift-JIS bytes) whose untouched lines keep their
+/// bytes whichever side is taken. `git add` then stores exactly those bytes.
+#[gitti_test::test]
+fn merge_editor_writes_non_utf8_files_exactly() {
+    let sjis: &[u8] = b"\x83\x5c\x83\x74\x83\x67"; // "ソフト": 0x5C (`\`) as a second byte
+    let mixed_base = [&b"\xc3\xa4 utf8\n"[..], b"\xe4 latin\n", sjis, b"\nx\n"].concat();
+    let mixed_ours = [&b"\xc3\xa4 utf8\n"[..], b"\xe4 latin\n", sjis, b"\nours \xe9\n"].concat();
+    let mixed_theirs = [&b"\xc3\xa4 utf8\n"[..], b"\xe4 latin\n", sjis, b"\ntheirs \x80\n"].concat();
+    let (_tmp, p, r) = conflicted(
+        &[
+            ("l.txt", b"a\nb\nc\n", b"a\n\xf6main\nc\n", b"a\n\xe4side\nc\n"),
+            ("m.txt", &mixed_base, &mixed_ours, &mixed_theirs),
+        ],
+        "",
+    );
+
+    let mut s = open_merge(&r, "l.txt");
+    assert_eq!(s.doc.encoding, TextEncoding::Latin1);
+    assert!(!s.is_modified(), "git's conflict file is the unedited start");
+    assert!(s.text().contains("\nömain\n=======\näside\n"), "{}", s.text());
+    let conflict = s.doc.conflicts().next().unwrap();
+    s.choose(conflict, Some(gitti_core::merge::Resolution::TheirsThenOurs));
+    s.write().unwrap();
+    assert_eq!(fs::read(p.join("l.txt")).unwrap(), b"a\n\xe4side\n\xf6main\nc\n");
+
+    let mut s = open_merge(&r, "m.txt");
+    assert_eq!(s.doc.encoding, TextEncoding::Windows1252);
+    let conflict = s.doc.conflicts().next().unwrap();
+    s.choose(conflict, Some(gitti_core::merge::Resolution::Theirs));
+    s.write().unwrap();
+    assert_eq!(fs::read(p.join("m.txt")).unwrap(), mixed_theirs);
+    // An unresolved conflict is written with markers around the exact bytes.
+    s.choose(conflict, None);
+    s.write().unwrap();
+    let ours_then = [&mixed_base[..mixed_base.len() - 2], b"<<<<<<< main\nours \xe9\n=======\ntheirs \x80\n>>>>>>> side\n"].concat();
+    assert_eq!(fs::read(p.join("m.txt")).unwrap(), ours_then);
+
+    s.choose(conflict, Some(gitti_core::merge::Resolution::Ours));
+    s.write().unwrap();
+    r.mark_resolved(&["l.txt".into(), "m.txt".into()]).unwrap();
+    assert_eq!(index_bytes(&p, "l.txt"), b"a\n\xe4side\n\xf6main\nc\n");
+    assert_eq!(index_bytes(&p, "m.txt"), mixed_ours);
+}
+
+/// Files git converts on checkout: the merge editor works on the stages as the working tree
+/// has them (`cat-file --filters`) and writes that form — CRLF with `core.autocrlf`, the
+/// `working-tree-encoding` (UTF-16 here, Latin-1 bytes in UTF-8 stages for ISO-8859-1) —
+/// so `git add` stores exactly what a resolution in the index would be.
+#[gitti_test::test]
+fn merge_editor_writes_the_working_tree_form() {
+    let attrs: &[u8] = b"u.txt working-tree-encoding=UTF-16LE-BOM\nl.txt working-tree-encoding=ISO-8859-1\n";
+    let (_tmp, p, r) = conflicted(
+        &[
+            (".gitattributes", attrs, attrs, attrs),
+            ("c.txt", b"a\nb\nc\n", b"a\nours\nc\n", b"a\ntheirs\nc\n"),
+            ("u.txt", "a\nb\n".as_bytes(), "a\nöurs\n".as_bytes(), "a\n中\n".as_bytes()),
+            ("l.txt", "a\nb\n".as_bytes(), "a\nöurs\n".as_bytes(), "a\nthéirs\n".as_bytes()),
+        ],
+        "[core]\n\tautocrlf = true\n",
+    );
+    let utf16 = |s: &str| -> Vec<u8> { s.encode_utf16().flat_map(u16::to_le_bytes).collect() };
+
+    let mut s = open_merge(&r, "c.txt");
+    assert_eq!(s.doc.encoding, TextEncoding::Utf8);
+    assert!(!s.text().contains('\r') && !s.is_modified(), "{:?}", s.text());
+    let c = s.doc.conflicts().next().unwrap();
+    s.choose(c, Some(gitti_core::merge::Resolution::Theirs));
+    s.write().unwrap();
+    assert_eq!(fs::read(p.join("c.txt")).unwrap(), b"a\r\ntheirs\r\nc\r\n");
+
+    let mut s = open_merge(&r, "u.txt");
+    assert_eq!(s.doc.encoding, TextEncoding::Utf16Le);
+    assert!(s.text().contains("\nöurs\n=======\n中\n"), "{:?}", s.text());
+    let c = s.doc.conflicts().next().unwrap();
+    s.choose(c, Some(gitti_core::merge::Resolution::OursThenTheirs));
+    s.write().unwrap();
+    assert_eq!(fs::read(p.join("u.txt")).unwrap(), utf16("\u{FEFF}a\r\nöurs\r\n中\r\n"));
+
+    let mut s = open_merge(&r, "l.txt");
+    assert_eq!(s.doc.encoding, TextEncoding::Latin1);
+    let c = s.doc.conflicts().next().unwrap();
+    s.choose(c, Some(gitti_core::merge::Resolution::Theirs));
+    s.write().unwrap();
+    assert_eq!(fs::read(p.join("l.txt")).unwrap(), b"a\r\nth\xe9irs\r\n");
+    // A character ISO-8859-1 has no byte for is refused, nothing written.
+    s.set_text("a\n中\n".into());
+    let err = s.write().unwrap_err().to_string();
+    assert!(err.contains("'中' (line 2) can't be written in Latin-1"), "{err}");
+    assert_eq!(fs::read(p.join("l.txt")).unwrap(), b"a\r\nth\xe9irs\r\n");
+
+    r.mark_resolved(&["c.txt".into(), "u.txt".into(), "l.txt".into()]).unwrap();
+    assert_eq!(index_bytes(&p, "c.txt"), b"a\ntheirs\nc\n");
+    assert_eq!(index_bytes(&p, "u.txt"), "a\nöurs\n中\n".as_bytes());
+    assert_eq!(index_bytes(&p, "l.txt"), "a\nthéirs\n".as_bytes());
 }
 
 // ------------------------------------------------------------------ random byte lines

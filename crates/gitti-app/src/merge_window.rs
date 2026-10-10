@@ -596,6 +596,10 @@ impl MergeEditor {
                     Some(("The file was deleted on disk — Save writes it again".into(), true));
                 cx.notify();
             }
+            DiskChange::Foreign(note) => {
+                self.status = Some((note, true));
+                cx.notify();
+            }
             DiskChange::TookIn(edit) => {
                 // Replaces only the differing middle, so cursor and scroll stay put.
                 self.apply_edit(edit, window, cx);
@@ -613,20 +617,30 @@ impl MergeEditor {
 
     fn save(&mut self, mark_resolved: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.check_disk(window, cx) {
-            self.status = Some((
-                "The file changed on disk — took that in first; check and save again".into(),
-                true,
-            ));
+            // A change that couldn't be taken in keeps its own note.
+            if self.session.foreign().is_none() {
+                self.status = Some((
+                    "The file changed on disk — took that in first; check and save again".into(),
+                    true,
+                ));
+            }
             cx.notify();
             return;
         }
-        let text = self.session.file_text();
+        let bytes = match self.session.file_bytes() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.status = Some((format!("{e:#}"), true));
+                cx.notify();
+                return;
+            }
+        };
         let path = self.session.doc.path.clone();
         let repo = self.session.repo.clone();
         // Known now, so the disk poll doesn't mistake our own write for an outside one.
-        let before = self.session.note_written(text.clone());
+        let before = self.session.note_written(bytes.clone());
         let task = cx.background_executor().spawn(async move {
-            repo.write_worktree_file(&path, &text)?;
+            repo.write_worktree_file(&path, &bytes)?;
             if mark_resolved {
                 repo.mark_resolved(&[path])?;
             }
@@ -766,6 +780,15 @@ impl MergeEditor {
                     .text_color(if markers { p.warning } else { p.success })
                     .child(state),
             )
+            // Not UTF-8: the file is held in this encoding and written back in it.
+            .children(self.session.doc.encoding.label().map(|label| {
+                div()
+                    .probe("merge-encoding")
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_color(p.text_muted)
+                    .child(label)
+            }))
             .children(deleted.map(|d| {
                 div()
                     .probe("merge-bar-text:2")

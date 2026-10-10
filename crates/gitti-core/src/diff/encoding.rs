@@ -10,6 +10,9 @@
 //! - otherwise valid UTF-8 lines as they are, every other line as Windows-1252 (Latin-1
 //!   plus the printable characters in 0x80–0x9F; one char per byte, so `\n` stays where it
 //!   was and line numbers keep lining up).
+//!
+//! The merge editor edits and writes whole files: it uses the exact pair
+//! [`decode_exact`] / [`encode_exact`] (one encoding per file, bytes round-trip).
 
 /// How a file's diff lines are decoded for display ([`super::FileDiff::encoding`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -65,6 +68,61 @@ pub fn decode_8bit(bytes: &[u8]) -> String {
             _ => b as char,
         })
         .collect()
+}
+
+/// The byte of `c` in [`decode_8bit`]'s decoding (its inverse); `None` for a character
+/// that decoding never produces.
+fn encode_8bit_char(c: char) -> Option<u8> {
+    match c as u32 {
+        0..=0x7F | 0xA0..=0xFF => Some(c as u8),
+        _ => CP1252_80_9F
+            .iter()
+            .position(|&x| x == c)
+            .map(|i| 0x80 + i as u8),
+    }
+}
+
+/// A whole file's bytes as text such that [`encode_exact`] gives exactly these bytes back
+/// (for whoever edits and writes a file: the merge editor). `None` when `enc` can't hold
+/// them: not valid UTF-8 for [`TextEncoding::Utf8`], an odd length or an unpaired
+/// surrogate for UTF-16. Latin-1 and Windows-1252 are both [`decode_8bit`]: one char per
+/// byte, every byte value has its own char, so any bytes round-trip. A UTF-16 byte order
+/// mark stays in the text (U+FEFF) so it is written back.
+pub fn decode_exact(bytes: &[u8], enc: TextEncoding) -> Option<String> {
+    match enc {
+        TextEncoding::Utf8 => std::str::from_utf8(bytes).ok().map(str::to_string),
+        TextEncoding::Latin1 | TextEncoding::Windows1252 => Some(decode_8bit(bytes)),
+        TextEncoding::Utf16Le | TextEncoding::Utf16Be => {
+            let (units, rest) = bytes.as_chunks::<2>();
+            if !rest.is_empty() {
+                return None;
+            }
+            let le = enc == TextEncoding::Utf16Le;
+            let units = units.iter().map(|&c| {
+                if le {
+                    u16::from_le_bytes(c)
+                } else {
+                    u16::from_be_bytes(c)
+                }
+            });
+            char::decode_utf16(units).collect::<Result<String, _>>().ok()
+        }
+    }
+}
+
+/// `text` in `enc`, the inverse of [`decode_exact`]; `Err(c)` for the first character
+/// `enc` has no bytes for (only the 8-bit encodings: `€` is fine in Windows-1252, `中` is
+/// not).
+pub fn encode_exact(text: &str, enc: TextEncoding) -> Result<Vec<u8>, char> {
+    match enc {
+        TextEncoding::Utf8 => Ok(text.as_bytes().to_vec()),
+        TextEncoding::Latin1 | TextEncoding::Windows1252 => text
+            .chars()
+            .map(|c| encode_8bit_char(c).ok_or(c))
+            .collect(),
+        TextEncoding::Utf16Le => Ok(text.encode_utf16().flat_map(u16::to_le_bytes).collect()),
+        TextEncoding::Utf16Be => Ok(text.encode_utf16().flat_map(u16::to_be_bytes).collect()),
+    }
 }
 
 /// The 8-bit encoding of lines that are not UTF-8: Windows-1252 when a byte in 0x80–0x9F
@@ -173,6 +231,29 @@ mod tests {
         // Mixed: the UTF-8 line stays UTF-8, line breaks stay.
         assert_eq!(decode_lines(b"\xc3\xa4\n\xe4\n".to_vec()), "ä\nä\n");
         assert_eq!(decode_lines("ä\n".as_bytes().to_vec()), "ä\n");
+    }
+
+    /// Every byte value round-trips through the 8-bit decoding (the five unassigned
+    /// Windows-1252 bytes too); UTF-16 round-trips with its byte order mark; what an
+    /// encoding can't hold is refused.
+    #[gitti_test::test]
+    fn exact_round_trips() {
+        let all: Vec<u8> = (0..=255).collect();
+        for enc in [TextEncoding::Latin1, TextEncoding::Windows1252] {
+            let text = decode_exact(&all, enc).unwrap();
+            assert_eq!(encode_exact(&text, enc).unwrap(), all);
+        }
+        assert_eq!(encode_exact("a€ä", TextEncoding::Windows1252).unwrap(), b"a\x80\xe4");
+        assert_eq!(encode_exact("a中", TextEncoding::Latin1), Err('中'));
+        for enc in [TextEncoding::Utf16Le, TextEncoding::Utf16Be] {
+            let bytes = encode_exact("\u{FEFF}a\r\n中😀\n", enc).unwrap();
+            assert_eq!(decode_exact(&bytes, enc).unwrap(), "\u{FEFF}a\r\n中😀\n");
+            assert_eq!(decode_exact(&bytes[1..], enc), None, "odd length");
+        }
+        // An unpaired surrogate (LE D800) can't be written back.
+        assert_eq!(decode_exact(b"\x00\xd8a\x00", TextEncoding::Utf16Le), None);
+        assert_eq!(decode_exact(b"\xe4", TextEncoding::Utf8), None);
+        assert_eq!(decode_exact("ä".as_bytes(), TextEncoding::Utf8).unwrap(), "ä");
     }
 
     #[gitti_test::test]

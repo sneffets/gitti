@@ -159,14 +159,17 @@ fn make_long_line_merge_repo(dir: &std::path::Path) -> std::path::PathBuf {
         let words: Vec<String> = (0..60).map(|i| format!("{who}_word_{i}")).collect();
         format!("let {who} = call(\"{}\");\n", words.join(" "))
     };
-    let file = |swap: &dyn Fn(usize) -> Option<String>| -> String {
-        (1..=40)
+    // Latin-1 (line 3 is `café` in one byte per char): the editor names the encoding.
+    let file = |swap: &dyn Fn(usize) -> Option<String>| -> Vec<u8> {
+        let text: String = (1..=40)
             .map(|i| match (i, swap(i)) {
                 (_, Some(s)) => s,
                 (6 | 14, None) => long("stable"),
+                (3, None) => "caf\u{e9}\n".into(),
                 _ => format!("line {i}\n"),
             })
-            .collect()
+            .collect();
+        text.chars().map(|c| c as u8).collect()
     };
     std::fs::write(dir.join(path), file(&|_| None)).unwrap();
     git(dir, &["add", "."]);
@@ -201,7 +204,7 @@ fn frame_of(ui: &mut Ui, win: AnyWindowHandle) -> Vec<Probe> {
 
 /// Merge editor with long lines: each side's line stays inside its half, the toolbar's and
 /// the single view bar's texts stay on one line inside their bar — at several window sizes,
-/// split and single view.
+/// split and single view. The file is Latin-1: the toolbar names the encoding.
 fn merge_long_lines(ui: &mut Ui) {
     ui.step("select:0");
     ui.step("mergeeditor:0");
@@ -229,6 +232,9 @@ fn merge_long_lines(ui: &mut Ui) {
             let bar = if single { "merge-folded" } else { "merge-toolbar" };
             if find(&p, bar).is_none() {
                 ui.fail(format!("{ctx}: no {bar}"));
+            }
+            if !single && find(&p, "merge-encoding").is_none() {
+                ui.fail(format!("{ctx}: the Latin-1 file's encoding isn't named"));
             }
             // The long lines are on screen and reach their half's right edge.
             if !single {
