@@ -201,9 +201,13 @@ impl App {
                     let progress = &mut |l: &str| {
                         let _ = tx.send(Msg::Progress(l.to_string()));
                     };
-                    let path =
-                        gitti_core::create::clone_repo_with(r.git(), &url, &dest, recurse, progress)?;
-                    Ok(format!("cloned into {}", path.display()))
+                    let (path, note) =
+                        gitti_core::create::clone_repo_noted(r.git(), &url, &dest, recurse, progress)?;
+                    // The note (paths that collided) goes into the "Open?" question.
+                    Ok(match note {
+                        Some(note) => format!("cloned into {}\n\n{note}", path.display()),
+                        None => format!("cloned into {}", path.display()),
+                    })
                 });
             },
         ));
@@ -293,10 +297,12 @@ impl App {
     }
 
     /// After a clone / init: switch to the new repository (gitty restarts in it)?
-    pub(super) fn offer_open(&mut self, path: PathBuf) {
+    /// `note`: what the user should know about it first (a clone's collided paths).
+    pub(super) fn offer_open(&mut self, path: PathBuf, note: Option<&str>) {
         let body = format!(
-            "{}\n\ngitty shows one repository at a time: it restarts in the new one.",
-            path.display()
+            "{}\n\n{}gitty shows one repository at a time: it restarts in the new one.",
+            path.display(),
+            note.map(|n| format!("{n}\n\n")).unwrap_or_default()
         );
         self.modal = Some(Modal::confirm(
             "Open the new repository?",

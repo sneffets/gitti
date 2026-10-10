@@ -501,15 +501,17 @@ impl Repo {
             a.push("--no-commit");
         }
         a.push(rev);
-        self.out(&a)
+        self.noting_fs_paths(|| self.out(&a))
     }
 
     pub fn revert(&self, rev: &str, is_merge: bool) -> Result<String> {
-        if is_merge {
-            self.out(&["revert", "--no-edit", "-m", "1", rev])
-        } else {
-            self.out(&["revert", "--no-edit", rev])
-        }
+        self.noting_fs_paths(|| {
+            if is_merge {
+                self.out(&["revert", "--no-edit", "-m", "1", rev])
+            } else {
+                self.out(&["revert", "--no-edit", rev])
+            }
+        })
     }
 
     pub fn reset(&self, rev: &str, mode: ResetMode) -> Result<String> {
@@ -518,7 +520,7 @@ impl Repo {
             ResetMode::Mixed => "--mixed",
             ResetMode::Hard => "--hard",
         };
-        self.out(&["reset", "-q", flag, rev])
+        self.noting_fs_paths(|| self.out(&["reset", "-q", flag, rev]))
     }
 
     pub fn merge(&self, rev: &str) -> Result<String> {
@@ -530,7 +532,7 @@ impl Repo {
     pub fn merge_with(&self, rev: &str, opts: &MergeOptions) -> Result<String> {
         let args = opts.args(rev);
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        unrelated_as(self.out(&args), || UnrelatedRetry::Merge {
+        unrelated_as(self.noting_fs_paths(|| self.out(&args)), || UnrelatedRetry::Merge {
             rev: rev.to_string(),
             opts: opts.clone(),
         })

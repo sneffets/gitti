@@ -50,6 +50,13 @@ pub enum DiffRow {
         src: Src,
         file: usize,
     },
+    /// Line `line` of the explanation why the file system can't hold a working-directory
+    /// file's path ([`crate::fs_paths::Problem::lines`]), under its file header.
+    PathNote {
+        src: Src,
+        file: usize,
+        line: u16,
+    },
     /// Gap between files (dark band).
     Spacer,
     /// Gap between two hunks of the same file.
@@ -93,6 +100,7 @@ impl DiffRow {
             DiffRow::Hunk { .. } => "hunk",
             DiffRow::Line { .. } => "line",
             DiffRow::Note { .. } => "note",
+            DiffRow::PathNote { .. } => "path-note",
             DiffRow::Spacer => "spacer",
             DiffRow::HunkGap => "hunk-gap",
             DiffRow::HeaderSpace => "header-space",
@@ -109,6 +117,7 @@ impl DiffRow {
         match *self {
             DiffRow::File { src, file }
             | DiffRow::Note { src, file }
+            | DiffRow::PathNote { src, file, .. }
             | DiffRow::Hunk { src, file, .. }
             | DiffRow::Line { src, file, .. }
             | DiffRow::Context { src, file, .. }
@@ -505,7 +514,7 @@ pub fn build_worktree_rows_for(
                 }
                 for (i, f) in members {
                     rows.push(DiffRow::Spacer);
-                    push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap);
+                    push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, path_notes(ws, f));
                 }
             }
             continue;
@@ -515,10 +524,18 @@ pub fn build_worktree_rows_for(
                 continue;
             }
             rows.push(DiffRow::Spacer);
-            push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap);
+            push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, path_notes(ws, f));
         }
     }
     rows
+}
+
+/// How many explanation rows ([`DiffRow::PathNote`]) a working-directory file gets: the
+/// lines of its path's problem on this file system, if it has one.
+fn path_notes(ws: &crate::WorkingState, f: &crate::WorkFile) -> u16 {
+    ws.fs_paths
+        .issue(f.path())
+        .map_or(0, |i| i.problem.lines(f.path(), &ws.fs_paths.rules).len() as u16)
 }
 
 /// The status letter of a conflicted file on file tabs, file rows and diff headers. git's
@@ -650,7 +667,7 @@ pub fn build_commit_rows(
         if !rows.is_empty() {
             rows.push(DiffRow::Spacer);
         }
-        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap);
+        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap, 0);
     }
     rows
 }
@@ -662,8 +679,12 @@ fn push_file(
     diff: Option<&FileDiff>,
     exp: &Expansion,
     wrap: Option<usize>,
+    path_notes: u16,
 ) {
     rows.push(DiffRow::File { src, file });
+    if diff.is_none_or(|d| exp.is_expanded(src, d)) {
+        rows.extend((0..path_notes).map(|line| DiffRow::PathNote { src, file, line }));
+    }
     let Some(diff) = diff else {
         rows.push(DiffRow::Note { src, file });
         return;

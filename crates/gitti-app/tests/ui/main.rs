@@ -13,6 +13,7 @@ mod common;
 
 mod commit;
 mod config_safety;
+mod fs_paths;
 mod keys;
 mod layout;
 mod lfs;
@@ -46,6 +47,7 @@ const SUITES: &[(&str, fn())] = &[
     ("worktrees", worktrees::main),
     ("config_safety", config_safety::main),
     ("lfs", lfs::main),
+    ("fs_paths", fs_paths::main),
     ("signature", signature::main),
     ("selection", selection::main),
 ];

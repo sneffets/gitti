@@ -1151,6 +1151,7 @@ impl GittiApp {
             | DiffRow::Context { src, file, .. }
             | DiffRow::Expand { src, file, .. }
             | DiffRow::Submodule { src, file, .. }
+            | DiffRow::PathNote { src, file, .. }
             | DiffRow::Note { src, file } => (src, file),
             DiffRow::HunkGap => match rows[..first].iter().rev().find_map(|r| match *r {
                 DiffRow::Line { src, file, .. } => Some((src, file)),
@@ -1171,6 +1172,7 @@ impl GittiApp {
             | DiffRow::Context { src: s, file: f, .. }
             | DiffRow::Expand { src: s, file: f, .. }
             | DiffRow::Submodule { src: s, file: f, .. }
+            | DiffRow::PathNote { src: s, file: f, .. }
             | DiffRow::Note { src: s, file: f } => s == src && f == file,
             DiffRow::HunkGap => true,
             _ => false,
@@ -1315,6 +1317,9 @@ impl GittiApp {
             }
             DiffRow::Submodule { src, file, line } => {
                 self.render_submodule_diff_row(base, (src, file, line), &p, cx)
+            }
+            DiffRow::PathNote { src, file, line } => {
+                self.render_path_note_row(base, (src, file, line), ix, &p, cx)
             }
         };
         // The row is diff-font tall: its buttons (rem-sized) follow the diff font too.
@@ -1672,6 +1677,21 @@ impl GittiApp {
                         .text_size(self.settings.diff_small())
                         .text_color(p.text_muted)
                         .child(text),
+                )
+            })
+            // A path this file system can't hold: why, in a few words (the rows below
+            // explain it).
+            .when_some(self.fs_issue_of(src, file).map(|i| i.problem.short()), |d, short| {
+                d.child(
+                    div()
+                        .id(("fs-path", ix))
+                        .probe(format!("fs-path:{ix}"))
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(FontWeight::NORMAL)
+                        .text_size(self.settings.diff_small())
+                        .text_color(p.warning)
+                        .child(format!("⚠ {short}")),
                 )
             })
             .child(div().flex_1())

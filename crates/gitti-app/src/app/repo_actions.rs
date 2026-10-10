@@ -64,6 +64,8 @@ pub(super) fn pattern_label(dir: &str) -> String {
 /// Asks the window (the workspace) to open a repository in a tab.
 pub enum AppEvent {
     OpenRepository(PathBuf),
+    /// Open it and show this note there (a clone's paths that collided).
+    OpenRepositoryNoted(PathBuf, String),
     /// The folder was deleted (a removed worktree): tabs on it close.
     RepositoryRemoved(PathBuf),
     /// A tab removes its own worktree: the tab of the main worktree `main` (opened
@@ -360,7 +362,7 @@ impl GittiApp {
             let dest = expand_home(&res.values[1]).join(name);
             let recurse = res.checks[0];
             this.create_repo("Cloning", w, cx, move |git, progress| {
-                gitti_core::create::clone_repo_with(git, &url, &dest, recurse, progress)
+                gitti_core::create::clone_repo_noted(git, &url, &dest, recurse, progress)
             });
         });
     }
@@ -406,7 +408,7 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) {
         self.create_repo("Initializing", window, cx, move |git, _| {
-            gitti_core::create::init_repo_as(git, &dir, format)
+            gitti_core::create::init_repo_as(git, &dir, format).map(|d| (d, None))
         });
     }
 
@@ -418,7 +420,9 @@ impl GittiApp {
         label: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-        job: impl FnOnce(&Git, &mut dyn FnMut(&str)) -> anyhow::Result<PathBuf> + Send + 'static,
+        job: impl FnOnce(&Git, &mut dyn FnMut(&str)) -> anyhow::Result<(PathBuf, Option<String>)>
+            + Send
+            + 'static,
     ) {
         if let Some(b) = &self.busy {
             self.set_error(format!("Busy ({b}) — try again in a moment"));
@@ -456,9 +460,12 @@ impl GittiApp {
                 let cancelled = this.op_cancelled();
                 this.end_busy(window, cx);
                 match result {
-                    Ok(path) => {
+                    Ok((path, note)) => {
                         this.set_info(format!("{label} done: {}", path.display()));
-                        cx.emit(AppEvent::OpenRepository(path));
+                        cx.emit(match note {
+                            Some(note) => AppEvent::OpenRepositoryNoted(path, note),
+                            None => AppEvent::OpenRepository(path),
+                        });
                     }
                     Err(_) if cancelled => this.set_info(format!("{label} cancelled")),
                     Err(e) => this.set_error(format!("{label} failed: {e:#}")),

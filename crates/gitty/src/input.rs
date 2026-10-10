@@ -502,6 +502,7 @@ impl App {
                         file,
                     },
                 ) => self.resolve_menu(*file),
+                Some(&DiffRow::PathNote { src, file, .. }) => self.path_note_menu(src, file),
                 Some(DiffRow::File { .. } | DiffRow::Note { .. } | DiffRow::Submodule { .. }) => {
                     self.toggle_file()
                 }

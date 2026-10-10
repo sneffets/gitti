@@ -402,6 +402,13 @@ impl Workspace {
                 }
             }
             AppEvent::OpenRepository(path) => this.open(path.clone(), window, cx),
+            AppEvent::OpenRepositoryNoted(path, note) => {
+                this.open(path.clone(), window, cx);
+                if let Some(app) = this.active_app() {
+                    let note = note.clone();
+                    app.update(cx, |a, cx| a.show_notice("Cloned", note, window, cx));
+                }
+            }
             AppEvent::RepositoryRemoved(path) => {
                 let path = gitti_core::paths::canonical(path);
                 while let Some(ix) = this.tabs.iter().position(|t| t.path == path) {

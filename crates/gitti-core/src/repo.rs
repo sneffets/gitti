@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
 use gix::ObjectId;
@@ -111,6 +112,10 @@ pub struct WorkingState {
     pub conflicted: Vec<WorkFile>,
     pub unstaged: Vec<WorkFile>,
     pub staged: Vec<WorkFile>,
+    /// The index paths this work tree's file system can't hold ([`crate::fs_paths`]); a
+    /// full read gets them (cached while the index is unchanged), a path-limited one keeps
+    /// the previous ones.
+    pub fs_paths: Arc<crate::fs_paths::PathReport>,
 }
 
 #[derive(Debug, Clone)]
@@ -265,6 +270,10 @@ struct Statics {
     attribute_files: StampCache<Vec<String>>,
     /// The subtree scans of the last few HEADs (`Repo::subtrees`).
     subtrees: std::sync::Mutex<Vec<crate::subtree::detect::Scan>>,
+    /// The work tree's file system ([`crate::fs_paths::probe`], once per open).
+    fs_probe: std::sync::OnceLock<(Option<crate::fs_paths::FsProbe>, crate::fs_paths::Os)>,
+    /// The index paths it can't hold (`Repo::fs_paths`).
+    fs_paths: StampCache<Arc<crate::fs_paths::PathReport>>,
 }
 
 /// One `stash list` line, for the sidebar and the history.
@@ -423,6 +432,22 @@ impl Repo {
 
     pub(crate) fn statics_attribute_files(&self) -> &StampCache<Vec<String>> {
         &self.statics.attribute_files
+    }
+
+    /// The file system probe and the cached report of [`crate::fs_paths`].
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn statics_fs_paths(
+        &self,
+    ) -> (
+        &std::sync::OnceLock<(Option<crate::fs_paths::FsProbe>, crate::fs_paths::Os)>,
+        &StampCache<Arc<crate::fs_paths::PathReport>>,
+    ) {
+        (&self.statics.fs_probe, &self.statics.fs_paths)
+    }
+
+    /// The config files (the repository's and the user's) cached results depend on.
+    pub(crate) fn config_files(&self) -> &[PathBuf] {
+        &self.static_files().0
     }
 
     pub(crate) fn statics_subtrees(&self) -> &std::sync::Mutex<Vec<crate::subtree::detect::Scan>> {
@@ -861,6 +886,7 @@ impl Repo {
             conflicted: merge(&prev.conflicted, part.conflicted),
             unstaged: merge(&prev.unstaged, part.unstaged),
             staged: merge(&prev.staged, part.staged),
+            fs_paths: prev.fs_paths.clone(),
         })
     }
 
@@ -908,7 +934,7 @@ impl Repo {
                 f
             })
         };
-        let (status, mut unstaged_diff, staged_diff, mut exact_diffs) = std::thread::scope(|s| {
+        let (status, mut unstaged_diff, staged_diff, mut exact_diffs, fs_paths) = std::thread::scope(|s| {
             let unstaged = s.spawn(|| shown(false, &[]));
             let staged = s.spawn(|| shown(true, &[]));
             let exact = opts.ignore_whitespace.then(|| {
@@ -917,10 +943,13 @@ impl Repo {
                     s.spawn(|| diff(diff_args(&exact, true, &[]))),
                 )
             });
+            // In-process (the index), cached while it is unchanged.
+            let fs_paths = paths.is_none().then(|| s.spawn(|| self.fs_paths()));
             let status = self.status_of(&pathspec);
             let join = |h| joined(h).and_then(|r| r);
             let exact = exact.map(|(u, c)| (join(u), join(c)));
-            (status, join(unstaged), join(staged), exact)
+            let fs_paths = fs_paths.and_then(|h| joined(h).ok()).unwrap_or_default();
+            (status, join(unstaged), join(staged), exact, fs_paths)
         });
         let status = status?;
         // A modified tracked file that cannot be read (`chmod 000`, another user's file)
@@ -1016,6 +1045,7 @@ impl Repo {
             }
         }
         state.status = status;
+        state.fs_paths = fs_paths;
         // Files under an LFS path that aren't pointer changes (untracked ones): whole file.
         self.lfs_mark_paths(&mut state);
         Ok(state)

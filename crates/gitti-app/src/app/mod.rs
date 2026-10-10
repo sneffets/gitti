@@ -12,6 +12,7 @@ mod config_ui;
 mod diff_view;
 mod file_tabs;
 mod folder_picker;
+mod fs_paths;
 mod git_log;
 mod graph_nav;
 mod header_ids;
@@ -224,6 +225,9 @@ pub struct GittiApp {
     lfs: lfs::LfsUi,
     /// The "out of date" banner was hidden for these pointers.
     submodule_banner_dismissed: Option<submodules::BannerKey>,
+    /// The paths the "can't be checked out on this file system" banner was hidden for
+    /// (`fs_paths.rs`).
+    fs_banner_dismissed: Option<Vec<String>>,
     /// Verification result of the shown commit's signature (`None` inside = failed).
     signature: Option<(gitti_core::ObjectId, Option<gitti_core::signature::SignatureInfo>)>,
     /// The shown SSH signature can't be checked for want of an allowed signers file: the
@@ -600,6 +604,7 @@ impl GittiApp {
             subtrees_queued: false,
             lfs: Default::default(),
             submodule_banner_dismissed: None,
+            fs_banner_dismissed: None,
             signature: None,
             signers_offer: None,
             selected: 0,
@@ -2142,6 +2147,18 @@ impl GittiApp {
     }
 
     fn stage_file(&mut self, src: Src, file: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // A path this file system can't hold: asks first (`fs_paths.rs`).
+        if src == Src::Unstaged
+            && let Some(path) = self.file_path(src, file)
+        {
+            return self.guard_fs_stage(vec![path], window, cx, move |this, _, w, cx| {
+                this.stage_file_now(src, file, w, cx)
+            });
+        }
+        self.stage_file_now(src, file, window, cx)
+    }
+
+    fn stage_file_now(&mut self, src: Src, file: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.file_path(src, file) else {
             return;
         };
@@ -2310,7 +2327,7 @@ impl GittiApp {
         if self.refuse_not_utf8(src, file, mode, cx) {
             return;
         }
-        if self.refuse_lfs(src, file, mode, cx) {
+        if self.refuse_lfs(src, file, mode, cx) || self.refuse_fs_path(src, file, mode, cx) {
             return;
         }
         let Some(shown) = self.file_diff(src, file) else {
@@ -2440,7 +2457,11 @@ impl GittiApp {
         } else {
             (
                 format!("Discard all changes in {}?", wf.path()),
-                "This cannot be undone.".to_string(),
+                // A path this file system can't hold: what Discard can't do (`fs_paths.rs`).
+                match self.fs_discard_warning([wf.path()]) {
+                    Some(w) => format!("{w}\n\nThis cannot be undone."),
+                    None => "This cannot be undone.".to_string(),
+                },
                 "Discard",
                 DiscardOptions::default(),
             )
@@ -2476,9 +2497,10 @@ impl GittiApp {
         if paths.is_empty() {
             return;
         }
-        let list = paths.clone();
-        self.work_op("Staging", Some(paths), window, cx, move |r| {
-            r.stage_path_list(&list)
+        self.guard_fs_stage(paths.clone(), window, cx, move |this, only, w, cx| {
+            let paths = only.unwrap_or(paths);
+            let list = paths.clone();
+            this.work_op("Staging", Some(paths), w, cx, move |r| r.stage_path_list(&list));
         });
     }
 
@@ -2507,6 +2529,7 @@ impl GittiApp {
             None => return,
         };
         let n = entries.len();
+        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let (title, done) = match group {
             None => (
                 format!("Discard all unstaged changes in {n} file(s)?"),
@@ -2528,15 +2551,19 @@ impl GittiApp {
                 Ok(Some(gitti_core::discard::done_note(done, &report)))
             });
         };
+        let detail = match fs_warning {
+            Some(w) => format!("{}\n\n{w}", plan.detail()),
+            None => plan.detail(),
+        };
         if plan.nested.is_empty() {
-            self.confirm(title, Some(plan.detail()), "Discard All", window, cx, move |this, w, cx| {
+            self.confirm(title, Some(detail), "Discard All", window, cx, move |this, w, cx| {
                 run(this, DiscardOptions::default(), w, cx)
             });
             return;
         }
         // Nested repositories: kept unless the box is ticked.
         let spec = modal::ModalSpec::new(title)
-            .message(plan.detail())
+            .message(detail)
             .check(plan.nested_check(), false)
             .ok("Discard All")
             .danger();
@@ -2655,7 +2682,14 @@ impl GittiApp {
             return;
         }
         if stage {
-            self.work_op("Staging", None, window, cx, |r| r.stage_all());
+            let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
+            self.guard_fs_stage(paths, window, cx, |this, only, w, cx| match only {
+                None => this.work_op("Staging", None, w, cx, |r| r.stage_all()),
+                Some(list) => {
+                    let paths = list.clone();
+                    this.work_op("Staging", Some(paths), w, cx, move |r| r.stage_path_list(&list))
+                }
+            });
         } else {
             self.work_op("Unstaging", None, window, cx, |r| r.unstage_all());
         }
@@ -3515,6 +3549,7 @@ impl Render for GittiApp {
         let banner = self.render_state_banner(cx);
         let sub_banner = self.render_submodule_banner(cx);
         let lfs_banner = self.render_lfs_banner(cx);
+        let fs_banner = self.render_fs_paths_banner(cx);
         let modal = self.render_modal(window, cx);
         let picker = self.render_picker(cx);
         let settings = self.render_settings(cx);
@@ -3523,6 +3558,7 @@ impl Render for GittiApp {
             .children(banner)
             .children(sub_banner)
             .children(lfs_banner)
+            .children(fs_banner)
             .child(body)
             .child(self.render_status_bar(window, cx))
             .children(settings)

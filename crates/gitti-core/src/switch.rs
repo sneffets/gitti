@@ -337,11 +337,20 @@ impl Repo {
         let watch = self.ignore_rules_change(target).unwrap_or(false);
         let from = self.head_label();
         let ignored = if watch { self.ignored_paths() } else { Vec::new() };
-        let message = self.switch_raw(target, force)?;
+        // Paths of the target this file system can't hold (in-process, index before / after).
+        let fs_before = self.fs_paths();
+        let message = self
+            .switch_raw(target, force)
+            .map_err(|e| self.explain_fs_error(e))?;
         let note = (!ignored.is_empty())
             .then(|| self.untracked_among(&ignored))
             .filter(|(n, _)| *n > 0)
             .map(|(n, examples)| newly_untracked_note(&from, target.name(), n, &examples));
+        let note = match (note, self.fs_change_note(&fs_before)) {
+            (Some(ignore), Some(fs)) => Some(format!("{ignore} {fs}")),
+            (None, Some(fs)) => Some(format!("Switched to {}. {fs}", target.name())),
+            (note, None) => note,
+        };
         Ok(Switched { message, note })
     }
 
