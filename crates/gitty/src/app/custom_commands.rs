@@ -1,6 +1,6 @@
 //! Custom commands in gitty, like gitti's `app/custom_commands.rs`: the palette's Custom
 //! Commands… (New…, and per command Run / Edit… / Delete…), Run Custom Command… and one
-//! entry per command; entries in the commit / branch / remote / diff menus for the
+//! entry per command; entries in the commit / branch / tag / remote / diff menus for the
 //! commands that use what that menu is about (greyed with the reason where a value is
 //! missing). The form is gitti's (`custom_command::form`) with the live text under it
 //! (`custom_command::plan`). A run is an ordinary operation (Esc cancels, in the Git Log,
@@ -20,6 +20,7 @@ pub(crate) struct Given {
     pub commit: Option<String>,
     pub branch: Option<String>,
     pub remote: Option<String>,
+    pub tag: Option<String>,
 }
 
 impl App {
@@ -49,6 +50,17 @@ impl App {
             (c.stash.is_none() && !c.stash_helper).then(|| c.id.to_string())
         });
         v.branch = given.branch.clone().or_else(|| self.head.branch.clone());
+        // `{tag}`: the menu's tag, else the first tag (by name) on the selected commit.
+        v.tag = given.tag.clone().or_else(|| {
+            let id = gitti_core::ObjectId::from_hex(v.commit.as_deref()?.as_bytes()).ok()?;
+            self.history
+                .refs_by_commit
+                .get(&id)?
+                .iter()
+                .filter(|r| r.kind == gitti_core::RefKind::Tag)
+                .map(|r| r.short_name.clone())
+                .min()
+        });
         v.remote = given
             .remote
             .clone()
@@ -95,6 +107,7 @@ impl App {
                     commit: target(RefKind::LocalBranch, name),
                     branch: Some(name.clone()),
                     remote: None,
+                    tag: None,
                 },
             ),
             SideItem::RemoteBranch { full, .. } => {
@@ -104,11 +117,20 @@ impl App {
                     Menu::Branch,
                     Given {
                         commit: target(RefKind::RemoteBranch, full),
-                        branch: Some(branch),
+                            branch: Some(branch),
                         remote,
+                        tag: None,
                     },
                 )
             }
+            SideItem::Tag { name } => self.custom_menu_items(
+                Menu::Tag,
+                Given {
+                    commit: target(RefKind::Tag, name),
+                    tag: Some(name.clone()),
+                    ..Given::default()
+                },
+            ),
             SideItem::Remote { name } => self.custom_menu_items(
                 Menu::Remote,
                 Given {
@@ -253,9 +275,10 @@ impl App {
             Some(o) => format!("Edit Custom Command “{}”", o.cmd.name),
             None => "New Custom Command".to_string(),
         };
+        let delete = old.clone();
         let old_id = old.map(|o| (o.scope, o.cmd.name));
         let live_old = old_id.clone();
-        let modal = Modal::input_checks(title, fields, form.checks.clone(), move |app, values, checks| {
+        let mut modal = Modal::input_checks(title, fields, form.checks.clone(), move |app, values, checks| {
             let e = cc::from_form(&values, &checks);
             let (name, scope) = (e.cmd.name.clone(), e.scope);
             cc::save(&key, old_id.as_ref().map(|(s, n)| (*s, n.as_str())), e);
@@ -275,6 +298,10 @@ impl App {
                 ..Default::default()
             }
         });
+        // Editing: Delete… (asks first), as gitti's dialog button.
+        if let Some(e) = delete {
+            modal = modal.with_extra('d', "Delete…", move |app: &mut App| app.delete_custom_command(e));
+        }
         self.modal = Some(modal);
     }
 }

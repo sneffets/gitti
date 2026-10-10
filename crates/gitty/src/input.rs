@@ -600,11 +600,19 @@ impl App {
                 focus,
                 submit,
                 pick,
+                extra,
                 ..
             } => {
                 let total = fields.len() + checks.len();
                 match key.code {
                     KeyCode::Esc => Outcome::Close,
+                    // The dialog's further action (`Modal::with_extra`).
+                    KeyCode::Char(c) if ctrl && extra.as_ref().is_some_and(|x| x.key == c) => {
+                        match extra.take() {
+                            Some(x) => Outcome::Run(x.f),
+                            None => Outcome::Keep,
+                        }
+                    }
                     // The field's chooser (`Modal::with_pick`).
                     KeyCode::Char(c)
                         if ctrl

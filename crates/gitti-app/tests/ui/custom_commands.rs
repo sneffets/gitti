@@ -36,10 +36,14 @@ pub fn main() {
         ("define_edit_delete", define_edit_delete),
         ("run_git_from_palette_and_menu", run_git_from_palette_and_menu),
         ("run_shell_confirmed", run_shell_confirmed),
+        ("tag_menu", tag_menu),
     ];
     common::run(tests, |name| {
         let dir = BASE.with(|b| b.borrow().join(name));
         make(&dir);
+        if name == "tag_menu" {
+            git(&dir, &["tag", "v1.0"]);
+        }
         dir
     });
 }
@@ -127,7 +131,7 @@ fn define_edit_delete(ui: &mut Ui) {
     match live(ui) {
         Some((t, _, None, _))
             if t.contains("Runs: git show --stat {commit}")
-                && t.contains("Also in the commit menu")
+                && t.contains("Also in the commit / tag menu")
                 && t.contains("Kept for this repository") => {}
         other => fail!(ui, "filled in: {other:?}"),
     }
@@ -231,5 +235,31 @@ fn run_shell_confirmed(ui: &mut Ui) {
     }
     if ui.repo.join("pwned").exists() {
         ui.fail("the file name ran as a command".into());
+    }
+}
+
+/// A command with `{tag}` is in a tag's menu (not in the commit menu); run with a commit
+/// selected, `{tag}` is the tag on it.
+fn tag_menu(ui: &mut Ui) {
+    define(ui, "Tag subject", "log -1 --format=%s {tag}", false, false);
+    testing::menu_labels();
+    ui.click_on("side:ref-refs/tags/v1.0", MouseButton::Right);
+    let labels = testing::menu_labels();
+    if !labels.iter().any(|l| l == "Tag subject") {
+        fail!(ui, "tag menu lacks Tag subject: {labels:?}");
+    }
+    ui.quick("key:escape");
+    testing::menu_labels();
+    ui.click_on("commit-row:1", MouseButton::Right);
+    let labels = testing::menu_labels();
+    if labels.iter().any(|l| l.starts_with("Tag subject")) {
+        fail!(ui, "commit menu offers a {{tag}} command: {labels:?}");
+    }
+    ui.quick("key:escape");
+    ui.step("select:1");
+    ui.step("custom:run,Tag subject");
+    ui.wait_real(3000, |ui| ui.is_idle() && ui.modal().is_some());
+    if !ui.git_commands().iter().any(|c| c == "log -1 --format=%s v1.0") {
+        fail!(ui, "not run with the tag: {:?}", ui.git_commands());
     }
 }

@@ -40,6 +40,13 @@ pub struct Pick {
     pub f: Submit,
 }
 
+/// A dialog's further action ([`Modal::with_extra`]).
+pub struct Extra {
+    pub key: char,
+    pub label: String,
+    pub f: Action,
+}
+
 /// The key that opens a field's chooser ([`Modal::with_pick`]) and its label.
 pub const PICK_KEY: char = 'o';
 pub const PICK_KEY_LABEL: &str = "ctrl-o";
@@ -292,6 +299,8 @@ pub enum Modal {
         live: Option<LiveFn>,
         /// A field filled from a chooser of its own ([`Modal::with_pick`]).
         pick: Option<Pick>,
+        /// A further action beside Enter ([`Modal::with_extra`]), e.g. Delete….
+        extra: Option<Extra>,
     },
     Confirm {
         title: String,
@@ -394,7 +403,21 @@ impl Modal {
             note: None,
             live: None,
             pick: None,
+            extra: None,
         }
+    }
+
+    /// A further action of the dialog on ctrl-`key` (`label` beside Enter's in the bottom
+    /// line): it closes the dialog and runs `f` (which asks first where it must).
+    pub fn with_extra(mut self, key: char, label: impl Into<String>, f: impl FnOnce(&mut App) + 'static) -> Self {
+        if let Modal::Input { extra, .. } = &mut self {
+            *extra = Some(Extra {
+                key,
+                label: label.into(),
+                f: Box::new(f),
+            });
+        }
+        self
     }
 
     /// [`PICK_KEY`] in field `field` closes the dialog and runs `f` with its values (it

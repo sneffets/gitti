@@ -690,7 +690,7 @@ impl GittiApp {
                 };
                 let menu = super::menus::ref_menu(menu, &app, &menu_ref, &ctx, window, cx);
                 // A branch's custom commands: a remote branch by its name there, with its
-                // remote.
+                // remote; a tag's.
                 let given = match menu_ref.kind {
                     RefKind::LocalBranch => Some(super::custom_commands::Given {
                         commit: Some(menu_ref.target.to_string()),
@@ -709,16 +709,20 @@ impl GittiApp {
                             ..Default::default()
                         })
                     }
+                    // A tag's: the tag and its commit.
+                    RefKind::Tag => Some(super::custom_commands::Given {
+                        commit: Some(menu_ref.target.to_string()),
+                        tag: Some(menu_ref.short_name.clone()),
+                        ..Default::default()
+                    }),
                     _ => None,
                 };
+                let kind = match menu_ref.kind {
+                    RefKind::Tag => gitti_core::custom_command::Menu::Tag,
+                    _ => gitti_core::custom_command::Menu::Branch,
+                };
                 match given {
-                    Some(g) => super::custom_commands::menu_items(
-                        menu,
-                        &app,
-                        gitti_core::custom_command::Menu::Branch,
-                        g,
-                        cx,
-                    ),
+                    Some(g) => super::custom_commands::menu_items(menu, &app, kind, g, cx),
                     None => menu,
                 }
             })

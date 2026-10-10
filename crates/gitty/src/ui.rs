@@ -2993,6 +2993,7 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
             focus,
             note,
             pick,
+            extra,
             ..
         } => {
             const W: u16 = 64;
@@ -3198,13 +3199,25 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                 inner.x,
                 inner.y + inner.height.saturating_sub(1),
                 inner.width.saturating_sub(1),
-                vec![
-                    Span::styled(ok, ok_style),
-                    Span::styled(
-                        " · esc cancel · tab next · space toggle",
-                        Style::new().fg(p.text_faint),
-                    ),
-                ],
+                {
+                    let extra = extra
+                        .as_ref()
+                        .map(|x| format!(" · ctrl-{} {}", x.key, x.label))
+                        .unwrap_or_default();
+                    // The navigation keys go first when the line is too long.
+                    let full = " · esc cancel · tab next · space toggle";
+                    let room = inner.width.saturating_sub(1) as usize;
+                    let rest = if (ok.as_str().width() + extra.as_str().width() + full.width()) <= room {
+                        full
+                    } else {
+                        " · esc cancel"
+                    };
+                    vec![
+                        Span::styled(ok, ok_style),
+                        Span::styled(extra, Style::new().fg(p.text_faint)),
+                        Span::styled(rest, Style::new().fg(p.text_faint)),
+                    ]
+                },
             );
         }
         Modal::Confirm {

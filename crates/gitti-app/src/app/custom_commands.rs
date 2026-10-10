@@ -1,6 +1,6 @@
 //! Custom commands in gitti (`gitti_core::custom_command`): Repository ▸ Custom
 //! Commands… (the list: New…, Edit…), Repository ▸ Run Custom Command… (a picker), one
-//! palette entry per command, and entries in the commit / branch / remote / diff context
+//! palette entry per command, and entries in the commit / branch / tag / remote / diff context
 //! menus for the commands that use what that menu is about — greyed with the reason when
 //! a value they need is missing. The define / edit dialog shares its fields and live text
 //! with gitty (`custom_command::form` / `plan`). A run is an ordinary operation
@@ -27,6 +27,7 @@ pub(super) struct Given {
     pub branch: Option<String>,
     pub remote: Option<String>,
     pub file: Option<String>,
+    pub tag: Option<String>,
 }
 
 /// The entries of `menu`'s custom commands (after a separator; none without such
@@ -91,6 +92,17 @@ impl GittiApp {
             (c.stash.is_none() && !c.stash_helper).then(|| c.id.to_string())
         });
         v.branch = given.branch.clone().or_else(|| self.head.branch.clone());
+        // `{tag}`: the menu's tag, else the first tag (by name) on the selected commit.
+        v.tag = given.tag.clone().or_else(|| {
+            let id = gitti_core::ObjectId::from_hex(v.commit.as_deref()?.as_bytes()).ok()?;
+            self.history
+                .refs_by_commit
+                .get(&id)?
+                .iter()
+                .filter(|r| r.kind == gitti_core::RefKind::Tag)
+                .map(|r| r.short_name.clone())
+                .min()
+        });
         v.remote = given.remote.clone().or_else(|| {
             cc::default_remote(self.head.branch.as_deref(), &self.tracking, &self.remotes)
         });

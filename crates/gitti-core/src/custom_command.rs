@@ -131,6 +131,8 @@ impl Entry {
         match menu {
             Menu::Commit => needs.contains(&Placeholder::Commit),
             Menu::Branch => needs.contains(&Placeholder::Branch),
+            // A tag's menu: what it is about is the tag, and its commit.
+            Menu::Tag => needs.contains(&Placeholder::Tag) || needs.contains(&Placeholder::Commit),
             Menu::Remote => needs.contains(&Placeholder::Remote),
             Menu::File => needs.contains(&Placeholder::File) || needs.contains(&Placeholder::Files),
         }
@@ -142,6 +144,7 @@ impl Entry {
 pub enum Menu {
     Commit,
     Branch,
+    Tag,
     Remote,
     File,
 }
@@ -567,6 +570,7 @@ pub fn plan(e: &Entry, old: Option<(Scope, &str)>, existing: &[Entry], ctx: &Con
         for (m, label) in [
             (Menu::Commit, "commit"),
             (Menu::Branch, "branch"),
+            (Menu::Tag, "tag"),
             (Menu::Remote, "remote"),
             (Menu::File, "file"),
         ] {
@@ -650,6 +654,13 @@ mod tests {
         assert_eq!(missing(&e, &c), None);
         assert!(e.offered_in(Menu::Commit) && e.offered_in(Menu::File));
         assert!(!e.offered_in(Menu::Branch) && !e.offered_in(Menu::Remote));
+        // A tag's menu: commands about its commit, and those using {tag}.
+        assert!(e.offered_in(Menu::Tag));
+        let t = entry(Kind::Git, "push {remote} {tag}");
+        assert!(t.offered_in(Menu::Tag) && t.offered_in(Menu::Remote) && !t.offered_in(Menu::Commit));
+        assert_eq!(missing(&t, &c), Some("no remote"));
+        c.values.remote = Some("origin".into());
+        assert_eq!(missing(&t, &c), Some("no tag on the selected commit"));
         let mut w = entry(Kind::Shell, "ls");
         w.cmd.workdir = "{branch}".into();
         assert_eq!(missing(&w, &c), Some("no current branch"));
