@@ -1,12 +1,13 @@
 //! The marks next to a repository's name: commits not pushed against an upstream, without
 //! one, with a gone one; none when detached or without any remote; the snapshot carries
-//! them without an extra git process; uncommitted = what `git status` lists.
+//! them without an extra git process; uncommitted = what `git status` lists (a stash is
+//! not); one mark shown, uncommitted before unpushed.
 
 use std::fs;
 use std::path::Path;
 
 use gitti_core::Repo;
-use gitti_core::tab_marks::{self, PushTarget, Unpushed};
+use gitti_core::tab_marks::{self, Mark, PushTarget, Unpushed};
 
 use crate::fx::{self, Import, put};
 
@@ -31,6 +32,8 @@ fn commits_not_pushed_with_and_without_an_upstream() {
     i.commit("main", None, &[], "two", &[put("a.txt", "two\n")]);
     let three = i.commit("main", None, &[], "three", &[put("a.txt", "three\n")]);
     i.commit("feature", Some(&three), &[], "four", &[put("b.txt", "four\n")]);
+    // A stash (only its ref matters here): not an uncommitted change.
+    i.reset("refs/stash", &one);
     let ids = i.run(&work);
     fx::checkout(&work);
     let repo = Repo::open(&work).unwrap();
@@ -44,6 +47,8 @@ fn commits_not_pushed_with_and_without_an_upstream() {
     };
     assert_eq!(snap.unpushed, Some(want));
     assert!(!tab_marks::uncommitted(&snap.working.status), "a clean checkout");
+    let mark = tab_marks::mark(&snap.working.status, snap.unpushed.as_ref());
+    assert_eq!(mark, Some(Mark::Unpushed), "clean with a stash, two commits not pushed");
     let ran = fx::commands(&repo)[n_before..].to_vec();
     assert!(
         !ran.iter().any(|c| c.starts_with("rev-list") || c.starts_with("log")),
@@ -58,6 +63,9 @@ fn commits_not_pushed_with_and_without_an_upstream() {
         tab_marks::describe_uncommitted(&w.status).as_deref(),
         Some("Uncommitted changes in 2 files: 1 unstaged, 1 untracked")
     );
+    // Uncommitted outranks unpushed: one filled circle.
+    let mark = tab_marks::mark(&w.status, snap.unpushed.as_ref());
+    assert_eq!(mark, Some(Mark::Uncommitted));
 
     // No upstream: the commits no remote-tracking branch has (two, three, four).
     set_head(&work, "ref: refs/heads/feature");

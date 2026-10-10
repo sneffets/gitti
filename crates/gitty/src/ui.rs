@@ -511,15 +511,16 @@ fn draw_toolbar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
         app.repo.name(),
         Style::new().fg(p.text_strong).add_modifier(Modifier::BOLD),
     ));
-    // As on gitti's repository tabs: ● uncommitted changes, ○ commits not pushed.
+    // As on gitti's repository tabs: ● uncommitted changes, else ○ commits not pushed.
     let marks_at = area.x + spans.iter().map(|s| s.width() as u16).sum::<u16>();
-    let (dirty, unpushed) = app.repo_marks();
     let mut marks_w = 0;
-    for (on, glyph, color) in [(dirty, "●", p.warning), (unpushed, "○", p.accent)] {
-        if on {
-            spans.push(Span::styled(format!(" {glyph}"), Style::new().fg(color)));
-            marks_w += 2;
-        }
+    if let Some(mark) = app.repo_mark() {
+        let color = match mark {
+            gitti_core::tab_marks::Mark::Uncommitted => p.warning,
+            gitti_core::tab_marks::Mark::Unpushed => p.accent,
+        };
+        spans.push(Span::styled(format!(" {}", mark.glyph()), Style::new().fg(color)));
+        marks_w = 2;
     }
     app.areas.repo_marks = if marks_w > 0 {
         Rect::new(marks_at, area.y, marks_w, 1).intersection(area)
@@ -3678,8 +3679,8 @@ Commit message
   ctrl-w ctrl-u   delete word / to line start
 
 Top line
-  ● ○             after the repository name: uncommitted changes / commits not pushed
-                  (a click on them says what they are)
+  ● / ○           after the repository name: uncommitted changes / else commits not
+                  pushed (a click on it says what is open)
 ";
 
 /// Greedy word wrap to `cols` display columns (long words are split); keeps leading indent.

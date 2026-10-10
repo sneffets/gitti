@@ -1392,11 +1392,11 @@ fn title_place(p: &[Probe], ix: usize) -> Option<(f32, f32)> {
     ))
 }
 
-/// A tab's marks right of its name: a hollow circle for commits not pushed, a filled one
-/// for uncommitted changes, both side by side, the same size, centred on the name's line —
-/// inside the tab, never over the name (the layout invariants check every frame), the name
-/// where it is in a tab without marks; at the default and the biggest fonts in the default
-/// and the most cramped window, with a second tab open.
+/// A tab's mark right of its name: a hollow circle for commits not pushed, a filled one
+/// for uncommitted changes — only the filled one when both hold — centred on the name's
+/// line, inside the tab, never over the name (the layout invariants check every frame), the
+/// name where it is in a tab without a mark; at the default and the biggest fonts in the
+/// default and the most cramped window, with a second tab open.
 fn repo_tab_marks_sweep(ui: &mut Ui) {
     let other = ui.repo.parent().unwrap().join("marks-sweep-other");
     if !other.exists() {
@@ -1408,28 +1408,31 @@ fn repo_tab_marks_sweep(ui: &mut Ui) {
     if marks.iter().map(|m| m.0.as_str()).collect::<Vec<_>>() != ["○", ""] {
         ui.fail(format!("ahead of origin/main, clean / an empty repository: {marks:?}"));
     }
+    sweep_tab_mark(ui, "tab-unpushed:0", "tab-dirty:0");
     std::fs::write(ui.repo.join("a.txt"), "changed\n").unwrap();
-    if !ui.wait_real(1500, |ui| ui.is_idle() && tab_marks(ui)[0].0 == "● ○") {
+    if !ui.wait_real(1500, |ui| ui.is_idle() && tab_marks(ui)[0].0 == "●") {
         let marks = tab_marks(ui);
         ui.fail(format!("after an outside change: {marks:?}"));
         return;
     }
+    // Uncommitted outranks unpushed: the filled circle alone.
+    sweep_tab_mark(ui, "tab-dirty:0", "tab-unpushed:0");
+}
+
+/// Over the sweep's points: tab 0 shows `shown` (and not `hidden`) on its name's line, its
+/// name where tab 1's is.
+fn sweep_tab_mark(ui: &mut Ui, shown: &str, hidden: &str) {
     for point in points() {
         let ctx = set_point(ui, point);
-        let p = ui.check(&format!("{ctx}, both marks"));
+        let p = ui.check(&format!("{ctx}, {shown}"));
         let vis = |n: &str| find(&p, n).and_then(Probe::visible);
-        match (vis("tab-dirty:0"), vis("tab-unpushed:0"), title_place(&p, 0), title_place(&p, 1)) {
-            (Some(d), Some(u), Some((x0, cy)), Some((x1, _)))
-                // The probe of the hollow one is its inside (without the ring).
-                if d.right() <= u.left()
-                    && (0. ..=4.5).contains(&(f32::from(d.size.width) - f32::from(u.size.width)))
-                    && (f32::from(d.center().y) - cy).abs() <= 2.
-                    && (f32::from(u.center().y) - cy).abs() <= 2.
-                    && (x0 - x1).abs() < 0.5 => {}
+        match (vis(shown), vis(hidden), title_place(&p, 0), title_place(&p, 1)) {
+            (Some(m), None, Some((x0, cy)), Some((x1, _)))
+                if (f32::from(m.center().y) - cy).abs() <= 2. && (x0 - x1).abs() < 0.5 => {}
             other => {
                 let marks = tab_marks(ui);
                 ui.fail(format!(
-                    "{ctx}: filled + hollow circle side by side on the name's line, the name in place: {other:?}, marks {marks:?}"
+                    "{ctx}: only {shown} on the name's line, the name in place: {other:?}, marks {marks:?}"
                 ))
             }
         }
@@ -1447,7 +1450,7 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
         ui.fail(format!("ahead of origin/main, clean: {marks:?}"));
     }
     std::fs::write(ui.repo.join("outside.txt"), "x\n").unwrap();
-    let seen = ui.wait_real(1500, |ui| ui.is_idle() && tab_marks(ui)[0].0 == "● ○");
+    let seen = ui.wait_real(1500, |ui| ui.is_idle() && tab_marks(ui)[0].0 == "●");
     let marks = tab_marks(ui);
     let want = "Uncommitted changes in 1 file: 1 untracked\n1 commit not pushed to origin/main";
     if !seen || marks[0].1 != want {
@@ -1455,7 +1458,7 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     }
     ui.step("stagefile:outside.txt");
     let marks = tab_marks(ui);
-    if marks[0].0 != "● ○" || !marks[0].1.starts_with("Uncommitted changes in 1 file: 1 staged") {
+    if marks[0].0 != "●" || !marks[0].1.starts_with("Uncommitted changes in 1 file: 1 staged") {
         ui.fail(format!("after staging: {marks:?}"));
     }
     ui.step("msg:Add outside");
@@ -1471,7 +1474,7 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     ui.step(&format!("open:{}", other.display()));
     // The first tab in the background: its watcher still reports.
     std::fs::write(ui.repo.join("later.txt"), "x\n").unwrap();
-    let seen = ui.wait_real(1500, |ui| tab_marks(ui)[0].0 == "● ○");
+    let seen = ui.wait_real(1500, |ui| tab_marks(ui)[0].0 == "●");
     let marks = tab_marks(ui);
     if !seen || marks[1] != (String::new(), String::new()) {
         ui.fail(format!("a change in the background tab: {marks:?}"));

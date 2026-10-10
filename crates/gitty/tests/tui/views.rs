@@ -485,13 +485,14 @@ fn repo_marks_after_the_name() {
     let out = gitty(d, &script);
     let s = screens(&out);
     let top = |i: usize| s[i].lines().next().unwrap_or_default().to_string();
-    assert!(top(0).contains(" ● ○  ⎇ main ↑1"), "{out}");
+    // Uncommitted outranks unpushed: only the filled circle (the ↑1 still shows).
+    assert!(top(0).contains(" ●  ⎇ main ↑1"), "{out}");
     let st = states(&out)[0];
     assert!(
         st.contains("Uncommitted changes in 1 file: 1 untracked · 1 commit not pushed to origin/main"),
-        "a click on the marks: {out}"
+        "a click on the mark names both: {out}"
     );
-    assert!(top(1).contains(" ● ○  ⎇ main"), "staged: {out}");
+    assert!(top(1).contains(" ●  ⎇ main"), "staged: {out}");
 }
 
 /// HEAD's refs in [`many_refs_repo`] (`main` checked out), in badge order.

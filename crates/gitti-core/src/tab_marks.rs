@@ -1,6 +1,8 @@
-//! The marks next to a repository's name — gitti's repository tabs, gitty's top line: a
-//! filled circle while the working tree has uncommitted changes, a hollow one while the
-//! current branch has commits that are not pushed.
+//! The mark next to a repository's name — gitti's repository tabs, gitty's top line: a
+//! filled circle while the working tree has uncommitted changes, else a hollow one while
+//! the current branch has commits that are not pushed ([`mark`]: two levels — uncommitted
+//! work is not pushed either, so the hollow circle would say nothing more). Stashes don't
+//! count as uncommitted. What the mark means (both, when both hold) is in the tooltip.
 //!
 //! Both come from what a refresh reads anyway: "uncommitted" is a non-empty `git status`
 //! (staged, unstaged, conflicted and untracked files — never ignored ones, and untracked
@@ -60,6 +62,36 @@ impl Unpushed {
 /// The working tree has uncommitted changes (whatever `git status` lists).
 pub fn uncommitted(status: &Status) -> bool {
     !status.entries.is_empty()
+}
+
+/// The one mark shown next to a repository's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    /// Filled circle: the working tree has uncommitted changes (whether or not commits
+    /// are unpushed as well).
+    Uncommitted,
+    /// Hollow circle: nothing uncommitted, but commits that are not pushed.
+    Unpushed,
+}
+
+impl Mark {
+    /// "●" / "○".
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Mark::Uncommitted => "●",
+            Mark::Unpushed => "○",
+        }
+    }
+}
+
+/// Which mark to show: uncommitted outranks unpushed; `None` when the repository is clean
+/// and pushed.
+pub fn mark(status: &Status, unpushed: Option<&Unpushed>) -> Option<Mark> {
+    if uncommitted(status) {
+        Some(Mark::Uncommitted)
+    } else {
+        unpushed.map(|_| Mark::Unpushed)
+    }
 }
 
 /// "Uncommitted changes in 3 files: 1 staged, 2 unstaged" — `None` when there are none.
@@ -204,6 +236,22 @@ mod tests {
             describe_uncommitted(&status).unwrap(),
             "Uncommitted changes in 4 files: 1 conflicted, 2 staged, 1 unstaged, 1 untracked"
         );
+    }
+
+    #[gitti_test::test]
+    fn uncommitted_outranks_unpushed() {
+        let up = Unpushed {
+            count: 1,
+            target: PushTarget::Upstream("origin/main".into()),
+        };
+        let mut status = Status::default();
+        assert_eq!(mark(&status, None), None);
+        assert_eq!(mark(&status, Some(&up)), Some(Mark::Unpushed));
+        status.entries.push(entry("a", None, Some('M')));
+        assert_eq!(mark(&status, None), Some(Mark::Uncommitted));
+        assert_eq!(mark(&status, Some(&up)), Some(Mark::Uncommitted));
+        assert_eq!(Mark::Uncommitted.glyph(), "●");
+        assert_eq!(Mark::Unpushed.glyph(), "○");
     }
 
     #[gitti_test::test]

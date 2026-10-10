@@ -479,7 +479,7 @@ impl Workspace {
             .collect()
     }
 
-    /// Per tab: its marks as text ("●", "○", "● ○", "") and what they mean, for tests.
+    /// Per tab: its mark as text ("●", "○", "") and what they mean, for tests.
     pub fn script_tab_marks(&self, cx: &App) -> Vec<(String, String)> {
         self.tabs
             .iter()
@@ -914,7 +914,7 @@ impl Workspace {
             } else {
                 titles[ix].clone()
             };
-            // The tab's marks: uncommitted ●, not pushed ○.
+            // The tab's mark: uncommitted ●, else not pushed ○.
             let marks = tab.app.read(cx).tab_marks();
             if marks.any() {
                 label = format!("{label}  {}", marks.glyphs());

@@ -1322,13 +1322,10 @@ impl App {
         }
     }
 
-    /// The marks after the repository name: ● uncommitted changes, ○ commits not pushed
-    /// (`gitti_core::tab_marks`, from what the refreshes read anyway); empty without any.
-    pub fn repo_marks(&self) -> (bool, bool) {
-        (
-            gitti_core::tab_marks::uncommitted(&self.working.status),
-            self.unpushed.is_some(),
-        )
+    /// The mark after the repository name: ● uncommitted changes, else ○ commits not
+    /// pushed (`gitti_core::tab_marks::mark`, from what the refreshes read anyway).
+    pub fn repo_mark(&self) -> Option<gitti_core::tab_marks::Mark> {
+        gitti_core::tab_marks::mark(&self.working.status, self.unpushed.as_ref())
     }
 
     /// What the marks mean, in the status line (a click on them).
