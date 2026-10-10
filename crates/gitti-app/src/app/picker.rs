@@ -683,6 +683,7 @@ impl GittiApp {
         items.extend(self.repo_palette_items(cx));
         items.extend(self.navigate_palette_items());
         items.extend(self.menu_cmd_palette_items());
+        items.extend(self.prepared_palette_items(cx));
         items.extend(self.list_layout_palette_items());
         items.extend(self.worktree_palette_items());
         items.extend(self.submodule_palette_items());

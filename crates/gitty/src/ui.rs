@@ -1504,6 +1504,8 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         area.height.saturating_sub(1),
     );
     app.areas.message = Rect::default();
+    app.areas.prepared_use = Rect::default();
+    app.areas.prepared_keep = Rect::default();
     // Compare mode: what is compared (or the base hint), pinned above everything else.
     if let Some(banner) = compare_banner(app, p) {
         let row = Rect::new(content.x, content.y, content.width, 1);
@@ -1726,7 +1728,10 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
     } else {
         1
     };
-    let total = (text_h + 2).min(area.height);
+    // git's prepared message next to the user's own text: a note row under the text.
+    let note = app.prepared_note();
+    let note_h = u16::from(note.is_some());
+    let total = (text_h + 2 + note_h).min(area.height);
     let box_area = Rect::new(area.x, area.y, area.width, total);
     let buf = f.buffer_mut();
     buf.set_style(box_area, Style::new().bg(p.bg_section));
@@ -1796,8 +1801,29 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
         f.set_cursor_position((cx, text_area.y + (crow - scroll) as u16));
     }
     let buf = f.buffer_mut();
-    if total > text_h {
+    app.areas.prepared_use = Rect::default();
+    app.areas.prepared_keep = Rect::default();
+    if let Some(note) = note
+        && total > text_h
+    {
         let y = area.y + text_h;
+        let buttons = vec![
+            Span::styled(" Use It ", Style::new().fg(p.accent_text).bg(p.accent)),
+            Span::raw(" "),
+            Span::styled(" Keep Mine ", Style::new().fg(p.text).bg(p.bg_file_header)),
+        ];
+        let bw = Line::from(buttons.clone()).width() as u16;
+        let w = area.width.saturating_sub(1);
+        let x = put_right(buf, area.x, y, w, buttons);
+        // " Use It " is 8 columns, then a space and " Keep Mine ".
+        app.areas.prepared_use = Rect::new(x, y, 8.min(bw), 1);
+        app.areas.prepared_keep = Rect::new(x + 9, y, bw.saturating_sub(9), 1);
+        let room = x.saturating_sub(area.x + 3);
+        let text = Span::styled(fit_width(&note, room), Style::new().fg(p.text_muted));
+        put(buf, area.x + 2, y, room, vec![text]);
+    }
+    if total > text_h + note_h {
+        let y = area.y + text_h + note_h;
         let (name, mail) = &app.identity;
         let who = match (name, mail) {
             (Some(n), Some(m)) => Span::styled(format!("{n} <{m}>"), Style::new().fg(p.text_muted)),

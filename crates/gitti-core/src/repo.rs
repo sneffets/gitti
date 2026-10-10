@@ -148,8 +148,10 @@ pub struct RepoSnapshot {
     pub identity: (Option<String>, Option<String>),
     /// Names of "ours" / "theirs" while there are conflicted files.
     pub conflict_sides: Option<crate::ops::ConflictSides>,
-    /// The prepared merge commit message while merging ([`Repo::merge_message`]).
-    pub merge_message: Option<String>,
+    /// The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`, see
+    /// [`Repo::prepared_message`]): after a merge, a cherry-pick / revert (also with
+    /// `--no-commit`) or `merge --squash`.
+    pub prepared_message: Option<String>,
     /// Every worktree, main first (cached, see [`Repo::worktrees`]); just the main one in
     /// a repository without linked worktrees.
     pub worktrees: Vec<crate::worktree::Worktree>,
@@ -1068,13 +1070,13 @@ impl Repo {
             self.nested_submodule_status(&mut submodules);
             let conflict_sides = (!working.conflicted.is_empty()).then(|| self.conflict_sides());
             let state = joined(state)?;
-            let merge_message = (state == crate::ops::RepoState::Merging)
-                .then(|| self.merge_message())
-                .flatten();
+            // Two small files in the git dir, read whatever the state: `cherry-pick -n`
+            // and `merge --squash` leave a message without any *_HEAD.
+            let prepared_message = self.prepared_message();
             Ok(RepoSnapshot {
                 working,
                 conflict_sides,
-                merge_message,
+                prepared_message,
                 head: self.head()?,
                 refs: self.refs()?,
                 remotes: joined(remotes)?,

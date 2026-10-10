@@ -4,6 +4,8 @@
 //! git. Commit with nothing staged asks: "Stage All and Commit" (`add -A`, then the commit)
 //! or "Create Empty Commit" (`--allow-empty`). Quitting while git runs asks first, so does
 //! closing the tab. A SHA-256 repository opens, stages a line and commits like a SHA-1 one.
+//! The message git prepared (`cherry-pick -n -x` on the command line) fills an empty box
+//! and commits; next to the user's own text a note offers it instead (Keep Mine, Use It).
 //!
 //! Own `main` like `layout.rs`: `cargo test --workspace --test ui -- commit[::FILTER]`.
 
@@ -28,10 +30,17 @@ pub fn main() {
         ("quit_while_git_runs_asks", quit_while_git_runs_asks),
         ("sha256_stage_a_line_and_commit", sha256_stage_a_line_and_commit),
         ("close_tab_while_git_runs_asks", close_tab_while_git_runs_asks),
+        ("prepared_message_after_cherry_pick", prepared_message_after_cherry_pick),
     ];
     common::run(tests, |name| {
         let dir = BASE.with(|b| b.borrow().join(name));
-        if name.starts_with("sha256") { make_sha256_repo(&dir) } else { make_repo(&dir) }
+        if name.starts_with("sha256") {
+            make_sha256_repo(&dir)
+        } else if name.starts_with("prepared") {
+            make_pick_repo(&dir)
+        } else {
+            make_repo(&dir)
+        }
     });
 }
 
@@ -95,6 +104,66 @@ fn sha256_stage_a_line_and_commit(ui: &mut Ui) {
         ui.fail(format!("select by a 12-digit prefix: {selected:?}, HEAD {head}"));
     }
     ui.check("SHA-256 commit header");
+}
+
+/// `main`: `init` (a.txt), `main work` (b.txt); `side` from `init`: "Add side" (with a
+/// body, side.txt), "Add other" (other.txt) — both pick cleanly onto main.
+fn make_pick_repo(dir: &std::path::Path) -> PathBuf {
+    init_repo(dir);
+    let mut s = Stream::new();
+    let init = s.commit("refs/heads/main", "init", None, &[("a.txt", Some("a\n"))]);
+    s.commit("refs/heads/side", "Add side\n\nWhy side.", Some(init), &[("side.txt", Some("s\n"))]);
+    s.commit("refs/heads/side", "Add other", None, &[("other.txt", Some("o\n"))]);
+    s.commit("refs/heads/main", "main work", None, &[("b.txt", Some("b\n"))]);
+    s.import(dir);
+    git(dir, &["reset", "-q", "--hard"]);
+    dir.to_path_buf()
+}
+
+/// `git cherry-pick -n -x` on the command line leaves only MERGE_MSG: the refresh puts
+/// it into the empty box (no note), Commit commits it and git drops the file. With the
+/// user's own text in the box, the text stays and a note offers git's message: Keep Mine
+/// hides it, the palette's "Use the Message git Prepared" takes it (no git).
+fn prepared_message_after_cherry_pick(ui: &mut Ui) {
+    let dir = ui.repo.clone();
+    let note = |ui: &mut Ui| find(&ui.frame(), "prepared-note").is_some();
+    let side = git_out(&dir, &["rev-parse", "side~1"]);
+    git(&dir, &["cherry-pick", "-n", "-x", "side~1"]);
+    ui.step("key:f5");
+    let want = format!("Add side\n\nWhy side.\n\n(cherry picked from commit {side})");
+    if message(ui) != want || note(ui) {
+        let (m, n) = (message(ui), note(ui));
+        ui.fail(format!("after cherry-pick -n -x: box {m:?}, note {n}"));
+    }
+    ui.step("commit");
+    let body = git_out(&dir, &["log", "-1", "--format=%B"]);
+    if body != want || dir.join(".git/MERGE_MSG").exists() || !message(ui).is_empty() {
+        let m = message(ui);
+        ui.fail(format!("after the commit: HEAD {body:?}, box {m:?}"));
+    }
+    // The user's own text: kept, git's message offered next to it.
+    ui.step("msg:My own text");
+    let other = git_out(&dir, &["rev-parse", "side"]);
+    git(&dir, &["cherry-pick", "-n", "-x", "side"]);
+    ui.step("key:f5");
+    if message(ui) != "My own text" || !note(ui) {
+        let (m, n) = (message(ui), note(ui));
+        ui.fail(format!("a draft and git's message: box {m:?}, note {n}"));
+    }
+    ui.check("the prepared-message note");
+    ui.click_on("prepared-keep", MouseButton::Left);
+    if message(ui) != "My own text" || note(ui) {
+        let (m, n) = (message(ui), note(ui));
+        ui.fail(format!("after Keep Mine: box {m:?}, note {n}"));
+    }
+    let n = ui.n_git();
+    ui.step("palette:use the message git prepared");
+    ui.no_git_since(n, "Use the Message git Prepared");
+    let want = format!("Add other\n\n(cherry picked from commit {other})");
+    if message(ui) != want {
+        let m = message(ui);
+        ui.fail(format!("after Use It: box {m:?}"));
+    }
 }
 
 fn message(ui: &mut Ui) -> String {

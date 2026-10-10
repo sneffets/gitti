@@ -700,24 +700,42 @@ impl Repo {
         self.out(&["reset", "--merge"])
     }
 
-    /// The message git prepared for the merge commit (`MERGE_MSG`) without its comment
-    /// lines (`# Conflicts: …`), trimmed; `None` when there is none.
-    pub fn merge_message(&self) -> Option<String> {
-        let raw = std::fs::read_to_string(self.git_dir()?.join("MERGE_MSG")).ok()?;
-        let comment = self.comment_char();
-        Some(strip_comment_lines(&raw, comment)).filter(|m| !m.is_empty())
+    /// The message git left for the next commit — what `git commit` would start its
+    /// editor with: `MERGE_MSG` (a merge, a cherry-pick / revert that stopped on a
+    /// conflict, and also `cherry-pick -n` / `revert -n`, which leave no
+    /// `CHERRY_PICK_HEAD`), after `SQUASH_MSG` (`merge --squash`) when both exist, else
+    /// `SQUASH_MSG` alone. Read from this worktree's own git dir (linked worktrees have
+    /// their own), cleaned up like git's default `strip` ([`cleanup_message`]: comment
+    /// lines such as `# Conflicts:` per `core.commentChar` / `core.commentString` go);
+    /// `None` when there is none or nothing is left. git deletes both files when a commit
+    /// succeeds (also `commit -F`, as gitti commits) and on abort / `reset`.
+    pub fn prepared_message(&self) -> Option<String> {
+        let dir = self.git_dir()?;
+        let merge = std::fs::read(dir.join("MERGE_MSG")).ok();
+        let squash = std::fs::read(dir.join("SQUASH_MSG")).ok();
+        if merge.is_none() && squash.is_none() {
+            return None;
+        }
+        let mut raw = squash.unwrap_or_default();
+        raw.extend(merge.unwrap_or_default());
+        let text = crate::git_cli::decode_native(&raw);
+        Some(cleanup_message(&text, &self.comment_string())).filter(|m| !m.is_empty())
     }
 
-    /// `core.commentChar` (`#` unless set; `auto` counts as `#`), in-process.
-    fn comment_char(&self) -> char {
-        self.gix()
-            .ok()
-            .and_then(|r| {
-                let c = r.config_snapshot().string("core.commentChar")?;
-                c.to_string().chars().next()
-            })
-            .filter(|c| !c.is_alphanumeric())
-            .unwrap_or('#')
+    /// The comment prefix of commit messages, in-process: `core.commentString`, else
+    /// `core.commentChar` (git 2.45+ takes several characters for both), `#` when unset
+    /// or `auto` (git applies `auto` only to the editor template it writes itself, never
+    /// to `MERGE_MSG` / `SQUASH_MSG`).
+    fn comment_string(&self) -> String {
+        let Ok(repo) = self.gix() else {
+            return "#".into();
+        };
+        let config = repo.config_snapshot();
+        ["core.commentString", "core.commentChar"]
+            .iter()
+            .find_map(|key| config.string(*key).map(|v| v.to_string()))
+            .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("auto") && !c.contains('\n'))
+            .unwrap_or_else(|| "#".into())
     }
 
     pub fn continue_operation(&self) -> Result<String> {
@@ -1061,15 +1079,98 @@ pub fn close_tab_while_busy_prompt(running: &str) -> (String, String) {
     )
 }
 
-/// A commit message without the lines starting with the comment character (git's
-/// `--cleanup=strip` minus the whitespace rules), trimmed at both ends.
-pub fn strip_comment_lines(msg: &str, comment: char) -> String {
-    msg.lines()
-        .filter(|l| !l.starts_with(comment))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
+/// A commit message cleaned up like git's default `--cleanup=strip`: lines starting with
+/// `comment` dropped, trailing whitespace of every line removed, runs of blank lines
+/// collapsed into one and blank lines at both ends dropped.
+pub fn cleanup_message(msg: &str, comment: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut blank = false;
+    for line in msg.lines().filter(|l| !l.starts_with(comment)) {
+        let line = line.trim_end();
+        if line.is_empty() {
+            blank = !out.is_empty();
+            continue;
+        }
+        if std::mem::take(&mut blank) {
+            out.push("");
+        }
+        out.push(line);
+    }
+    out.join("\n")
+}
+
+/// What a refresh does with the message box given the message git prepared for the next
+/// commit ([`Repo::prepared_message`]). Shared by gitti and gitty, which keep the
+/// prepared message they last put into the box (`prefill`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrefillSync {
+    /// Leave the box as it is.
+    Keep,
+    /// Put this message into the box (it was empty, or still held an older prefill
+    /// nobody edited) and remember it as the prefill.
+    Fill(String),
+    /// git's message is gone (committed, aborted, reset) and the box still holds it
+    /// untouched: empty the box.
+    Clear,
+    /// git's message is gone, the box holds something else: just forget the prefill.
+    Forget,
+}
+
+/// Decides [`PrefillSync`]: like `git commit`, an empty box starts with the message git
+/// prepared; text the user typed (a draft) is never replaced — the apps offer git's
+/// message next to it instead ([`offers_prepared`]). While amending (the box holds
+/// HEAD's message) nothing is filled.
+pub fn sync_prefill(
+    prepared: Option<&str>,
+    prefill: Option<&str>,
+    current: &str,
+    amend: bool,
+) -> PrefillSync {
+    match prepared {
+        Some(p) if prefill == Some(p) => PrefillSync::Keep,
+        Some(p) => {
+            let untouched = current.trim().is_empty() || prefill == Some(current);
+            if untouched && !amend {
+                PrefillSync::Fill(p.to_string())
+            } else {
+                PrefillSync::Keep
+            }
+        }
+        None => match prefill {
+            None => PrefillSync::Keep,
+            Some(old) if old == current => PrefillSync::Clear,
+            Some(_) => PrefillSync::Forget,
+        },
+    }
+}
+
+/// Whether the apps show "git prepared a message for this commit — Use It / Keep Mine"
+/// next to the message box: git left a message ([`Repo::prepared_message`]) that is not
+/// what the box started from, the box holds the user's own text (not amending), and the
+/// user didn't answer Keep Mine for this message (`dismissed`).
+pub fn offers_prepared(
+    prepared: Option<&str>,
+    prefill: Option<&str>,
+    dismissed: Option<&str>,
+    current: &str,
+    amend: bool,
+) -> bool {
+    prepared.is_some_and(|p| {
+        let mine = current.trim();
+        prefill != Some(p) && dismissed != Some(p) && !amend && !mine.is_empty() && mine != p
+    })
+}
+
+/// Palette label (both apps) of "Use It": git's prepared message replaces the box's text.
+pub const USE_PREPARED_LABEL: &str = "Use the Message git Prepared";
+/// Palette label (both apps) of "Keep Mine": the note goes, the box keeps its text.
+pub const KEEP_MINE_LABEL: &str = "Keep My Commit Message";
+
+/// The note next to the message box while [`offers_prepared`]: what git left, by its
+/// subject line.
+pub fn prepared_note(prepared: &str) -> String {
+    let subject = prepared.lines().next().unwrap_or_default();
+    format!("git prepared a message for this commit: \"{subject}\"")
 }
 
 /// Title and detail of the confirmation before [`Repo::abort_conflicts`] (conflicts
@@ -1110,14 +1211,49 @@ pub fn abort_conflicts_prompt<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{split_command_line_for, strip_comment_lines};
+    use super::{cleanup_message, split_command_line_for};
 
     #[gitti_test::test]
-    fn strips_comment_lines() {
+    fn cleans_up_like_git_strip() {
         let msg = "Merge branch 'feature'\n\n# Conflicts:\n#\tf.txt\n";
-        assert_eq!(strip_comment_lines(msg, '#'), "Merge branch 'feature'");
-        assert_eq!(strip_comment_lines("a\n; x\nb\n", ';'), "a\nb");
-        assert_eq!(strip_comment_lines("# only\n", '#'), "");
+        assert_eq!(cleanup_message(msg, "#"), "Merge branch 'feature'");
+        assert_eq!(cleanup_message("a\n; x\nb\n", ";"), "a\nb");
+        assert_eq!(cleanup_message("a\n// x\n# b\n", "//"), "a\n# b");
+        assert_eq!(cleanup_message("# only\n", "#"), "");
+        // Trailing whitespace goes, blank runs collapse, both ends trimmed.
+        let squash = "\n\nSquashed\n\n    Add g  \n    \n\n\n    Body\n\n";
+        assert_eq!(cleanup_message(squash, "#"), "Squashed\n\n    Add g\n\n    Body");
+    }
+
+    /// An empty box gets git's message; a draft is kept (and the note offers git's);
+    /// an untouched prefill follows git's message and goes with it.
+    #[gitti_test::test]
+    fn prefill_follows_the_prepared_message_never_over_a_draft() {
+        use super::{PrefillSync::*, offers_prepared, sync_prefill};
+        let fill = |m: &str| Fill(m.to_string());
+        assert_eq!(sync_prefill(Some("pick"), None, "", false), fill("pick"));
+        assert_eq!(sync_prefill(Some("pick"), None, " \n", false), fill("pick"));
+        assert_eq!(sync_prefill(Some("pick"), None, "mine", false), Keep);
+        assert_eq!(sync_prefill(Some("pick"), None, "", true), Keep, "amending");
+        // Already put in: an edit or an emptied box stays.
+        assert_eq!(sync_prefill(Some("pick"), Some("pick"), "", false), Keep);
+        assert_eq!(sync_prefill(Some("pick"), Some("pick"), "pick!", false), Keep);
+        // A new message replaces the old prefill only while nobody edited it.
+        assert_eq!(sync_prefill(Some("b"), Some("a"), "a", false), fill("b"));
+        assert_eq!(sync_prefill(Some("b"), Some("a"), "a edited", false), Keep);
+        // Gone.
+        assert_eq!(sync_prefill(None, Some("a"), "a", false), Clear);
+        assert_eq!(sync_prefill(None, Some("a"), "a edited", false), Forget);
+        assert_eq!(sync_prefill(None, None, "x", false), Keep);
+
+        assert!(offers_prepared(Some("pick"), None, None, "mine", false));
+        assert!(!offers_prepared(Some("pick"), None, None, "", false), "filled instead");
+        assert!(!offers_prepared(Some("pick"), None, None, "pick\n", false), "same text");
+        assert!(!offers_prepared(Some("pick"), Some("pick"), None, "pick edited", false));
+        assert!(!offers_prepared(Some("pick"), None, Some("pick"), "mine", false), "Keep Mine");
+        assert!(offers_prepared(Some("new"), None, Some("pick"), "mine", false));
+        assert!(!offers_prepared(Some("pick"), None, None, "mine", true), "amending");
+        assert!(!offers_prepared(None, None, None, "mine", false));
     }
 
     #[gitti_test::test]

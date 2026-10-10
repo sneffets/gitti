@@ -59,6 +59,9 @@ pub enum PathKind {
     Worktrees,
     /// Ignore rules outside the work tree (`.git/info/exclude`): the whole working state.
     Rules,
+    /// The message git left for the next commit (`MERGE_MSG`, `SQUASH_MSG` in this
+    /// worktree's git dir), read by the snapshot.
+    Message,
 }
 
 /// Why a batch can't be judged by its paths alone.
@@ -197,7 +200,7 @@ impl WatchFilter {
                 PathKind::Refs if !covered(path, self.history_read) => return Some(Refresh::Full),
                 PathKind::Refs => {}
                 PathKind::Index if covered(path, self.working_read) || own_index(path) => {}
-                PathKind::Index | PathKind::Worktrees | PathKind::Rules => {
+                PathKind::Index | PathKind::Worktrees | PathKind::Rules | PathKind::Message => {
                     whole |= !covered(path, self.working_read);
                 }
                 PathKind::Worktree(_) if whole || covered(path, self.working_read) => {}
@@ -650,6 +653,7 @@ impl Tree {
                     GitPath::Refs => out.push((p, PathKind::Refs)),
                     GitPath::Index => out.push((p, PathKind::Index)),
                     GitPath::Worktrees => out.push((p, PathKind::Worktrees)),
+                    GitPath::Message => out.push((p, PathKind::Message)),
                     GitPath::Rules => {
                         rules = true;
                         out.push((p, PathKind::Rules));
@@ -824,6 +828,7 @@ enum GitPath {
     Index,
     Worktrees,
     Rules,
+    Message,
     Ignore,
 }
 
@@ -846,6 +851,8 @@ fn classify_git_path(rel: &Path) -> GitPath {
         GitPath::Refs
     } else if s == "index" {
         GitPath::Index
+    } else if s == "MERGE_MSG" || s == "SQUASH_MSG" {
+        GitPath::Message
     } else {
         GitPath::Ignore
     }
@@ -1114,6 +1121,9 @@ mod tests {
         assert_eq!(c(&main, "/r/.git/reftable/0x01-0x02-abc.ref"), Some(Refs));
         assert_eq!(c(&main, "/r/.git/reftable/tables.list.lock"), Some(Ignore));
         assert_eq!(c(&main, "/r/.git/CHERRY_PICK_HEAD"), Some(Refs));
+        assert_eq!(c(&main, "/r/.git/MERGE_MSG"), Some(Message));
+        assert_eq!(c(&main, "/r/.git/SQUASH_MSG"), Some(Message));
+        assert_eq!(c(&main, "/r/.git/worktrees/w1/MERGE_MSG"), Some(Ignore));
         assert_eq!(c(&main, "/r/.git/info/exclude"), Some(Rules));
         assert_eq!(c(&main, "/r/.git/worktrees/w1/HEAD"), Some(Worktrees));
         assert_eq!(c(&main, "/r/.git/worktrees/w1/locked"), Some(Worktrees));
@@ -1125,6 +1135,8 @@ mod tests {
         // Linked worktree: its own HEAD / index, shared refs, the others' metadata.
         assert_eq!(c(&linked, "/r/.git/worktrees/w1/HEAD"), Some(Refs));
         assert_eq!(c(&linked, "/r/.git/worktrees/w1/index"), Some(Index));
+        assert_eq!(c(&linked, "/r/.git/worktrees/w1/MERGE_MSG"), Some(Message));
+        assert_eq!(c(&linked, "/r/.git/MERGE_MSG"), Some(Ignore));
         assert_eq!(c(&linked, "/r/.git/worktrees/w1/logs/HEAD"), Some(Ignore));
         assert_eq!(c(&linked, "/r/.git/refs/heads/x"), Some(Refs));
         assert_eq!(c(&linked, "/r/.git/packed-refs"), Some(Refs));
