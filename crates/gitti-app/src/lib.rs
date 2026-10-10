@@ -898,6 +898,36 @@ pub mod testing {
         app.read(cx).script_lfs_issues()
     }
 
+    /// The detail panel's selected text (commit message / diff) as copying takes it.
+    pub fn selected_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_selected_text()
+    }
+
+    /// Where byte `byte` of the commit message's line `line` (`area` = "message") or of
+    /// diff row `line` ("diff") was laid out in the last frame (window coordinates).
+    pub fn text_point(
+        ws: &Entity<Workspace>,
+        area: &str,
+        line: usize,
+        byte: usize,
+        cx: &App,
+    ) -> Option<Point<Pixels>> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_text_point(area, line, byte)
+    }
+
+    /// The commit message editor (`field` = `None`) or the open dialog's field `ix`: the
+    /// window position of its byte `byte` (`None`: not laid out) and its selected text.
+    pub fn input(
+        ws: &Entity<Workspace>,
+        field: Option<usize>,
+        byte: usize,
+        cx: &App,
+    ) -> Option<(Option<Point<Pixels>>, String)> {
+        ws.read(cx).script_app()?.read(cx).script_input(field, byte, cx)
+    }
+
     /// The commit message box's text.
     pub fn commit_message(ws: &Entity<Workspace>, cx: &App) -> String {
         let app = ws.read(cx).active_app().expect("a repository tab");
@@ -1051,6 +1081,8 @@ pub mod testing {
         /// The ours / theirs panes have the focus.
         pub top_focused: bool,
         pub text: String,
+        /// The text selected in ours / theirs (as copying takes it).
+        pub selected: Option<String>,
     }
 
     pub fn merge_state(cx: &mut App) -> Option<MergeState> {
@@ -1059,6 +1091,13 @@ pub mod testing {
         window
             .update(cx, |_, window, cx| editor.read(cx).script_state(window))
             .ok()
+    }
+
+    /// Where `needle` (+ `offset` bytes) was laid out on the merge editor's ours / theirs
+    /// side in the last frame (window coordinates).
+    pub fn merge_text_point(ours: bool, needle: &str, offset: usize, cx: &mut App) -> Option<Point<Pixels>> {
+        let editor = crate::merge_window::LAST_EDITOR.with(|e| e.borrow().clone())?.upgrade()?;
+        editor.read(cx).script_text_point(ours, needle, offset)
     }
 
     /// Gives the merge editor's ours / theirs panes the focus (as a click into them does).

@@ -3506,6 +3506,14 @@ impl App {
 
     fn detail_menu_spec(&self) -> (String, Vec<MenuItem>) {
         let mut items = Vec::new();
+        // On the header's commit id or parents line: copy the id(s).
+        let ids = self.header_id_entries();
+        if !ids.is_empty() {
+            for (label, text) in ids {
+                items.push(MenuItem::new(label, move |app| app.copy(text)));
+            }
+            items.push(MenuItem::separator());
+        }
         // On the header's Signature line, its details, the GitHub keys and an allowed
         // signers file.
         if Some(self.diff_cursor) == self.signature_header_line() {
@@ -4019,8 +4027,33 @@ impl App {
         self.refresh(false);
     }
 
+    /// The copy entries (label, id) of the header line under the detail cursor: the commit
+    /// id's line its id, the parents line each parent (`gitti_core::header_ids`).
+    fn header_id_entries(&self) -> Vec<(String, String)> {
+        use gitti_core::header_ids::{HeaderId, copy_entries};
+        let Detail::Commit(cv) = &self.detail else {
+            return Vec::new();
+        };
+        if cv.compare.is_some() || !matches!(self.rows.get(self.diff_cursor), Some(DiffRow::HeaderSpace)) {
+            return Vec::new();
+        }
+        let parents = &cv.details.parents;
+        if self.diff_cursor == crate::ui::ID_LINE {
+            copy_entries(&cv.details.id, HeaderId::Commit, parents.len())
+        } else if Some(self.diff_cursor) == crate::ui::parents_line(cv) {
+            parents
+                .iter()
+                .enumerate()
+                .flat_map(|(n, id)| copy_entries(id, HeaderId::Parent(n), parents.len()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// `y` in the diff: the selected lines, else the line under the cursor; on the commit
-    /// header the commit message; on a file header its path.
+    /// header's id line the commit id, on its parents line the parent ids (space-separated),
+    /// elsewhere in the header the commit message; on a file header its path.
     pub fn copy_selection(&mut self) {
         let line_text = |app: &App, src: Src, file: usize, hunk: usize, line: usize| {
             app.file_diff(src, file)
@@ -4044,6 +4077,17 @@ impl App {
                     ..
                 }) => line_text(self, src, file, hunk, line),
                 Some(DiffRow::HeaderSpace) => match &self.detail {
+                    Detail::Commit(cv) if cv.compare.is_none() && self.diff_cursor == crate::ui::ID_LINE => {
+                        Some(cv.details.id.to_string())
+                    }
+                    Detail::Commit(cv) if Some(self.diff_cursor) == crate::ui::parents_line(cv) => Some(
+                        cv.details
+                            .parents
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    ),
                     Detail::Commit(cv) => Some(cv.details.message.trim_end().to_string()),
                     _ => None,
                 },

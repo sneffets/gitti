@@ -18,7 +18,7 @@ use super::{Detail, GittiApp, MAX_LINE_CHARS};
 use crate::highlight::segment_styles;
 use crate::probe::ProbeExt as _;
 use crate::rows::{DiffRow, Src, expander_near, line_part_range};
-use crate::text_sel::{Area, overlay_selection, text_index};
+use crate::text_sel::{Area, overlay_selection};
 use crate::theme::{Palette, mono_font};
 
 impl GittiApp {
@@ -347,8 +347,7 @@ impl GittiApp {
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                     this.diff_focus.focus(window, cx);
-                    let byte = text_index(&layout, &text, ev.position);
-                    this.start_text_sel(Area::Diff, ix, byte, ev.modifiers.shift);
+                    this.press_text(Area::Diff, ix, &layout, &text, ev);
                     cx.notify();
                 }),
             )

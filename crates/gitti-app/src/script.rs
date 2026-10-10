@@ -6,7 +6,7 @@
 //! `stagehunk:PATH,N` / `unstagehunk:PATH,N` / `stagefile:PATH` / `unstagefile:PATH` (like
 //! the hunk / file buttons),
 //! `toggle:ROW` (expand/collapse diff file row), `msg:TEXT` (commit message), `commit`,
-//! `click:X,Y` / `rclick:X,Y` / `dclick:X,Y` / `down:X,Y` / `move:X,Y` / `up:X,Y` (logical px
+//! `click:X,Y` / `rclick:X,Y` / `dclick:X,Y` / `tclick:X,Y` (triple click) / `down:X,Y` / `move:X,Y` / `up:X,Y` (logical px
 //! relative to the window content, i.e. inside a client-drawn frame's shadow and border, so
 //! the same coordinates work on every platform), `wheel:X,Y,DY` (scroll DY px down at X,Y),
 //! `answer:TEXT` / `cancel` (current dialog), `fetch`, `zoom:DELTA`, `palette:QUERY` (run best match), `cmd:GIT ARGS` (command line), `config` (repo settings), `settings:SECTION`,
@@ -295,7 +295,9 @@ fn window_step(cmd: &str, arg: &str, window: &mut Window, cx: &mut App) -> bool 
                 cx,
             );
         }
-        "click" | "rclick" | "dclick" => click_at(cmd, arg_point(window, arg), window, cx),
+        "click" | "rclick" | "dclick" | "tclick" => {
+            click_at(cmd, arg_point(window, arg), window, cx)
+        }
         // `clickrel:DX,DY` — relative to the last click (menu items below a right click).
         "clickrel" => {
             let (dx, dy) = parse_xy(arg).unwrap_or_default();
@@ -324,7 +326,11 @@ fn click_at(kind: &str, pos: Point<Pixels>, window: &mut Window, cx: &mut App) {
     } else {
         MouseButton::Left
     };
-    let clicks = if kind == "dclick" { 2 } else { 1 };
+    let clicks = match kind {
+        "dclick" => 2,
+        "tclick" => 3,
+        _ => 1,
+    };
     window.dispatch_event(
         PlatformInput::MouseMove(MouseMoveEvent {
             position: pos,

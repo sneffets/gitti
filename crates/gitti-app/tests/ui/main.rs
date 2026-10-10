@@ -19,6 +19,7 @@ mod lfs;
 mod menus;
 mod render_linux;
 mod scroll;
+mod selection;
 mod signature;
 mod speed;
 mod submodules;
@@ -46,6 +47,7 @@ const SUITES: &[(&str, fn())] = &[
     ("config_safety", config_safety::main),
     ("lfs", lfs::main),
     ("signature", signature::main),
+    ("selection", selection::main),
 ];
 
 fn main() {

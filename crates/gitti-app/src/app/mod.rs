@@ -14,6 +14,7 @@ mod file_tabs;
 mod folder_picker;
 mod git_log;
 mod graph_nav;
+mod header_ids;
 mod highlighting;
 mod key_actions;
 mod lfs;
@@ -1170,33 +1171,89 @@ impl GittiApp {
         }
     }
 
-    /// Mouse down on text: starts a character selection (shift: extends the current one).
-    fn start_text_sel(
+    /// Left press on the text of line `line` of `area` (laid out as `layout`): a click
+    /// starts a character selection (shift: extends the current one), a double click
+    /// selects the word, a triple click the line (`text_sel::press`).
+    fn press_text(
         &mut self,
         area: crate::text_sel::Area,
         line: usize,
-        byte: usize,
-        extend: bool,
+        layout: &TextLayout,
+        text: &str,
+        ev: &MouseDownEvent,
     ) {
-        use crate::text_sel::{TextPos, TextSel};
-        let pos = TextPos { area, line, byte };
-        self.text_sel = match self.text_sel {
-            Some(sel) if extend => Some(TextSel { head: pos, ..sel }),
-            _ => Some(TextSel::at(pos)),
+        use crate::text_sel::{TextPos, char_index, press, text_index};
+        let pos = TextPos {
+            area,
+            line,
+            byte: text_index(layout, text, ev.position),
         };
+        let under = char_index(layout, text, ev.position);
+        let sel = press(
+            self.text_sel,
+            pos,
+            under,
+            ev.click_count,
+            ev.modifiers.shift,
+            self.sel_rows(area),
+        );
+        self.text_sel = Some(sel);
         self.text_dragging = true;
     }
 
-    /// Drag over text; returns whether the selection changed.
-    fn move_text_sel(&mut self, area: crate::text_sel::Area, line: usize, byte: usize) -> bool {
-        let pos = crate::text_sel::TextPos { area, line, byte };
-        match &mut self.text_sel {
-            Some(sel) if sel.head != pos => {
-                sel.head = pos;
-                true
+    /// The rows of a selectable text area as displayed, by line index: the commit
+    /// message's lines, the diff's rows (a wrapped line's parts continue it).
+    fn sel_rows(
+        &self,
+        area: crate::text_sel::Area,
+    ) -> impl Fn(usize) -> Option<crate::text_sel::Row> + '_ {
+        use crate::text_sel::{Area, Row};
+        let message: Vec<String> = match (&self.detail, area) {
+            (Detail::Commit(cv), Area::Message) => {
+                crate::message::style_message(&cv.details.message)
+                    .into_iter()
+                    .map(|l| l.text)
+                    .collect()
             }
-            _ => false,
+            _ => Vec::new(),
+        };
+        move |line| match area {
+            Area::Message => message.get(line).map(|t| Row::line(t.clone())),
+            Area::Diff => self.diff_sel_row(line),
+            _ => None,
         }
+    }
+
+    /// Diff row `ix` as displayed, if it has selectable text (a hunk line or a revealed
+    /// unchanged line; each wrapped part is a row of its own).
+    fn diff_sel_row(&self, ix: usize) -> Option<crate::text_sel::Row> {
+        let (raw, part) = match *self.rows.get(ix)? {
+            DiffRow::Line {
+                src,
+                file,
+                hunk,
+                line,
+                part,
+            } => {
+                let l = self.file_diff(src, file)?.hunks.get(hunk)?.lines.get(line)?;
+                (l.text.as_str(), part)
+            }
+            DiffRow::Context {
+                src,
+                file,
+                line,
+                part,
+            } => {
+                let path = self.file_path(src, file)?;
+                (self.expansion.context_line(src, &path, line)?, part)
+            }
+            _ => return None,
+        };
+        let (text, _, _) = line_part_range(raw, part, self.wrap(), MAX_LINE_CHARS);
+        Some(crate::text_sel::Row {
+            text,
+            continues: part > 0,
+        })
     }
 
     /// Mouse moved anywhere in the window with the button held: extends a character
@@ -1273,15 +1330,22 @@ impl GittiApp {
     }
 
     fn drag_text_sel(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
-        use crate::text_sel::Area;
-        if !self.text_dragging {
+        use crate::text_sel::{Area, unit_at};
+        let Some(mut sel) = self.text_sel.filter(|_| self.text_dragging) else {
             return;
-        }
-        if let Some(p) = self
+        };
+        let Some((at, under)) = self
             .drag_targets
             .hit(pos, |a| matches!(a, Area::Message | Area::Diff))
-            && self.move_text_sel(p.area, p.line, p.byte)
-        {
+        else {
+            return;
+        };
+        // A word / line selection extends by whole words / lines.
+        let span = sel
+            .unit
+            .map(|(unit, _, _)| unit_at(unit, at, under, self.sel_rows(at.area)));
+        if sel.drag_to(at, span) {
+            self.text_sel = Some(sel);
             cx.notify();
         }
     }
@@ -1311,28 +1375,19 @@ impl GittiApp {
                     }
                 }
             }
-            for (ix, row) in self.rows.iter().enumerate() {
-                let DiffRow::Line {
-                    src,
-                    file,
-                    hunk,
-                    line,
-                    part,
-                } = *row
-                else {
-                    continue;
-                };
-                let Some(l) = self
-                    .file_diff(src, file)
-                    .and_then(|f| f.hunks.get(hunk)?.lines.get(line))
-                else {
-                    continue;
-                };
-                let (text, _, _) = line_part_range(&l.text, part, self.wrap(), MAX_LINE_CHARS);
-                if let Some(r) = sel.span_in(Area::Diff, ix, text.len()) {
-                    push(&text[r], part > 0, &mut out);
-                } else if text.is_empty() && sel.covers_line(Area::Diff, ix) {
-                    push("", part > 0, &mut out);
+            // The diff rows the selection reaches (hunk lines and revealed lines).
+            let (start, end) = sel.ordered();
+            if end.area == Area::Diff {
+                let first = if start.area == Area::Diff { start.line } else { 0 };
+                for ix in first..=end.line {
+                    let Some(row) = self.diff_sel_row(ix) else {
+                        continue;
+                    };
+                    if let Some(r) = sel.span_in(Area::Diff, ix, row.text.len()) {
+                        push(&row.text[r], row.continues, &mut out);
+                    } else if row.text.is_empty() && sel.covers_line(Area::Diff, ix) {
+                        push("", row.continues, &mut out);
+                    }
                 }
             }
             return Some(out);
@@ -3054,6 +3109,47 @@ impl GittiApp {
         let text = text.replace("\\n", "\n");
         self.message
             .update(cx, |m, cx| m.set_value(text, window, cx));
+    }
+
+    /// Script hook: the detail panel's selected text (commit message / diff) as copying
+    /// takes it; `None` without a text selection.
+    pub fn script_selected_text(&self) -> Option<String> {
+        self.text_sel.filter(|s| !s.is_empty())?;
+        self.selected_text()
+    }
+
+    /// Script hook: where byte `byte` of the commit message's line `line` (`message`) or
+    /// of diff row `line` (`diff`) was laid out in the last frame.
+    pub fn script_text_point(&self, area: &str, line: usize, byte: usize) -> Option<Point<Pixels>> {
+        use crate::text_sel::Area;
+        let area = match area {
+            "message" => Area::Message,
+            "diff" => Area::Diff,
+            _ => return None,
+        };
+        self.drag_targets.point(area, line, byte)
+    }
+
+    /// Script hook: the commit message editor (`field` = `None`) or the open dialog's
+    /// field: where its byte `byte` was laid out (inside the character) and its selected
+    /// text.
+    pub fn script_input(
+        &self,
+        field: Option<usize>,
+        byte: usize,
+        cx: &App,
+    ) -> Option<(Option<Point<Pixels>>, String)> {
+        let (bounds, text) = match field {
+            None => {
+                let m = self.message.read(cx);
+                (m.range_to_bounds(&(byte..byte + 1)), m.selected_value())
+            }
+            Some(ix) => {
+                let f = self.modal.as_ref()?.field_input(ix)?.read(cx);
+                (f.range_to_bounds(&(byte..byte + 1)), f.selected_value())
+            }
+        };
+        Some((bounds.map(|b| b.center()), text.to_string()))
     }
 
     /// The commit message box's text (tests).

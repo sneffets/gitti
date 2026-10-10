@@ -34,7 +34,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::text_sel::{
-    Area, DragTargets, TextPos, TextSel, on_window_drag, overlay_selection, text_index,
+    Area, DragTargets, Row, TextPos, TextSel, char_index, on_window_drag, overlay_selection,
+    press, text_index, unit_at,
 };
 use crate::probe::ProbeExt as _;
 use crate::theme::{Palette, PaletteExt as _, Settings, mono_font};
@@ -483,7 +484,15 @@ impl MergeEditor {
             status: self.status.clone(),
             top_focused: self.top_focus.is_focused(window),
             text: self.session.text().to_string(),
+            selected: self.selected_text(),
         }
+    }
+
+    /// Script hook: where `needle` (+ `offset` bytes) was laid out on the ours / theirs
+    /// side in the last frame.
+    pub fn script_text_point(&self, ours: bool, needle: &str, offset: usize) -> Option<Point<Pixels>> {
+        let area = if ours { Area::Ours } else { Area::Theirs };
+        self.drag_targets.point_of(area, needle, offset)
     }
 
     pub fn script_focus_top(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1018,15 +1027,33 @@ impl MergeEditor {
     /// Mouse moved anywhere in the window with the button held: extends the selection to
     /// the nearest position on the side it started on.
     fn drag_text_sel(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(sel) = self.text_sel.as_mut().filter(|_| self.text_dragging) else {
+        let Some(mut sel) = self.text_sel.filter(|_| self.text_dragging) else {
             return;
         };
         let area = sel.anchor.area;
-        if let Some(head) = self.drag_targets.hit(pos, |a| a == area)
-            && sel.head != head
-        {
-            sel.head = head;
+        let Some((at, under)) = self.drag_targets.hit(pos, |a| a == area) else {
+            return;
+        };
+        // A word / line selection extends by whole words / lines.
+        let span = sel
+            .unit
+            .map(|(unit, _, _)| unit_at(unit, at, under, self.side_rows(area)));
+        if sel.drag_to(at, span) {
+            self.text_sel = Some(sel);
             cx.notify();
+        }
+    }
+
+    /// The rows of side `area` (`Ours` / `Theirs`) as displayed, by top row index: the
+    /// side's line of a chunk row (tabs expanded), nothing for other rows.
+    fn side_rows(&self, area: Area) -> impl Fn(usize) -> Option<Row> + '_ {
+        move |ix| {
+            let TopRow::Line { chunk, i } = *self.session.top_rows.get(ix)? else {
+                return None;
+            };
+            let c = &self.session.doc.chunks[chunk];
+            let side = if area == Area::Ours { &c.ours } else { &c.theirs };
+            side.get(i).map(|l| Row::line(expand_tabs(l)))
         }
     }
 
@@ -1220,12 +1247,18 @@ impl MergeEditor {
                                     line: ix,
                                     byte: text_index(&layout, &text, ev.position),
                                 };
-                                this.text_sel = match this.text_sel {
-                                    Some(sel) if ev.modifiers.shift && sel.anchor.area == area => {
-                                        Some(TextSel { head: pos, ..sel })
-                                    }
-                                    _ => Some(TextSel::at(pos)),
-                                };
+                                let under = char_index(&layout, &text, ev.position);
+                                let extend = ev.modifiers.shift
+                                    && this.text_sel.is_some_and(|s| s.anchor.area == area);
+                                let sel = press(
+                                    this.text_sel,
+                                    pos,
+                                    under,
+                                    ev.click_count,
+                                    extend,
+                                    this.side_rows(area),
+                                );
+                                this.text_sel = Some(sel);
                                 cx.notify();
                             }),
                         )

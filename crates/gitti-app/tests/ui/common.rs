@@ -482,6 +482,51 @@ impl Ui {
         self.settle();
     }
 
+    /// `count` left clicks in a row at `position` (2 = a double click: the second press
+    /// has `click_count` 2), quick (no time passes); `drag_to`: after the last press, the
+    /// mouse moves there with the button held before it is released.
+    pub fn clicks(&mut self, position: Point<Pixels>, count: usize, drag_to: Option<Point<Pixels>>) {
+        self.clicks_in(self.window, position, count, drag_to);
+    }
+
+    /// [`Self::clicks`] in window `win` (e.g. the merge editor's).
+    pub fn clicks_in(
+        &mut self,
+        win: AnyWindowHandle,
+        position: Point<Pixels>,
+        count: usize,
+        drag_to: Option<Point<Pixels>>,
+    ) {
+        self.last_step = format!("{count} clicks at {position:?}");
+        watchdog::step(&self.last_step);
+        let button = MouseButton::Left;
+        let modifiers = Modifiers::default();
+        self.cx
+            .update_window(win, |_, window, cx| {
+                window.dispatch_event(
+                    PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
+                    cx,
+                );
+                for click_count in 1..=count {
+                    let down = MouseDownEvent { button, position, modifiers, click_count, first_mouse: false };
+                    window.dispatch_event(PlatformInput::MouseDown(down), cx);
+                    let mut up = MouseUpEvent { button, position, modifiers, click_count };
+                    if click_count == count
+                        && let Some(to) = drag_to
+                    {
+                        let moved = MouseMoveEvent { position: to, pressed_button: Some(button), modifiers };
+                        window.dispatch_event(PlatformInput::MouseMove(moved), cx);
+                        up.position = to;
+                    }
+                    window.dispatch_event(PlatformInput::MouseUp(up), cx);
+                }
+            })
+            .unwrap();
+        self.cx.run_until_parked();
+        self.render();
+        self.check_drawn();
+    }
+
     /// Press and release `button` in the middle of `target`.
     pub fn click_on(&mut self, target: &str, button: MouseButton) {
         let p = self.frame();

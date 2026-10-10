@@ -508,3 +508,35 @@ fn compare_mode_swaps_ends_and_compares_the_working_directory() {
     assert_eq!(compare_of(st[3]), format!("base={dd},shown={dd}..Working_Directory"), "{out}");
     assert!(sc[1].contains("Working Directory") && sc[1].contains("one.rs"), "{out}");
 }
+
+/// The commit header's ids (a merge): a right click on the commit id's line offers Copy SHA
+/// / Copy Short SHA, on the Parents line both entries for each parent (numbered); `y` on
+/// the id's line copies the id, on the Parents line the parents. No git for any of it.
+#[gitti_test::test]
+fn header_ids_copy_from_their_menus_and_y() {
+    let dir = merge_history();
+    let d = dir.path();
+    let ids = git(d, &["log", "-1", "--format=%H %P"]);
+    let ids: Vec<&str> = ids.split_whitespace().collect();
+    let [head, p1, p2] = ids[..] else { panic!("{ids:?}") };
+    // Row 1 = the merge; the detail pane's header line N is screen row N + 2: the id on
+    // row 3, the Parents line on row 6.
+    let out = gitty(
+        d,
+        "press:j;wait;cmds;rclick:100,3;items;key:enter;state;rclick:100,6;items;press:down;press:down;\
+         key:enter;state;key:y;state;key:k;key:k;key:k;key:y;state;cmds",
+    );
+    let menus = item_lists(&out);
+    assert_eq!(menus[0][..2], ["Copy SHA", "Copy Short SHA"], "{out}");
+    assert_eq!(
+        menus[1][..4],
+        ["Copy Parent 1 SHA", "Copy Short Parent 1 SHA", "Copy Parent 2 SHA", "Copy Short Parent 2 SHA"],
+        "{out}"
+    );
+    let st = states(&out);
+    assert!(st[0].contains(&format!("Copied {head}")), "{out}");
+    assert!(st[1].contains(&format!("Copied {p2}")), "{out}");
+    assert!(st[2].contains(&format!("Copied {p1} {}", &p2[..8])), "y on Parents: {out}");
+    assert!(st[3].contains(&format!("Copied {head}")), "y on the id: {out}");
+    assert_no_git(&cmds(&out)[1..], "copying the header ids", &out);
+}

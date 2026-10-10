@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use gitti_core::WorkingState;
 use gitti_core::diff::{FileChange, LineKind};
+use gitti_core::header_ids::HeaderId;
 use gitti_core::patch::{PatchMode, Selection};
 use gpui_kit::component::button::{Button, ButtonVariants as _, DropdownButton};
 use gpui_kit::component::input::Textarea;
@@ -22,7 +23,7 @@ use crate::rows::{
     part_byte_ranges,
 };
 use crate::shortcuts as tips;
-use crate::text_sel::{Area, on_window_drag, overlay_mark, overlay_selection, text_index};
+use crate::text_sel::{Area, on_window_drag, overlay_mark, overlay_selection};
 use crate::theme::{BADGE_RADIUS, Palette, PaletteExt as _, mono_font};
 
 impl GittiApp {
@@ -401,7 +402,13 @@ impl GittiApp {
     fn render_commit_header(&self, cv: &CommitView, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette().clone();
         let d = &cv.details;
-        let parents = d.parents.iter().map(short).collect::<Vec<_>>().join(", ");
+        // Each parent on its own (its own context menu), comma-separated.
+        let n_parents = d.parents.len();
+        let parents = h_flex().children(d.parents.iter().enumerate().flat_map(|(n, id)| {
+            let sep = (n > 0).then(|| div().flex_none().pr_1().child(",").into_any_element());
+            let el = super::header_ids::id_element(*id, HeaderId::Parent(n), n_parents, short(id));
+            sep.into_iter().chain([el])
+        }));
         let LineTotals {
             added: add,
             removed: del,
@@ -431,7 +438,17 @@ impl GittiApp {
             .py_2()
             .gap(px(2.))
             .bg(p.bg_diff)
-            .child(meta("Commit", text(d.id.to_string())))
+            .child(meta(
+                "Commit",
+                h_flex()
+                    .child(super::header_ids::id_element(
+                        d.id,
+                        HeaderId::Commit,
+                        n_parents,
+                        d.id.to_string(),
+                    ))
+                    .into_any_element(),
+            ))
             .child(meta(
                 "Author",
                 text(format!("{} <{}>", d.author, d.author_email)),
@@ -446,7 +463,7 @@ impl GittiApp {
                     ))
                 },
             )
-            .child(meta("Parents", text(parents)))
+            .child(meta("Parents", parents.into_any_element()))
             .when_some(cv.stash, |el, n| {
                 el.child(meta("Stash", text(format!("stash@{{{n}}}"))))
             })
@@ -630,8 +647,7 @@ impl GittiApp {
                     MouseButton::Left,
                     cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         this.diff_focus.focus(window, cx);
-                        let byte = text_index(&layout, &text, ev.position);
-                        this.start_text_sel(Area::Message, i, byte, ev.modifiers.shift);
+                        this.press_text(Area::Message, i, &layout, &text, ev);
                         cx.notify();
                     }),
                 )
@@ -784,6 +800,9 @@ impl GittiApp {
                 move |menu, _, cx| {
                     if super::signing_keys::take_signature_click() {
                         return super::signing_keys::signature_menu(menu, &app, cx);
+                    }
+                    if let Some(click) = super::header_ids::take_id_click() {
+                        return super::header_ids::id_menu(menu, click);
                     }
                     let menu =
                         super::menus::diff_menu(menu, &app, &s, worktree, can_copy, &versions, cx);
@@ -2022,8 +2041,7 @@ impl GittiApp {
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                     this.diff_focus.focus(window, cx);
-                    let byte = text_index(&layout, &text, ev.position);
-                    this.start_text_sel(Area::Diff, ix, byte, ev.modifiers.shift);
+                    this.press_text(Area::Diff, ix, &layout, &text, ev);
                     this.on_line_mouse_down(ix, ev, cx);
                     cx.notify();
                 }),

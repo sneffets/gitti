@@ -1444,6 +1444,16 @@ fn format_time_full(secs: i64) -> String {
 /// Index of the "Signature" line in `commit_header` (after blank, hash, author, date).
 pub const SIGNATURE_LINE: usize = 4;
 
+/// Index of the commit id's line in `commit_header` (after the blank line).
+pub const ID_LINE: usize = 1;
+
+/// Index of the "Parent(s)" line in `commit_header`, if it has one: after the date or
+/// the signature.
+pub fn parents_line(cv: &CommitView) -> Option<usize> {
+    (cv.compare.is_none() && !cv.details.parents.is_empty())
+        .then(|| SIGNATURE_LINE + usize::from(cv.sig_kind.is_some()))
+}
+
 /// Header lines of a commit (the summary block), drawn over `HeaderSpace` rows.
 pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
     // A comparison is no commit: its banner is pinned above the diff (`compare_banner`).
@@ -1460,6 +1470,7 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
     };
     let val = |s: String| Span::styled(s, Style::new().fg(p.text));
     let mut out = vec![Line::default()];
+    debug_assert_eq!(out.len(), ID_LINE);
     out.push(Line::from(vec![
         label(if cv.stash.is_some() {
             "Stash"
@@ -1515,6 +1526,7 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
         ]));
     }
     if !d.parents.is_empty() {
+        debug_assert_eq!(Some(out.len()), parents_line(cv));
         let parents = d
             .parents
             .iter()

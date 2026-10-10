@@ -1,11 +1,15 @@
 //! Character-wise text selection for copying: in the detail panel (commit message and diff
 //! lines) and in the merge editor's ours / theirs panes. Positions are byte offsets into the *displayed* text of a line (tabs expanded,
-//! one visual row per wrapped part), so they map 1:1 to gpui's text layout.
+//! one visual row per wrapped part), so they map 1:1 to gpui's text layout. A double click
+//! selects a word, a triple click the line (`gitti_core::text_select`); dragging on from
+//! there extends by whole words / lines.
 
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
+pub use gitti_core::text_select::{Row, Unit};
+use gitti_core::text_select::unit_span;
 use gpui_kit::{
     App, Bounds, DispatchPhase, HighlightStyle, Hsla, IntoElement, MouseButton, MouseMoveEvent,
     MouseUpEvent,
@@ -34,6 +38,9 @@ pub struct TextPos {
 pub struct TextSel {
     pub anchor: TextPos,
     pub head: TextPos,
+    /// A double / triple click's selection: its unit and the word / line it selected
+    /// first; a drag from there extends by whole units and keeps that one selected.
+    pub unit: Option<(Unit, TextPos, TextPos)>,
 }
 
 impl TextSel {
@@ -41,7 +48,36 @@ impl TextSel {
         Self {
             anchor: pos,
             head: pos,
+            unit: None,
         }
+    }
+
+    /// The selection of a press of `unit` whose word / line is `start..end`.
+    pub fn of_unit(unit: Unit, start: TextPos, end: TextPos) -> Self {
+        Self {
+            anchor: start,
+            head: end,
+            unit: (unit != Unit::Char).then_some((unit, start, end)),
+        }
+    }
+
+    /// A drag to `pos`; `span` is the word / line at the pointer for a unit selection
+    /// (`unit_span` of the character under it). Returns whether the selection changed.
+    pub fn drag_to(&mut self, pos: TextPos, span: Option<(TextPos, TextPos)>) -> bool {
+        let before = *self;
+        match (self.unit, span) {
+            (Some((_, s0, e0)), Some((s, e))) => {
+                if s < s0 {
+                    self.anchor = e0;
+                    self.head = s;
+                } else {
+                    self.anchor = s0;
+                    self.head = e.max(e0);
+                }
+            }
+            _ => self.head = pos,
+        }
+        *self != before
     }
 
     pub fn is_empty(&self) -> bool {
@@ -87,6 +123,46 @@ impl TextSel {
         };
         (from < to).then_some(from..to)
     }
+}
+
+/// The selection after a left press at `pos` (`under`: the byte of the character under the
+/// pointer) that is the `clicks`-th click in a row: 1 starts a character selection (with
+/// `extend` — shift — it moves the head of `current`), 2 selects the word, 3 the line.
+/// `rows` gives the rows of `pos.area` by index (their displayed text).
+pub fn press(
+    current: Option<TextSel>,
+    pos: TextPos,
+    under: usize,
+    clicks: usize,
+    extend: bool,
+    rows: impl Fn(usize) -> Option<Row>,
+) -> TextSel {
+    match Unit::of_clicks(clicks) {
+        Unit::Char => match current {
+            Some(sel) if extend => TextSel { head: pos, ..sel },
+            _ => TextSel::at(pos),
+        },
+        unit => {
+            let (start, end) = unit_at(unit, pos, under, rows);
+            TextSel::of_unit(unit, start, end)
+        }
+    }
+}
+
+/// The word / line (`unit`) at `pos` (`under`: the character under the pointer).
+pub fn unit_at(
+    unit: Unit,
+    pos: TextPos,
+    under: usize,
+    rows: impl Fn(usize) -> Option<Row>,
+) -> (TextPos, TextPos) {
+    let ((l0, b0), (l1, b1)) = unit_span(pos.line, under, unit, rows);
+    let at = |line, byte| TextPos {
+        area: pos.area,
+        line,
+        byte,
+    };
+    (at(l0, b0), at(l1, b1))
 }
 
 /// Adds a selection background over `sel` to sorted, non-overlapping highlight runs of a text
@@ -224,7 +300,13 @@ impl DragTargets {
 
     /// The position for a drag at `pos` among the lines of the areas `accept` takes: the
     /// line under the mouse, else the vertically nearest one; the byte is clamped into it.
-    pub fn hit(&self, pos: Point<Pixels>, accept: impl Fn(Area) -> bool) -> Option<TextPos> {
+    /// Also the byte of the character under the pointer there (for extending a word / line
+    /// selection, [`char_index`]).
+    pub fn hit(
+        &self,
+        pos: Point<Pixels>,
+        accept: impl Fn(Area) -> bool,
+    ) -> Option<(TextPos, usize)> {
         let targets = self.0.borrow();
         let distance = |b: &Bounds<Pixels>| {
             if pos.y < b.top() {
@@ -243,10 +325,40 @@ impl DragTargets {
         // Clamped into the text's height, so a position beside it maps to this line.
         let text = t.layout.bounds();
         let y = pos.y.clamp(text.top(), (text.bottom() - px(0.5)).max(text.top()));
-        Some(TextPos {
+        let at = Point { x: pos.x, y };
+        let hit = TextPos {
             area: t.area,
             line: t.line,
-            byte: text_index(&t.layout, &t.text, Point { x: pos.x, y }),
+            byte: text_index(&t.layout, &t.text, at),
+        };
+        Some((hit, char_index(&t.layout, &t.text, at)))
+    }
+}
+
+impl DragTargets {
+    /// Where byte `byte` of line `line` of `area` was laid out in the last frame: the
+    /// middle of the character's line (script / test hook, for clicks on words).
+    pub fn point(&self, area: Area, line: usize, byte: usize) -> Option<Point<Pixels>> {
+        let targets = self.0.borrow();
+        let t = targets.iter().find(|t| t.area == area && t.line == line)?;
+        Self::point_in(t, byte)
+    }
+
+    /// [`Self::point`] of the first laid-out line of `area` containing `needle`, at its
+    /// byte `offset` into `needle` (script / test hook).
+    pub fn point_of(&self, area: Area, needle: &str, offset: usize) -> Option<Point<Pixels>> {
+        let targets = self.0.borrow();
+        targets
+            .iter()
+            .filter(|t| t.area == area)
+            .find_map(|t| Self::point_in(t, t.text.find(needle)? + offset))
+    }
+
+    fn point_in(t: &DragTarget, byte: usize) -> Option<Point<Pixels>> {
+        let p = t.layout.position_for_index(byte.min(t.text.len()))?;
+        Some(Point {
+            x: p.x + px(1.),
+            y: p.y + t.layout.line_height() / 2.,
         })
     }
 }
@@ -292,6 +404,14 @@ pub fn text_index(layout: &TextLayout, text: &str, pos: Point<Pixels>) -> usize 
     i
 }
 
+/// Byte index in `text` of the character under `pos` (a double click's word is the one
+/// the pointer is on, not the nearest boundary's); past the end of the text: its length.
+pub fn char_index(layout: &TextLayout, text: &str, pos: Point<Pixels>) -> usize {
+    match layout.index_for_position(pos) {
+        Ok(i) | Err(i) => i.min(text.len()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,6 +426,7 @@ mod tests {
         let sel = TextSel {
             anchor: pos(Area::Diff, 2, 3),
             head: pos(Area::Message, 1, 4),
+            unit: None,
         };
         assert_eq!(sel.span_in(Area::Message, 0, 10), None);
         assert_eq!(sel.span_in(Area::Message, 1, 10), Some(4..10));
@@ -331,5 +452,27 @@ mod tests {
         assert_eq!(ranges, vec![(2..4, false), (4..6, true), (6..8, true)]);
         assert_eq!(out[1].1.font_weight, red.font_weight, "keeps the syntax style");
         assert_eq!(overlay_selection(vec![(2..6, red)], None, bg, 10).len(), 1);
+    }
+
+    #[gitti_test::test]
+    fn unit_drag_keeps_the_first_word_and_extends_by_words() {
+        let p = |line, byte| pos(Area::Message, line, byte);
+        // Double click selected 4..9 of line 1.
+        let mut sel = TextSel::of_unit(Unit::Word, p(1, 4), p(1, 9));
+        assert!(!sel.is_empty());
+        // Dragged into the word 12..15: 4..15.
+        assert!(sel.drag_to(p(1, 13), Some((p(1, 12), p(1, 15)))));
+        assert_eq!(sel.ordered(), (p(1, 4), p(1, 15)));
+        // Back before the first word (line 0's 2..6): from there to its end.
+        assert!(sel.drag_to(p(0, 3), Some((p(0, 2), p(0, 6)))));
+        assert_eq!((sel.anchor, sel.head), (p(1, 9), p(0, 2)));
+        // Inside the first word again: just that word.
+        sel.drag_to(p(1, 5), Some((p(1, 4), p(1, 9))));
+        assert_eq!(sel.ordered(), (p(1, 4), p(1, 9)));
+        // A character selection follows the pointer.
+        let mut c = TextSel::at(p(0, 1));
+        assert!(c.drag_to(p(0, 4), None));
+        assert_eq!(c.head, p(0, 4));
+        assert_eq!(TextSel::of_unit(Unit::Char, p(0, 1), p(0, 1)).unit, None);
     }
 }
