@@ -144,6 +144,9 @@ pub struct RepoSnapshot {
     pub stashes: Vec<crate::ops::StashInfo>,
     pub state: crate::ops::RepoState,
     pub tracking: Vec<crate::ops::Tracking>,
+    /// The current branch's commits that are not pushed (the repository's hollow mark,
+    /// [`crate::tab_marks`]).
+    pub unpushed: Option<crate::tab_marks::Unpushed>,
     /// Effective user.name / user.email.
     pub identity: (Option<String>, Option<String>),
     /// Names of "ours" / "theirs" while there are conflicted files.
@@ -1050,7 +1053,12 @@ impl Repo {
             let remotes = s.spawn(|| self.remotes().unwrap_or_default());
             let stashes = s.spawn(|| self.stashes().unwrap_or_default());
             let state = s.spawn(|| self.state());
-            let tracking = s.spawn(|| self.tracking().unwrap_or_default());
+            // Without an upstream, what is not pushed is counted in-process (no git process).
+            let tracking = s.spawn(|| {
+                let tracking = self.tracking().unwrap_or_default();
+                let unpushed = crate::tab_marks::unpushed(self, &tracking);
+                (tracking, unpushed)
+            });
             let identity = s.spawn(|| self.identity());
             let worktrees = s.spawn(|| self.worktrees().unwrap_or_default());
             // In-process: index + the submodules' HEADs, only with `.gitmodules`.
@@ -1068,6 +1076,7 @@ impl Repo {
             self.nested_submodule_status(&mut submodules);
             let conflict_sides = (!working.conflicted.is_empty()).then(|| self.conflict_sides());
             let state = joined(state)?;
+            let (tracking, unpushed) = joined(tracking)?;
             let merge_message = (state == crate::ops::RepoState::Merging)
                 .then(|| self.merge_message())
                 .flatten();
@@ -1080,7 +1089,8 @@ impl Repo {
                 remotes: joined(remotes)?,
                 stashes: joined(stashes)?,
                 state,
-                tracking: joined(tracking)?,
+                tracking,
+                unpushed,
                 identity: joined(identity)?,
                 worktrees: joined(worktrees)?,
                 submodules,

@@ -62,6 +62,7 @@ pub mod store;
 pub mod submodule;
 pub mod switch;
 pub mod syntax;
+pub mod tab_marks;
 pub mod version_file;
 pub mod watch;
 pub mod worktree;

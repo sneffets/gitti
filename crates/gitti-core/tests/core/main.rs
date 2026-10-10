@@ -28,6 +28,7 @@ mod sidebar_ops;
 mod signature_keys;
 mod staging;
 mod submodules;
+mod tab_marks;
 mod unix_fs;
 mod worktrees;
 
