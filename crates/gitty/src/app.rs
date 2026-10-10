@@ -39,6 +39,7 @@ mod change_search;
 mod commit_flow;
 mod compare;
 mod context_lines;
+mod custom_commands;
 mod file_list;
 mod fs_paths;
 mod keybar;
@@ -3608,6 +3609,13 @@ impl App {
         }));
         items.extend(self.signing_key_items(Some(&sha)));
         items.extend(self.signers_items(Some(&sha)));
+        items.extend(self.custom_menu_items(
+            gitti_core::custom_command::Menu::Commit,
+            custom_commands::Given {
+                commit: Some(sha.clone()),
+                ..Default::default()
+            },
+        ));
         Some((format!("Commit {short}"), items))
     }
 
@@ -3737,6 +3745,11 @@ impl App {
                 };
                 items.extend(self.lfs_menu_items());
                 items.push(MenuItem::new("Copy Path", move |app| app.copy(path)));
+                // The file's custom commands (the diff cursor's file).
+                items.extend(self.custom_menu_items(
+                    gitti_core::custom_command::Menu::File,
+                    custom_commands::Given::default(),
+                ));
                 items.push(MenuItem::separator());
                 if !sub.is_empty() {
                     items.extend(sub);
@@ -4005,6 +4018,7 @@ impl App {
         items.extend(self.compare_palette_items());
         // Last: on an equal match the everyday commands come first ("merge").
         items.extend(self.subtree_palette_items());
+        items.extend(self.custom_palette_items());
         // What can't act now stays findable, greyed with the reason.
         let items = self.mark_unavailable(items);
         self.modal = Some(Modal::palette("Command Palette", items));

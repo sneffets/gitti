@@ -705,6 +705,31 @@ fn write_repo_pref<T: Serialize>(conn: &Connection, repo: &Path, key: &str, valu
     Ok(())
 }
 
+// ---------------------------------------------------------- app-wide values
+
+/// A value kept in the settings table under `key` beside the settings structs (e.g. the
+/// custom commands for every repository, `crate::custom_command`); `None` when there is
+/// none or it doesn't fit `T`. Neither app's settings struct has a field of that name.
+pub fn load_setting<T: DeserializeOwned>(key: &str) -> Option<T> {
+    read_setting(&open()?, key)
+}
+
+/// Stores `value` under `key` (see [`load_setting`]); queued like every write.
+pub fn save_setting<T: Serialize>(key: &str, value: &T) {
+    let Ok(value) = serde_json::to_value(value) else { return };
+    let key = key.to_string();
+    write_later("saving a setting", move |conn| put_value(conn, &key, &value));
+}
+
+fn read_setting<T: DeserializeOwned>(conn: &Connection, key: &str) -> Option<T> {
+    let text: String = conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0))
+        .optional()
+        .ok()
+        .flatten()?;
+    serde_json::from_str(&text).ok()
+}
+
 // ---------------------------------------------------------- commit message drafts
 
 /// A commit message typed in a worktree and not committed yet ([`load_draft`]).
@@ -1400,6 +1425,21 @@ mod tests {
         assert_eq!(n, 2);
         assert!(!dir.path().join("settings.json").exists());
         assert!(dir.path().join("settings.json.imported").exists());
+    }
+
+    #[gitti_test::test]
+    fn app_wide_values_roundtrip_beside_the_settings() {
+        let (_dir, conn) = db();
+        assert_eq!(read_setting::<Vec<String>>(&conn, "custom_commands"), None);
+        put_value(&conn, "custom_commands", &serde_json::json!(["a", "b"])).unwrap();
+        assert_eq!(
+            read_setting::<Vec<String>>(&conn, "custom_commands"),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        // A value that no longer fits reads as none; the settings struct ignores the key.
+        assert_eq!(read_setting::<u32>(&conn, "custom_commands"), None);
+        let s: S = load_settings_from(&conn);
+        assert_eq!(s, S::default());
     }
 
     #[gitti_test::test]

@@ -16,6 +16,7 @@ pub mod commits;
 pub mod compare;
 pub mod context;
 pub mod create;
+pub mod custom_command;
 pub mod desktop;
 pub mod diff;
 pub mod discard;

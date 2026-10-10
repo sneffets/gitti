@@ -127,6 +127,11 @@ finds every command.
   repositories, nested `.gitignore` / `.gitattributes` — not only the common case. (Where a
   subtree comes from isn't recorded by git; gitti remembers it in the repository's
   `.git/config`, section `[gitti-subtree "<folder>"]`.)
+- **Your own commands.** Name a git or shell command line once — e.g. "Pull my GitHub
+  subtree" — with placeholders for the repository, the selected commit, branch, remote and
+  files, for one repository or all of them; run it from the palette, the Repository menu or
+  the commit / branch / remote / file menus. Values are passed as arguments of their own (git)
+  or quoted for the shell, so no file or branch name can run anything.
 - **Explains itself.** Dialogs say in plain words what an action does and what follows from it;
   a missing tool or setup gives a clear message with what to do.
 - **Two front ends, one core.** `gitti-core` holds the logic; gitti and gitty get features

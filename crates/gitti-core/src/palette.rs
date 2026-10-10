@@ -73,6 +73,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     gitti("ToggleFullScreen", "a terminal"),
     both("ToggleGitLog", "Toggle Git Command Log"),
     both("RunGitCommand", "Run Git Command…"),
+    both("RunCustomCommand", "Run Custom Command…"),
+    both("CustomCommands", "Custom Commands…"),
     both("ToggleWrap", "Wrap Lines"),
     both("ToggleWhitespace", "Ignore Whitespace"),
     both("MoreContext", "More Context Lines"),

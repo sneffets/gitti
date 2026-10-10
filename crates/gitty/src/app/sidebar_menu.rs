@@ -17,6 +17,12 @@ use crate::sidebar::SideItem;
 impl App {
     /// The menu of sidebar entry `item`.
     pub fn side_menu_items(&self, item: &SideItem) -> Vec<MenuItem> {
+        let mut v = self.side_menu_own_items(item);
+        v.extend(self.custom_side_items(item));
+        v
+    }
+
+    fn side_menu_own_items(&self, item: &SideItem) -> Vec<MenuItem> {
         match item {
             SideItem::Branch { name, current, .. } => self.branch_menu(name, *current),
             SideItem::RemoteBranch { full, .. } => self.remote_branch_menu(full),

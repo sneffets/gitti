@@ -7,6 +7,7 @@ mod allowed_signers;
 mod change_search;
 mod config_safety;
 mod conflicts;
+mod custom_commands;
 mod discard;
 mod fixture_kit;
 mod fs_paths;
