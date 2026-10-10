@@ -1,7 +1,7 @@
 //! Branch / tag / remote / stash / history-rewriting operations. All via the git CLI so that
 //! hooks, signing and user configuration apply. Each returns git's (combined) output.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 
 use crate::{Repo, WorkingState};
 
@@ -555,7 +555,7 @@ impl Repo {
         } else if dir.join("REVERT_HEAD").exists() {
             RepoState::Reverting
         } else {
-            RepoState::Clean
+            sequence_state(&dir)
         }
     }
 
@@ -740,11 +740,105 @@ impl Repo {
             .unwrap_or_else(|| "#".into())
     }
 
+    /// Continues the operation in progress with git's own message: a merge is
+    /// concluded with `MERGE_MSG` (`--cleanup=strip`, as git's `cherry-pick --continue`
+    /// does: without it `--no-edit` would keep the `# Conflicts:` lines in the commit),
+    /// the others with `--continue`, the editor answered at once.
     pub fn continue_operation(&self) -> Result<String> {
         match self.state().command() {
-            Some("merge") => self.out(&["commit", "--no-edit"]),
+            Some("merge") => self.out(&["commit", "--no-edit", "--cleanup=strip"]),
             Some(cmd) => self.out(&["-c", "core.editor=true", cmd, "--continue"]),
             None => Ok(String::new()),
+        }
+    }
+
+    /// Continue with `message` — the text the user edited in the commit box
+    /// ([`continue_message`]) — as the message of the commit that concludes the stopped
+    /// step; `None`: git's own ([`Self::continue_operation`]). Hooks and signing apply as
+    /// for any commit:
+    ///
+    /// - a merge: `git commit` with it;
+    /// - a cherry-pick / revert stopped on a conflict: `git commit` with it (git keeps the
+    ///   picked commit's author, from `CHERRY_PICK_HEAD`), then `--continue` while a
+    ///   sequence of several commits has more to do;
+    /// - a rebase: `rebase --continue`, whose commit editor puts it in once (a later
+    ///   `reword` of the same run keeps its own message); `commit.cleanup=whitespace`, so
+    ///   a line like `#123 fix` stays. Nothing staged: git commits nothing, the message
+    ///   has no commit to go to. The apply backend (`rebase --apply`) asks for no message
+    ///   — refused up front instead of dropping the text silently.
+    ///
+    /// When git stops after the commit with the message was made (the next commit of a
+    /// sequence conflicts), the error carries [`MessageCommitted`]: the box can empty.
+    pub fn continue_with(&self, message: Option<&str>) -> Result<String> {
+        let Some(message) = message.filter(|m| !m.trim().is_empty()) else {
+            return self.continue_operation();
+        };
+        let dir = self.git_dir();
+        let has = |name: &str| dir.as_ref().is_some_and(|d| d.join(name).exists());
+        match self.state() {
+            RepoState::Clean => Ok(String::new()),
+            RepoState::Merging => self.commit_as(message, CommitKind::Staged),
+            RepoState::CherryPicking | RepoState::Reverting => {
+                // A sequence whose stopped commit was committed already: nothing takes
+                // the message.
+                if !has("CHERRY_PICK_HEAD") && !has("REVERT_HEAD") {
+                    return self.continue_operation();
+                }
+                let committed = self.commit_as(message, CommitKind::Staged)?;
+                if self.state() == RepoState::Clean {
+                    return Ok(committed);
+                }
+                let more = self.continue_operation().context(MessageCommitted)?;
+                Ok(format!("{}\n{}", committed.trim_end(), more).trim().to_string())
+            }
+            RepoState::Rebasing => {
+                if has("rebase-apply") {
+                    anyhow::bail!(
+                        "This rebase (git rebase --apply) takes each commit's message from its \
+                         patch and asks for none: the text in the commit box can't be used. \
+                         Empty the box (or Use It) to continue with the commit's own message, \
+                         and change it afterwards (Edit Commit Message…)."
+                    );
+                }
+                let staged = self.git().run_raw(&["diff", "--cached", "--quiet"], None)?.code != 0;
+                if !staged {
+                    return self.continue_operation();
+                }
+                self.continue_rebase_with(message, dir.as_deref())
+            }
+        }
+    }
+
+    /// `rebase --continue` with `message` put in by the commit editor, once.
+    fn continue_rebase_with(&self, message: &str, dir: Option<&std::path::Path>) -> Result<String> {
+        let dir = dir.ok_or_else(|| anyhow::anyhow!("no git directory"))?;
+        let msg_file = dir.join("GITTI_CONTINUE_MSG");
+        std::fs::write(&msg_file, message).context("writing the commit message")?;
+        let editor = crate::reword::copy_editor_once(&msg_file.to_string_lossy().replace('\\', "/"));
+        let head = || {
+            let repo = self.gix().ok()?;
+            let id = repo.head_id().ok()?.detach();
+            Some(id)
+        };
+        let before = head();
+        let result = self
+            .git()
+            .with_env(&[("GIT_EDITOR", &editor)])
+            .run(&["-c", "commit.cleanup=whitespace", "rebase", "--continue"]);
+        let used = std::fs::read(&msg_file).is_ok_and(|b| b.is_empty());
+        let _ = std::fs::remove_file(&msg_file);
+        match result {
+            Ok(o) => {
+                let out = format!("{}{}", o.stdout_str(), o.stderr).trim().to_string();
+                Ok(if used {
+                    out
+                } else {
+                    format!("{out}\ngit asked for no commit message: the text in the box was not used")
+                })
+            }
+            // The stopped commit was made with the message (HEAD moved), then git stopped.
+            Err(e) if used && head() != before => Err(anyhow::Error::from(e).context(MessageCommitted)),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -954,6 +1048,59 @@ fn split_command_line_for(line: &str, windows: bool) -> Vec<String> {
     }
     out
 }
+
+/// A sequence of cherry-picks / reverts git stopped in (`sequencer/todo`) without its
+/// `CHERRY_PICK_HEAD` / `REVERT_HEAD`: the stopped commit was committed by hand (as git
+/// suggests), the rest waits for `--continue`. Its first line says which.
+fn sequence_state(dir: &std::path::Path) -> RepoState {
+    let Ok(todo) = std::fs::read_to_string(dir.join("sequencer").join("todo")) else {
+        return RepoState::Clean;
+    };
+    let first = todo
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .unwrap_or("");
+    if first.starts_with("revert ") || first.starts_with("r ") {
+        RepoState::Reverting
+    } else {
+        RepoState::CherryPicking
+    }
+}
+
+/// Context of the error of [`Repo::continue_with`] when git stopped after it committed
+/// the message (the next commit of the sequence conflicts): the message is used — the
+/// apps empty the box as after a commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageCommitted;
+
+impl std::fmt::Display for MessageCommitted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Committed with your message; then git stopped")
+    }
+}
+
+/// The message Continue commits with: the box's text when the user edited it — git
+/// prepared one (`prepared`, [`Repo::prepared_message`]: a commit is pending) and the box
+/// holds something else, not blank — else `None` (git's own message, as `git
+/// <op> --continue`). Not while amending (the box holds HEAD's message). Shared by gitti
+/// and gitty.
+pub fn continue_message(prepared: Option<&str>, current: &str, amend: bool) -> Option<String> {
+    let p = prepared?;
+    let mine = current.trim();
+    (!amend && !mine.is_empty() && mine != p.trim()).then(|| current.to_string())
+}
+
+/// What the amend draft keeps of the box's text while amending ([`crate::store::save_amend_draft`]):
+/// nothing while it is HEAD's own message unedited (`head_message`, as amend put it into
+/// the box) or blank — else the text. Shared by gitti and gitty.
+pub fn amend_draft_text<'a>(current: &'a str, head_message: &str) -> &'a str {
+    if current.trim_end() == head_message.trim_end() { "" } else { current }
+}
+
+/// What the apps say next to Continue (palette detail, tooltip) while
+/// [`continue_message`] takes the box's text.
+pub const CONTINUE_WITH_BOX: &str = "with your edited message from the commit box";
 
 /// Why Commit cannot run right now, if it cannot: conflicted files are left (git refuses
 /// to commit with unmerged paths). Shared by gitti (disabled button + hint) and gitty.
@@ -1384,6 +1531,28 @@ mod tests {
         // Trailing whitespace goes, blank runs collapse, both ends trimmed.
         let squash = "\n\nSquashed\n\n    Add g  \n    \n\n\n    Body\n\n";
         assert_eq!(cleanup_message(squash, "#"), "Squashed\n\n    Add g\n\n    Body");
+    }
+
+    /// The amend draft keeps only an edited message.
+    #[gitti_test::test]
+    fn amend_draft_keeps_edits_only() {
+        use super::amend_draft_text;
+        assert_eq!(amend_draft_text("Fix\n\nbody", "Fix\n\nbody\n"), "");
+        assert_eq!(amend_draft_text("Fix\n\nbody\n", "Fix\n\nbody"), "");
+        assert_eq!(amend_draft_text("Fix it\n\nbody", "Fix\n\nbody"), "Fix it\n\nbody");
+        assert_eq!(amend_draft_text("", "Fix"), "");
+    }
+
+    /// Continue commits with the box's text only when the user edited git's message.
+    #[gitti_test::test]
+    fn continue_uses_an_edited_box_only() {
+        use super::continue_message;
+        assert_eq!(continue_message(Some("pick"), "pick", false), None, "git's own");
+        assert_eq!(continue_message(Some("pick"), "pick\n", false), None);
+        assert_eq!(continue_message(Some("pick"), "", false), None, "emptied: git's");
+        assert_eq!(continue_message(Some("pick"), "pick, edited", false).as_deref(), Some("pick, edited"));
+        assert_eq!(continue_message(Some("pick"), "#1 mine", true), None, "amending");
+        assert_eq!(continue_message(None, "mine", false), None, "no commit pending");
     }
 
     /// An empty box gets git's message; a draft is kept (and the note offers git's);

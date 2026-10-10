@@ -717,8 +717,11 @@ impl GittiApp {
                 0,
                 item(
                     format!("Continue {}", self.repo_state.label()),
-                    "",
-                    |t, w, cx| t.git_op("Continue", w, cx, |r| r.continue_operation()),
+                    match self.continue_message(cx) {
+                        Some(_) => gitti_core::ops::CONTINUE_WITH_BOX,
+                        None => "",
+                    },
+                    |t, w, cx| t.continue_operation(w, cx),
                 ),
             );
         } else if !self.working.conflicted.is_empty() {

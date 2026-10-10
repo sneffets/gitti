@@ -293,3 +293,32 @@ fn commit_message_draft_survives_a_restart_until_committed() {
     let workdir = gitti_core::paths::canonical(d);
     assert_eq!(gitti_core::store::load_draft_in(&db, &workdir), None, "dropped once committed");
 }
+
+/// An edited amend message is a draft for the commit it amends — not the commit draft:
+/// quit and started again, A brings it back; once HEAD moved, A takes HEAD's message;
+/// the amend that succeeds drops it.
+#[gitti_test::test]
+fn amend_draft_comes_back_for_its_commit() {
+    let dir = two_file_repo();
+    let d = dir.path();
+    let config = tempfile::tempdir().unwrap();
+    let run = |script: &str| gitty_with(d, config.path(), "120x30", script);
+    let (db, workdir) = (config.path().join("gitti.db"), gitti_core::paths::canonical(d));
+    let in_box = |out: &str, text: &str| {
+        screens(out)[0].lines().any(|l| l.trim_end().ends_with(&format!("   {text}")))
+    };
+    let head = rev(d, "HEAD");
+    let out = run(&format!("wait;press:A;press:c;press:ctrl-u;{}press:esc;press:q", presses("Init, edited")));
+    assert!(out.contains("(quit)"), "{out}");
+    let draft = gitti_core::store::load_amend_draft_in(&db, &workdir).expect("an amend draft");
+    assert_eq!((draft.head.as_str(), draft.message.as_str()), (head.as_str(), "Init, edited"), "{out}");
+    assert_eq!(gitti_core::store::load_draft_in(&db, &workdir), None, "no commit draft: {out}");
+    let out = run("wait;press:A;dump");
+    assert!(in_box(&out, "Init, edited"), "back for its commit: {out}");
+    git(d, &["commit", "-qm", "Moved on", "b.txt"]);
+    let script = format!("wait;press:A;dump;press:c;press:ctrl-u;{}key:ctrl-enter;state", presses("Moved, edited"));
+    let out = run(&script);
+    assert!(in_box(&out, "Moved on") && !in_box(&out, "Init, edited"), "HEAD's message: {out}");
+    assert_eq!(git(d, &["log", "-1", "--format=%s"]), "Moved, edited\n", "{out}");
+    assert_eq!(gitti_core::store::load_amend_draft_in(&db, &workdir), None, "dropped by the amend");
+}

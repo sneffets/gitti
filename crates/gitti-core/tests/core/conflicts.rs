@@ -3,7 +3,9 @@
 //! worktree (state detection in the worktree's own git dir), concluding a resolved merge
 //! with its prepared message, unrelated histories and `conflict-marker-size`; the
 //! message git leaves for the next commit (`MERGE_MSG` / `SQUASH_MSG`) after
-//! `cherry-pick -n -x`, a conflicting `cherry-pick -x` and `merge --squash`.
+//! `cherry-pick -n -x`, a conflicting `cherry-pick -x` and `merge --squash`; Continue
+//! with the message edited in the commit box (merge, cherry-pick sequence, revert,
+//! rebase) and without (a merge drops git's comment lines).
 
 use std::fs;
 use std::path::Path;
@@ -336,4 +338,145 @@ fn squash_merge_message_in_a_linked_worktree() {
 
     r.abort_conflicts().unwrap();
     assert_eq!(r.prepared_message(), None);
+}
+
+/// Concluding a resolved merge with git's message (Commit with an emptied box, Continue):
+/// git's "# Conflicts:" lines don't land in the commit. Continue with an edited message
+/// commits that one, a `#` line in it kept.
+#[gitti_test::test]
+fn continue_concludes_a_merge_without_conflict_comments_or_with_the_edited_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    diverged(p);
+    fx::git(p, &["branch", "other", "side"]);
+    fx::git_fails(p, &["merge", "feature"]);
+    let r = Repo::open(p).unwrap();
+    r.resolve_with_side(&["a.txt".into()], true).unwrap();
+    r.continue_with(None).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    assert_eq!(fx::git(p, &["log", "-1", "--format=%B"]), "Merge branch 'feature'");
+
+    fx::git(p, &["reset", "-q", "--hard", "other"]);
+    fx::git_fails(p, &["merge", "feature"]);
+    r.resolve_with_side(&["a.txt".into()], false).unwrap();
+    r.continue_with(Some("Take feature's a\n\n#12 stays")).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    let log = fx::git(p, &["log", "-1", "--format=%P%n%B"]);
+    let (parents, body) = log.split_once('\n').unwrap();
+    assert_eq!(parents.split_whitespace().count(), 2, "a merge commit");
+    assert_eq!(body, "Take feature's a\n\n#12 stays");
+}
+
+/// `<p>`: `main` changed a.txt; `feature` has "Change a" (conflicts with main) and then
+/// "Add c", both by Orig. Their ids.
+fn sequence(p: &Path) -> (String, String) {
+    fx::init(p);
+    let mut i = Import::new();
+    let base = i.commit("main", None, &[], "init", &[put("a.txt", "base\n")]);
+    i.author("Orig <orig@example.com>");
+    i.commit("feature", Some(&base), &[], "Change a", &[put("a.txt", "feature\n")]);
+    i.commit("feature", None, &[], "Add c", &[put("c.txt", "c\n")]);
+    i.author("T <t@example.com>");
+    i.commit("main", Some(&base), &[], "main change", &[put("a.txt", "main\n")]);
+    let ids = i.run(p);
+    fx::checkout(p);
+    (ids[1].clone(), ids[2].clone())
+}
+
+/// A cherry-pick of two commits stops on the first; Continue with the edited message
+/// commits the resolution with it — the picked commit's author kept — and picks the rest.
+#[gitti_test::test]
+fn continue_a_cherry_pick_sequence_with_the_edited_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    let (change, add) = sequence(p);
+    fx::git_fails(p, &["cherry-pick", &change, &add]);
+    let r = Repo::open(p).unwrap();
+    assert_eq!(r.state(), RepoState::CherryPicking);
+    let prepared = r.prepared_message();
+    assert_eq!(prepared.as_deref(), Some("Change a"));
+    r.resolve_with_side(&["a.txt".into()], false).unwrap();
+    let msg = gitti_core::ops::continue_message(prepared.as_deref(), "Change a (resolved)\n\n#3 kept", false);
+    r.continue_with(msg.as_deref()).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    let log = fx::git(p, &["log", "-3", "--format=%an|%B"]);
+    assert_eq!(log, "Orig|Add c\n\nOrig|Change a (resolved)\n\n#3 kept\n\nT|main change");
+}
+
+/// The stopped commit of a cherry-pick sequence committed by hand (as git suggests): the
+/// sequence still waits for `--continue` — the state says so, Continue picks the rest.
+#[gitti_test::test]
+fn a_sequence_committed_by_hand_still_continues() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    let (change, add) = sequence(p);
+    fx::git_fails(p, &["cherry-pick", &change, &add]);
+    fx::git(p, &["checkout", "--theirs", "a.txt"]);
+    fx::git(p, &["commit", "-qam", "by hand"]);
+    let r = Repo::open(p).unwrap();
+    assert_eq!(r.state(), RepoState::CherryPicking);
+    r.continue_with(Some("ignored: nothing is pending")).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    assert_eq!(fx::git(p, &["log", "-2", "--format=%s"]), "Add c\nby hand");
+}
+
+/// A single conflicting revert: Continue with the edited message commits it.
+#[gitti_test::test]
+fn continue_a_revert_with_the_edited_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    diverged(p);
+    // Reverting "main change" (a.txt base → main) conflicts with a later change of a.txt.
+    fs::write(p.join("a.txt"), "main again\n").unwrap();
+    fx::git(p, &["commit", "-qam", "main again"]);
+    fx::git_fails(p, &["revert", "--no-edit", "HEAD~1"]);
+    let r = Repo::open(p).unwrap();
+    assert_eq!(r.state(), RepoState::Reverting);
+    r.resolve_with_side(&["a.txt".into()], false).unwrap();
+    r.continue_with(Some("Revert the main change")).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    assert_eq!(fx::git(p, &["log", "-1", "--format=%B"]), "Revert the main change");
+}
+
+/// A rebase stopped on a conflict: Continue with the edited message gives the rebased
+/// commit that message (author kept, a `#` line kept); when the next commit conflicts
+/// too, the error says the message was used. The apply backend refuses it up front.
+#[gitti_test::test]
+fn continue_a_rebase_with_the_edited_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    fx::init(p);
+    let mut i = Import::new();
+    let base = i.commit("main", None, &[], "init", &[put("a.txt", "base\n")]);
+    i.author("Orig <orig@example.com>");
+    i.commit("feature", Some(&base), &[], "First", &[put("a.txt", "one\n")]);
+    i.commit("feature", None, &[], "Second", &[put("a.txt", "two\n")]);
+    i.author("T <t@example.com>");
+    i.commit("main", Some(&base), &[], "main change", &[put("a.txt", "main\n")]);
+    let ids = i.run(p);
+    fx::git(p, &["checkout", "-q", "feature"]);
+    fx::git_fails(p, &["rebase", "main"]);
+    let r = Repo::open(p).unwrap();
+    assert_eq!(r.state(), RepoState::Rebasing);
+    fs::write(p.join("a.txt"), "resolved\n").unwrap();
+    fx::git(p, &["add", "a.txt"]);
+    let err = r.continue_with(Some("First, resolved\n\n#4 kept")).unwrap_err();
+    assert!(err.is::<gitti_core::ops::MessageCommitted>(), "{err:#}");
+    assert_eq!(r.state(), RepoState::Rebasing, "Second conflicts");
+    assert!(!r.git_dir().unwrap().join("GITTI_CONTINUE_MSG").exists());
+    fs::write(p.join("a.txt"), "two\n").unwrap();
+    fx::git(p, &["add", "a.txt"]);
+    r.continue_with(None).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    let log = fx::git(p, &["log", "-3", "--format=%an|%B"]);
+    assert_eq!(log, "Orig|Second\n\nOrig|First, resolved\n\n#4 kept\n\nT|main change");
+
+    // The apply backend takes the patch's message: refused, nothing continued.
+    fx::git(p, &["checkout", "-q", "-b", "again", &ids[2]]);
+    fx::git_fails(p, &["rebase", "--apply", "main"]);
+    fs::write(p.join("a.txt"), "resolved\n").unwrap();
+    fx::git(p, &["add", "a.txt"]);
+    let err = format!("{:#}", r.continue_with(Some("Edited")).unwrap_err());
+    assert!(err.contains("rebase --apply"), "{err}");
+    assert_eq!(r.state(), RepoState::Rebasing);
 }

@@ -280,6 +280,9 @@ pub struct GittiApp {
     /// the pending debounced write.
     draft_dirty: bool,
     draft_save: Option<Task<()>>,
+    /// The message edited for an amend, as stored (`commit_flow`): it comes back when
+    /// amend is turned on again while its commit is still HEAD.
+    amend_draft: Option<gitti_core::store::AmendDraft>,
     /// The message box was blank in the last frame (with nothing staged the Commit button
     /// is off only then): typing re-renders when that flips.
     message_was_blank: Cell<bool>,
@@ -635,6 +638,7 @@ impl GittiApp {
             amend: false,
             draft_dirty: false,
             draft_save: None,
+            amend_draft: None,
             message_was_blank: Cell::new(true),
             status: None,
             errors: Default::default(),
@@ -1868,6 +1872,10 @@ impl GittiApp {
                             }
                         }
                         None => {
+                            if e.is::<gitti_core::ops::MessageCommitted>() {
+                                // Continue used the box's text before git stopped again.
+                                this.message_committed(window, cx);
+                            }
                             this.op_failed(&label, format!("{e:#}"));
                             this.offer_unrelated_merge(&e, window, cx);
                             if let Some(lock) = stale {
@@ -2577,17 +2585,15 @@ impl GittiApp {
     }
 
     fn toggle_amend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // What was typed before is the draft, not HEAD's message that may come now.
+        // What was typed before is the draft (or the amend draft), not HEAD's message
+        // that may come now.
         self.save_draft_now(cx);
         self.amend = !self.amend;
         if self.amend
             && self.message.read(cx).value().trim().is_empty()
-            && let Some(repo) = &self.repo
-            && let Ok(msg) = repo.head_message()
+            && let Some(msg) = self.amend_start_message()
         {
-            self.message.update(cx, |m, cx| {
-                m.set_value(msg.trim_end().to_string(), window, cx)
-            });
+            self.message.update(cx, |m, cx| m.set_value(msg, window, cx));
         }
         cx.notify();
     }
@@ -3391,12 +3397,15 @@ impl GittiApp {
                 .child(div().flex_1().min_w_0().child(text))
                 .child(
                     Button::new("op-continue")
+                        .probe("op-continue")
                         .label("Continue")
                         .small()
                         .disabled(conflicts > 0)
-                        .on_click(cx.listener(|this, _, w, cx| {
-                            this.git_op("Continue", w, cx, |r| r.continue_operation())
-                        })),
+                        .tooltip(match self.continue_message(cx) {
+                            Some(_) => format!("Continue {}", gitti_core::ops::CONTINUE_WITH_BOX),
+                            None => "Continue with git's message".to_string(),
+                        })
+                        .on_click(cx.listener(|this, _, w, cx| this.continue_operation(w, cx))),
                 )
                 .child(
                     Button::new("op-abort")
