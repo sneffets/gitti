@@ -478,6 +478,9 @@ impl GittiApp {
             Some((_, first)) => first.update(cx, |s, cx| s.focus(window, cx)),
             None => focus.focus(window, cx),
         }
+        // The first field has the focus and stays where it is: a long message above it is
+        // read first.
+        let focus_shown = (!fields.is_empty()).then_some(0);
         self.modal = Some(Modal {
             secret: any_secret,
             title: spec.title,
@@ -489,7 +492,7 @@ impl GittiApp {
             text_h: Default::default(),
             body_scroll: ScrollHandle::new(),
             field_bounds: Default::default(),
-            focus_shown: None,
+            focus_shown,
             ok_label: spec.ok_label,
             cancel_label: spec.cancel_label,
             danger: spec.danger,
@@ -1207,13 +1210,13 @@ impl GittiApp {
             .pr(gutter)
             .overflow_y_scroll()
             .track_scroll(&modal.body_scroll);
+        // The whole text: a long one scrolls with the rest of this part (its own scrolling
+        // box showed no bar — a cut text looked complete).
         if let Some(m) = &modal.message {
             middle = middle.child(
                 div()
                     .id("modal-message")
                     .flex_none()
-                    .max_h(px(260.))
-                    .overflow_y_scroll()
                     .whitespace_normal()
                     .text_color(p.text)
                     .child(m.clone()),
@@ -1231,7 +1234,8 @@ impl GittiApp {
                         .on_click(cx.listener(move |this, _, w, cx| this.modal_option(i, w, cx))),
                 )
             });
-            middle = middle.child(h_flex().flex_none().gap_1().children(buttons));
+            // Many options wrap (they ran under the scrollbar, past the dialog's edge).
+            middle = middle.child(h_flex().flex_none().flex_wrap().gap_1().children(buttons));
         }
         let mut fields = v_flex().id("modal-fields").flex_none().gap_3();
         // A field (and its fill-in buttons) only shown for some options.
