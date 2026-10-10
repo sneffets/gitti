@@ -258,6 +258,8 @@ struct Statics {
     compares: crate::compare::SharedCompareCache,
     /// The nested `.gitattributes` files of the index (`Repo::tracked_nested_attributes`).
     attribute_files: StampCache<Vec<String>>,
+    /// The subtree scans of the last few HEADs (`Repo::subtrees`).
+    subtrees: std::sync::Mutex<Vec<crate::subtree::detect::Scan>>,
 }
 
 /// One `stash list` line, for the sidebar and the history.
@@ -416,6 +418,10 @@ impl Repo {
 
     pub(crate) fn statics_attribute_files(&self) -> &StampCache<Vec<String>> {
         &self.statics.attribute_files
+    }
+
+    pub(crate) fn statics_subtrees(&self) -> &std::sync::Mutex<Vec<crate::subtree::detect::Scan>> {
+        &self.statics.subtrees
     }
 
     pub(crate) fn compare_cache(&self) -> &crate::compare::SharedCompareCache {

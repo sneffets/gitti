@@ -60,6 +60,7 @@ pub mod startup;
 pub mod status;
 pub mod store;
 pub mod submodule;
+pub mod subtree;
 pub mod switch;
 pub mod syntax;
 pub mod version_file;
