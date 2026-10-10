@@ -138,6 +138,23 @@ impl Submodule {
         parts.join(", ")
     }
 
+    /// The menu's "Copy SHA" entries: `(label, full id)`, `Err(why)` = greyed out. The
+    /// checked-out commit; not checked out (uninitialised): the commit the parent
+    /// records, labelled so. When the checkout differs from the recorded commit, "Copy
+    /// Recorded SHA" copies the latter.
+    pub fn copy_sha_entries(&self) -> Vec<(String, std::result::Result<String, &'static str>)> {
+        let hex = |id: ObjectId| Ok(id.to_hex().to_string());
+        match (self.checked_out, self.recorded) {
+            (Some(c), Some(r)) if r != c => vec![
+                ("Copy SHA".into(), hex(c)),
+                ("Copy Recorded SHA".into(), hex(r)),
+            ],
+            (Some(c), _) => vec![("Copy SHA".into(), hex(c))],
+            (None, Some(r)) => vec![("Copy SHA (recorded commit, not checked out)".into(), hex(r))],
+            (None, None) => vec![("Copy SHA".into(), Err("no commit recorded"))],
+        }
+    }
+
     /// Tooltip / details text.
     pub fn describe(&self) -> String {
         let mut s = format!("Submodule {} — {}", self.path, self.state.label());
@@ -1244,6 +1261,41 @@ mod tests {
 
     fn id(n: u8) -> ObjectId {
         ObjectId::from_bytes_or_panic(&[n; 20])
+    }
+
+    #[gitti_test::test]
+    fn copy_sha_entries_say_which_commit() {
+        let sm = |checked_out: Option<ObjectId>, recorded: Option<ObjectId>| Submodule {
+            name: "lib".into(),
+            path: "lib".into(),
+            url: None,
+            branch: None,
+            depth: 0,
+            recorded,
+            committed: recorded,
+            checked_out,
+            ahead: 0,
+            behind: 0,
+            missing: false,
+            flags: SubmoduleFlags::default(),
+            conflicted: false,
+            state: if checked_out.is_some() {
+                SubmoduleState::UpToDate
+            } else {
+                SubmoduleState::Uninitialized
+            },
+        };
+        let hex = |n: u8| Ok(id(n).to_hex().to_string());
+        assert_eq!(sm(Some(id(1)), Some(id(1))).copy_sha_entries(), [("Copy SHA".into(), hex(1))]);
+        assert_eq!(
+            sm(Some(id(1)), Some(id(2))).copy_sha_entries(),
+            [("Copy SHA".into(), hex(1)), ("Copy Recorded SHA".into(), hex(2))]
+        );
+        assert_eq!(
+            sm(None, Some(id(2))).copy_sha_entries(),
+            [("Copy SHA (recorded commit, not checked out)".into(), hex(2))]
+        );
+        assert_eq!(sm(None, None).copy_sha_entries(), [("Copy SHA".into(), Err("no commit recorded"))]);
     }
 
     #[gitti_test::test]

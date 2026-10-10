@@ -424,7 +424,7 @@ fn stage2_nested_remote_remove(ui: &mut Ui) {
 }
 
 /// The submodule row's and the SUBMODULES header's menus have the entries of
-/// `gitti_core::sidebar_menus`.
+/// `gitti_core::sidebar_menus`; Copy SHA puts the checked-out commit on the clipboard.
 fn sidebar_menus(ui: &mut Ui) {
     use gitti_core::sidebar_menus::{SideMenu, Vars, missing};
     let vars = Vars {
@@ -444,6 +444,23 @@ fn sidebar_menus(ui: &mut Ui) {
             fail!(ui, "{menu:?} menu lacks {miss:?}; has {labels:?}");
         }
         ui.step("key:escape");
+    }
+    ui.cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+    testing::menu_labels();
+    ui.click_on("side:sub-libs/lib", MouseButton::Right);
+    let labels = testing::menu_labels();
+    let Some(ix) = labels.iter().position(|l| l == "Copy SHA") else {
+        return fail!(ui, "no Copy SHA: {labels:?}");
+    };
+    // The first ↑ selects the last entry (the ones after it are all enabled).
+    for _ in ix..labels.len() {
+        ui.quick("key:up");
+    }
+    ui.quick("key:enter");
+    let copied = ui.cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+    let want = head(&ui.workdir().join("libs/lib"));
+    if copied != want {
+        fail!(ui, "Copy SHA copied {copied:?}, the submodule is at {want}");
     }
 }
 

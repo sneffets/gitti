@@ -60,6 +60,15 @@ impl App {
         let p = path.to_string();
         v.push(MenuItem::new("Sync URL", move |app| app.sync_submodules(vec![p])).key('s'));
         v.push(MenuItem::new("Copy Path", move |app| app.copy(dir)).key('c'));
+        // Its checked-out commit (uninitialised: the recorded one, labelled so); `h` as
+        // in a worktree's menu.
+        for (i, (label, id)) in sm.copy_sha_entries().into_iter().enumerate() {
+            v.push(match id {
+                Ok(id) if i == 0 => MenuItem::new(label, move |app| app.copy(id)).key('h'),
+                Ok(id) => MenuItem::new(label, move |app| app.copy(id)),
+                Err(why) => MenuItem::new(label, |_| {}).unless(Some(why)),
+            });
+        }
         let p = path.to_string();
         v.push(MenuItem::new("Remove Submodule…", move |app| app.remove_submodule_dialog(&p)).key('d'));
         v

@@ -98,7 +98,7 @@ fn submodule_menu(menu: PopupMenu, app: &AppHandle, sm: &Submodule, dir: PathBuf
     let initialised = sm.state != SubmoduleState::Uninitialized;
     let path = sm.path.clone();
     let update_label = if initialised { "Update" } else { "Initialise and Update" };
-    menu.item({
+    let menu = menu.item({
         let p = path.clone();
         item(update_label, app, move |this, w, cx| {
             this.update_submodules(vec![p.clone()], w, cx)
@@ -135,9 +135,15 @@ fn submodule_menu(menu: PopupMenu, app: &AppHandle, sm: &Submodule, dir: PathBuf
     })
     .item({
         super::menus::copy_item("Copy Path", dir.display().to_string())
-    })
-    .separator()
-    .item({
+    });
+    // Its checked-out commit (uninitialised: the recorded one, labelled so).
+    let menu = sm.copy_sha_entries().into_iter().fold(menu, |menu, (label, id)| {
+        menu.item(match id {
+            Ok(id) => super::menus::copy_item(label, id),
+            Err(why) => super::menus::menu_entry(format!("{label} ({why})")).disabled(true),
+        })
+    });
+    menu.separator().item({
         let p = path.clone();
         item("Remove Submodule…", app, move |this, w, cx| {
             this.remove_submodule_dialog(&p, w, cx)

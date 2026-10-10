@@ -91,7 +91,8 @@ fn submodule_pointer_change_shows_commits_and_stages_as_one_unit() {
 }
 
 /// A submodule checked out at an older commit: "1 SUBMODULE OUT OF DATE" and ↓ in the
-/// sidebar; the palette's Update Submodules runs `submodule update --init --recursive`.
+/// sidebar; its menu copies the checked-out commit (h = Copy SHA) and offers the recorded
+/// one; the palette's Update Submodules runs `submodule update --init --recursive`.
 #[gitti_test::test]
 fn submodule_out_of_date_badge_and_update_from_the_palette() {
     let (_tmp, sup) = super_repo();
@@ -100,11 +101,34 @@ fn submodule_out_of_date_badge_and_update_from_the_palette() {
     commit_all(&sub, "lib two");
     git(&sup, &["commit", "-qam", "lib two"]);
     git(&sub, &["checkout", "-q", "HEAD~1"]);
-    let out = run(&sup, &format!("dump;cmds;press:ctrl-p;{}key:enter;cmds;dump", presses("update submodules")));
+    let checked_out = rev(&sub, "HEAD");
+    let out = run(
+        &sup,
+        &format!(
+            "dump;cmds;press:backtab;press:G;press:m;items;key:h;state;press:ctrl-p;{}key:enter;cmds;dump",
+            presses("update submodules")
+        ),
+    );
     let s = screens(&out);
+    assert!(items(&out).contains(&"Copy Recorded SHA"), "{out}");
+    assert!(states(&out)[0].contains(&format!("Copied {checked_out}")), "{out}");
     assert!(s[0].contains("1 SUBMODULE OUT OF DATE") && s[0].contains("↓ libs/lib"), "{out}");
     assert!(cmds(&out)[1].iter().any(|l| l.contains("submodule update --init --recursive")), "{out}");
     assert!(!s[1].contains("OUT OF DATE") && s[1].contains("✓ libs/lib"), "{out}");
+}
+
+/// An uninitialised submodule (a gitlink and `.gitmodules`, nothing cloned): its menu's
+/// Copy SHA copies the commit the parent records, and says so.
+#[gitti_test::test]
+fn uninitialised_submodule_copies_the_recorded_sha() {
+    let dir = fixture(&[(".gitmodules", "[submodule \"lib\"]\n\tpath = lib\n\turl = ../lib.git\n")], &[]);
+    let d = dir.path();
+    // Any commit id serves as the recorded pointer.
+    let id = rev(d, "HEAD");
+    git(d, &["update-index", "--add", "--cacheinfo", &format!("160000,{id},lib")]);
+    let out = run(d, "press:backtab;press:G;press:m;items;key:h;state");
+    assert!(items(&out).contains(&"Copy SHA (recorded commit, not checked out)"), "{out}");
+    assert!(states(&out)[0].contains(&format!("Copied {id}")), "{out}");
 }
 
 #[gitti_test::test]
