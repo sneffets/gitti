@@ -709,6 +709,9 @@ impl PathReport {
     /// working directory (`ws`) — one of each colliding pair (the other one is what git
     /// keeps looking at), the missing ones.
     pub fn hidable(&self, ws: &crate::WorkingState) -> Vec<String> {
+        if self.issues.is_empty() {
+            return Vec::new();
+        }
         let shown: std::collections::HashSet<&str> = self.shown().map(|i| i.path.as_str()).collect();
         let mut out: Vec<String> = Vec::new();
         for f in ws.unstaged.iter().filter(|f| !f.entry.untracked && !f.entry.conflicted) {

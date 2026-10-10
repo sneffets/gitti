@@ -131,6 +131,11 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("EditGitignore", "Edit .gitignore…"),
     both("TrackWithLfs", "Track with Git LFS…"),
     both("EditGitattributes", "Edit .gitattributes…"),
+    // Paths this file system can't hold (`fs_paths`): the note, hide (skip-worktree),
+    // the undo.
+    both("FsPaths", "Paths This File System Can't Hold…"),
+    both("HideFsPaths", "Hide Paths This File System Can't Hold"),
+    both("ShowHiddenFsPaths", "Show Hidden Paths Again"),
     gitti("RepoGitSettings", CONFIG),
     gitti("GlobalGitSettings", CONFIG),
     gitti("EditRepoConfig", CONFIG),

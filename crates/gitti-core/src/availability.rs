@@ -69,6 +69,12 @@ pub struct RepoFacts {
     /// The shown commit's signature can't be checked for a missing key that GitHub may
     /// have (`signing_keys::offer`).
     pub signing_keys: bool,
+    /// Index paths this work tree's file system can't hold, still in the way
+    /// ([`crate::fs_paths::PathReport::shown`]), those of them "Hide Them" hides now
+    /// (`hidable`), and those hidden with skip-worktree.
+    pub fs_paths: usize,
+    pub fs_hidable: usize,
+    pub fs_hidden: usize,
 }
 
 impl Default for RepoFacts {
@@ -97,6 +103,9 @@ impl Default for RepoFacts {
             old_version: false,
             github_remote: false,
             signing_keys: false,
+            fs_paths: 0,
+            fs_hidable: 0,
+            fs_hidden: 0,
         }
     }
 }
@@ -128,6 +137,9 @@ pub const NO_OLD_VERSION: &str = "the commit has no parent";
 pub const NO_OTHER_BRANCH: &str = "no other local branch";
 pub const NO_GITHUB_REMOTE: &str = "no GitHub remote";
 pub const NO_KEY_MISSING: &str = "the shown commit has no signature whose key is missing";
+pub const NO_FS_PATHS: &str = "every path fits this file system";
+pub const NO_FS_PATH_CHANGED: &str = "none of them shows as changed";
+pub const NO_HIDDEN_PATHS: &str = "no paths hidden";
 
 /// "a merge is in progress" & co. (`None`: no operation half-done).
 pub fn in_progress(state: RepoState) -> Option<&'static str> {
@@ -198,6 +210,10 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "AddWorktree" => check(f.unborn, UNBORN),
         "MoveThisWorktree" | "RemoveThisWorktree" => check(!f.linked_worktree, MAIN_WORKTREE),
         "RepairWorktrees" => check(f.linked_worktrees == 0, NO_LINKED_WORKTREES),
+        // Paths this file system can't hold (`fs_paths`).
+        "FsPaths" => check(f.fs_paths + f.fs_hidden == 0, NO_FS_PATHS),
+        "HideFsPaths" => check(f.fs_paths == 0, NO_FS_PATHS).or(check(f.fs_hidable == 0, NO_FS_PATH_CHANGED)),
+        "ShowHiddenFsPaths" => check(f.fs_hidden == 0, NO_HIDDEN_PATHS),
         "PruneWorktrees" => check(f.prunable_worktrees == 0, NOTHING_TO_PRUNE),
         "UpdateSubmodules" | "UpdateSubmodulesRemote" | "CheckoutSubmoduleCommit"
         | "SyncSubmodules" | "RemoveSubmodule" | "ForeachSubmodule" => {
@@ -409,6 +425,9 @@ mod tests {
             old_version: true,
             github_remote: true,
             signing_keys: true,
+            fs_paths: 2,
+            fs_hidable: 1,
+            fs_hidden: 1,
             ..plain()
         };
         assert_eq!(off(&f), Vec::<&str>::new(), "{:?}", unavailable(&f));
@@ -463,6 +482,24 @@ mod tests {
         }
         // Committing concludes the merge.
         assert_eq!(why_not("Commit", &merging), None);
+    }
+
+    #[gitti_test::test]
+    fn paths_this_file_system_cant_hold() {
+        let fs = |fs_paths, fs_hidable, fs_hidden| RepoFacts { fs_paths, fs_hidable, fs_hidden, ..plain() };
+        let all = ["FsPaths", "HideFsPaths", "ShowHiddenFsPaths"];
+        let why = |f: &RepoFacts| all.map(|a| why_not(a, f));
+        // None at all: nothing to explain, hide or show.
+        assert_eq!(why(&fs(0, 0, 0)), [Some(NO_FS_PATHS), Some(NO_FS_PATHS), Some(NO_HIDDEN_PATHS)]);
+        // In the way, one shows as changed.
+        assert_eq!(why(&fs(2, 1, 0)), [None, None, Some(NO_HIDDEN_PATHS)]);
+        // In the way, none changed (e.g. both of a pair hold the same content).
+        assert_eq!(why(&fs(2, 0, 0)), [None, Some(NO_FS_PATH_CHANGED), Some(NO_HIDDEN_PATHS)]);
+        // All hidden: explained, shown again.
+        assert_eq!(why(&fs(0, 0, 1)), [None, Some(NO_FS_PATHS), None]);
+        for a in all {
+            assert!(MENU_COMMANDS.iter().any(|c| c.action == a), "{a}");
+        }
     }
 
     #[gitti_test::test]

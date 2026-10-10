@@ -1,5 +1,5 @@
-//! Character-wise text selection for copying: in the detail panel (commit message and diff
-//! lines) and in the merge editor's ours / theirs panes. Positions are byte offsets into the *displayed* text of a line (tabs expanded,
+//! Character-wise text selection for copying: in the detail panel (the commit header's
+//! author / date / committer, the commit message and diff lines) and in the merge editor's ours / theirs panes. Positions are byte offsets into the *displayed* text of a line (tabs expanded,
 //! one visual row per wrapped part), so they map 1:1 to gpui's text layout. A double click
 //! selects a word, a triple click the line (`gitti_core::text_select`); dragging on from
 //! there extends by whole words / lines.
@@ -16,17 +16,19 @@ use gpui_kit::{
     Pixels, Point, SharedString, Styled as _, TextLayout, Window, canvas, px,
 };
 
-/// Which text block a position is in; the message comes before the diff. In the merge
-/// editor a selection stays on one side (`Ours` / `Theirs`, `line` = top row index).
+/// Which text block a position is in: the commit header's author / date / committer
+/// lines, then the message, then the diff. In the merge editor a selection stays on one
+/// side (`Ours` / `Theirs`, `line` = top row index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Area {
+    Header,
     Message,
     Diff,
     Ours,
     Theirs,
 }
 
-/// A position: `line` is the message line or the diff row index.
+/// A position: `line` is the header line, the message line or the diff row index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TextPos {
     pub area: Area,

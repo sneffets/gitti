@@ -4,7 +4,10 @@
 //! (`DiffRow::PathNote`; Enter there opens the whole explanation with "Hide this path").
 //! A toolbar badge says "N PATHS CAN'T BE CHECKED OUT HERE — ctrl-p: File System"; the
 //! palette's "Paths This File System Can't Hold…" explains it, hides them (skip-worktree)
-//! and hides the badge; "Show Hidden Paths Again" is the undo. Staging such a file asks
+//! and hides the badge; "Hide Paths This File System Can't Hold" and "Show Hidden Paths
+//! Again" (the undo) are there too, greyed while there is nothing to do, and the file's
+//! detail menu (`m`) has its explanation and "Hide this path". The explanation rows wrap
+//! at the pane's width; file list entries say why too. Staging such a file asks
 //! first, Discard says what it can't do, lines of such a file are not staged / discarded.
 
 use gitti_core::fs_paths::{PathIssue, STAGE_THEM_TOO, discard_warning, partial_refusal, stage_question};
@@ -41,7 +44,7 @@ impl App {
         (self.fs_badge_dismissed.as_ref() != Some(&self.fs_badge_key())).then_some(short)
     }
 
-    fn fs_hidable(&self) -> Vec<String> {
+    pub(crate) fn fs_hidable(&self) -> Vec<String> {
         self.working.fs_paths.hidable(&self.working)
     }
 
@@ -119,36 +122,75 @@ impl App {
         self.modal = Some(Modal::menu(issue.path, items));
     }
 
-    /// Palette entries while there is something to explain / hide / show.
+    /// Palette entries: the note, hide, show again — always listed, greyed with the reason
+    /// while there is nothing to do (`unavailable.rs`), like gitti's Repository menu.
     pub(crate) fn fs_paths_palette_items(&self) -> Vec<PickItem> {
         let report = &self.working.fs_paths;
-        let mut items = Vec::new();
-        if let Some(short) = report.short_note() {
-            items.push(PickItem::new("Paths This File System Can't Hold…", short, |app: &mut App| {
-                app.fs_paths_menu()
-            }));
-        }
+        let count = |n| gitti_core::discard::count(n, "path");
         let hidable = self.fs_hidable();
-        if !hidable.is_empty() {
-            let detail = format!(
-                "{} showing as changed — skip-worktree",
-                gitti_core::discard::count(hidable.len(), "path")
-            );
-            items.push(PickItem::new("Hide Paths This File System Can't Hold", detail, move |app: &mut App| {
-                app.hide_fs_paths(hidable.clone())
-            }));
-        }
         let hidden = report.hidden().count();
-        if hidden > 0 {
-            let detail = format!(
-                "{} this file system can't hold — no-skip-worktree",
-                gitti_core::discard::count(hidden, "path")
-            );
-            items.push(PickItem::new("Show Hidden Paths Again", detail, |app: &mut App| {
-                app.show_hidden_fs_paths()
+        let note = report
+            .short_note()
+            .unwrap_or_else(|| format!("{} in the way, {hidden} hidden", count(0)));
+        vec![
+            PickItem::new("Paths This File System Can't Hold…", note, |app: &mut App| app.fs_paths_menu()),
+            PickItem::new(
+                "Hide Paths This File System Can't Hold",
+                format!("{} showing as changed — skip-worktree", count(hidable.len())),
+                |app: &mut App| {
+                    let paths = app.fs_hidable();
+                    app.hide_fs_paths(paths)
+                },
+            ),
+            PickItem::new(
+                "Show Hidden Paths Again",
+                format!("{} this file system can't hold — no-skip-worktree", count(hidden)),
+                |app: &mut App| app.show_hidden_fs_paths(),
+            ),
+        ]
+    }
+
+    /// The detail menu's entries on the header of a file this file system can't hold
+    /// (`m`): the whole explanation, hiding it.
+    pub(crate) fn fs_path_menu_items(&self, src: Src, file: usize) -> Vec<MenuItem> {
+        if self.fs_issue_of(src, file).is_none() {
+            return Vec::new();
+        }
+        let mut items = vec![MenuItem::new("Why it can't be checked out here…", move |app: &mut App| {
+            app.path_note_menu(src, file)
+        })];
+        if let Some(issue) = self.fs_issue_of(src, file).filter(|i| src == Src::Unstaged && i.problem.cannot_hold()) {
+            let path = issue.path.clone();
+            items.push(MenuItem::new("Hide this path (skip-worktree)", move |app: &mut App| {
+                app.hide_fs_paths(vec![path])
             }));
         }
         items
+    }
+
+    /// Whether diff row `row` is the note of a nested repository / an untracked folder
+    /// entry ([`Self::no_preview_menu`] on Enter).
+    pub(crate) fn no_preview_at(&self, row: usize) -> bool {
+        let Some(&gitti_core::rows::DiffRow::Note { src, file }) = self.rows.get(row) else {
+            return false;
+        };
+        work_files(&self.working, src)
+            .get(file)
+            .is_some_and(|wf| gitti_core::discard::no_preview_note(&self.working, wf).is_some())
+    }
+
+    /// Enter on the row of a nested repository / an untracked folder entry: what it is,
+    /// what Discard does with it (`true`: there was one).
+    pub(crate) fn no_preview_menu(&mut self, src: Src, file: usize) -> bool {
+        let Some(wf) = work_files(&self.working, src).get(file) else {
+            return false;
+        };
+        let Some((_, full)) = gitti_core::discard::no_preview_note(&self.working, wf) else {
+            return false;
+        };
+        let title = wf.path().to_string();
+        self.modal = Some(Modal::menu(title, MenuItem::notes(full, NOTE_WIDTH)));
+        true
     }
 
     /// Lines of a file this file system can't hold are not staged / discarded: says why.

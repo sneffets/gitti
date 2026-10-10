@@ -359,6 +359,9 @@ pub struct GittiApp {
     picker: Option<picker::Picker>,
     /// Diff panel width in monospace columns, measured while painting (for line wrap).
     wrap_cols: Rc<Cell<usize>>,
+    /// How the explanation rows of paths this file system can't hold wrap
+    /// (`fs_paths.rs`).
+    note_wrap: fs_paths::NoteWrapper,
     /// Height of the diff list viewport (measured while painting).
     diff_viewport_h: Rc<Cell<Pixels>>,
     log_scroll: UniformListScrollHandle,
@@ -675,6 +678,7 @@ impl GittiApp {
             replacing_modal: false,
             picker: None,
             wrap_cols: Rc::new(Cell::new(120)),
+            note_wrap: fs_paths::NoteWrapper::new(cx),
             diff_viewport_h: Rc::new(Cell::new(px(0.))),
             log_scroll: UniformListScrollHandle::new(),
             log_focus: cx.focus_handle(),
@@ -1222,7 +1226,8 @@ impl GittiApp {
     }
 
     /// The rows of a selectable text area as displayed, by line index: the commit
-    /// message's lines, the diff's rows (a wrapped line's parts continue it).
+    /// header's author / date / committer, the commit message's lines, the diff's rows (a
+    /// wrapped line's parts continue it).
     fn sel_rows(
         &self,
         area: crate::text_sel::Area,
@@ -1235,10 +1240,11 @@ impl GittiApp {
                     .map(|l| l.text)
                     .collect()
             }
+            (Detail::Commit(cv), Area::Header) => header_ids::header_lines(&cv.details),
             _ => Vec::new(),
         };
         move |line| match area {
-            Area::Message => message.get(line).map(|t| Row::line(t.clone())),
+            Area::Header | Area::Message => message.get(line).map(|t| Row::line(t.clone())),
             Area::Diff => self.diff_sel_row(line),
             _ => None,
         }
@@ -1356,7 +1362,7 @@ impl GittiApp {
         };
         let Some((at, under)) = self
             .drag_targets
-            .hit(pos, |a| matches!(a, Area::Message | Area::Diff))
+            .hit(pos, |a| matches!(a, Area::Header | Area::Message | Area::Diff))
         else {
             return;
         };
@@ -1370,8 +1376,8 @@ impl GittiApp {
         }
     }
 
-    /// The selected characters (message lines, then diff rows; wrapped rows joined), else the
-    /// full text of the selected diff lines.
+    /// The selected characters (header lines, message lines, then diff rows; wrapped rows
+    /// joined), else the full text of the selected diff lines.
     fn selected_text(&self) -> Option<String> {
         use crate::text_sel::Area;
         let mut out = String::new();
@@ -1386,6 +1392,11 @@ impl GittiApp {
         };
         if let Some(sel) = self.text_sel.filter(|s| !s.is_empty()) {
             if let Detail::Commit(cv) = &self.detail {
+                for (i, l) in header_ids::header_lines(&cv.details).iter().enumerate() {
+                    if let Some(r) = sel.span_in(Area::Header, i, l.len()) {
+                        push(&l[r], false, &mut out);
+                    }
+                }
                 let lines = crate::message::style_message(&cv.details.message);
                 for (i, l) in lines.iter().enumerate() {
                     if let Some(r) = sel.span_in(Area::Message, i, l.text.len()) {
@@ -3227,11 +3238,13 @@ impl GittiApp {
         self.selected_text()
     }
 
-    /// Script hook: where byte `byte` of the commit message's line `line` (`message`) or
-    /// of diff row `line` (`diff`) was laid out in the last frame.
+    /// Script hook: where byte `byte` of the commit header's line `line` (`header`: author,
+    /// date, committer), of the commit message's line `line` (`message`) or of diff row
+    /// `line` (`diff`) was laid out in the last frame.
     pub fn script_text_point(&self, area: &str, line: usize, byte: usize) -> Option<Point<Pixels>> {
         use crate::text_sel::Area;
         let area = match area {
+            "header" => Area::Header,
             "message" => Area::Message,
             "diff" => Area::Diff,
             _ => return None,
@@ -3535,6 +3548,7 @@ impl Render for GittiApp {
         let root = self.key_actions(root, cx);
         let root = self.nav_actions(root, cx);
         let root = self.repo_actions(root, cx);
+        let root = self.fs_paths_actions(root, cx);
         let root = self.navigate_actions(root, cx);
         let root = self.menu_cmd_actions(root, cx);
         let root = self.list_layout_actions(root, cx);

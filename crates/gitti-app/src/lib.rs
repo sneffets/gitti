@@ -1337,6 +1337,10 @@ actions!(gitti, [RunCustomCommand, CustomCommands]);
 // dialog); handlers in `app/toolbar.rs`.
 actions!(gitti, [PushTo, PullFrom, PullWith, FetchFrom]);
 
+// Repository ▸ paths this file system can't hold: the note, hide them (skip-worktree),
+// show them again; handlers in `app/fs_paths.rs`.
+actions!(gitti, [FsPaths, HideFsPaths, ShowHiddenFsPaths]);
+
 // Remote ▸ "Reset Remote Branch to Selected Commit…" (a push with lease, the local branch
 // stays); handler in `app/menu_cmds.rs`.
 actions!(gitti, [ResetRemoteBranch]);
@@ -1563,6 +1567,10 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Edit .gitignore…", EditGitignore),
                 MenuItem::action("Track with Git LFS…", TrackWithLfs),
                 MenuItem::action("Edit .gitattributes…", EditGitattributes),
+                MenuItem::separator(),
+                MenuItem::action("Paths This File System Can't Hold…", FsPaths),
+                MenuItem::action("Hide Paths This File System Can't Hold", HideFsPaths),
+                MenuItem::action("Show Hidden Paths Again", ShowHiddenFsPaths),
                 MenuItem::separator(),
                 MenuItem::action("Git Settings: This Repository…", RepoGitSettings),
                 MenuItem::action("Git Settings: Global…", GlobalGitSettings),

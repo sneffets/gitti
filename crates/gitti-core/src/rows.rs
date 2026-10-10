@@ -51,11 +51,13 @@ pub enum DiffRow {
         file: usize,
     },
     /// Line `line` of the explanation why the file system can't hold a working-directory
-    /// file's path ([`crate::fs_paths::Problem::lines`]), under its file header.
+    /// file's path ([`crate::fs_paths::Problem::lines`]), under its file header; `part` is
+    /// its visual row when it wraps ([`NoteWrap`]).
     PathNote {
         src: Src,
         file: usize,
         line: u16,
+        part: u16,
     },
     /// Gap between files (dark band).
     Spacer,
@@ -484,6 +486,59 @@ pub fn build_worktree_rows_for(
     exp: &Expansion,
     wrap: Option<usize>,
 ) -> Vec<DiffRow> {
+    build_worktree_rows_noted(ws, only, exp, wrap, &NoteWrap::None)
+}
+
+/// How the explanation rows under a file header ([`DiffRow::PathNote`]) wrap — always,
+/// whatever the line wrapping of the diff: they are prose, cutting them hides what to do.
+pub enum NoteWrap<'a> {
+    /// One row per line (cut where the pane ends).
+    None,
+    /// At this many display columns ([`char_cols`]; gitty: the terminal's cells).
+    Cols(usize),
+    /// By a measuring function: the byte ranges of a line's visual rows (gitti: its
+    /// proportional font's line wrapper at the pane's width).
+    By(&'a dyn Fn(&str) -> Vec<std::ops::Range<usize>>),
+}
+
+impl NoteWrap<'_> {
+    /// The byte ranges of `text`'s visual rows (at least one).
+    pub fn parts(&self, text: &str) -> Vec<std::ops::Range<usize>> {
+        let parts = match self {
+            NoteWrap::None => std::iter::once(0..text.len()).collect(),
+            NoteWrap::Cols(cols) => wrap_byte_ranges(text, *cols),
+            NoteWrap::By(f) => f(text),
+        };
+        if parts.is_empty() { std::iter::once(0..text.len()).collect() } else { parts }
+    }
+
+    /// Visual row `part` of `text` (empty past its end).
+    pub fn part<'t>(&self, text: &'t str, part: u16) -> &'t str {
+        self.parts(text)
+            .get(part as usize)
+            .and_then(|r| text.get(r.clone()))
+            .unwrap_or_default()
+    }
+}
+
+/// [`wrap_ranges`] of `text` as byte ranges (word wrap at `cols` display columns).
+pub fn wrap_byte_ranges(text: &str, cols: usize) -> Vec<std::ops::Range<usize>> {
+    let chars: Vec<char> = text.chars().collect();
+    let offs: Vec<usize> = text.char_indices().map(|(i, _)| i).chain([text.len()]).collect();
+    wrap_ranges(&chars, cols)
+        .into_iter()
+        .map(|(a, b)| offs[a.min(offs.len() - 1)]..offs[b.min(offs.len() - 1)])
+        .collect()
+}
+
+/// [`build_worktree_rows_for`] with the explanation rows wrapped by `notes`.
+pub fn build_worktree_rows_noted(
+    ws: &crate::WorkingState,
+    only: Option<&str>,
+    exp: &Expansion,
+    wrap: Option<usize>,
+    notes: &NoteWrap,
+) -> Vec<DiffRow> {
     let mut rows = Vec::new();
     for (src, files) in [
         (Src::Conflicted, &ws.conflicted),
@@ -514,7 +569,7 @@ pub fn build_worktree_rows_for(
                 }
                 for (i, f) in members {
                     rows.push(DiffRow::Spacer);
-                    push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, path_notes(ws, f));
+                    push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, &path_notes(ws, f, notes));
                 }
             }
             continue;
@@ -524,18 +579,27 @@ pub fn build_worktree_rows_for(
                 continue;
             }
             rows.push(DiffRow::Spacer);
-            push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, path_notes(ws, f));
+            push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, &path_notes(ws, f, notes));
         }
     }
     rows
 }
 
-/// How many explanation rows ([`DiffRow::PathNote`]) a working-directory file gets: the
-/// lines of its path's problem on this file system, if it has one.
-fn path_notes(ws: &crate::WorkingState, f: &crate::WorkFile) -> u16 {
-    ws.fs_paths
-        .issue(f.path())
-        .map_or(0, |i| i.problem.lines(f.path(), &ws.fs_paths.rules).len() as u16)
+/// The explanation rows ([`DiffRow::PathNote`]) of a working-directory file: (line, part)
+/// of each visual row of its path's problem on this file system, if it has one.
+fn path_notes(ws: &crate::WorkingState, f: &crate::WorkFile, notes: &NoteWrap) -> Vec<(u16, u16)> {
+    let Some(issue) = ws.fs_paths.issue(f.path()) else {
+        return Vec::new();
+    };
+    let lines = issue.problem.lines(f.path(), &ws.fs_paths.rules);
+    lines
+        .iter()
+        .enumerate()
+        .flat_map(|(line, text)| {
+            let n = notes.parts(text).len().clamp(1, u16::MAX as usize) as u16;
+            (0..n).map(move |part| (line as u16, part))
+        })
+        .collect()
 }
 
 /// The status letter of a conflicted file on file tabs, file rows and diff headers. git's
@@ -590,6 +654,9 @@ pub struct WorktreeTab {
     /// working-directory letter (`M`, `D`, …) or, for staged-only files, the index letter.
     pub letter: char,
     pub stage: TabStage,
+    /// Why this work tree's file system can't hold the path, in a few words
+    /// ([`crate::fs_paths::Problem::short`]: "collides with xt_TCPMSS.h"), if so.
+    pub fs_note: Option<String>,
 }
 
 impl WorktreeTab {
@@ -601,18 +668,27 @@ impl WorktreeTab {
         &self.path[start..]
     }
 
-    /// E.g. "modified, partly staged" (tooltips).
+    /// E.g. "modified, partly staged" (tooltips, the file list); a path the file system
+    /// can't hold says why after a dash ("modified, unstaged — ⚠ collides with X.h").
     pub fn describe(&self) -> String {
         let what = change_name(self.letter);
-        match self.stage {
+        let state = match self.stage {
             TabStage::Conflicted => "conflicted".to_string(),
             TabStage::Unstaged if self.letter == '?' => what.to_string(),
             TabStage::Unstaged => format!("{what}, unstaged"),
             TabStage::Partly => format!("{what}, partly staged"),
             TabStage::Staged => format!("{what}, staged"),
+        };
+        match &self.fs_note {
+            Some(note) => format!("{state} — {FS_MARK} {note}"),
+            None => state,
         }
     }
 }
+
+/// The mark of a path the work tree's file system can't hold (file headers, file tabs,
+/// the file list).
+pub const FS_MARK: &str = "⚠";
 
 /// The file tabs of `ws`, sorted by path (stable while files are staged / unstaged).
 pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
@@ -622,6 +698,7 @@ pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
             path: f.path().to_string(),
             letter: CONFLICT_LETTER,
             stage: TabStage::Conflicted,
+            fs_note: None,
         });
     }
     for f in &ws.unstaged {
@@ -637,6 +714,7 @@ pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
             path: f.path().to_string(),
             letter,
             stage,
+            fs_note: None,
         });
     }
     for f in &ws.staged {
@@ -644,12 +722,17 @@ pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
             path: f.path().to_string(),
             letter: f.entry.index.unwrap_or('M'),
             stage: TabStage::Staged,
+            fs_note: None,
         });
         if tab.stage == TabStage::Unstaged {
             tab.stage = TabStage::Partly;
         }
     }
-    map.into_values().collect()
+    let mut tabs: Vec<WorktreeTab> = map.into_values().collect();
+    for t in &mut tabs {
+        t.fs_note = ws.fs_paths.issue(&t.path).map(|i| i.problem.short());
+    }
+    tabs
 }
 
 /// Rows of a commit diff; `only` restricts them to one file (file tab).
@@ -667,7 +750,7 @@ pub fn build_commit_rows(
         if !rows.is_empty() {
             rows.push(DiffRow::Spacer);
         }
-        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap, 0);
+        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap, &[]);
     }
     rows
 }
@@ -679,11 +762,15 @@ fn push_file(
     diff: Option<&FileDiff>,
     exp: &Expansion,
     wrap: Option<usize>,
-    path_notes: u16,
+    path_notes: &[(u16, u16)],
 ) {
     rows.push(DiffRow::File { src, file });
     if diff.is_none_or(|d| exp.is_expanded(src, d)) {
-        rows.extend((0..path_notes).map(|line| DiffRow::PathNote { src, file, line }));
+        rows.extend(
+            path_notes
+                .iter()
+                .map(|&(line, part)| DiffRow::PathNote { src, file, line, part }),
+        );
     }
     let Some(diff) = diff else {
         rows.push(DiffRow::Note { src, file });
@@ -955,6 +1042,84 @@ mod tests {
             diff,
             patch_diff: None,
         }
+    }
+
+    /// `net/x.h` modified, colliding with `net/X.h` on this file system.
+    fn colliding() -> crate::WorkingState {
+        use crate::fs_paths::{Fold, PathIssue, PathReport, Problem};
+        let issue = PathIssue {
+            path: "net/x.h".into(),
+            problem: Problem::Collides { other: "net/X.h".into(), by: Fold::Case },
+            hidden: false,
+        };
+        crate::WorkingState {
+            unstaged: vec![work_file("net/x.h", None, Some('M'), false)],
+            fs_paths: std::sync::Arc::new(PathReport::new(Default::default(), vec![issue])),
+            ..Default::default()
+        }
+    }
+
+    /// The explanation rows under a colliding file's header wrap at any width (word wrap,
+    /// each row within the width, nothing lost); unwrapped one row per line.
+    #[gitti_test::test]
+    fn path_notes_wrap_at_the_width() {
+        let ws = colliding();
+        let exp = Expansion::default();
+        let lines = ws.fs_paths.issues[0].problem.lines("net/x.h", &ws.fs_paths.rules);
+        let notes = |rows: &[DiffRow]| -> Vec<(u16, u16)> {
+            rows.iter()
+                .filter_map(|r| match *r {
+                    DiffRow::PathNote { line, part, .. } => Some((line, part)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let plain = build_worktree_rows(&ws, &exp, None);
+        assert_eq!(notes(&plain), (0..lines.len() as u16).map(|l| (l, 0)).collect::<Vec<_>>());
+        for cols in [20, 47, 80] {
+            let wrap = NoteWrap::Cols(cols);
+            let rows = build_worktree_rows_noted(&ws, None, &exp, None, &wrap);
+            let got = notes(&rows);
+            assert!(got.len() > lines.len(), "{cols}: {got:?}");
+            // Right under the header, before the hunk.
+            let header = rows.iter().position(|r| matches!(r, DiffRow::File { .. })).unwrap();
+            assert!(matches!(rows[header + 1], DiffRow::PathNote { line: 0, part: 0, .. }));
+            for (i, line) in lines.iter().enumerate() {
+                let parts: Vec<&str> = got
+                    .iter()
+                    .filter(|(l, _)| *l as usize == i)
+                    .map(|&(_, p)| wrap.part(line, p))
+                    .collect();
+                assert_eq!(parts.concat(), *line, "{cols}: line {i}");
+                for p in &parts {
+                    let w: usize = p.chars().map(char_cols).sum();
+                    assert!(w <= cols, "{cols}: {p:?} is {w} wide");
+                }
+            }
+        }
+        // A measuring function decides the rows (gitti's line wrapper).
+        let halves = |t: &str| {
+            let mid = t.char_indices().nth(t.chars().count() / 2).map_or(t.len(), |(i, _)| i);
+            vec![0..mid, mid..t.len()]
+        };
+        let by = build_worktree_rows_noted(&ws, None, &exp, None, &NoteWrap::By(&halves));
+        assert_eq!(notes(&by).len(), 2 * lines.len());
+    }
+
+    /// The file tabs and the file list say why such a path can't be checked out.
+    #[gitti_test::test]
+    fn worktree_tab_of_a_colliding_path_says_why() {
+        let tabs = worktree_tabs(&colliding());
+        assert_eq!(tabs[0].fs_note.as_deref(), Some("collides with X.h"));
+        assert_eq!(tabs[0].describe(), "modified, unstaged — ⚠ collides with X.h");
+    }
+
+    #[gitti_test::test]
+    fn wrap_byte_ranges_keep_multibyte_chars_whole() {
+        let t = "größere Änderungen überall";
+        let parts = wrap_byte_ranges(t, 8);
+        assert!(parts.len() > 2, "{parts:?}");
+        assert_eq!(parts.iter().map(|r| &t[r.clone()]).collect::<String>(), t);
     }
 
     #[gitti_test::test]

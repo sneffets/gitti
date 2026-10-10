@@ -540,3 +540,27 @@ fn header_ids_copy_from_their_menus_and_y() {
     assert!(st[3].contains(&format!("Copied {head}")), "y on the id: {out}");
     assert_no_git(&cmds(&out)[1..], "copying the header ids", &out);
 }
+
+/// The header's Author line: its menu copies the author whole, the name, the email; `y`
+/// there copies "Name <email>", on the Date line the date — no git.
+#[gitti_test::test]
+fn header_author_and_date_copy() {
+    let dir = merge_history();
+    let d = dir.path();
+    let who = git(d, &["log", "-1", "--format=%an <%ae>"]);
+    let who = who.trim();
+    let email = git(d, &["log", "-1", "--format=%ae"]);
+    // The header's line N is screen row N + 2: Author on row 4, Date on row 5.
+    let out = gitty(
+        d,
+        "press:j;wait;cmds;rclick:100,4;items;press:down;press:down;key:enter;state;key:y;state;\
+         key:j;key:y;state;cmds",
+    );
+    let menus = item_lists(&out);
+    assert_eq!(menus[0][..3], ["Copy Author", "Copy Author Name", "Copy Author Email"], "{out}");
+    let st = states(&out);
+    assert!(st[0].contains(&format!("Copied {}", email.trim())), "{out}");
+    assert!(st[1].contains(&format!("Copied {who}")), "y on Author: {out}");
+    assert!(st[2].contains("Copied ") && !st[2].contains(who), "y on Date: {out}");
+    assert_no_git(&cmds(&out)[1..], "copying the header's author / date", &out);
+}

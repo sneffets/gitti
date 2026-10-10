@@ -1,5 +1,7 @@
 //! The commit ids in the commit header: the commit's own (`header-id`) and each parent's
 //! (`header-parent:N`), each with a context menu that copies it (`gitti_core::header_ids`).
+//! The author / date / committer lines are selectable text instead
+//! (`text_sel::Area::Header`, [`header_lines`]).
 //! The header lies inside the diff list, whose context menu opens on any right click in
 //! it: like the signature (`signing_keys::mark_signature_click`), an id marks the click in
 //! the capture phase and the diff's menu builder shows the id's menu instead.
@@ -10,6 +12,19 @@ use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
 use crate::probe::ProbeExt as _;
+
+/// The commit header's selectable lines (`text_sel::Area::Header`, by index): the author
+/// ("Name <email>"), the date, and the committer when it isn't the author.
+pub(super) fn header_lines(d: &gitti_core::CommitDetails) -> Vec<String> {
+    let mut lines = vec![
+        format!("{} <{}>", d.author, d.author_email),
+        super::format_time_full(d.author_time),
+    ];
+    if d.committer != d.author || d.committer_email != d.author_email {
+        lines.push(format!("{} <{}>", d.committer, d.committer_email));
+    }
+    lines
+}
 
 thread_local! {
     static ID_CLICK: std::cell::Cell<Option<IdClick>> =

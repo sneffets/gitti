@@ -71,6 +71,9 @@ impl GittiApp {
             old_version,
             github_remote: gitti_core::signing_keys::github_repo(&self.remotes).is_some(),
             signing_keys: self.signing_key_offer().is_some(),
+            fs_paths: self.working.fs_paths.shown().count(),
+            fs_hidable: self.fs_hidable().len(),
+            fs_hidden: self.working.fs_paths.hidden().count(),
         }
     }
 

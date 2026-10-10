@@ -96,8 +96,8 @@ fn stage_all_unstage_all_discard_all_with_confirmations() {
 }
 
 /// D with an untracked folder that is a repository of its own: the menu says it is kept
-/// unless asked; `d` discards the rest and the status line names what was kept, `x`
-/// deletes it too.
+/// unless asked; `d` discards the rest and the status line names what was kept (its diff
+/// pane says what it is), `x` deletes it too.
 #[gitti_test::test]
 fn discard_all_keeps_a_nested_repository_unless_asked() {
     let dir = two_file_repo();
@@ -105,9 +105,18 @@ fn discard_all_keeps_a_nested_repository_unless_asked() {
     git(d, &["init", "-q", "nested"]);
     std::fs::write(d.join("nested/n.txt"), "n\n").unwrap();
     std::fs::write(d.join("u.txt"), "untracked\n").unwrap();
-    let out = gitty(d, "press:D;dump;key:d;state;press:D;key:x;state");
+    let out = gitty(
+        d,
+        "press:D;dump;key:d;state;dump;key:enter;key:j;key:j;key:j;key:enter;dump;press:esc;press:esc;\
+         press:D;key:x;state",
+    );
     let s = screens(&out);
     let st = states(&out);
+    // Its diff pane says what it is (not "too large or too many to preview").
+    assert!(s[1].contains(gitti_core::discard::NESTED_REPO_NOTE), "{out}");
+    assert!(!s[1].contains("too many to preview"), "{out}");
+    // Enter there: what it is in full, what Discard does with it.
+    assert!(s[2].contains("A git repository of its own inside this one"), "{out}");
     assert!(s[0].contains("separate git repository (own .git): nested/"), "{out}");
     assert!(s[0].contains("Discard, keep the nested repositories"), "{out}");
     assert!(s[0].contains("Discard and delete the repository nested/"), "{out}");
