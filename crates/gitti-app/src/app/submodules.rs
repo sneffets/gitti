@@ -1,8 +1,9 @@
 //! Submodules: the SUBMODULES sidebar rows and their menu (Update, Update to Remote
-//! Branch, Check Out Commit…, Open, Reveal, Sync URL, Copy Path, Remove…) — also in the diff's menu on a
-//! submodule's pointer change —, the "Submodules out of date" banner, the Repository menu /
-//! palette commands, and the rows of a pointer change in diffs (`DiffRow::Submodule`). The
-//! data comes with the refresh snapshot (`gitti_core::submodule`, no git call of its own).
+//! Branch, Check Out Commit…, Open, Reveal, Open in Terminal, Sync URL, Copy Path,
+//! Remove…) — also in the diff's menu on a submodule's pointer change —, the "Submodules
+//! out of date" banner, the Repository menu / palette commands, and the rows of a pointer
+//! change in diffs (`DiffRow::Submodule`). The data comes with the refresh snapshot
+//! (`gitti_core::submodule`, no git call of its own).
 //!
 //! "Check Out Commit in Submodule…": a picker over the submodule's history (read in
 //! the background), the chosen commit checked out detached in the submodule — the pointer
@@ -125,6 +126,11 @@ fn submodule_menu(menu: PopupMenu, app: &AppHandle, sm: &Submodule, dir: PathBuf
             cx.notify();
         })
         .disabled(!dir.is_dir())
+    })
+    .item({
+        let d = dir.clone();
+        item("Open in Terminal", app, move |this, _, cx| this.open_terminal_at(d.clone(), cx))
+            .disabled(!dir.is_dir())
     })
     .separator()
     .item({

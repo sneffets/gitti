@@ -1,6 +1,7 @@
 //! Submodules in gitty: the menu of a SUBMODULES sidebar entry (Update, Update to
-//! Remote Branch, Check Out Commit… (picker over its history), Open — gitty restarts in it —, Sync URL, Copy Path, Remove…; also in the
-//! diff's menu on a pointer change), palette entries (the same commands as gitti's
+//! Remote Branch, Check Out Commit… (picker over its history), Open — gitty restarts in
+//! it —, Reveal, Open in Terminal, Sync URL, Copy Path, Remove…; also in the diff's menu
+//! on a pointer change), palette entries (the same commands as gitti's
 //! Repository menu), and the list kept in step after a stage / unstage / discard. The data
 //! comes with the refresh snapshot (`gitti_core::submodule`); the sidebar rows, the
 //! toolbar's out-of-date badge and the pointer-change rows of diffs are drawn in `ui.rs`.
@@ -51,11 +52,15 @@ impl App {
         let folder = sm.dir(self.repo.workdir());
         if folder.is_dir() {
             let fm = gitti_core::desktop::file_manager_name();
+            let f = folder.clone();
             v.push(MenuItem::new(format!("Reveal in {fm}"), move |app| {
-                if let Err(e) = gitti_core::desktop::open_folder(&folder) {
+                if let Err(e) = gitti_core::desktop::open_folder(&f) {
                     app.set_error(format!("{e:#}"));
                 }
             }));
+            v.push(
+                MenuItem::new("Open in Terminal", move |app| app.open_terminal_at(folder)).key('t'),
+            );
         }
         let p = path.to_string();
         v.push(MenuItem::new("Sync URL", move |app| app.sync_submodules(vec![p])).key('s'));

@@ -69,6 +69,7 @@ pub mod subtree;
 pub mod switch;
 pub mod syntax;
 pub mod tab_marks;
+pub mod terminal;
 pub mod version_file;
 pub mod watch;
 pub mod worktree;

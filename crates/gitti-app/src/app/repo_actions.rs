@@ -198,6 +198,11 @@ impl GittiApp {
                 t.open_terminal(cx)
             }),
             entry(
+                "Choose Terminal…",
+                "for Open in Terminal (also in Settings ▸ Diff)",
+                |t, w, cx| t.terminal_command_dialog(w, cx),
+            ),
+            entry(
                 "Add to .gitignore…",
                 "file at the diff cursor",
                 |t, w, cx| {
@@ -642,11 +647,30 @@ impl GittiApp {
         let Some(dir) = self.repo.as_ref().map(|r| r.workdir().to_path_buf()) else {
             return;
         };
-        match gitti_core::desktop::open_terminal(&dir, &self.settings.terminal_command) {
-            Ok(()) => self.set_info(format!("Opened a terminal in {}", dir.display())),
-            Err(e) => self.set_error(format!("{e:#}")),
-        }
-        cx.notify();
+        self.open_terminal_at(dir, cx);
+    }
+
+    /// "Open in Terminal" for `dir` (repository, worktree, submodule): the terminal of the
+    /// setting / the detected one, started in the background (detection and macOS `open`
+    /// take a moment); the status line says which one opened or why none could.
+    pub(super) fn open_terminal_at(&mut self, dir: std::path::PathBuf, cx: &mut Context<Self>) {
+        let setting = self.settings.terminal_command.clone();
+        let task = cx.background_executor().spawn({
+            let dir = dir.clone();
+            async move { gitti_core::desktop::open_terminal(&dir, &setting) }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(name) => this.set_info(format!("Opened {name} in {}", dir.display())),
+                    Err(e) => this.set_error(format!("{e:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     // ------------------------------------------------------------------ misc

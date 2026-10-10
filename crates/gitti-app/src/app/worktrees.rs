@@ -92,7 +92,7 @@ pub(super) fn worktree_menu_in(
         .item({
             let p = path.clone();
             item("Open in Terminal", app, move |this, _, cx| {
-                this.worktree_terminal(p.clone(), cx)
+                this.open_terminal_at(p.clone(), cx)
             })
             .disabled(gone)
         })
@@ -511,13 +511,6 @@ impl GittiApp {
         cx.notify();
     }
 
-    fn worktree_terminal(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match gitti_core::desktop::open_terminal(&path, &self.settings.terminal_command) {
-            Ok(()) => self.set_info(format!("Opened a terminal in {}", path.display())),
-            Err(e) => self.set_error(format!("{e:#}")),
-        }
-        cx.notify();
-    }
 
     fn lock_worktree_dialog(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let name = path

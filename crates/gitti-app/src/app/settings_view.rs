@@ -400,7 +400,7 @@ impl GittiApp {
 
     fn settings_diff(&self, p: &Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let s = &self.settings;
-        vec![
+        let mut rows = vec![
             setting_row(
                 p,
                 "Syntax highlighting",
@@ -471,44 +471,109 @@ impl GittiApp {
                     .on_click(cx.listener(|this, _, w, cx| this.editor_command_dialog(w, cx)))
                     .into_any_element(),
             ),
-            setting_row(
-                p,
-                "Terminal",
-                "Command for \"Open in Terminal\" (Repository menu). {dir} is replaced by the \
-                 repository folder, and it runs in that folder, e.g. ghostty \
-                 --working-directory={dir} · wezterm start --cwd {dir} · open -a iTerm {dir}. \
-                 Empty = the platform's terminal (Terminal.app, Windows Terminal / cmd, \
-                 $TERMINAL or a common emulator). The environment variable GITTI_TERMINAL \
-                 overrides this setting.",
-                Button::new("terminal-command")
-                    .label(if s.terminal_command.trim().is_empty() {
-                        "Platform default…".to_string()
-                    } else {
-                        format!("{}…", s.terminal_command)
-                    })
-                    .small()
-                    .on_click(cx.listener(|this, _, w, cx| this.terminal_command_dialog(w, cx)))
-                    .into_any_element(),
-            ),
-        ]
+        ];
+        rows.extend(self.settings_terminal(p, cx));
+        rows
     }
 
-    fn terminal_command_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// The Terminal row: which terminal "Open in Terminal" starts (the chooser's label),
+    /// what it runs, and a warning when it can't work here.
+    fn settings_terminal(&self, p: &Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let det = gitti_core::terminal::cached();
+        let command = self.settings.terminal_command.trim();
+        let (label, runs) = det.describe(command);
         let env = std::env::var("GITTI_TERMINAL")
             .ok()
             .filter(|t| !t.trim().is_empty());
-        let mut message = "{dir} is replaced by the repository folder; empty = the platform's \
-                           terminal."
+        let warning = match env {
+            Some(env) => Some(format!(
+                "The environment variable GITTI_TERMINAL is set (`{env}`) and overrides this \
+                 setting."
+            )),
+            None => det.problem(command, &gitti_core::terminal::SystemHost),
+        };
+        let mut rows = vec![setting_row(
+            p,
+            "Terminal",
+            &format!(
+                "\"Open in Terminal\" (Repository menu, worktrees, submodules) opens it in that \
+                 folder. {runs}. Shared with gitty."
+            ),
+            div()
+                .probe("setting:terminal")
+                .child(
+                    Button::new("terminal-command")
+                        .label(format!("{label}…"))
+                        .small()
+                        .on_click(
+                            cx.listener(|this, _, w, cx| this.terminal_command_dialog(w, cx)),
+                        ),
+                )
+                .into_any_element(),
+        )];
+        if let Some(w) = warning {
+            rows.push(
+                div()
+                    .probe("setting:terminal-warning")
+                    .text_color(p.warning)
+                    .whitespace_normal()
+                    .child(format!("⚠ {w}"))
+                    .into_any_element(),
+            );
+        }
+        rows
+    }
+
+    /// The terminal chooser: the terminals found on this computer fill the command field
+    /// ("Automatic" empties it), any other command can be typed (`{dir}` = the folder);
+    /// it says live what the command runs and warns when its program is missing.
+    pub(super) fn terminal_command_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use gitti_core::terminal::{SystemHost, redetect};
+        // A fresh look: a terminal may have been installed meanwhile.
+        let det = redetect();
+        let mut message = "Choose a terminal found on this computer, or enter the command that \
+                           opens yours: {dir} is replaced by the folder, and it runs in that \
+                           folder. Automatic = the terminal gitti was started from, else the \
+                           system's default terminal."
             .to_string();
-        if let Some(env) = env {
+        let others: Vec<&str> = det
+            .entries
+            .iter()
+            .filter(|e| !e.installed)
+            .map(|e| e.name.as_str())
+            .collect();
+        if !others.is_empty() {
+            message.push_str(&format!("\nAlso known (not found here): {}.", others.join(", ")));
+        }
+        if let Some(env) = std::env::var("GITTI_TERMINAL")
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+        {
             message.push_str(&format!(
                 "\nNote: GITTI_TERMINAL is set (`{env}`) and overrides this setting."
             ));
         }
-        let spec = super::modal::ModalSpec::new("Terminal command")
+        let auto_label = det.describe("").0;
+        let mut spec = super::modal::ModalSpec::new("Terminal")
             .message(message)
             .field("Command", self.settings.terminal_command.clone())
-            .ok("Save");
+            .ok("Save")
+            .choice(auto_label, 0, "");
+        for e in det.installed() {
+            spec = spec.choice(e.name.clone(), 0, e.command.clone());
+        }
+        let live_det = det.clone();
+        let spec = spec.live(move |r| {
+            let command = r.values.first().map(|v| v.trim()).unwrap_or("");
+            let mut text = live_det.describe(command).1;
+            if let Some(w) = live_det.problem(command, &SystemHost) {
+                text.push_str(&format!("\n⚠ {w}"));
+            }
+            super::modal::ModalLive {
+                text,
+                ..Default::default()
+            }
+        });
         self.open_modal(spec, window, cx, |this, res, _, cx| {
             let cmd = res.values[0].trim().to_string();
             this.update_settings(cx, |s| s.terminal_command = cmd);

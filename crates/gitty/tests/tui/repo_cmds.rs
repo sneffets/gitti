@@ -408,3 +408,38 @@ fn ignore_into_a_folder_gitignore() {
     assert_eq!(std::fs::read_to_string(d.join("sub/.gitignore")).unwrap(), "# sub\n*.log\n");
     assert!(!d.join(".gitignore").exists());
 }
+
+/// Palette ▸ Choose Terminal…: Automatic first, Custom Command… — a typed command says
+/// live what it runs and warns when its program is missing; saved, Open in Terminal starts
+/// it (sandboxed, not really) until Automatic is chosen again.
+#[gitti_test::test]
+fn choose_terminal_and_open_in_terminal() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let d = dir.path();
+    let out = gitty_with(
+        d,
+        tempfile::tempdir().unwrap().path(),
+        "160x45",
+        "press:ctrl-p;type:choose terminal;key:enter;items;type:custom;key:enter;\
+         type:gitti-no-such-term --dir {dir};dump;key:enter;state;\
+         press:ctrl-p;type:open in terminal;key:enter;state;\
+         press:ctrl-p;type:choose terminal;key:enter;type:automatic;key:enter;state;\
+         press:ctrl-p;type:choose terminal;key:enter;type:custom;key:enter;dump",
+    );
+    let list = items(&out);
+    assert!(list.first().is_some_and(|l| l.starts_with("Automatic (")), "{out}");
+    assert!(list.contains(&"Custom Command…"), "{out}");
+    let s = screens(&out);
+    assert!(s[0].contains("Custom — runs gitti-no-such-term --dir {dir}"), "{out}");
+    assert!(s[0].contains("is not installed"), "the missing program is named: {out}");
+    let st = states(&out);
+    assert!(st[0].contains("Terminal: Custom (gitti-no-such-term)"), "{out}");
+    let name = d.file_name().unwrap().to_string_lossy();
+    assert!(
+        st[1].contains("Opened gitti-no-such-term in ") && st[1].contains(&*name),
+        "{out}"
+    );
+    assert!(st[2].contains("Automatic ("), "{out}");
+    // The custom field is empty again.
+    assert!(!s[1].contains("gitti-no-such-term"), "{out}");
+}

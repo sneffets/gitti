@@ -179,35 +179,22 @@ mod scenarios {
     }
 
     fn terminal_env_is_a_command_line() {
-        use gitti_core::desktop::terminal_candidates;
+        use gitti_core::desktop::terminal_choice;
+        use gitti_core::terminal::Source;
         let dir = Path::new("/src/my repo");
-        with_vars(
-            &[
-                ("TERMINAL", Some("kitty --single-instance")),
-                ("GITTI_TERMINAL", None),
-            ],
-            || {
-                let c = terminal_candidates(dir, "");
-                assert_eq!(c[0], ["kitty", "--single-instance"], "{c:?}");
-                assert_eq!(c[1], ["x-terminal-emulator"]);
-                // The setting comes first, $TERMINAL second.
-                let c = terminal_candidates(dir, "foot -D {dir}");
-                assert_eq!(c[0], ["foot", "-D", "/src/my repo"]);
-                assert_eq!(c[1], ["kitty", "--single-instance"]);
-            },
-        );
         // GITTI_TERMINAL overrides the setting for one session.
-        with_vars(
-            &[
-                ("TERMINAL", Some("  ")),
-                ("GITTI_TERMINAL", Some("wezterm start --cwd {dir}")),
-            ],
-            || {
-                let c = terminal_candidates(dir, "foot");
-                assert_eq!(c[0], ["wezterm", "start", "--cwd", "/src/my repo"]);
-                assert_eq!(c[1], ["x-terminal-emulator"], "blank $TERMINAL is skipped");
-            },
-        );
+        with_vars(&[("GITTI_TERMINAL", Some("wezterm start --cwd {dir}"))], || {
+            let c = terminal_choice("foot").unwrap();
+            assert_eq!(c.source, Source::Override);
+            assert_eq!(c.argv(dir), ["wezterm", "start", "--cwd", "/src/my repo"]);
+        });
+        // Unset or blank: the setting, `{dir}` replaced (one argument, spaces kept).
+        with_vars(&[("GITTI_TERMINAL", Some("  "))], || {
+            let c = terminal_choice("foot -D {dir}").unwrap();
+            assert_eq!(c.source, Source::Setting);
+            assert_eq!(c.argv(dir), ["foot", "-D", "/src/my repo"]);
+            assert_eq!(c.name, "foot");
+        });
     }
 
     fn git_messages_stay_english() {

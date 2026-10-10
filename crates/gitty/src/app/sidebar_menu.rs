@@ -642,6 +642,12 @@ fn worktree_items(wt: &Worktree, lone: bool) -> Vec<MenuItem> {
             app.set_error(format!("{e:#}"));
         }
     }));
+    let p = path.clone();
+    v.push(
+        MenuItem::new("Open in Terminal", move |app| app.open_terminal_at(p))
+            .key('t')
+            .unless(gone.then_some("its folder is gone")),
+    );
     if !gone && !wt.bare {
         let w = wt.clone();
         v.push(MenuItem::new("Sparse Folders…", move |app| app.sparse_folders_dialog(w)).key('s'));

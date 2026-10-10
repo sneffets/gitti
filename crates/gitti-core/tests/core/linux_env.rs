@@ -370,8 +370,9 @@ fn emacs_in_the_terminal_is_a_terminal_editor() {
 #[cfg(target_os = "linux")]
 #[gitti_test::test]
 fn linux_openers_use_xdg_open_and_usual_terminals() {
-    use gitti_core::desktop::{file_manager_name, folder_argv, terminal_candidates_with};
+    use gitti_core::desktop::{file_manager_name, folder_argv};
     use gitti_core::editor::editor_argv;
+    use gitti_core::terminal::{PRESETS, Platform, command_argv};
     let dir = Path::new("/home/u/my repo (copy)");
     assert_eq!(folder_argv(dir), ["xdg-open", "/home/u/my repo (copy)"]);
     assert_eq!(file_manager_name(), "File Manager");
@@ -379,21 +380,18 @@ fn linux_openers_use_xdg_open_and_usual_terminals() {
         editor_argv("", Path::new("/r/a b.txt"), 1).unwrap(),
         ["xdg-open", "/r/a b.txt"]
     );
-    let c = terminal_candidates_with(dir, None, "ptyxis --working-directory={dir}");
     assert_eq!(
-        c[0],
+        command_argv("ptyxis --working-directory={dir}", dir),
         ["ptyxis", "--working-directory=/home/u/my repo (copy)"]
     );
-    let programs: Vec<&str> = c.iter().map(|a| a[0].as_str()).collect();
-    for t in ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"] {
-        assert!(programs.contains(&t), "{t} missing in {programs:?}");
+    let ids: Vec<&str> = PRESETS
+        .iter()
+        .filter(|p| p.platform == Platform::Linux)
+        .map(|p| p.id)
+        .collect();
+    for t in ["gnome-terminal", "ptyxis", "konsole", "kitty", "foot", "xterm"] {
+        assert!(ids.contains(&t), "{t} missing in {ids:?}");
     }
-    // Platform terminals start in the directory (cwd), they get no argument.
-    assert!(
-        c[1..]
-            .iter()
-            .all(|a| !a.iter().any(|x| x.contains("my repo")))
-    );
 }
 
 // ---------------------------------------------------------------------------------------
