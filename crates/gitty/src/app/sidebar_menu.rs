@@ -25,7 +25,7 @@ impl App {
             SideItem::Stash { index, .. } => stash_items(*index),
             SideItem::Submodule { path, .. } => self.submodule_menu_items(path),
             SideItem::Worktree { index, .. } => match self.worktrees.get(*index) {
-                Some(wt) => worktree_items(wt),
+                Some(wt) => worktree_items(wt, wt.is_lone_main(&self.worktrees)),
                 None => Vec::new(),
             },
             SideItem::Header { key, .. } => self.section_menu(key),
@@ -607,8 +607,9 @@ pub(super) fn stash_items(n: usize) -> Vec<MenuItem> {
 }
 
 /// A worktree's menu: switch gitty to it, reveal, sparse folders, lock, move, remove /
-/// repair, copy the path. What git refuses says why instead of acting.
-fn worktree_items(wt: &Worktree) -> Vec<MenuItem> {
+/// repair, copy the path / its commit. What git refuses says why instead of acting.
+/// `lone`: the main worktree listed alone (no linked ones) — only the folder's entries.
+fn worktree_items(wt: &Worktree, lone: bool) -> Vec<MenuItem> {
     let fm = gitti_core::desktop::file_manager_name();
     let gone = wt.prunable.is_some();
     let path = wt.path.clone();
@@ -631,6 +632,9 @@ fn worktree_items(wt: &Worktree) -> Vec<MenuItem> {
         v.push(MenuItem::new("Sparse Folders…", move |app| app.sparse_folders_dialog(w)).key('s'));
     }
     v.push(MenuItem::separator());
+    if lone {
+        return copy_items(v, wt);
+    }
     if !wt.is_main {
         let p = path.clone();
         v.push(match wt.locked {
@@ -666,8 +670,18 @@ fn worktree_items(wt: &Worktree) -> Vec<MenuItem> {
         }),
     });
     v.push(MenuItem::separator());
-    let text = path.display().to_string();
+    copy_items(v, wt)
+}
+
+/// `v` + a worktree's Copy Path and Copy SHA (its checked-out commit; greyed with the
+/// reason when there is none).
+fn copy_items(mut v: Vec<MenuItem>, wt: &Worktree) -> Vec<MenuItem> {
+    let text = wt.path.display().to_string();
     v.push(MenuItem::new("Copy Path", move |app| app.copy(text)).key('y'));
+    v.push(match wt.copy_sha() {
+        Ok(id) => MenuItem::new("Copy SHA", move |app| app.copy(id)).key('h'),
+        Err(why) => MenuItem::new("Copy SHA", |_| {}).unless(Some(why)),
+    });
     v
 }
 

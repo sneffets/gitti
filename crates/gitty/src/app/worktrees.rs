@@ -39,6 +39,14 @@ impl App {
                 |app: &mut App| app.repair_worktrees_dialog(None),
             ),
         ];
+        items.push(PickItem::new(
+            format!(
+                "Toggle Main Worktree When It Is the Only One: {}",
+                super::on_off(self.main_worktree_alone)
+            ),
+            "the repository's folder under WORKTREES in the sidebar",
+            |app: &mut App| app.toggle_main_worktree_alone(),
+        ));
         for wt in &self.worktrees {
             if remove_blocker(wt).is_none() {
                 let label = if wt.is_current {
@@ -114,6 +122,21 @@ impl App {
                 (c.id.to_string(), short, label)
             }
             None => ("HEAD".into(), "HEAD".into(), "HEAD".into()),
+        }
+    }
+
+    /// The main worktree listed alone (no linked worktrees) or not — persisted, shared
+    /// with gitti.
+    pub fn toggle_main_worktree_alone(&mut self) {
+        self.main_worktree_alone = !self.main_worktree_alone;
+        self.rebuild_sidebar();
+        // Without linked worktrees the section appears / goes: say why.
+        if self.worktrees.len() == 1 {
+            self.set_info(if self.main_worktree_alone {
+                "The main worktree is listed under WORKTREES"
+            } else {
+                "The main worktree is listed only with linked worktrees"
+            });
         }
     }
 

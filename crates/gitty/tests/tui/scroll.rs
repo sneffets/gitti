@@ -145,8 +145,8 @@ fn sidebar_with_many_branches_scrolls_by_keys_and_wheel() {
         &[Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", "a\n")] }],
         &refs,
     );
-    // Items: 0 BRANCHES, 1..=60 br00..br59, 61 main, 62 REMOTES, 63 TAGS, 64 STASHES; 27
-    // shown.
+    // Items: 0 BRANCHES, 1..=60 br00..br59, 61 main, 62 WORKTREES, 63 the main worktree
+    // (listed alone by default), 64 REMOTES, 65 TAGS, 66 STASHES; 27 shown.
     let out = gitty(
         dir.path(),
         "press:backtab;press:G;state;dump;cmds;wheel:10,10,-1;state;cmds;press:k;state;\
@@ -156,15 +156,15 @@ fn sidebar_with_many_branches_scrolls_by_keys_and_wheel() {
     let st = states(&out);
     let cur = |i: usize| num(st[i], "side_cursor");
     let off = |i: usize| num(st[i], "side_offset");
-    assert_eq!((cur(0), off(0)), (64, 38), "G: {out}");
+    assert_eq!((cur(0), off(0)), (66, 40), "G: {out}");
     let side = |s: &str| -> Vec<String> { body(s).iter().map(|l| l.chars().take(26).collect()).collect() };
     let s = dumps(&out, 30);
     assert!(side(&s[0]).last().unwrap().contains("STASHES"), "{out}");
-    assert_eq!((cur(1), off(1)), (64, 35), "wheel up, the cursor stays: {out}");
-    assert_eq!((cur(2), off(2)), (63, 37), "k brings the cursor back into view: {out}");
-    assert_eq!(off(3), 38, "the wheel stops at the end: {out}");
+    assert_eq!((cur(1), off(1)), (66, 37), "wheel up, the cursor stays: {out}");
+    assert_eq!((cur(2), off(2)), (65, 39), "k brings the cursor back into view: {out}");
+    assert_eq!(off(3), 40, "the wheel stops at the end: {out}");
     assert!(side(&s[1]).last().unwrap().contains("STASHES"), "{out}");
-    assert_eq!(off(4), 38, "the wheel over the commit list doesn't scroll the sidebar: {out}");
+    assert_eq!(off(4), 40, "the wheel over the commit list doesn't scroll the sidebar: {out}");
     assert_eq!((cur(5), off(5)), (0, 0), "{out}");
     assert_eq!(cur(6), 26, "pgdn: {out}");
     assert_eq!(cur(7), 52, "{out}");

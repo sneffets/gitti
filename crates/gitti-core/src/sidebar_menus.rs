@@ -27,6 +27,9 @@ pub enum SideMenu {
     Stash,
     /// A linked worktree other than this one.
     Worktree,
+    /// The main worktree when it is the only one (setting `show_main_worktree_alone`):
+    /// the folder's entries without tab / lock / move / remove.
+    MainWorktreeAlone,
     Submodule,
     BranchesSection,
     RemotesSection,
@@ -45,6 +48,7 @@ pub const ALL: &[SideMenu] = &[
     SideMenu::Tag,
     SideMenu::Stash,
     SideMenu::Worktree,
+    SideMenu::MainWorktreeAlone,
     SideMenu::Submodule,
     SideMenu::BranchesSection,
     SideMenu::RemotesSection,
@@ -130,13 +134,16 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Move…",
             "Remove Worktree…",
             "Copy Path",
+            "Copy SHA",
         ],
+        SideMenu::MainWorktreeAlone => &["Reveal in {fm}", "Sparse Folders…", "Copy Path", "Copy SHA"],
         SideMenu::Submodule => &[
             "Update",
             "Update to Remote Branch",
             "Reveal in {fm}",
             "Sync URL",
             "Copy Path",
+            "Copy SHA",
             "Remove Submodule…",
         ],
         SideMenu::BranchesSection => &["Create Branch at HEAD…", "Switch Branch…"],

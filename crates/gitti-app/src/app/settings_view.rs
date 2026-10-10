@@ -376,6 +376,18 @@ impl GittiApp {
             ),
             setting_row(
                 p,
+                "Show the main worktree when it is the only one",
+                &format!(
+                    "The repository's folder under WORKTREES also without linked worktrees, for \
+                     its menu: Copy Path, Copy SHA, Open in Terminal, Reveal in {}.",
+                    gitti_core::desktop::file_manager_name()
+                ),
+                switch(p, "sw-main-wt", s.show_main_worktree_alone, cx, |this, _, cx| {
+                    this.toggle_main_worktree_alone(cx)
+                }),
+            ),
+            setting_row(
+                p,
                 "Theme",
                 "Dark. A light theme is on the roadmap.",
                 div()

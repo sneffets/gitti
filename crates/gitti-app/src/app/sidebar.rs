@@ -1,4 +1,5 @@
-//! Left sidebar: branches, worktrees (only with linked ones), remotes (nested: remote ▸
+//! Left sidebar: branches, worktrees (with linked ones; the main one alone by the setting
+//! `show_main_worktree_alone`), remotes (nested: remote ▸
 //! branches), tags, stashes, submodules (only with some; rows in `submodules.rs`). A branch
 //! checked out in another worktree has a folder mark and `in <folder>`.
 
@@ -53,8 +54,8 @@ impl GittiApp {
         if section(&mut items, "branches", "BRANCHES", locals.len()) {
             items.extend(locals.into_iter().map(|i| SideItem::Ref(i, 1)));
         }
-        // Only when there is more than the main worktree.
-        if self.worktrees.len() > 1
+        // With linked worktrees; the main one alone only by the setting.
+        if gitti_core::worktree::section_shown(&self.worktrees, self.settings.show_main_worktree_alone)
             && section(&mut items, "worktrees", "WORKTREES", self.worktrees.len())
         {
             items.extend((0..self.worktrees.len()).map(SideItem::Worktree));
@@ -442,11 +443,15 @@ impl GittiApp {
                 }
             }))
             .context_menu(move |menu, _, cx| {
-                let Some(wt) = app.upgrade().and_then(|a| a.read(cx).worktrees.get(wi).cloned())
-                else {
+                let Some(this) = app.upgrade() else {
                     return menu;
                 };
-                super::worktrees::worktree_menu(menu, &app, &wt)
+                let list = &this.read(cx).worktrees;
+                let Some(wt) = list.get(wi).cloned() else {
+                    return menu;
+                };
+                let lone = wt.is_lone_main(list);
+                super::worktrees::worktree_menu_in(menu, &app, &wt, lone)
             })
     }
 

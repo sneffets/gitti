@@ -469,6 +469,9 @@ pub struct App {
     /// The sidebar is shown (`H`, palette "Toggle Sidebar"; the setting shared with
     /// gitti). Hidden it still shows while it has the focus (h / ← from the commit list).
     pub show_sidebar: bool,
+    /// The sidebar lists the main worktree also without linked ones (palette toggle; the
+    /// setting `show_main_worktree_alone` shared with gitti).
+    pub main_worktree_alone: bool,
     pub log_reads: bool,
     /// The git log panel scrolled back (`None`: it follows the newest entries).
     pub log_top: Option<LogTop>,
@@ -714,6 +717,7 @@ impl App {
             },
             show_log: settings.show_git_log,
             show_sidebar: settings.show_sidebar,
+            main_worktree_alone: settings.show_main_worktree_alone,
             log_reads: settings.log_show_reads,
             log_top: None,
             merge_single: settings.merge_single_view,
@@ -782,6 +786,7 @@ impl App {
             spell_check: self.settings.spell_check,
             intraline_strength: self.opts.intraline_strength,
             commit_list_layout: self.opts.list_layout,
+            show_main_worktree_alone: self.main_worktree_alone,
         }
     }
 
@@ -835,6 +840,10 @@ impl App {
         };
         self.show_log = s.show_git_log;
         self.show_sidebar = s.show_sidebar;
+        if self.main_worktree_alone != s.show_main_worktree_alone {
+            self.main_worktree_alone = s.show_main_worktree_alone;
+            self.rebuild_sidebar();
+        }
         self.log_reads = s.log_show_reads;
         self.merge_single = s.merge_single_view;
     }

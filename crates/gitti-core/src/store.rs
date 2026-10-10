@@ -137,6 +137,9 @@ pub struct SharedSettings {
     pub intraline_strength: u32,
     /// Commit list rows: by width, one line or two lines (View menu / palette).
     pub commit_list_layout: crate::list_layout::CommitListLayout,
+    /// The sidebar's WORKTREES section also without linked worktrees: the main worktree
+    /// (the repository's folder) alone, for its menu (`worktree::section_shown`).
+    pub show_main_worktree_alone: bool,
 }
 
 impl Default for SharedSettings {
@@ -156,6 +159,7 @@ impl Default for SharedSettings {
             spell_check: true,
             intraline_strength: crate::intraline::DEFAULT_STRENGTH,
             commit_list_layout: crate::list_layout::CommitListLayout::Auto,
+            show_main_worktree_alone: true,
         }
     }
 }

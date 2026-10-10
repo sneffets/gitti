@@ -2,7 +2,8 @@
 //! (sidebar section, branch mark) and opens in a tab on its folder; checking out its
 //! branch offers that tab; removing (with the forced second step for a dirty one); a tab
 //! opened on a linked worktree works; no git while scrolling the sidebar and none for the
-//! cached worktree list on a refresh. The sidebar's layout with worktrees across sizes is
+//! cached worktree list on a refresh; the main worktree listed alone (setting, its menu,
+//! Copy SHA). The sidebar's layout with worktrees across sizes is
 //! `layout.rs::sidebar_worktrees_sweep`.
 //!
 //! Lean scenarios (well under 2 s): the 2 s sleeps for git's racy stamps are replaced by
@@ -46,6 +47,8 @@ pub fn main() {
         ("folder_picker", folder_picker),
         ("move_and_repair", move_and_repair),
         ("live_plan", live_plan),
+        // Last: it switches the shared setting off (and on again).
+        ("main_worktree_alone", main_worktree_alone),
     ];
     common::run(tests, |name| make_repo(&base().join(name)));
 }
@@ -163,8 +166,10 @@ fn add_open_remove(ui: &mut Ui) {
     if worktrees(ui) != ["add_open_remove main current main"] {
         fail!(ui, "worktrees at the start: {:?}", worktrees(ui));
     }
-    if visible(&ui.frame(), "side-section:worktrees") {
-        ui.fail("a WORKTREES section without linked worktrees".into());
+    // Without linked worktrees: the section with the main worktree alone (the default).
+    let p = ui.frame();
+    if !visible(&p, "side-section:worktrees") || !visible(&p, "side:wt-add_open_remove") {
+        ui.fail("no WORKTREES section with the main worktree alone".into());
     }
     // From the menu bar, on the selected commit (row 1 = HEAD's commit).
     ui.step("select:1");
@@ -302,8 +307,9 @@ fn add_open_remove(ui: &mut Ui) {
     if worktrees(ui) != ["add_open_remove main current main"] {
         fail!(ui, "worktrees after removing: {:?}", worktrees(ui));
     }
-    if visible(&ui.frame(), "side-section:worktrees") {
-        ui.fail("WORKTREES section left after removing the only linked one".into());
+    let p = ui.frame();
+    if !visible(&p, "side:wt-add_open_remove") || find(&p, &format!("side:wt-{folder}")).is_some() {
+        ui.fail("after removing the only linked one: not the main worktree alone".into());
     }
     // The branch stays.
     if git_out(&repo, &["rev-parse", "--verify", "-q", "feature/topic"]).is_empty() {
@@ -991,4 +997,82 @@ fn live_plan(ui: &mut Ui) {
     ui.quick("option:1");
     expect(ui, "detached", "Check Out", &format!("Checks out {head}"), None);
     ui.step("cancel");
+}
+
+/// Opens `target`'s context menu and chooses the entry `label` by keyboard (the entries
+/// after it must be enabled); returns the clipboard after it (emptied before).
+fn copy_from_menu(ui: &mut Ui, target: &str, label: &str) -> String {
+    ui.cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+    testing::menu_labels();
+    ui.click_on(target, MouseButton::Right);
+    let labels = testing::menu_labels();
+    let Some(ix) = labels.iter().position(|l| l == label) else {
+        fail!(ui, "{target}: no {label:?} in {labels:?}");
+        ui.quick("key:escape");
+        return String::new();
+    };
+    // The first ↑ selects the last entry (the ones after it are all enabled).
+    for _ in ix..labels.len() {
+        ui.quick("key:up");
+    }
+    ui.quick("key:enter");
+    ui.cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default()
+}
+
+/// Without linked worktrees the WORKTREES section lists the main worktree (setting on by
+/// default): its menu has the folder's entries (`SideMenu::MainWorktreeAlone` + Open in
+/// Terminal), no tab / lock / move / remove; Copy SHA puts HEAD's full id on the
+/// clipboard. Settings ▸ Appearance switches it off (the section goes) and on again — no
+/// git for any of it. A detached linked worktree's Copy SHA copies its commit.
+fn main_worktree_alone(ui: &mut Ui) {
+    use gitti_core::sidebar_menus::{SideMenu, Vars, missing};
+    let repo = base().join("main_worktree_alone");
+    let row = "side:wt-main_worktree_alone";
+    let p = ui.frame();
+    if !visible(&p, "side-section:worktrees") || !visible(&p, row) {
+        return fail!(ui, "no WORKTREES section with the main worktree alone");
+    }
+    let n = ui.n_git();
+    testing::menu_labels();
+    ui.click_on(row, MouseButton::Right);
+    let labels = testing::menu_labels();
+    ui.quick("key:escape");
+    let vars = Vars { fm: gitti_core::desktop::file_manager_name().into(), ..Default::default() };
+    let miss = missing(SideMenu::MainWorktreeAlone, &vars, &labels);
+    if !miss.is_empty() || !labels.iter().any(|l| l == "Open in Terminal") {
+        fail!(ui, "the lone main worktree's menu lacks {miss:?} / Open in Terminal: {labels:?}");
+    }
+    let pointless = ["Open in New Tab", "Lock", "Unlock", "Move", "Remove", "Prune", "Repair"];
+    if labels.iter().any(|l| pointless.iter().any(|p| l.starts_with(p))) {
+        fail!(ui, "the lone main worktree's menu offers what makes no sense: {labels:?}");
+    }
+    let head = git_out(&repo, &["rev-parse", "HEAD"]);
+    let copied = copy_from_menu(ui, row, "Copy SHA");
+    if copied != head {
+        fail!(ui, "Copy SHA copied {copied:?}, HEAD is {head}; menu {labels:?}");
+    }
+    // The setting off: the section goes; on again: back.
+    ui.step("settings:appearance");
+    ui.click_on("setting:sw-main-wt", MouseButton::Left);
+    ui.step("key:escape");
+    if visible(&ui.frame(), "side-section:worktrees") {
+        ui.fail("the setting is off, the WORKTREES section is still there".into());
+    }
+    ui.step("settings:appearance");
+    ui.click_on("setting:sw-main-wt", MouseButton::Left);
+    ui.step("key:escape");
+    if !visible(&ui.frame(), row) {
+        ui.fail("the setting is on again, the main worktree is not back".into());
+    }
+    ui.no_git_since(n, "the lone main worktree's menu, Copy SHA and the setting");
+
+    // A detached linked worktree: Copy SHA = its commit.
+    let wt = base().join("main_worktree_alone-det");
+    git_out(&repo, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap(), "HEAD~1"]);
+    ui.step("key:secondary-r");
+    let want = git_out(&repo, &["rev-parse", "HEAD~1"]);
+    let copied = copy_from_menu(ui, "side:wt-main_worktree_alone-det", "Copy SHA");
+    if copied != want {
+        fail!(ui, "detached worktree: Copy SHA copied {copied:?}, its commit is {want}");
+    }
 }

@@ -51,6 +51,17 @@ fn item(
 
 /// The actions on one worktree (its sidebar entry, or a branch checked out in it).
 pub(super) fn worktree_menu(menu: PopupMenu, app: &AppHandle, wt: &Worktree) -> PopupMenu {
+    worktree_menu_in(menu, app, wt, false)
+}
+
+/// [`worktree_menu`]; `lone` = the main worktree listed alone (no linked ones,
+/// `Worktree::is_lone_main`): only the folder's entries — no tab, lock, move or remove.
+pub(super) fn worktree_menu_in(
+    menu: PopupMenu,
+    app: &AppHandle,
+    wt: &Worktree,
+    lone: bool,
+) -> PopupMenu {
     let fm = gitti_core::desktop::file_manager_name();
     let gone = wt.prunable.is_some();
     let path = wt.path.clone();
@@ -62,14 +73,15 @@ pub(super) fn worktree_menu(menu: PopupMenu, app: &AppHandle, wt: &Worktree) -> 
     } else {
         "Open in New Tab"
     };
+    let mut menu = menu;
+    if !lone {
+        let p = path.clone();
+        menu = menu.item(
+            item(open_label, app, move |this, _, cx| this.open_worktree(p.clone(), cx))
+                .disabled(wt.is_current || gone),
+        );
+    }
     let mut menu = menu
-        .item({
-            let p = path.clone();
-            item(open_label, app, move |this, _, cx| {
-                this.open_worktree(p.clone(), cx)
-            })
-            .disabled(wt.is_current || gone)
-        })
         .item({
             let p = path.clone();
             item(format!("Reveal in {fm}"), app, move |this, _, cx| {
@@ -126,10 +138,15 @@ pub(super) fn worktree_menu(menu: PopupMenu, app: &AppHandle, wt: &Worktree) -> 
             menu.item(move_item(app, wt)).item(remove_item(app, wt))
         };
         menu = menu.separator();
-    } else {
+    } else if !lone {
         menu = menu.item(remove_item(app, wt)).separator();
     }
-    menu.item(super::menus::copy_item("Copy Path", path.display().to_string()))
+    // Built in display order (tests read the labels in build order).
+    let menu = menu.item(super::menus::copy_item("Copy Path", path.display().to_string()));
+    menu.item(match wt.copy_sha() {
+        Ok(id) => super::menus::copy_item("Copy SHA", id),
+        Err(why) => super::menus::menu_entry(format!("Copy SHA ({why})")).disabled(true),
+    })
 }
 
 /// "Remove Worktree…" for `wt` (`Remove Worktree <folder>…` with `named`), greyed out with
@@ -202,6 +219,20 @@ impl GittiApp {
         }
     }
 
+    /// Settings / palette: the main worktree listed alone (no linked worktrees) or not.
+    pub(super) fn toggle_main_worktree_alone(&mut self, cx: &mut Context<Self>) {
+        self.update_settings(cx, |s| s.show_main_worktree_alone = !s.show_main_worktree_alone);
+        // Without linked worktrees the section appears / goes: say why.
+        if self.worktrees.len() == 1 {
+            self.set_info(if self.settings.show_main_worktree_alone {
+                "The main worktree is listed under WORKTREES"
+            } else {
+                "The main worktree is listed only with linked worktrees"
+            });
+        }
+        cx.notify();
+    }
+
     /// Repository ▸ "Remove This Worktree…": this tab's worktree, when it is a linked one.
     pub(super) fn remove_this_worktree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.worktrees.iter().find(|w| w.is_current).cloned() {
@@ -245,6 +276,15 @@ impl GittiApp {
                 t.prune_worktrees(w, cx)
             }),
         ];
+        let on = self.settings.show_main_worktree_alone;
+        items.push(entry(
+            format!(
+                "Toggle Main Worktree When It Is the Only One ({})",
+                if on { "on" } else { "off" }
+            ),
+            "the repository's folder under WORKTREES in the sidebar",
+            |t, _, cx| t.toggle_main_worktree_alone(cx),
+        ));
         for wt in self
             .worktrees
             .iter()
