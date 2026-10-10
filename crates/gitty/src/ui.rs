@@ -885,6 +885,31 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                     draw_submodule_item(buf, (x, y, w), app, *index, sm, p);
                 }
             }
+            SideItem::Subtree { index, prefix } => {
+                // Folder, the detail (squash, branch, removed) on the right.
+                let Some(s) = app.subtrees.get(*index) else {
+                    continue;
+                };
+                let detail = s.detail();
+                let mut rw = detail.width() as u16;
+                if 4 + prefix.width() as u16 + 1 + rw + 1 > w {
+                    rw = 0;
+                }
+                let fg = if s.present { p.text } else { p.text_faint };
+                put(
+                    buf,
+                    x + 2,
+                    y,
+                    w.saturating_sub(3 + rw),
+                    vec![
+                        Span::styled("⊂ ", Style::new().fg(p.text_muted)),
+                        Span::styled(prefix.clone(), Style::new().fg(fg)),
+                    ],
+                );
+                if rw > 0 {
+                    put_right(buf, x + w - rw, y, rw, vec![Span::styled(detail, Style::new().fg(p.text_muted))]);
+                }
+            }
             SideItem::Worktree { index, name } => {
                 // Folder name (bold for gitty's own), what it has checked out on the right.
                 let Some(wt) = app.worktrees.get(*index) else {

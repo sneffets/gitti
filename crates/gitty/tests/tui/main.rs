@@ -24,5 +24,6 @@ mod signing_keys;
 mod speed;
 mod staging;
 mod submodules;
+mod subtrees;
 mod unicode;
 mod views;

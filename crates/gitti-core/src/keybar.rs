@@ -86,6 +86,7 @@ pub enum Context {
     Stash,
     Worktree,
     Submodule,
+    Subtree,
     /// The commit list's working-directory row.
     WorkingDir,
     Commit,
@@ -195,6 +196,7 @@ pub fn pane_hints(pane: Pane, ctx: Context) -> Vec<Hint> {
         (Pane::Sidebar, Context::Section) => vec![h("⏎", "fold")],
         (Pane::Sidebar, Context::Branch | Context::RemoteBranch) => vec![h("⏎", "checkout")],
         (Pane::Sidebar, Context::Submodule) => vec![h("⏎", "open")],
+        (Pane::Sidebar, Context::Subtree) => vec![h("⏎", "pull")],
         (Pane::Sidebar, _) => vec![h("⏎", "show")],
         (Pane::Commits, Context::WorkingDir) => vec![h("⏎", "changes"), h("c", "message")],
         (Pane::Commits, _) => vec![h("⏎", "diff")],

@@ -1,5 +1,5 @@
 //! Sidebar entries ("Locations"): branches, worktrees (only with linked ones), remotes
-//! with their branches, tags, stashes, submodules (only with some).
+//! with their branches, tags, stashes, submodules and subtrees (only with some).
 
 use gitti_core::RefKind;
 use gitti_core::ops::Tracking;
@@ -44,6 +44,11 @@ pub enum SideItem {
         index: usize,
         path: String,
     },
+    /// Index into `App::subtrees` and its folder.
+    Subtree {
+        index: usize,
+        prefix: String,
+    },
 }
 
 impl SideItem {
@@ -56,6 +61,7 @@ impl SideItem {
             SideItem::Tag { name } => name.clone(),
             SideItem::Stash { index, .. } => format!("stash@{{{index}}}"),
             SideItem::Submodule { path, .. } => format!("Submodule {path}"),
+            SideItem::Subtree { prefix, .. } => format!("Subtree {prefix}/"),
             SideItem::Worktree { name, .. } => format!("Worktree {name}"),
         }
     }
@@ -80,6 +86,7 @@ impl SideItem {
                 let head = app.worktrees.get(*index)?.head?;
                 app.history.row_of(&head)
             }
+            SideItem::Subtree { index, .. } => app.history.row_of(&app.subtrees.get(*index)?.commit),
             _ => None,
         }
     }
@@ -172,6 +179,15 @@ pub fn build(app: &App) -> Vec<SideItem> {
             out.push(SideItem::Submodule {
                 index,
                 path: s.path.clone(),
+            });
+        }
+    }
+    // Only with subtrees (found in the history), like gitti.
+    if !app.subtrees.is_empty() && section(&mut out, "subtrees", "SUBTREES", app.subtrees.len()) {
+        for (index, s) in app.subtrees.iter().enumerate() {
+            out.push(SideItem::Subtree {
+                index,
+                prefix: s.prefix.clone(),
             });
         }
     }

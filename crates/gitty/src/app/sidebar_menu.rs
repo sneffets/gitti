@@ -24,6 +24,7 @@ impl App {
             SideItem::Remote { name } => self.remote_menu(name),
             SideItem::Stash { index, .. } => stash_items(*index),
             SideItem::Submodule { path, .. } => self.submodule_menu_items(path),
+            SideItem::Subtree { index, .. } => self.subtree_menu_items(*index),
             SideItem::Worktree { index, .. } => match self.worktrees.get(*index) {
                 Some(wt) => worktree_items(wt),
                 None => Vec::new(),
@@ -165,6 +166,11 @@ impl App {
         let n = name.to_string();
         v.push(MenuItem::new("Create Tag…", move |app| app.create_tag_dialog(n)).key('t'));
         v.push(self.compare_item(self.row_of_ref(RefKind::LocalBranch, name)));
+        if !current {
+            // The checked-out branch can't be added into itself.
+            v.push(MenuItem::separator());
+            v.extend(self.subtree_ref_items(name, None));
+        }
         v.push(MenuItem::separator());
         let n = name.to_string();
         v.push(MenuItem::new("Rename…", move |app| app.rename_branch_dialog(n)).key('r'));
@@ -240,6 +246,8 @@ impl App {
         }
         v.push(self.compare_item(self.row_of_ref(RefKind::RemoteBranch, full)));
         v.push(MenuItem::separator());
+        v.extend(self.subtree_ref_items(full, Some((remote.clone(), branch.clone()))));
+        v.push(MenuItem::separator());
         let f = full.to_string();
         v.push(
             MenuItem::new(format!("Delete {branch} on {remote}…"), move |app| {
@@ -274,6 +282,8 @@ impl App {
         let n = name.to_string();
         v.push(MenuItem::new("Create Branch From…", move |app| app.create_branch_dialog(n)).key('b'));
         v.push(self.compare_item(self.row_of_ref(RefKind::Tag, name)));
+        v.push(MenuItem::separator());
+        v.extend(self.subtree_ref_items(name, None));
         v.push(MenuItem::separator());
         for remote in self.remotes.iter().map(|r| r.name.clone()) {
             let n = name.to_string();
@@ -490,6 +500,7 @@ impl App {
                     .unless(self.why_not("RepairWorktrees")),
             ],
             "submodules" => self.submodule_section_items(),
+            "subtrees" => self.subtree_section_items(),
             _ => Vec::new(),
         }
     }

@@ -51,6 +51,7 @@ mod search;
 mod sidebar_menu;
 mod signing_keys;
 mod submodules;
+mod subtrees;
 mod unavailable;
 mod view_anchor;
 mod watching;
@@ -131,6 +132,8 @@ pub enum Msg {
     ChangeSearchDue,
     /// "Check Out Commit in Submodule…": the history of the submodule at that path.
     SubmoduleHistory(String, Result<Vec<gitti_core::submodule::SubmoduleCommit>>),
+    /// The subtrees of HEAD's history, read for that HEAD (`app/subtrees.rs`).
+    Subtrees(Option<ObjectId>, Result<Vec<gitti_core::subtree::Subtree>>),
     /// The Git LFS health check's result (`app/lfs_health.rs`).
     LfsHealth(Box<gitti_core::lfs_health::LfsHealth>),
     /// The repository's Git LFS locks (`app/lfs.rs`).
@@ -187,6 +190,12 @@ pub enum FollowUp {
         message: String,
         changes: Vec<String>,
     },
+    /// A split without a branch: its commit — create a branch on it?
+    SplitDone {
+        prefix: String,
+        id: ObjectId,
+        message: String,
+    },
     /// The worktree is removed, `branch -d` refused: Force Delete (naming `lost`)?
     UnmergedBranch {
         branch: String,
@@ -205,6 +214,7 @@ impl std::fmt::Display for FollowUp {
             FollowUp::ForceDelete(n) => write!(f, "{n} is not fully merged"),
             FollowUp::WorktreeRefused { wt, .. } => write!(f, "{} has changes", wt.name()),
             FollowUp::UnmergedBranch { branch, .. } => write!(f, "{branch} is not fully merged"),
+            FollowUp::SplitDone { message, .. } => write!(f, "{message}"),
         }
     }
 }
@@ -360,6 +370,13 @@ pub struct App {
     pub worktrees: Vec<gitti_core::worktree::Worktree>,
     /// Every submodule with its state (`app/submodules.rs`; empty without `.gitmodules`).
     pub submodules: Vec<gitti_core::submodule::Submodule>,
+    /// The subtrees of HEAD's history (`app/subtrees.rs`), the HEAD they were read for,
+    /// a read running / asked for again, a subtree operation ran (read them again).
+    pub subtrees: Vec<gitti_core::subtree::Subtree>,
+    subtrees_head: Option<Option<ObjectId>>,
+    subtrees_loading: bool,
+    subtrees_queued: bool,
+    subtrees_dirty: bool,
     /// Git LFS: the repository's state, the notice shown, the locks (`app/lfs.rs`).
     pub lfs: lfs::LfsUi,
     pub repo_state: RepoState,
@@ -642,6 +659,11 @@ impl App {
             stashes: Vec::new(),
             worktrees: Vec::new(),
             submodules: Vec::new(),
+            subtrees: Vec::new(),
+            subtrees_head: None,
+            subtrees_loading: false,
+            subtrees_queued: false,
+            subtrees_dirty: false,
             lfs: Default::default(),
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
@@ -1048,6 +1070,7 @@ impl App {
             Msg::ChangeScan(generation, ev) => self.on_change_scan(generation, *ev),
             Msg::ChangeScanDone(generation) => self.on_change_scan_done(generation),
             Msg::ChangeSearchDue => self.change_search_due(),
+            Msg::Subtrees(head, result) => self.on_subtrees(head, result),
             Msg::SubmoduleHistory(path, result) => {
                 self.loads_in_flight -= 1;
                 self.on_submodule_history(&path, result);
@@ -1351,6 +1374,12 @@ impl App {
         self.conflict_sides = s.conflict_sides;
         self.sync_merge_message(s.merge_message);
         self.loaded = true;
+        // Only when HEAD moved, or after a subtree operation (in the background).
+        let force = self.subtrees_dirty && self.busy.is_none();
+        if force {
+            self.subtrees_dirty = false;
+        }
+        self.refresh_subtrees(force);
         // The working directory is row 0 of every history: its state shows before the
         // history has loaded.
         if matches!(self.detail, Detail::Empty) && self.selected == 0 {
@@ -2968,6 +2997,7 @@ impl App {
 
     fn follow_up(&mut self, f: FollowUp) {
         match f {
+            FollowUp::SplitDone { prefix, id, message } => self.split_done(&prefix, id, &message),
             FollowUp::Switch(target, block) => {
                 let name = target.name().to_string();
                 let list = |files: &[String]| {
@@ -3340,6 +3370,9 @@ impl App {
         items.push(
             MenuItem::new("Edit Commit Message…", move |app| app.edit_commit_message(&s)).key('e'),
         );
+        items.push(MenuItem::separator());
+        items.extend(self.subtree_ref_items(&sha, None));
+        items.push(MenuItem::separator());
         let s = sha.clone();
         items.push(MenuItem::new("Copy SHA", move |app| app.copy(s)).key('y'));
         // Read when chosen (the key bar builds this menu for every frame).
@@ -3720,6 +3753,8 @@ impl App {
             ));
         }
         items.extend(self.compare_palette_items());
+        // Last: on an equal match the everyday commands come first ("merge").
+        items.extend(self.subtree_palette_items());
         // What can't act now stays findable, greyed with the reason.
         let items = self.mark_unavailable(items);
         self.modal = Some(Modal::palette("Command Palette", items));

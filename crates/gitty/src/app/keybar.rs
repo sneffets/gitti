@@ -89,6 +89,7 @@ impl App {
                 Some(SideItem::Stash { .. }) => Context::Stash,
                 Some(SideItem::Worktree { .. }) => Context::Worktree,
                 Some(SideItem::Submodule { .. }) => Context::Submodule,
+                Some(SideItem::Subtree { .. }) => Context::Subtree,
             },
             Focus::Commits => {
                 let row = self.selected;

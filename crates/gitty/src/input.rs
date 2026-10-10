@@ -304,6 +304,16 @@ impl App {
                 self.switch_to(gitti_core::switch::SwitchTarget::Remote(full))
             }
             SideItem::Submodule { path, .. } => self.open_submodule(&path),
+            // ⏎: Pull (the subtree's everyday action); its menu has more.
+            SideItem::Subtree { index, .. } => {
+                if let Some(s) = self.subtrees.get(index).filter(|s| s.present) {
+                    let req = gitti_core::subtree::Request::for_subtree(
+                        gitti_core::subtree::Action::Pull,
+                        s,
+                    );
+                    self.subtree_dialog(req);
+                }
+            }
             _ => {
                 self.side_jump();
                 self.focus = Focus::Commits;
