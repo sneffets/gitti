@@ -27,7 +27,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::GittiApp;
-use super::modal::ModalSpec;
+use super::modal::{ModalLive, ModalSpec};
+use gitti_core::submodule::add::FilePermission;
 use super::picker::PickerItem;
 use super::repo_actions::AppEvent;
 use crate::probe::ProbeExt as _;
@@ -348,13 +349,17 @@ impl GittiApp {
     /// "Add Submodule…": URL, path (git's default from the URL until edited), branch to
     /// track (optional) → `git submodule add`; the result is staged, a commit records it.
     /// A repository URL on the clipboard (`clone_source::url_from_clipboard`) is put into
-    /// the URL field, selected, the path derived as if it was pasted — as in Clone.
+    /// the URL field, selected, the path derived as if it was pasted — as in Clone. A local
+    /// path git refuses for submodules (`submodule::add`): said under the fields while
+    /// typed, and OK asks before it allows the `file` transport for this one add.
     pub(super) fn add_submodule_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.repo.is_none() {
+        let Some(repo) = self.repo.as_ref() else {
             return;
-        }
+        };
+        let ctx = repo.submodule_add_context();
         let from_clipboard = super::repo_actions::clipboard_text(cx)
             .and_then(|t| gitti_core::clone_source::url_from_clipboard(&t));
+        let live_ctx = ctx.clone();
         let mut spec = ModalSpec::new("Add Submodule")
             .message(
                 "Clones the repository into a folder of this one and stages it with \
@@ -364,7 +369,8 @@ impl GittiApp {
             .field("Path in this repository", "")
             .derive(0, 1, gitti_core::submodule::default_path)
             .field("Branch to track (optional)", "")
-            .ok("Add Submodule");
+            .ok("Add Submodule")
+            .live(move |r| add_submodule_live(&live_ctx, r.values[0].trim()));
         if from_clipboard.is_some() {
             spec = spec.prefilled(0, gitti_core::clone_source::CLIPBOARD_NOTE);
         }
@@ -377,22 +383,45 @@ impl GittiApp {
                 cx.notify();
                 return;
             }
-            let shown = if path.is_empty() {
-                gitti_core::submodule::default_path(&url)
-            } else {
-                path.clone()
-            };
-            this.run_op(
-                "Adding submodule",
-                true,
-                w,
-                cx,
-                move |r| r.add_submodule(&url, &path, &branch),
-                move |this, _, _, _| {
-                    this.set_info(format!("Added submodule {shown} (staged — commit to record it)"))
-                },
-            );
+            if ctx.needs_permission(&url) != FilePermission::Ask {
+                this.add_submodule(url, path, branch, false, w, cx);
+                return;
+            }
+            let spec = ModalSpec::new("Allow a Local Path for This Submodule?")
+                .message(gitti_core::submodule::add::permission_text(&ctx, &url))
+                .ok("Allow for This Add");
+            this.open_modal(spec, w, cx, move |this, _, w, cx| {
+                this.add_submodule(url, path, branch, true, w, cx)
+            });
         });
+    }
+
+    /// Runs `git submodule add` (see `Repo::add_submodule`; `allow_file`: the user agreed
+    /// to the `file` transport for this add).
+    fn add_submodule(
+        &mut self,
+        url: String,
+        path: String,
+        branch: String,
+        allow_file: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shown = if path.is_empty() {
+            gitti_core::submodule::default_path(&url)
+        } else {
+            path.clone()
+        };
+        self.run_op(
+            "Adding submodule",
+            true,
+            window,
+            cx,
+            move |r| r.add_submodule(&url, &path, &branch, allow_file),
+            move |this, _, _, _| {
+                this.set_info(format!("Added submodule {shown} (staged — commit to record it)"))
+            },
+        );
     }
 
     /// `git submodule update --init --recursive [-- paths]` (empty = all), then a refresh.
@@ -1013,5 +1042,19 @@ impl GittiApp {
             .iter()
             .map(|s| format!("{} {}", s.path, s.state.label()))
             .collect()
+    }
+}
+
+/// Add Submodule's live text (`submodule::add::live_note`): a local path git refuses for
+/// submodules — OK asks first, or can't run at all (`GIT_ALLOW_PROTOCOL`).
+fn add_submodule_live(ctx: &gitti_core::submodule::add::AddContext, url: &str) -> ModalLive {
+    match gitti_core::submodule::add::live_note(ctx, url) {
+        None => ModalLive::default(),
+        Some((text, true)) => ModalLive { blocked: Some(text.into()), ..Default::default() },
+        Some((text, false)) => ModalLive {
+            text: text.into(),
+            ok_label: Some("Add Submodule…".into()),
+            ..Default::default()
+        },
     }
 }

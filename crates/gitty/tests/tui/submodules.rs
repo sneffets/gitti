@@ -161,3 +161,44 @@ fn add_a_submodule_from_the_palette() {
     assert!(dir.path().join("deps/addme/s.txt").is_file(), "{out}");
     assert!(states(&out)[0].contains("staged=2"), "{out}");
 }
+
+/// Add Submodule… with a local path where git refuses the `file` transport for submodules
+/// (git's default: no global setting; this repository's own `always` doesn't count — the
+/// submodule's clone doesn't read it): the dialog says so
+/// while typed, Enter asks first with what allowing does and what lands in .gitmodules;
+/// "Allow for This Add" runs `git -c protocol.file.allow=always submodule add`.
+#[gitti_test::test]
+fn add_a_submodule_from_a_local_path_asks_first() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let src = fixture(&[("s.txt", "s\n")], &[]);
+    let config = dir.path().join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[protocol \"file\"]\n\tallow = always\n");
+    std::fs::write(&config, text).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let global = home.path().join("gitconfig");
+    std::fs::write(&global, "").unwrap();
+    let env = [("GIT_CONFIG_GLOBAL", global.to_str().unwrap()), ("GIT_CONFIG_NOSYSTEM", "1")];
+    let out = gitty_env(
+        dir.path(),
+        home.path(),
+        "160x45",
+        &env,
+        &format!(
+            "press:ctrl-p;{}press:enter;type:{};press:tab;{}dump;key:enter;dump;key:enter;cmds;dump",
+            presses("add submodule"),
+            src.path().display(),
+            presses("deps/local")
+        ),
+    );
+    let s = screens(&out);
+    assert!(s[0].contains("A local path") && s[0].contains("Add Submodule…"), "{out}");
+    assert!(s[1].contains("Allow a local path") && s[1].contains("git's default since"), "{out}");
+    assert!(s[1].contains(".gitmodules will record"), "{out}");
+    assert!(
+        cmds(&out)[0].iter().any(|l| l.contains("protocol.file.allow=always") && l.contains("submodule add")),
+        "{out}"
+    );
+    assert!(dir.path().join("deps/local/s.txt").is_file(), "{out}");
+    assert!(s[2].contains("SUBMODULES (1)"), "{out}");
+}
