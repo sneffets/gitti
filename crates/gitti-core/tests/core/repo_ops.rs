@@ -415,7 +415,12 @@ fn config_upstream_and_blobs() {
 #[gitti_test::test]
 fn ssh_signed_commit_verification() {
     use gitti_core::signature::{SigKind, SigStatus};
-    let (_tmp, p, r) = one_commit(&[("a.txt", "1\n")]);
+    let (_tmp, p, mut r) = one_commit(&[("a.txt", "1\n")]);
+    // The user's global config may name an allowed signers file: not here.
+    r.set_env(vec![
+        ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+    ]);
     let unsigned = crate::fixture_kit::rev(&p, "HEAD");
     assert_eq!(r.verify_signature(unsigned).unwrap(), None);
 
