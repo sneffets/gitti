@@ -4,6 +4,7 @@
 //! `gitti_core::push`, shared with gitty.
 
 use gitti_core::RefKind;
+use gitti_core::overwrite::{Overwrite, PushRejected, Source, WayOut};
 use gitti_core::pull::{DivergentPull, PullStrategy};
 use gitti_core::push::{
     PUSH_CHOICES_KEY, PullBlock, PushBlock, PushChoices, PushOptions, PushTags, QuickPush,
@@ -13,7 +14,7 @@ use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 
 use super::GittiApp;
-use super::modal::ModalSpec;
+use super::modal::{ModalLive, ModalSpec};
 use super::picker::PickerItem;
 
 impl GittiApp {
@@ -27,6 +28,11 @@ impl GittiApp {
         let branch = self.head.branch.clone();
         let has_upstream = branch.as_deref().is_some_and(|b| self.has_upstream(b));
         match push_block(branch.as_deref(), has_upstream, !self.remotes.is_empty()) {
+            // Behind its upstream (amended / rebased after the push, or someone pushed):
+            // git would refuse — the ways out right away, read locally (no network).
+            None if branch.as_deref().is_some_and(|b| self.behind_upstream(b)) => {
+                self.git_op("Push", window, cx, |r| r.push_diverged())
+            }
             None => self.git_push_op("Push", false, window, cx, |r| r.push_current()),
             Some(block) => self.push_blocked(block, window, cx),
         }
@@ -49,6 +55,13 @@ impl GittiApp {
             }
         }
         cx.notify();
+    }
+
+    /// Whether local `branch` is behind its upstream, from the last refresh (no git).
+    fn behind_upstream(&self, branch: &str) -> bool {
+        self.tracking
+            .iter()
+            .any(|t| t.branch == branch && t.upstream.is_some() && t.behind > 0)
     }
 
     /// Whether local `branch` has an upstream, from the last refresh (no git).
@@ -416,6 +429,200 @@ impl GittiApp {
             }
             this.run_push(opts, w, cx);
         });
+    }
+
+    /// git refused a push (or the main Push knew it would): says why in plain words and
+    /// offers the ways out — Pull (merge / rebase), Push with Lease… (what the remote
+    /// loses, then the push pinned to it), Fetch, Then Decide…. A refusal by the server
+    /// itself (protected branch, hook) is an error naming it: its settings decide.
+    pub(super) fn push_rejected(
+        &mut self,
+        rej: PushRejected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.user_op_started();
+        let ways = rej.ways_out();
+        if ways.is_empty() {
+            let details = if rej.output.trim().is_empty() {
+                rej.describe()
+            } else {
+                format!("{rej}\n\n{}", rej.output.trim_end())
+            };
+            self.op_failed("Push", details);
+            self.set_error(rej.to_string());
+            cx.notify();
+            return;
+        }
+        self.set_info(rej.to_string());
+        let labels: Vec<String> = ways.iter().map(|w| rej.way_label(*w)).collect();
+        let options: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let live_labels = labels.clone();
+        let spec = ModalSpec::new(rej.title())
+            .message(rej.describe())
+            .options(&options, 0)
+            .ok(labels[0].clone())
+            .live(move |res| ModalLive {
+                ok_label: live_labels.get(res.option).cloned(),
+                ..Default::default()
+            });
+        self.open_modal(spec, window, cx, move |this, res, w, cx| {
+            let way = ways[res.option.min(ways.len() - 1)];
+            this.push_way_out(rej.clone(), way, w, cx)
+        });
+        cx.notify();
+    }
+
+    fn push_way_out(
+        &mut self,
+        rej: PushRejected,
+        way: WayOut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match way {
+            WayOut::Pull(strategy) => {
+                self.git_op("Pull", window, cx, move |r| rej.pull(r, strategy))
+            }
+            WayOut::PushWithLease => match rej.plan {
+                Some(plan) => self.overwrite_dialog(plan, window, cx),
+                None => self.push_way_out(rej, WayOut::FetchThenDecide, window, cx),
+            },
+            WayOut::FetchThenDecide => self.run_op(
+                "Fetch",
+                true,
+                window,
+                cx,
+                move |r| rej.fetch_then_plan(r),
+                |this, plan, w, cx| this.overwrite_dialog(plan, w, cx),
+            ),
+        }
+    }
+
+    /// The confirmation of an overwrite of a remote branch: what moves, what it loses
+    /// (with authors), that the lease is pinned to what is listed; then the push.
+    pub(super) fn overwrite_dialog(
+        &mut self,
+        ov: Overwrite,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let spec = ModalSpec::new(ov.title())
+            .message(ov.describe())
+            .ok(ov.ok_label())
+            .danger();
+        self.open_modal(spec, window, cx, move |this, _, w, cx| {
+            let ov = ov.clone();
+            this.git_push_op("Push with lease", ov.no_verify, w, cx, move |r| r.overwrite(&ov))
+        });
+        cx.notify();
+    }
+
+    /// Reads (in the background, local git only) what overwriting `<remote>/<branch>`
+    /// with `source` does — the lease pinned to the remote-tracking commit shown now —
+    /// then [`Self::overwrite_dialog`].
+    pub(super) fn plan_overwrite(
+        &mut self,
+        remote: String,
+        branch: String,
+        source: Source,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let lease = gitti_core::push::Lease::seen(&self.refs, &remote, &branch);
+        let short = format!("{remote}/{branch}");
+        let local = self
+            .tracking
+            .iter()
+            .find(|t| t.upstream.as_deref() == Some(short.as_str()))
+            .map(|t| t.branch.clone());
+        // A force push of a branch without upstream sets it (as Push does).
+        let set_upstream = matches!(&source, Source::Branch(b) if !self.has_upstream(b));
+        let task = cx.background_executor().spawn(async move {
+            let mut plan = repo.overwrite_plan(&remote, &branch, source, lease, local.as_deref())?;
+            plan.set_upstream = set_upstream;
+            anyhow::Ok(plan)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(plan) => this.overwrite_dialog(plan, window, cx),
+                Err(e) => {
+                    this.set_error(format!("{e:#}"));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// "Reset <remote>/<branch> to Here…": `remote_branch` (`origin/main`, as shown) onto
+    /// commit `rev` (hex) — the local branch stays as it is.
+    pub(super) fn reset_remote_branch(
+        &mut self,
+        remote_branch: String,
+        rev: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(u) = Upstream::parse(&remote_branch, &self.remote_names()) else {
+            self.set_error(format!("{remote_branch}: no such remote"));
+            cx.notify();
+            return;
+        };
+        self.plan_overwrite(u.remote, u.branch, Source::Commit(rev), window, cx);
+    }
+
+    /// The upstream of the current branch (`origin/main`), from the last refresh.
+    pub(super) fn head_upstream(&self) -> Option<String> {
+        let b = self.head.branch.as_deref()?;
+        self.tracking
+            .iter()
+            .find(|t| t.branch == b)?
+            .upstream
+            .clone()
+    }
+
+    /// The remote branches to reset to commit `rev`: the current branch's upstream first.
+    pub(super) fn reset_remote_picker(
+        &mut self,
+        rev: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let upstream = self.head_upstream();
+        let mut names: Vec<String> = self
+            .refs
+            .iter()
+            .filter(|r| r.kind == RefKind::RemoteBranch)
+            .map(|r| r.short_name.clone())
+            .collect();
+        if names.is_empty() {
+            self.set_info("No remote branches — fetch or push one first");
+            cx.notify();
+            return;
+        }
+        names.sort_by_key(|n| Some(n) != upstream.as_ref());
+        let short = rev[..rev.len().min(7)].to_string();
+        let items = names
+            .into_iter()
+            .map(|n| {
+                let detail = if Some(&n) == upstream.as_ref() {
+                    "upstream of the current branch".to_string()
+                } else {
+                    String::new()
+                };
+                let (n2, rev) = (n.clone(), rev.clone());
+                super::picker::item(format!("Reset {n} to {short}…"), detail, move |t, w, cx| {
+                    t.reset_remote_branch(n2.clone(), rev.clone(), w, cx)
+                })
+            })
+            .collect();
+        self.open_picker(&format!("Reset which remote branch to {short}?"), items, window, cx);
     }
 
     /// The Push ▾ menu of the toolbar: the quick pushes, then Options….

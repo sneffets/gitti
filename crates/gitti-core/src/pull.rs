@@ -427,6 +427,26 @@ impl Repo {
         unrelated_as(out, || UnrelatedRetry::Pull { args })
     }
 
+    /// `git pull <strategy> <remote> <branch>` into the current branch, `strategy` chosen
+    /// by the user (a refused push's "Pull": its remote branch, which needn't be the
+    /// upstream). Errors as [`Self::pull_with`].
+    pub fn pull_branch_chosen(
+        &self,
+        remote: &str,
+        branch: &str,
+        strategy: PullStrategy,
+    ) -> Result<String> {
+        let Some(current) = self.head()?.branch else {
+            bail!("HEAD is detached — switch to a branch to pull into");
+        };
+        let target = Target::From {
+            remote: remote.to_string(),
+            branch: branch.to_string(),
+        };
+        let up = format!("{remote}/{branch}");
+        self.pull_run(&current, &up, &target, Some(Flag::Chosen(strategy)))
+    }
+
     /// `git pull --allow-unrelated-histories` with the refused pull's `args` (strategy,
     /// remote and branch).
     pub fn pull_allow_unrelated(&self, args: &[String]) -> Result<String> {

@@ -180,6 +180,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("PullWith", "Pull with…"),
     both("Push", "Push"),
     both("PushTo", "Push…"),
+    both("ResetRemoteBranch", "Reset Remote Branch to Selected Commit…"),
     both("AddRemote", "Add Remote…"),
     // Navigate
     both("GoToCommit", "Go to Commit…"),

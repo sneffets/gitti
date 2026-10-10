@@ -128,19 +128,9 @@ impl App {
             v.push(MenuItem::new(
                 format!("Force Push {name} to {remote} (with lease)…"),
                 move |app| {
-                    let n2 = n.clone();
-                    // The remote branch as shown now.
-                    let lease = gitti_core::push::Lease::seen(&app.refs, &remote, &n);
-                    app.modal = Some(Modal::confirm(
-                        "Force Push",
-                        format!("Force push {n} to {remote}? {}", lease.describe(&remote, &n)),
-                        "Force Push",
-                        move |app| {
-                            app.run_push_op(&format!("Force push {n2}"), After::Nothing, false, move |r| {
-                                r.force_push_branch(&remote, &n2, false, &lease)
-                            })
-                        },
-                    ));
+                    // What the remote loses (with authors), the lease pinned to the
+                    // remote branch as shown now.
+                    app.plan_overwrite(remote, n.clone(), gitti_core::overwrite::Source::Branch(n))
                 },
             ));
             // Remotes, name on the remote, upstream, force, tags, hooks.
@@ -245,6 +235,11 @@ impl App {
             })),
         }
         v.push(self.compare_item(self.row_of_ref(RefKind::RemoteBranch, full)));
+        // Moves the remote branch (push with lease); no local branch changes.
+        let n = full.to_string();
+        v.push(MenuItem::new(format!("Reset {full} to Selected Commit…"), move |app| {
+            app.reset_remote_to_selected(n)
+        }));
         v.push(MenuItem::separator());
         v.extend(self.subtree_ref_items(
             full,

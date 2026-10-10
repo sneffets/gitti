@@ -520,6 +520,12 @@ impl GittiApp {
                 t.open_push_step(w, cx)
             })
             .act(&crate::PushTo),
+            item(
+                "Reset Remote Branch to Selected Commit…",
+                "a push with lease; the local branch stays",
+                |t, w, cx| t.reset_remote_selected(w, cx),
+            )
+            .act(&crate::ResetRemoteBranch),
             item("Commit", k(&crate::Commit), |t, w, cx| t.commit(w, cx)),
             item("Discard All Unstaged Changes…", k(&crate::DiscardAll), |t, w, cx| {
                 t.discard_all(w, cx)

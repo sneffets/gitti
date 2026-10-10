@@ -43,6 +43,7 @@ pub mod merge_session;
 pub mod nav;
 pub mod object_format;
 pub mod ops;
+pub mod overwrite;
 pub mod palette;
 pub mod panic_log;
 pub mod patch;

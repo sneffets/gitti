@@ -1321,6 +1321,10 @@ actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 // dialog); handlers in `app/toolbar.rs`.
 actions!(gitti, [PushTo, PullFrom, PullWith, FetchFrom]);
 
+// Remote ▸ "Reset Remote Branch to Selected Commit…" (a push with lease, the local branch
+// stays); handler in `app/menu_cmds.rs`.
+actions!(gitti, [ResetRemoteBranch]);
+
 // The action of a greyed menu-bar entry. Nothing handles it, so macOS's menu validation
 // shows the entry disabled too (it asks gpui whether the action is handled).
 actions!(gitti, [MenuItemUnavailable]);
@@ -1613,6 +1617,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Pull with…", PullWith),
                 MenuItem::action("Push", Push),
                 MenuItem::action("Push…", PushTo),
+                MenuItem::action("Reset Remote Branch to Selected Commit…", ResetRemoteBranch),
                 MenuItem::separator(),
                 MenuItem::action("Add Remote…", AddRemote),
             ],

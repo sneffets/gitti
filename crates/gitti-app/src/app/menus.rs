@@ -270,7 +270,8 @@ pub(super) fn commit_menu(
             }));
         }
         m
-    })
+    });
+    let menu = remote_reset_items(menu, app, &rev, cx)
     .separator()
     .item({
         let rev = rev.clone();
@@ -284,6 +285,37 @@ pub(super) fn commit_menu(
     .item(copy_item("Copy SHA", rev.clone()))
     .item(copy_item("Copy Short SHA", short.clone()))
     .item(copy_item("Copy Subject", c.subject.clone()))
+}
+
+/// A commit's "Reset <upstream> to Here…" (the current branch's upstream) and "Reset
+/// Another / a Remote Branch to Here…" (a picker): a push with lease that moves the
+/// remote branch, the local one stays.
+fn remote_reset_items(menu: PopupMenu, app: &AppHandle, rev: &str, cx: &App) -> PopupMenu {
+    let Some(a) = app.upgrade() else {
+        return menu;
+    };
+    let a = a.read(cx);
+    let upstream = a.head_upstream();
+    let any = a.refs.iter().any(|r| r.kind == RefKind::RemoteBranch);
+    let mut menu = menu;
+    if let Some(u) = upstream.clone() {
+        let rev = rev.to_string();
+        menu = menu.item(item(format!("Reset {u} to Here…"), app, move |this, w, cx| {
+            this.reset_remote_branch(u.clone(), rev.clone(), w, cx)
+        }));
+    }
+    if any {
+        let rev = rev.to_string();
+        let label = if upstream.is_some() {
+            "Reset Another Remote Branch to Here…"
+        } else {
+            "Reset a Remote Branch to Here…"
+        };
+        menu = menu.item(item(label, app, move |this, w, cx| {
+            this.reset_remote_picker(rev.clone(), w, cx)
+        }));
+    }
+    menu
 }
 
 /// "Resolve Conflicts" dropdown of a conflicted file.
@@ -574,21 +606,15 @@ pub(super) fn ref_menu(
                             format!("Force Push {name} to {remote} (with lease)…"),
                             app,
                             move |this, w, cx| {
+                                // What the remote loses (with authors), the lease pinned
+                                // to the remote branch as shown now.
                                 let (n, rm) = (n.clone(), remote.clone());
-                                // The remote branch as shown now.
-                                let lease = gitti_core::push::Lease::seen(&this.refs, &rm, &n);
-                                this.confirm(
-                                    format!("Force push {n} to {rm}?"),
-                                    Some(lease.describe(&rm, &n)),
-                                    "Force Push",
+                                this.plan_overwrite(
+                                    rm,
+                                    n.clone(),
+                                    gitti_core::overwrite::Source::Branch(n),
                                     w,
                                     cx,
-                                    move |this, w, cx| {
-                                        let (n, rm, lease) = (n.clone(), rm.clone(), lease.clone());
-                                        this.git_push_op("Force push", false, w, cx, move |r| {
-                                            r.force_push_branch(&rm, &n, true, &lease)
-                                        })
-                                    },
                                 )
                             },
                         )
@@ -716,7 +742,14 @@ pub(super) fn ref_menu(
             .item(create_branch(&name))
             .item(create_tag(&name))
             .item(upstream_of_head)
-            .item(compare_item(app, target));
+            .item(compare_item(app, target))
+            .item({
+                // Moves the remote branch (push with lease); no local branch changes.
+                let name = name.clone();
+                item(format!("Reset {name} to Selected Commit…"), app, move |this, w, cx| {
+                    this.reset_remote_to_selected(name.clone(), w, cx)
+                })
+            });
             super::subtrees::ref_items(menu, app, &name, Some(target), subtree_src, window, cx)
             .separator()
             .item(item(

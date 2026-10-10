@@ -95,6 +95,29 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &CreateEmptyCommit, w, cx| {
             this.commit_kind(CommitKind::Empty, w, cx)
         }))
+        .on_action(cx.listener(|this, _: &crate::ResetRemoteBranch, w, cx| {
+            this.reset_remote_selected(w, cx)
+        }))
+    }
+
+    /// Remote ▸ "Reset Remote Branch to Selected Commit…": which remote branch (the
+    /// upstream first), then what it loses; a push with lease, the local branch stays.
+    pub(super) fn reset_remote_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s) = self.selected_commit(cx) {
+            self.reset_remote_picker(s.rev, window, cx);
+        }
+    }
+
+    /// A remote branch's "Reset origin/x to Selected Commit…" (sidebar).
+    pub(super) fn reset_remote_to_selected(
+        &mut self,
+        remote_branch: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(s) = self.selected_commit(cx) {
+            self.reset_remote_branch(remote_branch, s.rev, window, cx);
+        }
     }
 
     /// Palette entries of this module.

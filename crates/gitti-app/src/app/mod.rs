@@ -1849,6 +1849,12 @@ impl GittiApp {
                                 this.push_blocked(b.clone(), window, cx)
                             }
                         }
+                        // A refused push: the ways out (pull, push with lease, …).
+                        None if e.is::<gitti_core::overwrite::PushRejected>() => {
+                            if let Some(r) = e.downcast_ref::<gitti_core::overwrite::PushRejected>() {
+                                this.push_rejected(r.clone(), window, cx)
+                            }
+                        }
                         // Diverged, no strategy: the user chooses one.
                         None if e.is::<gitti_core::pull::DivergentPull>() => {
                             if let Some(d) = e.downcast_ref::<gitti_core::pull::DivergentPull>() {

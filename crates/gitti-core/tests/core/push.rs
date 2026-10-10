@@ -8,6 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use gitti_core::Repo;
+use gitti_core::overwrite::{PushRejected, Rejection, Source, WayOut};
+use gitti_core::pull::PullStrategy;
 use gitti_core::push::{Lease, PullBlock, PushBlock, PushOptions, PushTags, Upstream};
 
 use crate::fx::{self, Import, put};
@@ -273,8 +275,10 @@ fn force_push_pins_the_lease_the_user_saw() {
         ..PushOptions::to_remote("main", "origin", upstream.as_ref())
     };
     forced.pin_leases(&seen);
-    let err = format!("{:#}", repo.push_with(&forced).unwrap_err());
-    assert!(err.contains("stale info"), "{err}");
+    let err = repo.push_with(&forced).unwrap_err();
+    let refused = err.downcast_ref::<PushRejected>().expect("a refusal");
+    assert_eq!(refused.rejection, Rejection::Stale);
+    assert!(refused.output.contains("stale info"), "{err:#}");
     // The branch menu's force push (pinned): refused too; a lease that expects no remote
     // branch is refused when there is one.
     let lease = Lease::seen(&seen, "origin", "main");
@@ -366,4 +370,150 @@ fn pull_from_one_remote_and_prune_another() {
     repo.prune_remote("origin").unwrap();
     assert_eq!(fx::ref_id(&work, "refs/remotes/origin/topic"), None);
     assert!(fx::ref_id(&work, "refs/remotes/origin/main").is_some());
+}
+
+/// A push of an amended branch: git refuses it; the refusal says so in plain words
+/// ("diverged … (amended?)"), offers Push with Lease first and lists what origin/main
+/// loses, with the author. The main Push knows it before pushing (no network). Push with
+/// Lease goes through pinned to the commit listed.
+#[gitti_test::test]
+fn refused_push_of_an_amended_branch_offers_push_with_lease() {
+    let dir = tempfile::tempdir().unwrap();
+    let (work, origin, rewritten) = rewritten_after_push(dir.path());
+    let repo = Repo::open(&work).unwrap();
+    let seen = fx::ref_id(&work, "refs/remotes/origin/main").unwrap();
+
+    // The main Push after a refresh that showed main behind: no push at all.
+    let err = repo.push_diverged().unwrap_err();
+    no_network(&repo);
+    let r = err.downcast_ref::<PushRejected>().expect("diverged");
+    assert_eq!((r.current, r.upstream, r.rejection.clone()), (true, true, Rejection::NonFastForward));
+    assert_eq!(r.to_string(), "main diverged from origin/main (amended?) — Push with Lease… or pull (nothing was pushed)");
+    assert_eq!(r.ways_out()[0], WayOut::PushWithLease);
+    let plan = r.plan.clone().unwrap();
+    assert!(plan.rewritten);
+    assert_eq!((plan.lost_total, plan.gained), (1, 1));
+    assert_eq!((plan.lost[0].author.as_str(), plan.lost[0].subject.as_str()), ("T", "one"));
+    assert_eq!(plan.lease.expect.as_deref(), Some(seen.as_str()));
+
+    // The plain push (a stale refresh): git refuses, the same plan.
+    let err = repo.push_current().unwrap_err();
+    let r = err.downcast_ref::<PushRejected>().expect("refused");
+    assert_eq!(r.plan.as_ref(), Some(&plan));
+    assert!(r.output.contains("(non-fast-forward)"), "{}", r.output);
+
+    let out = repo.overwrite(&plan).unwrap();
+    assert!(out.ends_with("Pushed main to origin/main with lease"), "{out}");
+    assert_eq!(fx::ref_id(&origin, "refs/heads/main"), Some(rewritten));
+    let ran = fx::commands(&repo);
+    let lease = format!("push --force-with-lease=refs/heads/main:{seen} origin refs/heads/main:refs/heads/main");
+    assert!(ran.contains(&lease), "{ran:?}");
+}
+
+/// Someone pushed since: a plain push is refused ("fetch first"); Fetch, Then Decide
+/// lists their commit (author) and pins the lease to it; a lease pinned to the old
+/// commit is refused as "moved since you looked"; a Pull (merge) of the refusal joins
+/// their commit.
+#[gitti_test::test]
+fn refused_push_after_someone_pushed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (work, origin, rewritten) = rewritten_after_push(dir.path());
+    let repo = Repo::open(&work).unwrap();
+    let stale = repo.overwrite_plan(
+        "origin",
+        "main",
+        Source::Branch("main".into()),
+        repo.tracking_lease("origin", "main"),
+        Some("main"),
+    )
+    .unwrap();
+    let mut i = Import::at(1_800_000_000);
+    i.author("Bea <bea@example.com>");
+    i.commit("main", Some("refs/heads/main^0"), &[], "theirs", &[put("c.txt", "theirs\n")]);
+    let theirs = i.run(&origin).remove(0);
+
+    let err = repo.push_current().unwrap_err();
+    let r = err.downcast_ref::<PushRejected>().expect("refused").clone();
+    assert_eq!(r.rejection, Rejection::FetchFirst);
+    assert_eq!(r.plan, None);
+    assert_eq!(*r.ways_out().last().unwrap(), WayOut::FetchThenDecide);
+
+    // The old plan's lease: refused, their commit stays.
+    let err = repo.overwrite(&stale).unwrap_err();
+    let s = err.downcast_ref::<PushRejected>().expect("stale");
+    assert_eq!(s.rejection, Rejection::Stale);
+    assert!(s.forced);
+    assert_eq!(s.ways_out()[0], WayOut::FetchThenDecide);
+    assert_eq!(fx::ref_id(&origin, "refs/heads/main"), Some(theirs.clone()));
+
+    let plan = r.fetch_then_plan(&repo).unwrap();
+    assert_eq!(plan.lease.expect.as_deref(), Some(theirs.as_str()));
+    let lost: Vec<_> = plan.lost.iter().map(|c| (c.author.as_str(), c.subject.as_str())).collect();
+    assert_eq!(lost, [("Bea", "theirs"), ("T", "one")]);
+    assert!(!plan.rewritten, "their commit was never main's");
+    assert!(plan.describe().contains("origin/main loses 2 commits"), "{}", plan.describe());
+
+    // Pull (merge) instead: the upstream's plain pull with the strategy (the amended
+    // root shares no history with theirs: git asks about unrelated histories, which the
+    // apps offer as usual).
+    fx::checkout(&work);
+    let err = r.pull(&repo, PullStrategy::Merge).unwrap_err();
+    assert!(err.is::<gitti_core::ops::UnrelatedHistories>(), "{err:#}");
+    assert!(fx::commands(&repo).contains(&"pull --no-rebase".to_string()));
+    assert_eq!(fx::head(&work), Some(rewritten));
+}
+
+/// "Reset origin/main to Here…": origin's main moves back to an older commit, the lost
+/// commit listed, the local branch untouched; a server that denies non-fast-forwards
+/// refuses it — named as the server's setting.
+#[gitti_test::test]
+fn reset_the_remote_branch_to_a_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let (work, origin) = (dir.path().join("work"), dir.path().join("origin.git"));
+    fx::bare(&origin);
+    fx::init(&work);
+    fx::remote(&work, "origin", &origin);
+    fx::upstream(&work, "main", "origin");
+    let mut i = Import::new();
+    i.commit("main", None, &[], "one", &[put("a.txt", "one\n")]);
+    i.commit("main", None, &[], "two", &[put("a.txt", "two\n")]);
+    i.run(&origin);
+    let ids = {
+        let mut j = Import::new();
+        j.commit("main", None, &[], "one", &[put("a.txt", "one\n")]);
+        let two = j.commit("main", None, &[], "two", &[put("a.txt", "two\n")]);
+        j.reset("refs/remotes/origin/main", &two);
+        j.run(&work)
+    };
+    let (one, two) = (ids[0].clone(), ids[1].clone());
+    let repo = Repo::open(&work).unwrap();
+    let seen = repo.refs().unwrap();
+    let plan = repo
+        .overwrite_plan(
+            "origin",
+            "main",
+            Source::Commit(one.clone()),
+            Lease::seen(&seen, "origin", "main"),
+            Some("main"),
+        )
+        .unwrap();
+    assert_eq!((plan.lost_total, plan.gained), (1, 0));
+    assert_eq!(plan.lost[0].subject, "two");
+    assert_eq!(plan.title(), format!("Reset origin/main to {}?", &one[..7]));
+    assert!(plan.describe().contains("Your local main stays where it is"));
+
+    // The server refuses rewrites: said as such.
+    fx::config(&origin, "[receive]\n\tdenyNonFastForwards = true\n");
+    let err = repo.overwrite(&plan).unwrap_err();
+    let r = err.downcast_ref::<PushRejected>().expect("server");
+    assert_eq!(r.rejection, Rejection::Server("non-fast-forward".into()));
+    assert!(r.to_string().contains("doesn't allow overwriting main on origin"), "{r}");
+    assert!(r.ways_out().is_empty());
+    assert_eq!(fx::ref_id(&origin, "refs/heads/main"), Some(two.clone()));
+
+    fx::config(&origin, "[receive]\n\tdenyNonFastForwards = false\n");
+    let out = repo.overwrite(&plan).unwrap();
+    assert!(out.ends_with(&format!("Reset origin/main to {}", &one[..7])), "{out}");
+    assert_eq!(fx::ref_id(&origin, "refs/heads/main"), Some(one));
+    assert_eq!(fx::ref_id(&work, "refs/heads/main"), Some(two), "the local branch stays");
 }
