@@ -29,7 +29,8 @@
 //! `worktree:ACTION,NAME` (open / remove / lock / unlock a worktree);
 //! `folders:ACTION[,PATH]` (the folder picker: expand / toggle / ok / cancel);
 //! `submodule:ACTION,PATH` (update / sync / open a submodule, `*` = all; `dismiss` the
-//! out-of-date banner); `ignore:PATH` ("Add to .gitignore…"
+//! out-of-date banner); `subtree:ACTION,PREFIX` (the add / pull / merge / push / split
+//! dialog for a subtree); `ignore:PATH` ("Add to .gitignore…"
 //! for a working-directory file), `lfstrack:PATH` ("Track with Git LFS…" for it; the
 //! dialog opens after a background check of git-lfs), `lfs:ACTION[,ARG]` (Git LFS
 //! health: `fix,setup|hooks|download`, `dismiss` the banner, `check` again), `action:NAME` (dispatch e.g. `gitti::CloneRepository`, as
@@ -466,6 +467,12 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
         "folders" => {
             let (action, path) = arg.split_once(',').unwrap_or((arg, ""));
             app.update(cx, |a, cx| a.script_folder_picker(action, path, window, cx));
+        }
+        // `subtree:ACTION,PREFIX` — the dialog of add / pull / merge / push / split (for the
+        // subtree at PREFIX, else with PREFIX as its folder).
+        "subtree" => {
+            let (action, prefix) = arg.split_once(',').unwrap_or((arg, ""));
+            app.update(cx, |a, cx| a.script_subtree(action, prefix, window, cx));
         }
         "modalok" => app.update(cx, |a, cx| a.script_confirm_modal(window, cx)),
         // `ask:PROMPT[|COMMAND]` — a credential prompt as the askpass helper forwards it,

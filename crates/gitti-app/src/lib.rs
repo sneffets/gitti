@@ -832,6 +832,12 @@ pub mod testing {
         app.read(cx).script_submodules()
     }
 
+    /// The subtrees the active tab knows (`prefix [squash] [removed] update [source]`).
+    pub fn subtrees(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_subtrees()
+    }
+
     /// The worktrees the active tab knows (`name checkout [current] [main] [locked]
     /// [prunable]`, main first).
     pub fn worktrees(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
@@ -1192,6 +1198,11 @@ actions!(
         SyncSubmodules,
         RemoveSubmodule,
         ForeachSubmodule,
+        AddSubtree,
+        PullSubtree,
+        MergeIntoSubtree,
+        PushSubtree,
+        SplitSubtree,
     ]
 );
 
@@ -1439,6 +1450,12 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Sync Submodule URLs", SyncSubmodules),
                 MenuItem::action("Remove Submodule…", RemoveSubmodule),
                 MenuItem::action("Run Command in Each Submodule…", ForeachSubmodule),
+                MenuItem::separator(),
+                MenuItem::action("Add Subtree…", AddSubtree),
+                MenuItem::action("Pull Subtree…", PullSubtree),
+                MenuItem::action("Merge into Subtree…", MergeIntoSubtree),
+                MenuItem::action("Push Subtree…", PushSubtree),
+                MenuItem::action("Split Subtree…", SplitSubtree),
                 MenuItem::separator(),
                 MenuItem::action("Add to .gitignore…", AddToGitignore),
                 MenuItem::action("Edit .gitignore…", EditGitignore),

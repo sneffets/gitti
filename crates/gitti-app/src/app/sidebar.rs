@@ -1,5 +1,6 @@
 //! Left sidebar: branches, worktrees (only with linked ones), remotes (nested: remote ▸
-//! branches), tags, stashes, submodules (only with some; rows in `submodules.rs`). A branch
+//! branches), tags, stashes, submodules (only with some; rows in `submodules.rs`),
+//! subtrees (only with some; rows in `subtrees.rs`). A branch
 //! checked out in another worktree has a folder mark and `in <folder>`.
 
 use gitti_core::{RefInfo, RefKind};
@@ -32,6 +33,8 @@ enum SideItem {
     Worktree(usize),
     /// Index into `submodules`.
     Submodule(usize),
+    /// Index into `subtrees`.
+    Subtree(usize),
 }
 
 impl GittiApp {
@@ -86,6 +89,12 @@ impl GittiApp {
             && section(&mut items, "submodules", "SUBMODULES", self.submodules.len())
         {
             items.extend((0..self.submodules.len()).map(SideItem::Submodule));
+        }
+        // Only with subtrees (found in the history; nothing to show otherwise).
+        if !self.subtrees.is_empty()
+            && section(&mut items, "subtrees", "SUBTREES", self.subtrees.len())
+        {
+            items.extend((0..self.subtrees.len()).map(SideItem::Subtree));
         }
         items
     }
@@ -152,6 +161,7 @@ impl GittiApp {
                 SideItem::Stash(si) => self.stash_row(*si, &p, cx).into_any_element(),
                 SideItem::Worktree(wi) => self.worktree_row(*wi, &p, cx).into_any_element(),
                 SideItem::Submodule(si) => self.submodule_row(*si, &p, cx).into_any_element(),
+                SideItem::Subtree(si) => self.subtree_row(*si, &p, cx).into_any_element(),
             };
             // The keyboard cursor (sidebar focused), and a click puts it there.
             list = list.child(
@@ -256,6 +266,10 @@ impl GittiApp {
                 .get(*wi)
                 .and_then(|w| w.head)
                 .and_then(|id| self.history.row_of(&id)),
+            SideItem::Subtree(si) => self
+                .subtrees
+                .get(*si)
+                .and_then(|s| self.history.row_of(&s.commit)),
             _ => None,
         }
     }
@@ -311,6 +325,16 @@ impl GittiApp {
             SideItem::Submodule(si) => {
                 let path = self.submodules[*si].path.clone();
                 self.open_submodule(&path, cx);
+            }
+            // ⏎: Pull (the subtree's everyday action); its menu (m / right click) has more.
+            SideItem::Subtree(si) => {
+                if let Some(s) = self.subtrees.get(*si).filter(|s| s.present).cloned() {
+                    let req = gitti_core::subtree::Request::for_subtree(
+                        gitti_core::subtree::Action::Pull,
+                        &s,
+                    );
+                    self.subtree_dialog(req, window, cx);
+                }
             }
             _ => {}
         }

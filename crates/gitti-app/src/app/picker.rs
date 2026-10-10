@@ -686,6 +686,7 @@ impl GittiApp {
         items.extend(self.list_layout_palette_items());
         items.extend(self.worktree_palette_items());
         items.extend(self.submodule_palette_items());
+        items.extend(self.subtree_palette_items());
         items.extend(self.lfs_palette_items());
         items.extend(self.lfs_download_palette_items());
         items.extend(self.lfs_health_palette_items());

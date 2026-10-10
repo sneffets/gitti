@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, Result, SharedString};
 
-gpui_kit::assets::icon_assets!(ExtraIcons, [KeyRound, Funnel]);
+gpui_kit::assets::icon_assets!(ExtraIcons, [KeyRound, Funnel, FolderGit2]);
 
 /// Key of the credential prompt (askpass dialog): an SVG, so it looks the same on every
 /// platform (an emoji depends on the system fonts — Windows showed none).
@@ -14,6 +14,9 @@ pub const KEY_ICON: gpui_kit::assets::IconName = gpui_kit::assets::IconName::Key
 /// Mark of a sparse worktree (instead of the word "sparse"): only some folders pass — a
 /// funnel, an SVG for the same reason as the key.
 pub const SPARSE_ICON: gpui_kit::assets::IconName = gpui_kit::assets::IconName::Funnel;
+
+/// Mark of a subtree in the sidebar: another repository's files in a folder.
+pub const SUBTREE_ICON: gpui_kit::assets::IconName = gpui_kit::assets::IconName::FolderGit2;
 
 pub struct GittiAssets;
 

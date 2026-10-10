@@ -115,6 +115,12 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("SyncSubmodules", "Sync Submodule URLs"),
     both("RemoveSubmodule", "Remove Submodule…"),
     both("ForeachSubmodule", "Run Command in Each Submodule…"),
+    // Always in both palettes (without subtrees they open with an empty folder).
+    both("AddSubtree", "Add Subtree…"),
+    both("PullSubtree", "Pull Subtree…"),
+    both("MergeIntoSubtree", "Merge into Subtree…"),
+    both("PushSubtree", "Push Subtree…"),
+    both("SplitSubtree", "Split Subtree…"),
     both("AddToGitignore", "Add to .gitignore…"),
     both("EditGitignore", "Edit .gitignore…"),
     both("TrackWithLfs", "Track with Git LFS…"),

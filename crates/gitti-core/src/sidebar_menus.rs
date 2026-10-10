@@ -28,12 +28,14 @@ pub enum SideMenu {
     /// A linked worktree other than this one.
     Worktree,
     Submodule,
+    Subtree,
     BranchesSection,
     RemotesSection,
     TagsSection,
     StashesSection,
     WorktreesSection,
     SubmodulesSection,
+    SubtreesSection,
 }
 
 /// Every menu of the table, for tests that walk them all.
@@ -46,12 +48,14 @@ pub const ALL: &[SideMenu] = &[
     SideMenu::Stash,
     SideMenu::Worktree,
     SideMenu::Submodule,
+    SideMenu::Subtree,
     SideMenu::BranchesSection,
     SideMenu::RemotesSection,
     SideMenu::TagsSection,
     SideMenu::StashesSection,
     SideMenu::WorktreesSection,
     SideMenu::SubmodulesSection,
+    SideMenu::SubtreesSection,
 ];
 
 /// The entries of `menu`, with placeholders.
@@ -79,6 +83,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Create Branch From…",
             "Create Tag…",
             "Mark for Comparison",
+            "Add as Subtree…",
             "Rename…",
             "Delete…",
             "Force Delete…",
@@ -104,6 +109,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Create Tag…",
             "Set as Upstream of {head}",
             "Mark for Comparison",
+            "Add as Subtree…",
             "Delete {branch} on {remote}…",
             "Copy Name",
         ],
@@ -113,6 +119,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Create Branch From…",
             "Push Tag to {remote}",
             "Mark for Comparison",
+            "Add as Subtree…",
             "Delete Tag…",
             "Delete Tag on {remote}…",
             "Copy Name",
@@ -139,6 +146,16 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Copy Path",
             "Remove Submodule…",
         ],
+        // `{name}` = the folder.
+        SideMenu::Subtree => &[
+            "Pull…",
+            "Merge…",
+            "Push…",
+            "Split…",
+            "Show History of {name}/",
+            "Edit Source…",
+            "Copy Path",
+        ],
         SideMenu::BranchesSection => &["Create Branch at HEAD…", "Switch Branch…"],
         SideMenu::RemotesSection => &["Add Remote…", "Fetch All"],
         SideMenu::TagsSection => &["Create Tag at HEAD…", "Push All Tags to {remote}"],
@@ -155,6 +172,13 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Update Submodules to Remote Branches",
             "Sync Submodule URLs",
             "Run Command in Each Submodule…",
+        ],
+        SideMenu::SubtreesSection => &[
+            "Add Subtree…",
+            "Pull Subtree…",
+            "Merge into Subtree…",
+            "Push Subtree…",
+            "Split Subtree…",
         ],
     }
 }

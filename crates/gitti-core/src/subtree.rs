@@ -23,7 +23,7 @@ use crate::git_cli::GitError;
 use crate::ops::RepoState;
 use crate::repo::Repo;
 
-pub use request::{Action, Context, Plan, Request, normalize_prefix, plan, prefix_problem};
+pub use request::{Action, Context, Form, Plan, Request, form, from_form, normalize_prefix, plan, prefix_problem};
 pub use source::Source;
 
 /// How a subtree came in last.

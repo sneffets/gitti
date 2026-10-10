@@ -37,6 +37,7 @@ mod signing_keys;
 mod spell_ui;
 mod startup_ui;
 mod submodules;
+mod subtrees;
 mod test_state;
 mod toolbar;
 mod unavailable;
@@ -205,6 +206,12 @@ pub struct GittiApp {
     worktrees: Vec<gitti_core::worktree::Worktree>,
     /// Every submodule with its state (`submodules.rs`; empty without `.gitmodules`).
     submodules: Vec<gitti_core::submodule::Submodule>,
+    /// The subtrees of HEAD's history (`subtrees.rs`, read in the background when HEAD
+    /// moves), the HEAD they were read for, a read running / asked for again.
+    subtrees: Vec<gitti_core::subtree::Subtree>,
+    subtrees_head: Option<Option<gitti_core::ObjectId>>,
+    subtrees_loading: bool,
+    subtrees_queued: bool,
     /// Git LFS: the repository's state, the notice shown, the locks (`lfs.rs`).
     lfs: lfs::LfsUi,
     /// The "out of date" banner was hidden for these pointers.
@@ -561,6 +568,10 @@ impl GittiApp {
             conflict_sides: None,
             worktrees: Vec::new(),
             submodules: Vec::new(),
+            subtrees: Vec::new(),
+            subtrees_head: None,
+            subtrees_loading: false,
+            subtrees_queued: false,
             lfs: Default::default(),
             submodule_banner_dismissed: None,
             signature: None,
@@ -951,6 +962,8 @@ impl GittiApp {
         self.worktrees = s.worktrees;
         self.submodules = s.submodules;
         self.apply_lfs_state(s.lfs, cx);
+        // Only when HEAD moved (in-process, in the background).
+        self.refresh_subtrees(false, cx);
         // Refs moved behind our back → the history may have changed too (the first
         // refresh loads it anyway).
         if refs_changed && self.loaded_once {
@@ -3321,6 +3334,7 @@ impl Render for GittiApp {
         let root = self.list_layout_actions(root, cx);
         let root = self.worktree_actions(root, cx);
         let root = self.submodule_actions(root, cx);
+        let root = self.subtree_actions(root, cx);
         let root = self.spell_actions(root, cx);
         let root = self.toolbar_actions(root, cx);
         if self.repo.is_none() {

@@ -22,6 +22,7 @@ mod scroll;
 mod signature;
 mod speed;
 mod submodules;
+mod subtrees;
 mod toolbar;
 mod tooltips;
 mod worktrees;
@@ -38,6 +39,7 @@ const SUITES: &[(&str, fn())] = &[
     ("render_linux", render_linux::main),
     ("speed", speed::main),
     ("submodules", submodules::main),
+    ("subtrees", subtrees::main),
     ("toolbar", toolbar::main),
     ("tooltips", tooltips::main),
     ("worktrees", worktrees::main),

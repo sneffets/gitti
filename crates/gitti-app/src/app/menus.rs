@@ -256,7 +256,8 @@ pub(super) fn commit_menu(
     let reset_app = app.clone();
     let reset_rev = rev.clone();
     let reset_label = format!("Reset {current} to {short}");
-    menu.submenu(reset_label, window, cx, move |m, _, _| {
+    let subtree_rev = rev.clone();
+    let menu = menu.submenu(reset_label, window, cx, move |m, _, _| {
         let mut m = m;
         for (label, mode) in [
             ("Soft — keep index and working tree", ResetMode::Soft),
@@ -276,7 +277,8 @@ pub(super) fn commit_menu(
         item("Edit Commit Message…", app, move |this, w, cx| {
             this.edit_commit_message(rev.clone(), w, cx)
         })
-    })
+    });
+    super::subtrees::ref_items(menu, app, &subtree_rev, None, window, cx)
     .separator()
     .item(copy_item("Copy SHA", rev.clone()))
     .item(copy_item("Copy Short SHA", short.clone()))
@@ -631,7 +633,7 @@ pub(super) fn ref_menu(
                     this.git_op("Unset upstream", w, cx, move |r| r.unset_upstream(&n))
                 }));
             }
-            menu.separator()
+            let menu = menu.separator()
                 .item(create_branch(&name))
                 .item(create_tag(&name))
                 .item({
@@ -646,8 +648,13 @@ pub(super) fn ref_menu(
                     })
                     .disabled(is_head || elsewhere.is_some())
                 })
-                .item(compare_item(app, target))
-                .separator()
+                .item(compare_item(app, target));
+            let menu = match is_head {
+                // The checked-out branch can't be added into itself.
+                true => menu,
+                false => super::subtrees::ref_items(menu, app, &name, None, window, cx),
+            };
+            menu.separator()
                 .item({
                     let name = name.clone();
                     item("Rename…", app, move |this, w, cx| {
@@ -690,7 +697,8 @@ pub(super) fn ref_menu(
                 })
                 .disabled(c.head.is_none())
             };
-            menu.item({
+            let subtree_src = Some((remote.clone(), branch.clone()));
+            let menu = menu.item({
                 let name = name.clone();
                 item(
                     format!("Checkout as local {branch}"),
@@ -707,7 +715,8 @@ pub(super) fn ref_menu(
             .item(create_branch(&name))
             .item(create_tag(&name))
             .item(upstream_of_head)
-            .item(compare_item(app, target))
+            .item(compare_item(app, target));
+            super::subtrees::ref_items(menu, app, &name, subtree_src, window, cx)
             .separator()
             .item(item(
                 format!("Delete {branch} on {remote}…"),
@@ -733,7 +742,7 @@ pub(super) fn ref_menu(
             .item(copy_item("Copy Name", name))
         }
         RefKind::Tag => {
-            let mut menu = menu
+            let menu = menu
                 .item({
                     let name = name.clone();
                     item(
@@ -746,8 +755,8 @@ pub(super) fn ref_menu(
                 })
                 .item(merge(&name))
                 .item(create_branch(&name))
-                .item(compare_item(app, target))
-                .separator();
+                .item(compare_item(app, target));
+            let mut menu = super::subtrees::ref_items(menu, app, &name, None, window, cx).separator();
             for remote in remotes {
                 let (n, rm) = (name.clone(), remote.clone());
                 menu = menu.item(item(
@@ -993,6 +1002,7 @@ pub(super) fn section_menu(
                 this.repair_worktrees_dialog(None, w, cx)
             })),
         "submodules" => super::submodules::section_menu(menu, app),
+        "subtrees" => super::subtrees::section_menu(menu, app),
         _ => menu,
     }
 }

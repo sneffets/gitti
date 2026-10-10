@@ -3,7 +3,7 @@
 //! the same in gitti and gitty — and the `git subtree` command line it becomes
 //! ([`Request::args`]).
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::ops::{RemoteInfo, RepoState};
 use crate::repo::{RefInfo, RefKind};
@@ -195,6 +195,137 @@ impl Request {
     }
 }
 
+impl Request {
+    /// A request for the subtree `s`: its folder, its remembered repository and branch
+    /// (Push: the push branch), squash as it was brought in.
+    pub fn for_subtree(action: Action, s: &Subtree) -> Self {
+        let mut r = Request::new(action, &s.prefix);
+        r.squash = s.squash;
+        if let Some(src) = &s.source {
+            match action {
+                Action::Pull | Action::Add => {
+                    r.repository = src.repository.clone();
+                    r.reference = src.reference.clone();
+                }
+                Action::Push => {
+                    r.repository = src.repository.clone();
+                    r.reference = src.push_target().to_string();
+                }
+                Action::Merge | Action::Split => {}
+            }
+        }
+        r
+    }
+}
+
+/// A dialog's text fields and checkboxes (label, value), in order — gitti and gitty show
+/// the same; [`from_form`] reads them back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Form {
+    pub fields: Vec<(&'static str, String)>,
+    pub checks: Vec<(&'static str, bool)>,
+}
+
+pub const FOLDER: &str = "Folder in this repository";
+pub const MESSAGE: &str = "Merge commit message (optional)";
+pub const SQUASH: &str = "Squash: one commit, without the subtree's history";
+pub const REJOIN: &str = "Rejoin: record the split with a merge commit (faster next time)";
+pub const REJOIN_SQUASH: &str = "Squash the rejoin";
+pub const IGNORE_JOINS: &str = "Ignore earlier rejoins (--ignore-joins)";
+
+/// The fields of `req.action`'s dialog, filled from `req`.
+pub fn form(req: &Request) -> Form {
+    let r = req.clone();
+    let (fields, checks) = match req.action {
+        Action::Add => (
+            vec![
+                (FOLDER, r.prefix),
+                ("Repository: URL, path or remote (empty: this repository)", r.repository),
+                ("Branch or tag (this repository: a commit, branch or tag)", r.reference),
+                (MESSAGE, r.message),
+            ],
+            vec![(SQUASH, r.squash)],
+        ),
+        Action::Pull => (
+            vec![
+                (FOLDER, r.prefix),
+                ("Repository: URL, path or remote", r.repository),
+                ("Branch or tag to pull", r.reference),
+                (MESSAGE, r.message),
+            ],
+            vec![(SQUASH, r.squash)],
+        ),
+        Action::Merge => (
+            vec![
+                (FOLDER, r.prefix),
+                ("Commit, branch or tag to merge (e.g. origin/lib after a fetch)", r.reference),
+                (MESSAGE, r.message),
+            ],
+            vec![(SQUASH, r.squash)],
+        ),
+        Action::Push => (
+            vec![
+                (FOLDER, r.prefix),
+                ("Repository: URL, path or remote", r.repository),
+                ("Branch to push to", r.reference),
+            ],
+            vec![(REJOIN, r.rejoin), (REJOIN_SQUASH, r.rejoin && r.squash)],
+        ),
+        Action::Split => (
+            vec![
+                (FOLDER, r.prefix),
+                ("Split from: commit, branch or tag (empty: HEAD)", r.reference),
+                ("Branch to create or update (optional)", r.branch),
+                ("Onto: an earlier split to continue (optional)", r.onto),
+                ("Prefix for the split commits' messages (optional)", r.annotate),
+            ],
+            vec![
+                (REJOIN, r.rejoin),
+                (IGNORE_JOINS, r.ignore_joins),
+                (REJOIN_SQUASH, r.rejoin && r.squash),
+            ],
+        ),
+    };
+    Form { fields, checks }
+}
+
+/// The request a dialog of `action` stands for with these field `values` and `checks`
+/// (in [`form`]'s order; missing ones count as empty / off).
+pub fn from_form(action: Action, values: &[String], checks: &[bool]) -> Request {
+    let v = |i: usize| values.get(i).cloned().unwrap_or_default();
+    let c = |i: usize| checks.get(i).copied().unwrap_or(false);
+    let mut r = Request::new(action, &v(0));
+    match action {
+        Action::Add | Action::Pull => {
+            r.repository = v(1);
+            r.reference = v(2);
+            r.message = v(3);
+            r.squash = c(0);
+        }
+        Action::Merge => {
+            r.reference = v(1);
+            r.message = v(2);
+            r.squash = c(0);
+        }
+        Action::Push => {
+            r.repository = v(1);
+            r.reference = v(2);
+            r.rejoin = c(0);
+            r.squash = c(0) && c(1);
+        }
+        Action::Split => {
+            r.reference = v(1);
+            r.branch = v(2);
+            r.onto = v(3);
+            r.annotate = v(4);
+            r.rejoin = c(0);
+            r.ignore_joins = c(1);
+            r.squash = c(0) && c(2);
+        }
+    }
+    r
+}
+
 /// A typed folder as git subtree wants it: `/` separators, no `./`, no trailing `/`.
 pub fn normalize_prefix(prefix: &str) -> String {
     super::detect::normalize_dir(&prefix.trim().replace('\\', "/"))
@@ -231,28 +362,45 @@ pub fn prefix_problem(prefix: &str) -> Option<String> {
     None
 }
 
-/// What a dialog knows about the repository, for [`plan`].
-#[derive(Debug, Clone, Copy)]
-pub struct Context<'a> {
+/// What a dialog knows about the repository, for [`plan`] (a copy taken when it opens).
+#[derive(Debug, Clone)]
+pub struct Context {
     /// The top of the work tree (the folder is checked there).
-    pub workdir: &'a Path,
+    pub workdir: PathBuf,
     /// The checked-out branch (`None`: detached HEAD).
-    pub branch: Option<&'a str>,
+    pub branch: Option<String>,
     /// No commit yet on the branch.
     pub unborn: bool,
     pub state: RepoState,
     /// Tracked files with staged or unstaged changes (untracked ones don't count).
     pub changed: usize,
     pub conflicted: usize,
-    pub subtrees: &'a [Subtree],
-    pub remotes: &'a [RemoteInfo],
-    pub refs: &'a [RefInfo],
+    pub subtrees: Vec<Subtree>,
+    pub remotes: Vec<RemoteInfo>,
+    /// The local branch names.
+    pub branches: Vec<String>,
 }
 
-impl Context<'_> {
+impl Default for Context {
+    fn default() -> Self {
+        Context {
+            workdir: PathBuf::new(),
+            branch: None,
+            unborn: false,
+            state: RepoState::Clean,
+            changed: 0,
+            conflicted: 0,
+            subtrees: Vec::new(),
+            remotes: Vec::new(),
+            branches: Vec::new(),
+        }
+    }
+}
+
+impl Context {
     /// "main" / "the detached HEAD".
     fn on(&self) -> String {
-        match self.branch {
+        match &self.branch {
             Some(b) => b.to_string(),
             None => "the detached HEAD".to_string(),
         }
@@ -260,6 +408,35 @@ impl Context<'_> {
 
     fn exists(&self, prefix: &str) -> bool {
         std::fs::symlink_metadata(self.workdir.join(prefix)).is_ok()
+    }
+
+    /// The context from what a frontend shows (its last refresh).
+    #[allow(clippy::too_many_arguments)]
+    pub fn of(
+        workdir: &std::path::Path,
+        head: &crate::repo::HeadInfo,
+        state: RepoState,
+        working: &crate::repo::WorkingState,
+        subtrees: &[Subtree],
+        remotes: &[RemoteInfo],
+        refs: &[RefInfo],
+    ) -> Context {
+        let (changed, conflicted) = super::tracked_changes(working);
+        Context {
+            workdir: workdir.to_path_buf(),
+            branch: head.branch.clone(),
+            unborn: head.id.is_none(),
+            state,
+            changed,
+            conflicted,
+            subtrees: subtrees.to_vec(),
+            remotes: remotes.to_vec(),
+            branches: refs
+                .iter()
+                .filter(|r| r.kind == RefKind::LocalBranch)
+                .map(|r| r.short_name.clone())
+                .collect(),
+        }
     }
 }
 
@@ -300,7 +477,7 @@ fn describe(req: &Request, ctx: &Context, prefix: &str) -> String {
     };
     let on = ctx.on();
     let r = req.reference.trim();
-    let repo = source::describe_repository(&req.repository, ctx.remotes);
+    let repo = source::describe_repository(&req.repository, &ctx.remotes);
     let what = |r: &str| if r.is_empty() { "the branch".to_string() } else { r.to_string() };
     let merge_commits = if req.squash {
         format!(
@@ -362,7 +539,7 @@ fn describe(req: &Request, ctx: &Context, prefix: &str) -> String {
             );
             match req.branch.trim() {
                 "" => s.push_str(" Its newest commit is shown afterwards — you can create a branch on it."),
-                b if has_branch(ctx.refs, b) => s.push_str(&format!(
+                b if ctx.branches.iter().any(|x| x == b) => s.push_str(&format!(
                     " Branch {b} is moved to it (only if the split continues {b})."
                 )),
                 b => s.push_str(&format!(" Branch {b} is created on it.")),
@@ -376,11 +553,6 @@ fn describe(req: &Request, ctx: &Context, prefix: &str) -> String {
             s
         }
     }
-}
-
-fn has_branch(refs: &[RefInfo], name: &str) -> bool {
-    refs.iter()
-        .any(|r| r.kind == RefKind::LocalBranch && r.short_name == name)
 }
 
 fn blocker(req: &Request, ctx: &Context, prefix: &str) -> Option<String> {
@@ -500,17 +672,11 @@ pub fn progress_line(line: &str) -> String {
 mod tests {
     use super::*;
 
-    fn ctx<'a>(dir: &'a Path) -> Context<'a> {
+    fn ctx(dir: &std::path::Path) -> Context {
         Context {
-            workdir: dir,
-            branch: Some("main"),
-            unborn: false,
-            state: RepoState::Clean,
-            changed: 0,
-            conflicted: 0,
-            subtrees: &[],
-            remotes: &[],
-            refs: &[],
+            workdir: dir.to_path_buf(),
+            branch: Some("main".into()),
+            ..Default::default()
         }
     }
 
@@ -591,6 +757,39 @@ mod tests {
     }
 
     #[gitti_test::test]
+    fn forms_round_trip() {
+        let mut reqs = Vec::new();
+        for a in Action::ALL {
+            let mut r = Request::new(a, "lib");
+            r.reference = "main".into();
+            if matches!(a, Action::Add | Action::Pull | Action::Push) {
+                r.repository = "origin".into();
+            }
+            if matches!(a, Action::Add | Action::Pull | Action::Merge) {
+                r.message = "m".into();
+                r.squash = true;
+            }
+            if matches!(a, Action::Push | Action::Split) {
+                r.rejoin = true;
+                r.squash = true;
+            }
+            if a == Action::Split {
+                r.branch = "b".into();
+                r.onto = "o".into();
+                r.annotate = "(x) ".into();
+                r.ignore_joins = true;
+            }
+            reqs.push(r);
+        }
+        for r in reqs {
+            let f = form(&r);
+            let values: Vec<String> = f.fields.iter().map(|(_, v)| v.clone()).collect();
+            let checks: Vec<bool> = f.checks.iter().map(|(_, c)| *c).collect();
+            assert_eq!(from_form(r.action, &values, &checks), r, "{:?}", r.action);
+        }
+    }
+
+    #[gitti_test::test]
     fn prefixes() {
         assert_eq!(prefix_problem("vendor/lib"), None);
         assert_eq!(prefix_problem("vendor\\lib\\"), None);
@@ -627,14 +826,14 @@ mod tests {
         let p = plan(&req(Action::Pull, "nope", "u", "main"), &c);
         assert!(p.blocked.unwrap().contains("does not exist"));
         // A clean tree.
-        let dirty = Context { changed: 2, ..c };
+        let dirty = Context { changed: 2, ..c.clone() };
         let p = plan(&req(Action::Pull, "lib", "u", "main"), &dirty);
         assert!(p.blocked.unwrap().contains("2 files have uncommitted changes"));
         // Split without rejoin doesn't need it.
         let p = plan(&req(Action::Split, "lib", "", ""), &dirty);
         assert_eq!(p.blocked, None);
         assert!(p.text.contains("from HEAD"), "{}", p.text);
-        let merging = Context { state: RepoState::Merging, ..c };
+        let merging = Context { state: RepoState::Merging, ..c.clone() };
         let p = plan(&req(Action::Merge, "lib", "", "x"), &merging);
         assert!(p.blocked.unwrap().contains("merging is in progress"));
         // Fields.
@@ -645,10 +844,10 @@ mod tests {
         let p = plan(&req(Action::Merge, "lib", "", ""), &c);
         assert!(p.blocked.unwrap().contains("enter a commit"));
         // Detached HEAD and unborn branches.
-        let detached = Context { branch: None, ..c };
+        let detached = Context { branch: None, ..c.clone() };
         let p = plan(&req(Action::Merge, "lib", "", "x"), &detached);
         assert!(p.text.contains("the detached HEAD"), "{}", p.text);
-        let unborn = Context { unborn: true, ..c };
+        let unborn = Context { unborn: true, ..c.clone() };
         let p = plan(&req(Action::Add, "new", "", "x"), &unborn);
         assert!(p.blocked.unwrap().contains("no commit yet"));
         // Push says what it does.
