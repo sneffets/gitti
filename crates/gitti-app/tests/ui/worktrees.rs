@@ -1022,8 +1022,8 @@ fn copy_from_menu(ui: &mut Ui, target: &str, label: &str) -> String {
 /// Without linked worktrees the WORKTREES section lists the main worktree (setting on by
 /// default): its menu has the folder's entries (`SideMenu::MainWorktreeAlone` + Open in
 /// Terminal), no tab / lock / move / remove; Copy SHA puts HEAD's full id on the
-/// clipboard. Settings ▸ Appearance switches it off (the section goes) and on again — no
-/// git for any of it. A detached linked worktree's Copy SHA copies its commit.
+/// clipboard. Settings ▸ Appearance switches it off (the section goes) and on again, so
+/// does View ▸ Toggle Main Worktree When It Is the Only One — no git for any of it. A detached linked worktree's Copy SHA copies its commit.
 fn main_worktree_alone(ui: &mut Ui) {
     use gitti_core::sidebar_menus::{SideMenu, Vars, missing};
     let repo = base().join("main_worktree_alone");
@@ -1063,6 +1063,16 @@ fn main_worktree_alone(ui: &mut Ui) {
     ui.step("key:escape");
     if !visible(&ui.frame(), row) {
         ui.fail("the setting is on again, the main worktree is not back".into());
+    }
+    // The View menu's toggle: the same setting.
+    ui.step("focuslist");
+    ui.step("action:gitti::ToggleMainWorktreeAlone");
+    if visible(&ui.frame(), "side-section:worktrees") {
+        ui.fail("View ▸ Toggle Main Worktree… off, the WORKTREES section is still there".into());
+    }
+    ui.step("action:gitti::ToggleMainWorktreeAlone");
+    if !visible(&ui.frame(), row) {
+        ui.fail("View ▸ Toggle Main Worktree… on again, the main worktree is not back".into());
     }
     ui.no_git_since(n, "the lone main worktree's menu, Copy SHA and the setting");
 

@@ -357,6 +357,7 @@ fn menu_entries(ui: &mut Ui) {
         ("File", "Open Recent…"),
         ("Repository", &format!("Open in {fm}") as &str),
         ("Repository", "Open in Terminal"),
+        ("View", "Toggle Main Worktree When It Is the Only One"),
         ("Repository", "Add to .gitignore…"),
         ("Repository", "Edit .gitignore…"),
         ("Repository", "Add Worktree…"),

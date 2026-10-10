@@ -1274,6 +1274,7 @@ actions!(
         RemoveThisWorktree,
         MoveThisWorktree,
         RepairWorktrees,
+        ToggleMainWorktreeAlone,
         AddSubmodule,
         UpdateSubmodules,
         UpdateSubmodulesRemote,
@@ -1488,6 +1489,10 @@ fn menu_bar() -> Vec<Menu> {
             vec![
                 MenuItem::action("Command Palette…", CommandPalette),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
+                MenuItem::action(
+                    "Toggle Main Worktree When It Is the Only One",
+                    ToggleMainWorktreeAlone,
+                ),
                 MenuItem::action("Toggle Full Screen", ToggleFullScreen),
                 MenuItem::action("Git Command Log", ToggleGitLog),
                 MenuItem::action("Last Error Details", ErrorDetails),
