@@ -277,6 +277,8 @@ impl App {
     fn tag_menu(&self, name: &str) -> Vec<MenuItem> {
         let mut v = Vec::new();
         let n = name.to_string();
+        v.push(MenuItem::new("Show Tag…", move |app| app.show_tag(n)).key('i'));
+        let n = name.to_string();
         v.push(
             MenuItem::new(format!("Checkout {name} (detached)"), move |app| {
                 app.switch_to(SwitchTarget::Detached(n))

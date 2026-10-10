@@ -784,6 +784,11 @@ pub(super) fn ref_menu(
             let menu = menu
                 .item({
                     let name = name.clone();
+                    item("Show Tag…", app, move |this, w, cx| this.show_tag(name.clone(), w, cx))
+                })
+                .separator()
+                .item({
+                    let name = name.clone();
                     item(
                         format!("Checkout {name} (detached)"),
                         app,
@@ -1341,13 +1346,16 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) {
         let spec = ModalSpec::new(format!("Create tag at {label}"))
+            .message(
+                "With a message (the box below, several lines welcome) it is an annotated tag \
+                 (git tag -a: message, tagger and date of its own); without one a lightweight \
+                 tag, only a name for the commit.",
+            )
             .field("Tag name", "")
-            .field("Message (optional — makes an annotated tag)", "")
-            .spell(1)
             .ok("Create");
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let name = res.values[0].trim().to_string();
-            let message = res.values[1].clone();
+            let message = res.text.unwrap_or_default();
             let rev = rev.clone();
             if name.is_empty() {
                 return;
@@ -1357,6 +1365,8 @@ impl GittiApp {
                 Ok(format!("Created tag {name}"))
             })
         });
+        // The message: multi-line (Enter in it starts a new line).
+        self.add_modal_text_area(String::new(), window, cx);
     }
 
     pub(super) fn add_remote_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {

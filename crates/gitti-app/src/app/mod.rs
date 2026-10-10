@@ -45,6 +45,7 @@ mod submodules;
 mod subtrees;
 mod custom_commands;
 mod tab_marks;
+mod tag_ui;
 mod test_state;
 mod toolbar;
 mod unavailable;

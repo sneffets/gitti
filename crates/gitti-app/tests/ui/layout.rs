@@ -1777,31 +1777,37 @@ fn spell_marks_dialogs(ui: &mut Ui) {
     ui.step("cancel");
     ui.step("action:gitti::CreateTag");
     ui.step("field:0=tehh-wrnog");
-    ui.step("field:1=Release teh build");
-    let (name, msg) = (marks(ui, SpellTarget::ModalField(0)), marks(ui, SpellTarget::ModalField(1)));
+    let set_message = |ui: &mut Ui, text: &str| {
+        ui.cx
+            .update_window(ui.window, |_, window, cx| testing::modal_text(&ws, text, window, cx))
+            .unwrap();
+        ui.settle();
+    };
+    set_message(ui, "Release teh build\n\nSecond line");
+    let (name, msg) = (marks(ui, SpellTarget::ModalField(0)), marks(ui, SpellTarget::ModalText));
     if !name.is_empty() || msg != ["teh"] {
         ui.fail(format!("tag dialog marked name {name:?}, message {msg:?}"));
     }
-    inside(ui, "tag message", "modal-field:1", 1);
-    right_click_menu(ui, "modal-spell-mark:0", SpellTarget::ModalField(1), "tag message");
-    ui.cx.update(|cx| testing::spell_at(&ws, SpellTarget::ModalField(1), 9, cx));
+    inside(ui, "tag message", "modal-text", 1);
+    right_click_menu(ui, "modal-spell-mark:0", SpellTarget::ModalText, "tag message");
+    ui.cx.update(|cx| testing::spell_at(&ws, SpellTarget::ModalText, 9, cx));
     ui.cx
-        .update_window(ui.window, |_, window, cx| testing::spell_choose(&ws, SpellTarget::ModalField(1), 0, window, cx))
+        .update_window(ui.window, |_, window, cx| testing::spell_choose(&ws, SpellTarget::ModalText, 0, window, cx))
         .unwrap();
     ui.settle();
-    let fields = ui.cx.update(|cx| testing_menus::modal(&ws, cx)).map(|m| m.1);
-    if fields.as_ref().and_then(|f| f.get(1)).map(String::as_str) != Some("Release the build") {
-        ui.fail(format!("tag message after the suggestion: {fields:?}"));
+    let left = marks(ui, SpellTarget::ModalText);
+    if !left.is_empty() {
+        ui.fail(format!("tag message after the suggestion still marks {left:?}"));
     }
     ui.step("cancel");
     // Off: the dialogs aren't checked either.
     ui.step("palette:Toggle Spell Checking");
     ui.step("action:gitti::CreateTag");
-    ui.step("field:1=Release teh build");
-    if !marks(ui, SpellTarget::ModalField(1)).is_empty() {
+    set_message(ui, "Release teh build");
+    if !marks(ui, SpellTarget::ModalText).is_empty() {
         ui.fail("tag message marked while spell checking is off".into());
     }
-    inside(ui, "spell checking off", "modal-field:1", 0);
+    inside(ui, "spell checking off", "modal-text", 0);
     ui.step("cancel");
     ui.step("palette:Toggle Spell Checking");
     reset_point(ui);

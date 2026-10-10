@@ -64,6 +64,7 @@ pub fn main() {
         ("pull_diverged", pull_diverged),
         ("push_refused_ways_out", push_refused_ways_out),
         ("sidebar_menus", sidebar_menus),
+        ("tag_message_and_show_tag", tag_message_and_show_tag),
         ("startup_timings", startup_timings),
         ("unavailable_commands", unavailable_commands),
         ("detached_head_greys_branch_commands", detached_head_greys_branch_commands),
@@ -1722,5 +1723,48 @@ fn fresh_repository_greys_what_needs_a_commit(ui: &mut Ui) {
     match status(ui) {
         Some((t, false)) if t == refusal("Create Branch at HEAD…", UNBORN) => {}
         other => fail!(ui, "Create Branch: status {other:?}"),
+    }
+}
+
+/// Create Tag's message is a multi-line text area, kept as typed (`#` lines too): an
+/// annotated tag; without one a lightweight tag. The tag's sidebar menu starts with Show Tag: its tagger and message; a
+/// lightweight tag says it is one.
+fn tag_message_and_show_tag(ui: &mut Ui) {
+    let ws = ui.ws.clone();
+    let dir = ui.workdir();
+    ui.step("action:gitti::CreateTag");
+    ui.quick("field:0=v9");
+    ui.cx
+        .update_window(ui.window, |_, window, cx| {
+            testing::modal_text(&ws, "Line one\n\n# kept\nthird", window, cx)
+        })
+        .unwrap();
+    ui.step("modalok");
+    ui.wait_real(1500, |ui| ui.is_idle());
+    let msg = git_out(&dir, &["for-each-ref", "--format=%(contents)", "refs/tags/v9"]);
+    if msg != "Line one\n\n# kept\nthird" {
+        fail!(ui, "tag message {msg:?}");
+    }
+    // No message: a lightweight tag.
+    ui.step("action:gitti::CreateTag");
+    ui.quick("field:0=light9");
+    ui.step("modalok");
+    ui.wait_real(1500, |ui| ui.is_idle());
+    if git_out(&dir, &["cat-file", "-t", "light9"]) != "commit" {
+        fail!(ui, "light9 is not a lightweight tag");
+    }
+    for (tag, want) in [("v9", "Annotated tag v9"), ("light9", "Lightweight tag light9")] {
+        ui.click_on(&format!("side:ref-refs/tags/{tag}"), MouseButton::Right);
+        ui.quick("key:down");
+        ui.quick("key:enter");
+        ui.wait_real(1500, |ui| {
+            let ws = ui.ws.clone();
+            ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).is_some()
+        });
+        let text = ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+        if !text.starts_with(want) || (tag == "v9" && !(text.contains("Tagger:") && text.contains("# kept"))) {
+            fail!(ui, "Show Tag {tag}: {text:?}");
+        }
+        ui.step("cancel");
     }
 }

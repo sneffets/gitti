@@ -1,7 +1,8 @@
 //! Repository operations against real temporary repositories (fast-import fixtures):
 //! branches / tags / stashes / remotes, cherry-pick / revert / reset / merge and their
 //! options, conflicts from a stash and a merge, the 3-way merge document, switching with
-//! blocking files, rewording, config / upstream / file versions and SSH-signed commits.
+//! blocking files, rewording, config / upstream / file versions, SSH-signed commits; Show
+//! Tag's details of lightweight, annotated (multi-line) and SSH-signed tags.
 
 use std::fs;
 use std::path::Path;
@@ -553,4 +554,59 @@ fn nothing_staged_stage_all_or_empty_commit() {
     r.commit_as("Tracked", CommitKind::StageTracked).unwrap();
     assert_eq!(sh(&p, &["show", "--name-status", "--format=", "HEAD"]).trim(), "M\ta.txt");
     assert_eq!(sh(&p, &["status", "--porcelain"]), "?? later.txt\n");
+}
+
+/// Show Tag: a lightweight tag says it is one; an annotated tag keeps its multi-line
+/// message as typed (`#` lines too) and has tagger and date; an SSH-signed tag's signature
+/// is verified like a commit's (not verifiable without an allowed signers file, good with).
+#[gitti_test::test]
+fn tag_details_lightweight_annotated_signed() {
+    use gitti_core::signature::{SigKind, SigStatus};
+    let (_tmp, p, mut r) = one_commit(&[("a.txt", "1\n")]);
+    r.set_env(vec![
+        ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+    ]);
+    let head = crate::fixture_kit::rev(&p, "HEAD").to_string();
+    r.create_tag("light", "HEAD", None).unwrap();
+    let message = "Release 1\n\n# not a comment\nSecond line";
+    r.create_tag("v1", "HEAD", Some(message)).unwrap();
+
+    let light = r.tag_details("light").unwrap();
+    assert!(light.annotated.is_none());
+    assert_eq!((light.target.as_str(), light.target_subject.as_str()), (head.as_str(), "init"));
+    assert!(light.describe().starts_with("Lightweight tag light"));
+
+    let v1 = r.tag_details("v1").unwrap();
+    let a = v1.annotated.as_ref().unwrap();
+    assert_eq!(a.message, message);
+    assert!(a.tagger.contains('<') && !a.date.is_empty(), "{a:?}");
+    assert_eq!(a.signature, None);
+    assert_eq!(v1.target, head);
+    assert!(v1.describe().contains("Second line"));
+    assert!(r.tag_details("nope").is_err());
+
+    let keys = tempfile::tempdir().unwrap();
+    let key = keys.path().join("id");
+    let st = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "t@example.com", "-f"])
+        .arg(&key)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let key_path = key.to_str().unwrap().replace('\\', "/");
+    append_config(&p, &format!("[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {key_path}\n"));
+    assert!(sh_ok(&p, &["tag", "-s", "-m", "signed", "v2"]));
+    let sig = r.tag_details("v2").unwrap().annotated.unwrap().signature.unwrap();
+    assert_eq!((sig.kind, sig.status), (SigKind::Ssh, SigStatus::CannotCheck), "{sig:?}");
+
+    let pubkey = fs::read_to_string(key.with_extension("pub")).unwrap();
+    let allowed = keys.path().join("allowed");
+    fs::write(&allowed, format!("jane@x.org namespaces=\"git\" {pubkey}")).unwrap();
+    let allowed_path = allowed.to_str().unwrap().replace('\\', "/");
+    append_config(&p, &format!("[gpg \"ssh\"]\n\tallowedSignersFile = {allowed_path}\n"));
+    let d = r.tag_details("v2").unwrap();
+    let sig = d.annotated.as_ref().unwrap().signature.clone().unwrap();
+    assert_eq!((sig.status, sig.signer.as_str()), (SigStatus::Good, "jane@x.org"), "{sig:?}");
+    assert!(d.describe().contains("Signature: ✓ Signed · jane@x.org"), "{}", d.describe());
 }

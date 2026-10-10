@@ -3367,25 +3367,43 @@ impl App {
         ));
     }
 
+    /// Create Tag: the name, and whether to write a message next (multi-line, in its own
+    /// editor): with one an annotated tag (`git tag -a`), without a lightweight one.
     pub fn create_tag_dialog(&mut self, rev: String) {
         let title = format!("Create tag at {}", short_rev(&rev));
-        self.modal = Some(Modal::input(
+        self.modal = Some(Modal::input_checks(
             title,
-            vec![("Tag name", ""), ("Message (annotated if set)", "")],
-            move |app, v| {
+            vec![("Tag name", "")],
+            vec![("Annotated — write a message next (git tag -a)", true)],
+            move |app, v, checks| {
                 let name = v[0].trim().to_string();
                 if name.is_empty() {
                     return;
                 }
-                let msg = v[1].trim().to_string();
-                app.run_op(
-                    &format!("Create tag {name}"),
-                    true,
-                    After::Nothing,
-                    move |r| r.create_tag(&name, &rev, (!msg.is_empty()).then_some(msg.as_str())),
-                );
+                let create = move |app: &mut App, name: String, msg: String| {
+                    app.run_op(&format!("Create tag {name}"), true, After::Nothing, move |r| {
+                        r.create_tag(&name, &rev, (!msg.trim().is_empty()).then_some(msg.as_str()))
+                    });
+                };
+                if !checks[0] {
+                    return create(app, name, String::new());
+                }
+                app.modal = Some(Modal::edit(
+                    format!("Message of tag {name}"),
+                    "the tag's message (empty: a lightweight tag)",
+                    "",
+                    move |app, text| create(app, name, text),
+                ));
             },
         ));
+    }
+
+    /// Show Tag: tag `name`'s details (lightweight or annotated: tagger, date, message,
+    /// verified signature) in a text window, read in the background.
+    pub fn show_tag(&mut self, name: String) {
+        self.run_op("Show tag", false, After::ShowOutput(format!("Tag {name}")), move |r| {
+            Ok(r.tag_details(&name)?.describe())
+        });
     }
 
     /// The action menu of the focused item (right click / `m`).
