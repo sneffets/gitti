@@ -316,6 +316,9 @@ pub struct Areas {
     pub modal_list: Rect,
     /// The top line's error mark; a click opens its details.
     pub error_mark: Rect,
+    /// The marks after the repository name (● uncommitted, ○ not pushed); a click says
+    /// what they mean in the status line.
+    pub repo_marks: Rect,
     /// The status line's "esc cancel" of a running operation; a click cancels.
     pub busy_cancel: Rect,
     /// The status line's "o more k/n"; a click pages the key bar.
@@ -364,6 +367,8 @@ pub struct App {
     pub lfs: lfs::LfsUi,
     pub repo_state: RepoState,
     pub tracking: Vec<Tracking>,
+    /// The current branch's commits that are not pushed (the ○ after the repository name).
+    pub unpushed: Option<gitti_core::tab_marks::Unpushed>,
     pub identity: (Option<String>, Option<String>),
     pub conflict_sides: Option<ConflictSides>,
     pub loaded: bool,
@@ -645,6 +650,7 @@ impl App {
             lfs: Default::default(),
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
+            unpushed: None,
             identity: (None, None),
             conflict_sides: None,
             loaded: false,
@@ -1225,6 +1231,26 @@ impl App {
         }
     }
 
+    /// The marks after the repository name: ● uncommitted changes, ○ commits not pushed
+    /// (`gitti_core::tab_marks`, from what the refreshes read anyway); empty without any.
+    pub fn repo_marks(&self) -> (bool, bool) {
+        (
+            gitti_core::tab_marks::uncommitted(&self.working.status),
+            self.unpushed.is_some(),
+        )
+    }
+
+    /// What the marks mean, in the status line (a click on them).
+    pub fn explain_repo_marks(&mut self) {
+        let parts: Vec<String> = gitti_core::tab_marks::describe_uncommitted(&self.working.status)
+            .into_iter()
+            .chain(self.unpushed.as_ref().map(|u| u.describe()))
+            .collect();
+        if !parts.is_empty() {
+            self.set_info(parts.join(" · "));
+        }
+    }
+
     pub fn set_info(&mut self, text: impl Into<String>) {
         self.status = Some(StatusLine {
             text: text.into(),
@@ -1347,6 +1373,7 @@ impl App {
         self.apply_lfs_state(s.lfs);
         self.repo_state = s.state;
         self.tracking = s.tracking;
+        self.unpushed = s.unpushed;
         self.identity = s.identity;
         self.conflict_sides = s.conflict_sides;
         self.sync_merge_message(s.merge_message);

@@ -472,6 +472,17 @@ impl Workspace {
             .collect()
     }
 
+    /// Per tab: its marks as text ("●", "○", "● ○", "") and what they mean, for tests.
+    pub fn script_tab_marks(&self, cx: &App) -> Vec<(String, String)> {
+        self.tabs
+            .iter()
+            .map(|t| {
+                let m = t.app.read(cx).tab_marks();
+                (m.glyphs().to_string(), m.describe())
+            })
+            .collect()
+    }
+
     /// The tabs' paths in their order, for tests.
     pub fn script_tab_paths(&self) -> Vec<PathBuf> {
         self.tabs.iter().map(|t| t.path.clone()).collect()
@@ -699,7 +710,8 @@ impl Workspace {
         let tabs = self.tabs.iter().enumerate().map(|(ix, tab)| {
             let active = ix == self.active;
             let title = tab.app.read(cx).title();
-            let busy = tab.app.read(cx).is_busy();
+            let busy = tab.app.read(cx).busy_label().map(str::to_string);
+            let marks = tab.app.read(cx).tab_marks();
             let dragged = DraggedTab {
                 ix,
                 title: title.clone().into(),
@@ -728,8 +740,31 @@ impl Workspace {
                     d.text_color(p.text_muted)
                         .hover(|s| s.bg(p.bg_list_hover).text_color(p.text))
                 })
-                .child(div().flex_1().min_w_0().truncate().child(title))
-                .when(busy, |d| d.child(div().text_color(p.warning).child("●")))
+                // The marks follow the name right away (it truncates first); the spacer
+                // keeps × at the right end.
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .probe(format!("repo-tab-title:{ix}"))
+                        .child(title),
+                )
+                .children(marks.element(ix, settings.ui_font_size, &p))
+                .child(div().flex_1())
+                // Not a circle: those are the marks.
+                .when_some(busy, |d, label| {
+                    d.child(
+                        div()
+                            .id(("tab-busy", ix))
+                            .flex_none()
+                            .text_color(p.warning)
+                            .child(Icon::new(IconName::Loader).small())
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(format!("{label}…"))
+                                    .build(window, cx)
+                            }),
+                    )
+                })
                 .child(
                     div()
                         .id(("close-tab", ix))
@@ -866,11 +901,16 @@ impl Workspace {
         let mut menu = menu;
         for (ix, tab) in this.tabs.iter().enumerate() {
             // Two tabs of the same name (worktrees, clones) tell their paths.
-            let label = if titles.iter().filter(|t| **t == titles[ix]).count() > 1 {
+            let mut label = if titles.iter().filter(|t| **t == titles[ix]).count() > 1 {
                 format!("{} — {}", titles[ix], tab.path.display())
             } else {
                 titles[ix].clone()
             };
+            // The tab's marks: uncommitted ●, not pushed ○.
+            let marks = tab.app.read(cx).tab_marks();
+            if marks.any() {
+                label = format!("{label}  {}", marks.glyphs());
+            }
             let ws = ws.clone();
             menu = menu.item(
                 PopupMenuItem::new(label)

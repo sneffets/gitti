@@ -454,3 +454,42 @@ fn commit_list_layouts_from_the_palette() {
     let next = s[1].lines().skip_while(|l| !l.contains("Second commit")).nth(1).unwrap_or_default();
     assert!(next.contains("Initial commit"), "{out}");
 }
+
+/// The marks after the repository name on the top line, as on gitti's tabs: ○ commits not
+/// pushed, ● uncommitted changes; a click on them says what they are; staging keeps ●.
+/// (A commit taking ● away and counting one more ○ is the same refresh path, covered by
+/// gitti's `layout::repo_tab_marks_follow`; a commit here costs ~0.6 s.)
+#[gitti_test::test]
+fn repo_marks_after_the_name() {
+    let dir = import_with(
+        &[
+            Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "a\n")] },
+            Commit { branch: "main", from: None, merge: None, msg: "two", files: &[("a.txt", "b\n")] },
+        ],
+        "reset refs/remotes/origin/main\nfrom :1\n\n",
+    );
+    let d = dir.path();
+    let mut config = std::fs::OpenOptions::new().append(true).open(d.join(".git/config")).unwrap();
+    std::io::Write::write_all(
+        &mut config,
+        b"[remote \"origin\"]\n\turl = ../origin.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
+          [branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+    )
+    .unwrap();
+    drop(config);
+    std::fs::write(d.join("new.txt"), "n\n").unwrap();
+    // " gitty " + two spaces + the folder name + " ●".
+    let name = d.file_name().unwrap().to_string_lossy().chars().count();
+    let x = 7 + 2 + name + 1;
+    let script = format!("dump;click:{x},0;state;press:S;dump");
+    let out = gitty(d, &script);
+    let s = screens(&out);
+    let top = |i: usize| s[i].lines().next().unwrap_or_default().to_string();
+    assert!(top(0).contains(" ● ○  ⎇ main ↑1"), "{out}");
+    let st = states(&out)[0];
+    assert!(
+        st.contains("Uncommitted changes in 1 file: 1 untracked · 1 commit not pushed to origin/main"),
+        "a click on the marks: {out}"
+    );
+    assert!(top(1).contains(" ● ○  ⎇ main"), "staged: {out}");
+}

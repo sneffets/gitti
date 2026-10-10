@@ -402,6 +402,33 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
         }
     }
 
+    // 7c. A repository tab's marks (uncommitted / not pushed) sit inside their tab, right
+    //     of its name and clear of it: the name truncates, the marks never cover it.
+    for m in all("tab-marks") {
+        let ix = m.index().unwrap_or(0);
+        let (Some(tab), Some(mv)) = (get(&format!("repo-tab:{ix}")), m.visible()) else {
+            continue;
+        };
+        if !contains(&tab.bounds, &mv) {
+            out.push(format!("{} is drawn outside repo-tab:{ix}", m.name));
+        }
+        if let Some(t) = get(&format!("repo-tab-title:{ix}")).and_then(Probe::visible) {
+            if let Some(o) = overlap(&t, &mv) {
+                out.push(format!("{} and repo-tab-title:{ix} overlap ({o})", m.name));
+            }
+            if f32::from(mv.left()) + TOL < f32::from(t.right()) {
+                out.push(format!("{} is not right of repo-tab-title:{ix}", m.name));
+            }
+        }
+        for dot in ["tab-dirty", "tab-unpushed"] {
+            if let Some(d) = get(&format!("{dot}:{ix}")).and_then(Probe::visible)
+                && !contains(&mv, &d)
+            {
+                out.push(format!("{dot}:{ix} is drawn outside {}", m.name));
+            }
+        }
+    }
+
     // 8. Merge editor: a side's line text is drawn only inside its cell (a long
     // line used to run on under the other side's text), and the bars' texts stay on one
     // line inside their bar (wrapped, they ran out of it).
@@ -514,6 +541,27 @@ mod tests {
             "{v:?}"
         );
         assert!(v.iter().any(|s| s.contains("commit-box and file-tabs overlap")), "{v:?}");
+    }
+
+    #[gitti_test::test]
+    fn tab_marks_sit_right_of_the_name_inside_the_tab() {
+        let ok = vec![
+            probe("tab-bar", 0., 0., 800., 26.),
+            probe("repo-tab:0", 0., 0., 200., 26.),
+            probe("repo-tab-title:0", 12., 5., 60., 16.),
+            probe("tab-marks:0", 80., 9., 20., 7.),
+            probe("tab-dirty:0", 80., 9., 7., 7.),
+            probe("tab-unpushed:0", 93., 9., 7., 7.),
+        ];
+        assert!(check(&ok).is_empty(), "{:?}", check(&ok));
+        let mut bad = ok.clone();
+        // Over the name, and the tab too narrow for them.
+        bad[3].bounds.origin.x = px(50.);
+        bad[1].bounds.size.width = px(60.);
+        let v = check(&bad);
+        assert!(v.iter().any(|s| s.contains("tab-marks:0 and repo-tab-title:0 overlap")), "{v:?}");
+        assert!(v.iter().any(|s| s.contains("tab-marks:0 is drawn outside repo-tab:0")), "{v:?}");
+        assert!(v.iter().any(|s| s.contains("tab-dirty:0 is drawn outside tab-marks:0")), "{v:?}");
     }
 
     #[gitti_test::test]
