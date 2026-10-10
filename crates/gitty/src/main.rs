@@ -7,6 +7,7 @@ mod graph;
 mod input;
 mod kb;
 mod merge;
+mod message_view;
 mod modal;
 mod script;
 mod sidebar;

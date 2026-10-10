@@ -389,3 +389,31 @@ fn small_terminal_lists_menus_and_help_scroll() {
     assert!(st[2].contains("status=\"Copied "), "{out}");
     assert!(s[4].contains("previous file (diff)"), "help: its last line: {out}");
 }
+
+/// A commit message longer than its box, with lines longer than the box is wide: the lines
+/// wrap (they were cut at the box's edge), moving the cursor up inside the box leaves the
+/// view alone (it was pinned to the cursor: the text slid under it), the wheel scrolls the
+/// message, and a terminal too low for the box draws it cut instead of panicking.
+#[gitti_test::test]
+fn commit_message_box_wraps_and_scrolls() {
+    let dir = repo();
+    let mut script = String::from("press:c;type:Subject of the message");
+    for i in 0..12 {
+        script.push_str(&format!(
+            ";press:enter;type:body line {i} with words enough to wrap in the box, end{i}"
+        ));
+    }
+    script.push_str(";dump;press:up;press:up;dump;wheel:100,3,-3;dump;resize:120x9;check;dump");
+    let out = gitty(dir.path(), &script);
+    let s = dumps(&out, 30);
+    // The last line's wrapped tail is on the box's last row, right above the amend row.
+    let tail = row_of(&s[0], "end11").expect("the last line's end shown");
+    assert_eq!(row_of(&s[0], "amend"), Some(tail + 1), "{}", s[0]);
+    assert!(row_of(&s[0], "end7").is_none(), "an 8-row box shows the last lines: {}", s[0]);
+    // Up twice (still inside the box): the same rows.
+    assert_eq!(s[1], s[0], "up inside the box moved the view");
+    // Wheel up 3 rows: the last line's tail scrolled out below.
+    assert!(row_of(&s[2], "end11").is_none() && row_of(&s[2], "end9").is_some(), "{}", s[2]);
+    assert!(out.contains("check: ok"), "{out}");
+    assert!(row_of(&s[3], "body line").is_some(), "the low terminal shows the box: {}", s[3]);
+}

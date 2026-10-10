@@ -26,6 +26,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, CommitView, Detail, Focus, work_files};
 use crate::graph::{self, NodeStyle};
+use crate::message_view;
 use crate::modal::Modal;
 use crate::sidebar::SideItem;
 use crate::theme::{Palette, blend};
@@ -1856,9 +1857,12 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
         return 0;
     }
     let editing = app.focus == Focus::Message;
-    let lines = app.message.lines().len() as u16;
+    // Soft-wrapped at the text area's width: a column of padding left, one for the cursor
+    // at a row's end right.
+    let cols = area.width.saturating_sub(4).max(1) as usize;
+    let rows = message_view::wrap(app.message.lines(), cols);
     let text_h = if editing || !app.message.is_empty() {
-        lines.clamp(2, 8)
+        (rows.len() as u16).clamp(2, 8)
     } else {
         1
     };
@@ -1882,8 +1886,13 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
     );
     buf.set_style(text_area, Style::new().bg(text_bg));
     app.areas.message = text_area;
-    let (crow, ccol) = app.message.cursor();
-    let scroll = crow.saturating_sub(text_h as usize - 1);
+    // Rows shown: the text area's, which a low terminal cuts below `text_h`.
+    let shown = text_area.height as usize;
+    let (crow, ccol) = app.message.position();
+    let (cursor_row, cursor_x) = message_view::cursor_at(&rows, app.message.lines(), crow, ccol);
+    let scroll = app
+        .message_view
+        .place(app.message.lines(), rows.len(), shown, cursor_row, ccol);
     if app.message.is_empty() && !editing {
         put(
             buf,
@@ -1896,43 +1905,33 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
             )],
         );
     } else {
-        for (i, l) in app
-            .message
-            .lines()
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(text_h as usize)
-        {
-            let style = if i == 0 {
-                Style::new().fg(p.text_strong).add_modifier(Modifier::BOLD)
-            } else {
-                Style::new().fg(p.text)
-            };
-            // The subject should stay short (git convention: 50, hard limit 72).
-            let spans = if i == 0 && l.width() > 72 {
-                let cut: String = l.chars().take(72).collect();
-                let rest: String = l.chars().skip(72).collect();
+        for (y, r) in rows.iter().skip(scroll).take(shown).enumerate() {
+            let chars: Vec<char> = app.message.lines()[r.line].chars().collect();
+            let text = |a: usize, b: usize| chars[a..b].iter().collect::<String>();
+            let spans = if r.line == 0 {
+                // The subject should stay short (git convention: 50, hard limit 72).
+                let style = Style::new().fg(p.text_strong).add_modifier(Modifier::BOLD);
+                let cut = 72.clamp(r.start, r.end);
                 vec![
-                    Span::styled(cut, style),
-                    Span::styled(rest, Style::new().fg(p.warning)),
+                    Span::styled(text(r.start, cut), style),
+                    Span::styled(text(cut, r.end), Style::new().fg(p.warning)),
                 ]
             } else {
-                vec![Span::styled(l.clone(), style)]
+                vec![Span::styled(text(r.start, r.end), Style::new().fg(p.text))]
             };
             put(
                 buf,
                 text_area.x + 1,
-                text_area.y + (i - scroll) as u16,
+                text_area.y + y as u16,
                 text_area.width.saturating_sub(1),
                 spans,
             );
         }
     }
-    if editing {
-        let cx =
-            (text_area.x + 1 + ccol as u16).min(text_area.x + text_area.width.saturating_sub(1));
-        f.set_cursor_position((cx, text_area.y + (crow - scroll) as u16));
+    if editing && (scroll..scroll + shown).contains(&cursor_row) {
+        let cx = (text_area.x + 1 + cursor_x as u16)
+            .min(text_area.x + text_area.width.saturating_sub(1));
+        f.set_cursor_position((cx, text_area.y + (cursor_row - scroll) as u16));
     }
     let buf = f.buffer_mut();
     app.areas.prepared_use = Rect::default();

@@ -915,7 +915,9 @@ impl App {
                     let max = len.saturating_sub(h as usize) as isize;
                     *off = (*off as isize + d).clamp(0, max.max(0)) as usize;
                 };
-                if a.commits.contains(pos) {
+                if a.message.contains(pos) {
+                    self.message_view.wheel(d);
+                } else if a.commits.contains(pos) {
                     let shown = u16::try_from(a.commit_rows()).unwrap_or(u16::MAX);
                     scroll(&mut self.commit_offset, self.history.commits.len(), shown);
                 } else if a.detail.contains(pos) {
