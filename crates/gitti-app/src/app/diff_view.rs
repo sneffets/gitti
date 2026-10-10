@@ -159,6 +159,7 @@ impl GittiApp {
                         self.spell_marks_layer(SpellTarget::Message, look, focused, cx)
                     }),
             )
+            .children(self.render_prepared_note(cx))
             .child({
                 let (name, mail) = &self.identity;
                 let (text, color) = match (name, mail) {

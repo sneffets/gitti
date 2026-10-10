@@ -9,14 +9,19 @@
 //! - Commit with nothing staged asks instead of failing (`gitti_core::ops::plan_commit`):
 //!   "Stage All and Commit" (when there are changes) or "Create Empty Commit"; both are in
 //!   the palette and the working directory's menu too.
+//! - The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`) fills an empty
+//!   box and goes again with git's file if nobody edited it; the user's own text is never
+//!   replaced — a note under the box offers git's message (Use It / Keep Mine: a click
+//!   or the palette), as gitti (`gitti_core::ops::{sync_prefill, offers_prepared}`).
 //! - Quitting while an operation runs asks first.
 
 use std::time::{Duration, Instant};
 
-use gitti_core::ops::{CommitKind, CommitPlan};
+use gitti_core::ops::{CommitKind, CommitPlan, PrefillSync};
 
 use super::{After, App, Focus, Msg, spawn};
-use crate::modal::{MenuItem, Modal};
+use crate::edit::TextEdit;
+use crate::modal::{MenuItem, Modal, PickItem};
 
 /// Typing pauses this long before the draft is written.
 const DRAFT_DELAY: Duration = Duration::from_millis(500);
@@ -176,6 +181,132 @@ impl App {
             self.message.set_text(&draft);
             self.merge_prefill = None;
         }
+    }
+
+    // ------------------------------------------------------- git's prepared message
+
+    /// A refresh read the message git left for the next commit: into an empty box (or
+    /// over an older prefill nobody edited), out again with git's file if untouched.
+    pub(super) fn sync_prepared_message(&mut self, prepared: Option<String>) {
+        let sync = gitti_core::ops::sync_prefill(
+            prepared.as_deref(),
+            self.merge_prefill.as_deref(),
+            &self.message.text(),
+            self.amend,
+        );
+        match sync {
+            PrefillSync::Keep => {}
+            PrefillSync::Fill(m) => {
+                self.message.set_text(&m);
+                self.merge_prefill = Some(m);
+            }
+            PrefillSync::Clear => {
+                self.message = TextEdit::multi();
+                self.merge_prefill = None;
+            }
+            PrefillSync::Forget => self.merge_prefill = None,
+        }
+        if prepared.is_none() {
+            self.prepared_dismissed = None;
+        }
+        self.prepared = prepared;
+    }
+
+    /// git's prepared message, when it differs from the user's text in the box (the
+    /// palette offers it then, the note unless dismissed).
+    pub fn prepared_differs(&self) -> Option<&str> {
+        let p = self.prepared.as_deref()?;
+        (!self.amend && self.message.text().trim() != p).then_some(p)
+    }
+
+    /// The note under the message box: shown while git's prepared message waits next to
+    /// the user's own text; its text.
+    pub fn prepared_note(&self) -> Option<String> {
+        let shown = gitti_core::ops::offers_prepared(
+            self.prepared.as_deref(),
+            self.merge_prefill.as_deref(),
+            self.prepared_dismissed.as_deref(),
+            &self.message.text(),
+            self.amend,
+        );
+        shown.then(|| gitti_core::ops::prepared_note(self.prepared.as_deref().unwrap_or("")))
+    }
+
+    /// Use It: git's prepared message replaces the box's text (and the stored draft).
+    pub fn use_prepared_message(&mut self) {
+        let Some(m) = self.prepared_differs().map(str::to_string) else { return };
+        self.message.set_text(&m);
+        self.merge_prefill = Some(m);
+        // The draft the box held goes: git's message is no draft.
+        self.draft.edited = Some(Instant::now());
+        self.save_draft_now();
+    }
+
+    /// Keep Mine: the note goes for this prepared message (Commit uses the box's text;
+    /// git removes its file with the commit).
+    pub fn keep_my_message(&mut self) {
+        self.prepared_dismissed = self.prepared.clone();
+    }
+
+    /// Palette: Use the Message git Prepared (while it differs from the box's text), Keep
+    /// My Commit Message (while the note shows).
+    pub(super) fn prepared_palette_items(&self) -> Vec<PickItem> {
+        let mut items = Vec::new();
+        if let Some(m) = self.prepared_differs() {
+            let subject = m.lines().next().unwrap_or_default().to_string();
+            items.push(PickItem::new(gitti_core::ops::USE_PREPARED_LABEL, subject, |app: &mut App| {
+                app.use_prepared_message()
+            }));
+        }
+        if self.prepared_note().is_some() {
+            items.push(PickItem::new(gitti_core::ops::KEEP_MINE_LABEL, "hide the note", |app: &mut App| {
+                app.keep_my_message()
+            }));
+        }
+        items
+    }
+
+    // ------------------------------------------------------------------ cherry-pick
+
+    /// "Cherry-pick with Options…" (as gitti's dialog): `-x` and / or `--no-commit`, each
+    /// combination a menu entry saying what follows.
+    pub(super) fn cherry_pick_options(&mut self, rev: String, short: String, merge: bool) {
+        use gitti_core::ops::CherryPickOptions;
+        let choices = [
+            (
+                "-x — commit, with \"(cherry picked from commit …)\" in the message",
+                'x',
+                CherryPickOptions { record_origin: true, no_commit: false },
+            ),
+            (
+                "--no-commit — only apply the changes; the message waits in the commit box",
+                'n',
+                CherryPickOptions { record_origin: false, no_commit: true },
+            ),
+            (
+                "--no-commit -x — both: the message with its origin line waits in the box",
+                'b',
+                CherryPickOptions { record_origin: true, no_commit: true },
+            ),
+        ];
+        let items = choices
+            .into_iter()
+            .map(|(label, key, opts)| {
+                let rev = rev.clone();
+                MenuItem::new(label, move |app: &mut App| {
+                    app.run_op("Cherry-pick", true, After::Nothing, move |r| {
+                        r.cherry_pick_with(&rev, merge, opts)
+                    })
+                })
+                .key(key)
+            })
+            .collect();
+        let title = if merge {
+            format!("Cherry-pick {short} (a merge: its changes against the first parent)")
+        } else {
+            format!("Cherry-pick {short}")
+        };
+        self.modal = Some(Modal::menu(title, items));
     }
 
     // ------------------------------------------------------------------ quitting

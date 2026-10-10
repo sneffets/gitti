@@ -254,9 +254,14 @@ pub struct GittiApp {
     message: Entity<TextareaState>,
     /// Misspelled words of the message (`spell_ui`).
     spell: spell_ui::SpellStates,
-    /// git's merge message put into the empty message box while merging, so an untouched
-    /// copy can go again once the merge is over.
+    /// The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`) as put into
+    /// the message box, so an untouched copy can follow it and go with it
+    /// (`commit_flow::sync_prepared_message`).
     merge_prefill: Option<String>,
+    /// That message as of the last refresh (`None`: git left none).
+    prepared: Option<String>,
+    /// The prepared message the user answered "Keep Mine" for: its note stays hidden.
+    prepared_dismissed: Option<String>,
     amend: bool,
     /// The message was typed in since its draft was last written (`commit_flow`);
     /// the pending debounced write.
@@ -601,6 +606,8 @@ impl GittiApp {
             message,
             spell: Default::default(),
             merge_prefill: None,
+            prepared: None,
+            prepared_dismissed: None,
             amend: false,
             draft_dirty: false,
             draft_save: None,
@@ -875,10 +882,10 @@ impl GittiApp {
                             s.conflict_sides = this.conflict_sides.clone();
                             this.refresh_queued = Some(this.refresh_queued.unwrap_or(false));
                         }
-                        let merge_message = s.merge_message.take();
+                        let prepared = s.prepared_message.take();
                         this.errors.succeeded("Refresh");
                         this.apply_snapshot(s, cx);
-                        this.sync_merge_message(merge_message, window, cx);
+                        this.sync_prepared_message(prepared, window, cx);
                     }
                     Err(e) => {
                         this.op_failed("Refresh", format!("{e:#}"));
@@ -901,33 +908,6 @@ impl GittiApp {
             .ok();
         })
         .detach();
-    }
-
-    /// While merging, an empty message box gets git's prepared message (`MERGE_MSG`), so
-    /// Commit concludes the merge with it; once the merge is over, a prefill the user left
-    /// untouched goes again.
-    fn sync_merge_message(
-        &mut self,
-        merge_message: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let current = self.message.read(cx).value().to_string();
-        if self.repo_state == RepoState::Merging {
-            if let Some(m) = merge_message
-                && self.merge_prefill.is_none()
-                && !self.amend
-                && current.trim().is_empty()
-            {
-                self.message
-                    .update(cx, |e, cx| e.set_value(m.clone(), window, cx));
-                self.merge_prefill = Some(m);
-            }
-        } else if let Some(prefill) = self.merge_prefill.take()
-            && current == prefill
-        {
-            self.message.update(cx, |e, cx| e.set_value("", window, cx));
-        }
     }
 
     fn apply_snapshot(&mut self, s: RepoSnapshot, cx: &mut Context<Self>) {

@@ -1,7 +1,9 @@
 //! Conflict states against real temporary repositories: aborting conflicts left by
 //! a `git stash pop` (the stash survives), a merge with open conflicts in a linked
 //! worktree (state detection in the worktree's own git dir), concluding a resolved merge
-//! with its prepared message, unrelated histories and `conflict-marker-size`.
+//! with its prepared message, unrelated histories and `conflict-marker-size`; the
+//! message git leaves for the next commit (`MERGE_MSG` / `SQUASH_MSG`) after
+//! `cherry-pick -n -x`, a conflicting `cherry-pick -x` and `merge --squash`.
 
 use std::fs;
 use std::path::Path;
@@ -110,7 +112,7 @@ fn merge_conflict_in_a_linked_worktree() {
     assert_eq!(snap.working.conflicted.len(), 1);
     let sides = snap.conflict_sides.unwrap();
     assert_eq!((sides.ours.as_str(), sides.theirs.as_str()), ("side", "feature"));
-    assert_eq!(snap.merge_message.as_deref(), Some("Merge branch 'feature' into side"));
+    assert_eq!(snap.prepared_message.as_deref(), Some("Merge branch 'feature' into side"));
     assert_eq!(Repo::open(&main).unwrap().state(), RepoState::Clean);
 
     r.abort_operation().unwrap();
@@ -131,7 +133,7 @@ fn committing_a_resolved_merge_concludes_it() {
     // git's MERGE_MSG carries "# Conflicts:" comment lines; they are stripped.
     let raw = fs::read_to_string(r.git_dir().unwrap().join("MERGE_MSG")).unwrap();
     assert!(raw.contains("# Conflicts:"), "{raw}");
-    let msg = r.merge_message().unwrap();
+    let msg = r.prepared_message().unwrap();
     assert_eq!(msg, "Merge branch 'feature'");
     // A commit with conflicts still open fails (the UI disables the button).
     assert!(r.commit(&msg, false).is_err());
@@ -145,7 +147,7 @@ fn committing_a_resolved_merge_concludes_it() {
     assert_eq!(parents.split_whitespace().count(), 2, "a merge commit: {parents}");
     assert_eq!(body.trim(), "Merge branch 'feature'");
     assert_eq!(read(p, "b.txt"), "b from feature\n");
-    assert!(r.merge_message().is_none());
+    assert!(r.prepared_message().is_none());
 }
 
 /// Two histories without a common commit: git refuses `merge` and `pull` with
@@ -249,4 +251,89 @@ fn conflict_marker_size_attribute() {
     // Resolved by hand, with 7-character marker lookalikes as content.
     fs::write(p.join("doc.rst"), format!("{heading}<<<<<<< quoted\nmain\n")).unwrap();
     assert!(!r.has_conflict_markers("doc.rst"));
+}
+
+/// `main` and `feature` from `init` (`a.txt`): feature adds `b.txt` ("Add b" with a body)
+/// and then changes `a.txt`, main changes `a.txt` too (picking feature's tip conflicts).
+/// Checked out: main. The commit ids in stream order.
+fn picks(p: &Path) -> Vec<String> {
+    fx::init(p);
+    let mut i = Import::new();
+    let base = i.commit("main", None, &[], "init", &[put("a.txt", "base\n")]);
+    i.commit("feature", Some(&base), &[], "Add b\n\nWhy b.", &[put("b.txt", "b\n")]);
+    i.commit("feature", None, &[], "Change a", &[put("a.txt", "feature\n")]);
+    i.commit("main", None, &[], "main change", &[put("a.txt", "main\n")]);
+    let ids = i.run(p);
+    fx::checkout(p);
+    ids
+}
+
+/// `cherry-pick -n -x` (as gitti's Cherry-pick with Options runs it) leaves no
+/// CHERRY_PICK_HEAD, only MERGE_MSG: the picked message with "(cherry picked from commit
+/// <full id>)". Committing (`commit -F`, as gitti does) uses it, and git removes the file.
+#[gitti_test::test]
+fn cherry_pick_no_commit_record_origin_prepares_the_message() {
+    use gitti_core::ops::CherryPickOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    let ids = picks(p);
+    let r = Repo::open(p).unwrap();
+    assert_eq!(r.prepared_message(), None);
+    let opts = CherryPickOptions { record_origin: true, no_commit: true };
+    r.cherry_pick_with(&ids[1], false, opts).unwrap();
+    assert_eq!(r.state(), RepoState::Clean, "no CHERRY_PICK_HEAD with -n");
+    let want = format!("Add b\n\nWhy b.\n\n(cherry picked from commit {})", ids[1]);
+    let snap = r.snapshot(&Default::default()).unwrap();
+    assert_eq!(snap.prepared_message.as_deref(), Some(want.as_str()));
+
+    r.commit(&want, false).unwrap();
+    assert_eq!(r.prepared_message(), None, "git removed MERGE_MSG");
+    assert!(!r.git_dir().unwrap().join("MERGE_MSG").exists());
+    assert_eq!(fx::git(p, &["log", "-1", "--format=%B"]), want);
+}
+
+/// A conflicting `cherry-pick -x` (no -n: CHERRY_PICK_HEAD) with `core.commentChar = ;`:
+/// git's "; Conflicts:" lines go, the origin line stays; aborting removes the message.
+#[gitti_test::test]
+fn conflicting_cherry_pick_strips_the_configured_comment_char() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    let ids = picks(p);
+    fx::config(p, "[core]\n\tcommentChar = \";\"\n");
+    fx::git_fails(p, &["cherry-pick", "-x", &ids[2]]);
+    let r = Repo::open(p).unwrap();
+    assert_eq!(r.state(), RepoState::CherryPicking);
+    let raw = fs::read_to_string(r.git_dir().unwrap().join("MERGE_MSG")).unwrap();
+    assert!(raw.contains("; Conflicts:"), "{raw}");
+    let want = format!("Change a\n\n(cherry picked from commit {})", ids[2]);
+    assert_eq!(r.prepared_message().as_deref(), Some(want.as_str()));
+    r.abort_operation().unwrap();
+    assert_eq!(r.prepared_message(), None);
+}
+
+/// `merge --squash` with a conflict in a linked worktree (`core.commentString = //`):
+/// git writes SQUASH_MSG and a MERGE_MSG of only "// Conflicts:" lines into the
+/// worktree's own git dir; `git commit` would start from both, the main worktree has
+/// none. Aborting the conflicts (`reset --merge`) removes both.
+#[gitti_test::test]
+fn squash_merge_message_in_a_linked_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("repo");
+    picks(&main);
+    fx::config(&main, "[core]\n\tcommentString = //\n");
+    let wt = dir.path().join("wt");
+    fx::git(&main, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap(), "main"]);
+    fx::git_fails(&wt, &["merge", "--squash", "feature"]);
+    let r = Repo::open(&wt).unwrap();
+    let git_dir = r.git_dir().unwrap();
+    assert!(git_dir.join("SQUASH_MSG").exists() && git_dir.join("MERGE_MSG").exists());
+    let msg = r.prepared_message().unwrap();
+    assert!(msg.starts_with("Squashed commit of the following:\n\ncommit "), "{msg}");
+    // Newest first, bodies indented.
+    assert!(msg.contains("\n    Change a\n") && msg.ends_with("\n    Add b\n\n    Why b."), "{msg}");
+    assert!(!msg.contains("Conflicts"), "{msg}");
+    assert_eq!(Repo::open(&main).unwrap().prepared_message(), None);
+
+    r.abort_conflicts().unwrap();
+    assert_eq!(r.prepared_message(), None);
 }

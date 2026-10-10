@@ -323,6 +323,10 @@ pub struct Areas {
     pub commit_row_h: u16,
     pub detail: Rect,
     pub message: Rect,
+    /// The "Use It" / "Keep Mine" of the note under the message box (git's prepared
+    /// message next to the user's own text); empty without the note.
+    pub prepared_use: Rect,
+    pub prepared_keep: Rect,
     pub log: Rect,
     pub status: Rect,
     /// Item list of an open menu / picker.
@@ -441,9 +445,14 @@ pub struct App {
     pub line_sel: Option<LineSel>,
 
     pub message: TextEdit,
-    /// The merge message put into the empty message box while merging, so an
-    /// untouched copy can go again once the merge is over.
+    /// The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`) as put into
+    /// the message box, so an untouched copy can follow it and go with it
+    /// (`commit_flow::sync_prepared_message`).
     merge_prefill: Option<String>,
+    /// That message as of the last refresh (`None`: git left none).
+    prepared: Option<String>,
+    /// The prepared message the user answered "Keep Mine" for: its note stays hidden.
+    prepared_dismissed: Option<String>,
     pub amend: bool,
     /// The message draft's pending write (`app/commit_flow.rs`).
     draft: commit_flow::DraftState,
@@ -717,6 +726,8 @@ impl App {
             line_sel: None,
             message: TextEdit::multi(),
             merge_prefill: None,
+            prepared: None,
+            prepared_dismissed: None,
             amend: false,
             draft: Default::default(),
             busy: None,
@@ -1363,26 +1374,6 @@ impl App {
         );
     }
 
-    /// While merging, an empty message box gets git's prepared message (`MERGE_MSG`), so
-    /// Commit concludes the merge with it; once the merge is over, a prefill the user left
-    /// untouched goes again (as gitti).
-    fn sync_merge_message(&mut self, merge_message: Option<String>) {
-        if self.repo_state == RepoState::Merging {
-            if let Some(m) = merge_message
-                && self.merge_prefill.is_none()
-                && !self.amend
-                && self.message.text().trim().is_empty()
-            {
-                self.message.set_text(&m);
-                self.merge_prefill = Some(m);
-            }
-        } else if let Some(prefill) = self.merge_prefill.take()
-            && self.message.text() == prefill
-        {
-            self.message = TextEdit::multi();
-        }
-    }
-
     fn apply_snapshot(&mut self, s: Snapshot) {
         // Identify the line selection's file by its diff, to keep it if unchanged.
         let prev_sel_diff = self.line_sel.as_ref().and_then(|sel| {
@@ -1416,7 +1407,7 @@ impl App {
         self.unpushed = s.unpushed;
         self.identity = s.identity;
         self.conflict_sides = s.conflict_sides;
-        self.sync_merge_message(s.merge_message);
+        self.sync_prepared_message(s.prepared_message);
         self.loaded = true;
         // Only when HEAD moved, or after a subtree operation (in the background).
         let force = self.subtrees_dirty && self.busy.is_none();
@@ -3370,6 +3361,14 @@ impl App {
             .key('c')
             .unless(head_or_busy),
         );
+        let (s, sh) = (sha.clone(), short.clone());
+        items.push(
+            MenuItem::new("Cherry-pick with Options…", move |app| {
+                app.cherry_pick_options(s, sh, merge)
+            })
+            .key('x')
+            .unless(head_or_busy),
+        );
         let s = sha.clone();
         items.push(
             MenuItem::new(format!("Revert {short}"), move |app| {
@@ -3766,6 +3765,7 @@ impl App {
         items.extend(self.lfs_health_palette_items());
         items.extend(self.worktree_palette_items());
         items.extend(self.menu_palette_items());
+        items.extend(self.prepared_palette_items());
         if self.repo_state != RepoState::Clean || !self.working.conflicted.is_empty() {
             let clean = self.repo_state == RepoState::Clean;
             let label = if clean {

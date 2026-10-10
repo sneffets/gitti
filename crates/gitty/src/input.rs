@@ -931,7 +931,11 @@ impl App {
             MouseEventKind::Down(button @ (MouseButton::Left | MouseButton::Right)) => {
                 let right = button == MouseButton::Right;
                 let shift = m.modifiers.contains(KeyModifiers::SHIFT);
-                if a.message.contains(pos) {
+                if a.prepared_use.contains(pos) && a.message.width > 0 {
+                    self.use_prepared_message();
+                } else if a.prepared_keep.contains(pos) && a.message.width > 0 {
+                    self.keep_my_message();
+                } else if a.message.contains(pos) {
                     self.focus = Focus::Message;
                 } else if a.log.contains(pos) {
                     self.focus = Focus::Log;

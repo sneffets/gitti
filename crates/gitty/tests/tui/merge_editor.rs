@@ -1,6 +1,7 @@
 //! The merge editor and conflicts: taking chunks, undo / redo, moving and panning, saving,
 //! the single view, edit mode, questions before closing, outside edits, both halves
-//! scrolling together; the merge message and committing a merge.
+//! scrolling together; the merge message and committing a merge; the message git
+//! prepared after `cherry-pick -n -x` (alone, next to the user's text).
 
 use crate::common;
 use crate::support;
@@ -322,4 +323,62 @@ fn stash_pop_conflict_aborts_from_the_palette_and_keeps_the_stash() {
     assert!(s[1].contains("stash entry is still there"), "{out}");
     assert_eq!(git(d, &["status", "--porcelain"]), "", "{out}");
     assert!(git(d, &["stash", "list"]).contains("wip"), "the stash stays");
+}
+
+/// `main`: init, "main work"; `side` from init: "Add side" (with a body), "Add other" —
+/// both pick cleanly onto main.
+fn pick_repo() -> tempfile::TempDir {
+    let c = |branch, from, msg, files| Commit { branch, from, merge: None, msg, files };
+    import(&[
+        c("main", None, "init", &[("a.txt", "a\n")]),
+        c("side", Some(1), "Add side\n\nWhy side.", &[("side.txt", "s\n")]),
+        c("side", None, "Add other", &[("other.txt", "o\n")]),
+        c("main", None, "main work", &[("b.txt", "b\n")]),
+    ])
+}
+
+/// `git cherry-pick -n -x` on the command line leaves only MERGE_MSG: the empty message
+/// box gets it (no note) and ctrl-s commits it (git drops the file).
+#[gitti_test::test]
+fn prepared_message_after_cherry_pick_no_commit() {
+    let dir = pick_repo();
+    let d = dir.path();
+    let side = rev(d, "side~1");
+    git(d, &["cherry-pick", "-n", "-x", "side~1"]);
+    // Wide: the detail pane shows the whole origin line.
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "220x30", "dump;press:c;key:ctrl-s;dump");
+    let s = screens(&out);
+    let origin = format!("(cherry picked from commit {side})");
+    assert!(s[0].contains("Add side") && s[0].contains(&origin), "prefilled: {out}");
+    assert!(!s[0].contains("git prepared a message"), "no note: {out}");
+    let want = format!("Add side\n\nWhy side.\n\n{origin}");
+    assert_eq!(git(d, &["log", "-1", "--format=%B"]).trim(), want);
+    assert!(!d.join(".git/MERGE_MSG").exists(), "git dropped it");
+    assert!(!s[1].contains(&origin), "the box is empty again: {out}");
+}
+
+/// The user's own text in the box, then gitty's Cherry-pick with Options… (`--no-commit
+/// -x`): the text stays and a note offers git's message — the palette's "Keep My Commit
+/// Message" hides it, "Use the Message git Prepared" takes it; nothing is committed.
+#[gitti_test::test]
+fn prepared_message_next_to_the_users_text() {
+    let dir = pick_repo();
+    let d = dir.path();
+    let other = rev(d, "side");
+    let draft = "press:c;type:My own text;press:esc";
+    let pick = format!("press:ctrl-g;type:{other};press:enter;wait;press:m;press:x;items;key:b;press:ctrl-home");
+    let keep = "press:ctrl-p;type:keep my commit;press:enter";
+    let use_it = "press:ctrl-p;type:use the message git;press:enter";
+    let script = format!("wait;{draft};{pick};dump;{keep};dump;{use_it};dump");
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "220x30", &script);
+    let menu = items(&out);
+    assert!(menu.iter().any(|i| i.starts_with("--no-commit -x")), "options: {out}");
+    let s = screens(&out);
+    assert!(s[0].contains("My own text"), "the text stays: {out}");
+    assert!(s[0].contains("git prepared a message for this commit: \"Add other\""), "{out}");
+    assert!(s[0].contains("Use It") && s[0].contains("Keep Mine"), "{out}");
+    assert!(s[1].contains("My own text") && !s[1].contains("git prepared"), "Keep Mine: {out}");
+    assert!(s[2].contains(&format!("(cherry picked from commit {other})")), "Use It: {out}");
+    assert!(!s[2].contains("My own text"), "Use It: {out}");
+    assert_eq!(git(d, &["status", "--porcelain"]).trim(), "A  other.txt", "not committed");
 }
