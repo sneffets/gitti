@@ -69,6 +69,8 @@ pub struct Modal {
     viewer: bool,
     /// Height of the text box as last drawn (a page for the keys).
     text_h: std::rc::Rc<std::cell::Cell<Pixels>>,
+    /// The part between title and buttons, scrolled when the window is too small for it.
+    body_scroll: ScrollHandle,
     ok_label: String,
     cancel_label: Option<String>,
     danger: bool,
@@ -481,6 +483,7 @@ impl GittiApp {
             text: None,
             viewer: false,
             text_h: Default::default(),
+            body_scroll: ScrollHandle::new(),
             ok_label: spec.ok_label,
             cancel_label: spec.cancel_label,
             danger: spec.danger,
@@ -1163,6 +1166,7 @@ impl GittiApp {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 h_flex()
+                    .flex_none()
                     .gap_2()
                     .items_center()
                     .font_weight(FontWeight::BOLD)
@@ -1179,10 +1183,21 @@ impl GittiApp {
                     })
                     .child(modal.title.clone()),
             );
+        // Everything between the title and the buttons scrolls when the window is too
+        // small for it (big fonts, a small window): the title and the buttons stay. Its
+        // parts keep their height (a scrolling part of its own would shrink to nothing),
+        // only the text box gives some up first.
+        let mut middle = v_flex()
+            .id("modal-body")
+            .gap_3()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&modal.body_scroll);
         if let Some(m) = &modal.message {
-            body = body.child(
+            middle = middle.child(
                 div()
                     .id("modal-message")
+                    .flex_none()
                     .max_h(px(260.))
                     .overflow_y_scroll()
                     .whitespace_normal()
@@ -1202,13 +1217,9 @@ impl GittiApp {
                         .on_click(cx.listener(move |this, _, w, cx| this.modal_option(i, w, cx))),
                 )
             });
-            body = body.child(h_flex().gap_1().children(buttons));
+            middle = middle.child(h_flex().flex_none().gap_1().children(buttons));
         }
-        let mut fields = v_flex()
-            .id("modal-fields")
-            .gap_3()
-            .max_h(px(560.))
-            .overflow_y_scroll();
+        let mut fields = v_flex().id("modal-fields").flex_none().gap_3();
         // A field (and its fill-in buttons) only shown for some options.
         let hidden = |ix: usize| {
             modal
@@ -1271,7 +1282,7 @@ impl GittiApp {
             );
         }
         if !modal.fields.is_empty() {
-            body = body.child(fields);
+            middle = middle.child(fields);
         }
         if modal.choices.iter().any(|c| c.pick.is_none() && !hidden(c.field)) {
             let buttons = modal
@@ -1280,13 +1291,14 @@ impl GittiApp {
                 .enumerate()
                 .filter(|(_, c)| c.pick.is_none() && !hidden(c.field))
                 .map(|(i, c)| choice_button(i, c, cx));
-            body = body.child(h_flex().flex_wrap().gap_1().children(buttons));
+            middle = middle.child(h_flex().flex_none().flex_wrap().gap_1().children(buttons));
         }
         // Whether macOS really has secure keyboard entry on (queried, not assumed).
         if modal.secret && cfg!(target_os = "macos") {
             let on = crate::secure_input::system_enabled();
-            body = body.child(
+            middle = middle.child(
                 div()
+                    .flex_none()
                     .text_size(s.ui_small())
                     .text_color(if on { p.success } else { p.text_muted })
                     .child(if on {
@@ -1299,9 +1311,10 @@ impl GittiApp {
         for (i, (label, value)) in modal.checks.iter().enumerate() {
             let label = label.clone();
             let value = *value;
-            body = body.child(
+            middle = middle.child(
                 h_flex()
                     .id(("modal-check", i))
+                    .flex_none()
                     .probe(format!("modal-check:{i}"))
                     .gap_2()
                     .items_start()
@@ -1327,9 +1340,10 @@ impl GittiApp {
         }
         // What OK will do, right above it.
         if let Some(live) = &modal.live_now {
-            body = body.child(
+            middle = middle.child(
                 v_flex()
                     .id("modal-live")
+                    .flex_none()
                     .probe("modal-live")
                     .gap_1()
                     .whitespace_normal()
@@ -1348,7 +1362,7 @@ impl GittiApp {
         }
         if let Some(text) = &modal.text {
             let text_h = modal.text_h.clone();
-            body = body.child(
+            middle = middle.child(
                 div()
                     .relative()
                     .child(
@@ -1357,6 +1371,7 @@ impl GittiApp {
                             .inset_0(),
                     )
                     .h(px(380.))
+                    .min_h(rems(6.))
                     .font_family(crate::theme::mono_font())
                     .text_size(s.ui_small())
                     .probe("modal-text")
@@ -1392,6 +1407,7 @@ impl GittiApp {
             .when(!modal.danger, |b| b.primary())
             .on_click(cx.listener(|this, _, w, cx| this.confirm_modal(w, cx)));
         let buttons = h_flex()
+            .flex_none()
             .gap_2()
             .justify_end()
             .when_some(modal.extra.as_ref().map(|(l, _)| l.clone()), |d, label| {
@@ -1415,8 +1431,18 @@ impl GittiApp {
                         .on_click(cx.listener(|this, _, w, cx| this.cancel_modal(w, cx))),
                 )
             })
-            .child(ok);
-        body = body.child(buttons);
+            .child(div().probe("modal-ok").child(ok));
+        // The probe on a frame around it: the scrolled element's own bounds move with it.
+        body = body
+            .child(
+                v_flex()
+                    .probe("modal-body")
+                    .relative()
+                    .min_h_0()
+                    .child(middle)
+                    .children(crate::scroll_guard::scrollbar("modal-body", &modal.body_scroll, false)),
+            )
+            .child(buttons);
 
         Some(
             div()

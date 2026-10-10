@@ -153,9 +153,9 @@ pub enum Msg {
     LfsLocks(Result<Vec<gitti_core::lfs::LfsLock>>),
     /// "Track with Git LFS…" for this path: git-lfs as found (`app/lfs.rs`).
     LfsSetup(String, gitti_core::lfs_track::LfsSetup),
-    /// The repository location on the clipboard for the open Clone dialog
-    /// (`app/repo_cmds.rs`).
-    CloneClipboard(Option<String>),
+    /// The repository location on the clipboard for the open Clone / Add Submodule dialog
+    /// (its title; `app/repo_cmds.rs`).
+    CloneClipboard(&'static str, Option<String>),
 }
 
 /// What to do after an operation succeeded.
@@ -439,6 +439,9 @@ pub struct App {
     /// The detail pane's width the header's "Refs" lines wrap at (set by the renderer;
     /// 0 until the first frame).
     pub header_cols: u16,
+    /// The commit list's "+N" badges as last drawn: where, and what they hide (one line,
+    /// `ref_badges::ListBadges::hidden_summary`) — a click says it, as gitti's tooltip.
+    pub badge_more: Vec<(Rect, String)>,
     /// Commits being prefetched (`prefetch_around`).
     prefetching: Arc<std::sync::Mutex<std::collections::HashSet<ObjectId>>>,
     /// Row of the commit shown before, for the prefetch direction.
@@ -762,6 +765,7 @@ impl App {
             hscroll: 0,
             wrap_cols: None,
             header_cols: 0,
+            badge_more: Vec::new(),
             line_sel: None,
             message: TextEdit::multi(),
             message_view: Default::default(),
@@ -1183,7 +1187,7 @@ impl App {
                 self.loads_in_flight -= 1;
                 self.lfs_setup_read(path, setup);
             }
-            Msg::CloneClipboard(url) => self.clone_clipboard(url),
+            Msg::CloneClipboard(title, url) => self.clone_clipboard(title, url),
             Msg::Working(generation, result) => {
                 self.loads_in_flight -= 1;
                 if generation == self.working_gen {
@@ -1474,6 +1478,8 @@ impl App {
         self.conflict_sides = s.conflict_sides;
         self.sync_prepared_message(s.prepared_message);
         self.loaded = true;
+        // The header's badges: the current branch, branches in other worktrees.
+        self.rewrap_header();
         // Only when HEAD moved, or after a subtree operation (in the background).
         let force = self.subtrees_dirty && self.busy.is_none();
         if force {
@@ -1569,6 +1575,8 @@ impl App {
                 self.load_detail();
             }
         }
+        // Its refs may have changed (the history's `refs_by_commit`).
+        self.rewrap_header();
     }
 
     /// Selects commit list row `row` and loads its detail.
@@ -1954,8 +1962,10 @@ impl App {
         );
     }
 
-    /// The commit header again at the pane's new width ([`Self::header_cols`]); when its
-    /// "Refs" lines wrap onto another number of lines, the rows follow (the view kept).
+    /// The commit header again: at the pane's new width ([`Self::header_cols`]), or after
+    /// the refs, the current branch or the worktrees changed (a new tag, a deleted
+    /// branch); when its "Refs" lines take another number of lines, the rows follow (the
+    /// view kept).
     pub fn rewrap_header(&mut self) {
         let Detail::Commit(cv) = &self.detail else {
             return;

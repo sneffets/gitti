@@ -3,9 +3,10 @@
 //!
 //! Recognised: `https` / `http` / `ssh` / `git` / `git+ssh` / `ftp(s)` / `file` URLs,
 //! scp-like `[user@]host:path`, absolute local paths (to an existing repository, checked by
-//! [`from_clipboard`]), and a whole `git clone … URL` command line (its URL). Not: plain
-//! words, several lines, URLs with an unknown scheme, remote-helper addresses
-//! (`helper::address`).
+//! [`from_clipboard`]), a whole `git clone … URL` command line (its URL) and a
+//! `gh repo clone OWNER/REPO` line (the URL gh would clone: host and protocol from the
+//! user's gh settings, [`GhConfig`]). Not: plain words, several lines, URLs with an
+//! unknown scheme, remote-helper addresses (`helper::address`).
 //!
 //! Web pages: the page URLs of the big forges (`…/blob/main/README.md`, `…/tree/dev`, an
 //! issue, `?tab=readme`, `#readme`) are cut back to the repository (GitHub, Codeberg,
@@ -32,11 +33,20 @@ pub enum CloneSource {
 const MAX_LEN: usize = 2048;
 
 /// The repository location `text` names (trimmed, one line), if it names one. Pure: a
-/// local path is not checked on disk ([`from_clipboard`] does that).
+/// local path is not checked on disk ([`from_clipboard`] does that); a `gh repo clone`
+/// line is read with gh's defaults (github.com, https — [`parse_with`] takes the user's).
 pub fn parse(text: &str) -> Option<CloneSource> {
+    parse_with(text, &GhConfig::default())
+}
+
+/// [`parse`] with the GitHub CLI's settings `gh` for a `gh repo clone …` line.
+pub fn parse_with(text: &str, gh: &GhConfig) -> Option<CloneSource> {
     let t = text.trim();
     if t.is_empty() || t.len() > MAX_LEN || t.contains(['\n', '\r']) {
         return None;
+    }
+    if let Some(args) = gh_clone_args(t) {
+        return gh_repo(args, gh);
     }
     if let Some(args) = git_clone_args(t) {
         // `git clone [options] URL [folder]`: the first argument that is a location (an
@@ -57,7 +67,7 @@ pub const CLIPBOARD_NOTE: &str = "From the clipboard — type or paste to replac
 /// network path (`\\server\share…`) is not looked at: an unreachable server would keep
 /// the dialog from opening for a long time.
 pub fn from_clipboard(text: &str) -> Option<String> {
-    match parse(text)? {
+    match parse_clipboard(text)? {
         CloneSource::Url(u) => Some(u),
         CloneSource::Path(p) if p.starts_with("\\\\") || p.starts_with("//") => None,
         CloneSource::Path(p) => {
@@ -65,6 +75,207 @@ pub fn from_clipboard(text: &str) -> Option<String> {
             is_repository(&path).then(|| path.display().to_string())
         }
     }
+}
+
+/// What Add Submodule takes from the clipboard's `text`: a URL only. A local path is no
+/// address for a submodule — `.gitmodules` would record this machine's folder, and git
+/// refuses `file` transports for submodules unless `protocol.file.allow` says otherwise.
+pub fn url_from_clipboard(text: &str) -> Option<String> {
+    match parse_clipboard(text)? {
+        CloneSource::Url(u) => Some(u),
+        CloneSource::Path(_) => None,
+    }
+}
+
+/// [`parse_with`] the user's gh settings — read only for a `gh repo clone` line.
+fn parse_clipboard(text: &str) -> Option<CloneSource> {
+    let gh = if gh_clone_args(text.trim()).is_some() {
+        GhConfig::load()
+    } else {
+        GhConfig::default()
+    };
+    parse_with(text, &gh)
+}
+
+/// The GitHub CLI's settings a `gh repo clone OWNER/REPO` line depends on: which host,
+/// which protocol (`git_protocol`, per host or global; gh's default is https) and, for a
+/// bare `REPO`, the signed-in user. Read from gh's `config.yml` / `hosts.yml` in-process
+/// ([`GhConfig::load`]); gh itself is not run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GhConfig {
+    /// `GH_HOST`, if set.
+    pub env_host: Option<String>,
+    /// The global `git_protocol` of `config.yml`.
+    pub git_protocol: Option<String>,
+    /// The hosts of `hosts.yml`, in file order.
+    pub hosts: Vec<GhHost>,
+}
+
+/// One host of gh's `hosts.yml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GhHost {
+    pub name: String,
+    pub git_protocol: Option<String>,
+    pub user: Option<String>,
+}
+
+impl GhConfig {
+    /// From the texts of gh's `config.yml` and `hosts.yml` and `GH_HOST`. Only the keys
+    /// above are read (no YAML library: top-level `key: value` lines, a host's own keys
+    /// one level below its name).
+    pub fn parse(config_yml: &str, hosts_yml: &str, env_host: Option<&str>) -> Self {
+        let git_protocol = yaml_lines(config_yml)
+            .filter(|(indent, ..)| *indent == 0)
+            .find(|(_, k, _)| *k == "git_protocol")
+            .and_then(|(_, _, v)| v);
+        let mut hosts: Vec<GhHost> = Vec::new();
+        // The indentation of the current host's own keys (its first indented line).
+        let mut child: Option<usize> = None;
+        for (indent, key, value) in yaml_lines(hosts_yml) {
+            if indent == 0 {
+                hosts.push(GhHost {
+                    name: key.to_string(),
+                    ..Default::default()
+                });
+                child = None;
+                continue;
+            }
+            let Some(host) = hosts.last_mut() else { continue };
+            if indent != *child.get_or_insert(indent) {
+                continue;
+            }
+            match key {
+                "git_protocol" => host.git_protocol = value,
+                "user" => host.user = value,
+                _ => {}
+            }
+        }
+        GhConfig {
+            env_host: env_host.map(str::trim).filter(|h| !h.is_empty()).map(str::to_string),
+            git_protocol,
+            hosts,
+        }
+    }
+
+    /// The user's gh settings: `$GH_CONFIG_DIR`, else `$XDG_CONFIG_HOME/gh`, else (Windows)
+    /// `%AppData%\GitHub CLI`, else `~/.config/gh` — where gh looks. Missing files = gh's
+    /// defaults.
+    pub fn load() -> Self {
+        let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
+        let dir = env("GH_CONFIG_DIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| env("XDG_CONFIG_HOME").map(|x| Path::new(&x).join("gh")))
+            .or_else(|| {
+                cfg!(windows)
+                    .then(|| env("AppData").map(|a| Path::new(&a).join("GitHub CLI")))
+                    .flatten()
+            })
+            .or_else(|| dirs::home_dir().map(|h| h.join(".config").join("gh")));
+        let read = |name: &str| {
+            dir.as_ref()
+                .and_then(|d| std::fs::read_to_string(d.join(name)).ok())
+                .unwrap_or_default()
+        };
+        let env_host = std::env::var("GH_HOST").ok();
+        Self::parse(&read("config.yml"), &read("hosts.yml"), env_host.as_deref())
+    }
+
+    /// The host of `OWNER/REPO` as gh picks it: `GH_HOST`, else the only signed-in host,
+    /// else github.com.
+    pub fn default_host(&self) -> &str {
+        match (&self.env_host, self.hosts.as_slice()) {
+            (Some(h), _) => h,
+            (None, [one]) => &one.name,
+            _ => "github.com",
+        }
+    }
+
+    /// gh's `git_protocol` for `host`: the host's own, else the global one, else https.
+    pub fn protocol(&self, host: &str) -> &str {
+        self.host(host)
+            .and_then(|h| h.git_protocol.as_deref())
+            .or(self.git_protocol.as_deref())
+            .unwrap_or("https")
+    }
+
+    fn host(&self, name: &str) -> Option<&GhHost> {
+        self.hosts.iter().find(|h| h.name.eq_ignore_ascii_case(name))
+    }
+}
+
+/// The `key: value` lines of a simple YAML text: (indentation, key, value — `None` when
+/// empty), comments and list items skipped, quotes around the value removed.
+fn yaml_lines(text: &str) -> impl Iterator<Item = (usize, &str, Option<String>)> {
+    text.lines().filter_map(|line| {
+        let body = line.trim_start();
+        if body.is_empty() || body.starts_with('#') || body.starts_with('-') {
+            return None;
+        }
+        let (key, value) = body.split_once(':')?;
+        let value = value.split(" #").next().unwrap_or("").trim();
+        let value = unquote(value).trim();
+        let key = unquote(key.trim());
+        Some((line.len() - body.len(), key, (!value.is_empty()).then(|| value.to_string())))
+    })
+}
+
+/// The arguments after `gh repo clone` (a shell prompt `$ ` in front allowed).
+fn gh_clone_args(t: &str) -> Option<&str> {
+    let mut rest = t.strip_prefix("$ ").unwrap_or(t).trim_start();
+    for word in ["gh", "repo", "clone"] {
+        rest = rest.strip_prefix(word)?;
+        if rest.is_empty() {
+            return Some(rest);
+        }
+        rest = rest.strip_prefix(char::is_whitespace)?.trim_start();
+    }
+    Some(rest)
+}
+
+/// The repository of `gh repo clone [options] REPO [DIR] [-- gitflags]`: `OWNER/REPO`,
+/// `HOST/OWNER/REPO`, `REPO` (the signed-in user's) or a URL, as gh resolves it — https
+/// `https://HOST/OWNER/REPO.git`, ssh `git@HOST:OWNER/REPO.git`.
+fn gh_repo(args: &str, gh: &GhConfig) -> Option<CloneSource> {
+    let mut words = args.split_whitespace();
+    let repo = loop {
+        match words.next()? {
+            "--" => return None,
+            "-u" | "--upstream-remote-name" => {
+                words.next()?;
+            }
+            w if w.starts_with('-') => {}
+            w => break unquote(w),
+        }
+    };
+    if repo.contains("://") || scp_like(repo) {
+        return match parse_one(repo)? {
+            CloneSource::Url(u) => Some(CloneSource::Url(u)),
+            CloneSource::Path(_) => None,
+        };
+    }
+    let segs: Vec<&str> = repo.split('/').collect();
+    let (host, owner, name) = match segs.as_slice() {
+        [name] => {
+            let host = gh.default_host();
+            (host, gh.host(host)?.user.as_deref()?, *name)
+        }
+        [owner, name] => (gh.default_host(), *owner, *name),
+        [host, owner, name] => (*host, *owner, *name),
+        _ => return None,
+    };
+    let name = name.strip_suffix(".git").unwrap_or(name);
+    let part = |s: &str| {
+        !s.is_empty()
+            && !s.starts_with('.')
+            && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
+    if !part(owner) || !part(name) || !valid_host(host) || host.starts_with('[') {
+        return None;
+    }
+    Some(CloneSource::Url(match gh.protocol(host) {
+        "ssh" => format!("git@{host}:{owner}/{name}.git"),
+        _ => format!("https://{host}/{owner}/{name}.git"),
+    }))
 }
 
 /// `dir` is a repository: a work tree with `.git` (folder or file), or a git directory
@@ -424,6 +635,82 @@ mod tests {
             assert_eq!(parse(s), None, "{s:?}");
         }
         assert_eq!(parse(&format!("https://example.com/{}", "a".repeat(3000))), None);
+    }
+
+    #[gitti_test::test]
+    fn gh_repo_clone_lines_name_the_url_gh_clones() {
+        let def = GhConfig::default();
+        for (line, want) in [
+            ("gh repo clone cli/cli", "https://github.com/cli/cli.git"),
+            ("$ gh repo clone cli/cli my-folder", "https://github.com/cli/cli.git"),
+            ("gh repo clone cli/cli.git", "https://github.com/cli/cli.git"),
+            ("gh repo clone -u up cli/cli dir -- --depth 1", "https://github.com/cli/cli.git"),
+            ("gh repo clone --no-upstream 'a-b/c.d_e'", "https://github.com/a-b/c.d_e.git"),
+            ("gh repo clone ghe.example.com/team/tool", "https://ghe.example.com/team/tool.git"),
+            ("gh repo clone https://github.com/cli/cli/tree/trunk", "https://github.com/cli/cli"),
+            ("gh repo clone git@github.com:cli/cli.git", "git@github.com:cli/cli.git"),
+        ] {
+            assert_eq!(parse_with(line, &def), url(want), "{line}");
+        }
+        for line in [
+            "gh repo clone",
+            "gh repo clone -- --depth 1",
+            "gh repo clone -u",
+            "gh repo clone repo",
+            "gh repo clone a/b/c/d",
+            "gh repo clone ../x/y",
+            "gh repo clone a/b?c",
+            "gh repo clone /srv/repo",
+            "gh repo cloned cli/cli",
+            "gh repo view cli/cli",
+            "ghost repo clone cli/cli",
+        ] {
+            assert_eq!(parse_with(line, &def), None, "{line}");
+        }
+    }
+
+    #[gitti_test::test]
+    fn gh_settings_choose_host_protocol_and_user() {
+        let config = "# gh config\nversion: 1\ngit_protocol: https\naliases:\n    co: pr checkout\n";
+        let hosts = "github.com:\n    git_protocol: ssh\n    users:\n        alice:\n            git_protocol: https\n    user: alice\n";
+        let gh = GhConfig::parse(config, hosts, None);
+        assert_eq!(gh.default_host(), "github.com");
+        assert_eq!(gh.protocol("github.com"), "ssh", "the host's own setting wins");
+        assert_eq!(gh.protocol("ghe.example.com"), "https");
+        assert_eq!(parse_with("gh repo clone cli/cli", &gh), url("git@github.com:cli/cli.git"));
+        assert_eq!(parse_with("gh repo clone mine", &gh), url("git@github.com:alice/mine.git"));
+        assert_eq!(
+            parse_with("gh repo clone ghe.example.com/t/x", &gh),
+            url("https://ghe.example.com/t/x.git")
+        );
+        // The only signed-in host is the default; GH_HOST outranks it; global protocol.
+        let gh = GhConfig::parse(
+            "git_protocol: \"ssh\"\n",
+            "ghe.example.com:\n  user: bob # me\n",
+            None,
+        );
+        assert_eq!(parse_with("gh repo clone t/x", &gh), url("git@ghe.example.com:t/x.git"));
+        assert_eq!(parse_with("gh repo clone x", &gh), url("git@ghe.example.com:bob/x.git"));
+        let gh = GhConfig::parse("", "ghe.example.com:\n  user: bob\n", Some("github.com"));
+        assert_eq!(parse_with("gh repo clone t/x", &gh), url("https://github.com/t/x.git"));
+        assert_eq!(parse_with("gh repo clone x", &gh), None, "no user for github.com");
+        // Several hosts: github.com.
+        let gh = GhConfig::parse("", "a.example:\n  user: a\nb.example:\n  user: b\n", None);
+        assert_eq!(gh.default_host(), "github.com");
+        // Empty / missing files: gh's defaults.
+        assert_eq!(GhConfig::parse("", "", Some("  ")), GhConfig::default());
+    }
+
+    #[gitti_test::test]
+    fn submodules_take_urls_only() {
+        assert_eq!(
+            url_from_clipboard("git clone git@github.com:user/repo.git"),
+            Some("git@github.com:user/repo.git".to_string())
+        );
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        assert_eq!(url_from_clipboard(&dir.path().display().to_string()), None);
+        assert_eq!(url_from_clipboard("hello"), None);
     }
 
     #[gitti_test::test]

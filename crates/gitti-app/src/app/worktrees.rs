@@ -18,7 +18,10 @@ use super::GittiApp;
 use super::modal::{ModalLive, ModalResult, ModalSpec};
 use super::picker::PickerItem;
 use super::repo_actions::AppEvent;
-use crate::{AddWorktree, MoveThisWorktree, PruneWorktrees, RemoveThisWorktree, RepairWorktrees};
+use crate::{
+    AddWorktree, MoveThisWorktree, PruneWorktrees, RemoveThisWorktree, RepairWorktrees,
+    ToggleMainWorktreeAlone,
+};
 
 type AppHandle = WeakEntity<GittiApp>;
 
@@ -203,6 +206,9 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &RepairWorktrees, w, cx| {
             this.repair_worktrees_dialog(None, w, cx)
         }))
+        .on_action(cx.listener(|this, _: &ToggleMainWorktreeAlone, _, cx| {
+            this.toggle_main_worktree_alone(cx)
+        }))
     }
 
     /// Repository ▸ "Move This Worktree…": this tab's worktree, when it is a linked one.
@@ -219,7 +225,8 @@ impl GittiApp {
         }
     }
 
-    /// Settings / palette: the main worktree listed alone (no linked worktrees) or not.
+    /// Settings / palette / View menu: the main worktree listed alone (no linked
+    /// worktrees) or not.
     pub(super) fn toggle_main_worktree_alone(&mut self, cx: &mut Context<Self>) {
         self.update_settings(cx, |s| s.show_main_worktree_alone = !s.show_main_worktree_alone);
         // Without linked worktrees the section appears / goes: say why.
@@ -284,7 +291,8 @@ impl GittiApp {
             ),
             "the repository's folder under WORKTREES in the sidebar",
             |t, _, cx| t.toggle_main_worktree_alone(cx),
-        ));
+        )
+        .act(&ToggleMainWorktreeAlone));
         for wt in self
             .worktrees
             .iter()

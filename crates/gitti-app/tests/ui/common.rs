@@ -216,10 +216,15 @@ pub mod watchdog {
 
 /// A temp dir with `GITTI_CONFIG_DIR` pointed into it; call first thing in `main` (the
 /// platform text system must be created on the main thread on macOS, so no libtest).
+/// The GitHub CLI's settings (`gh repo clone` on the clipboard) are gh's defaults there.
 pub fn setup() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     // SAFETY: still single-threaded.
-    unsafe { std::env::set_var("GITTI_CONFIG_DIR", tmp.path().join("config")) };
+    unsafe {
+        std::env::set_var("GITTI_CONFIG_DIR", tmp.path().join("config"));
+        std::env::set_var("GH_CONFIG_DIR", tmp.path().join("gh"));
+        std::env::remove_var("GH_HOST");
+    }
     tmp
 }
 

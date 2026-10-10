@@ -492,6 +492,29 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
             _ => {}
         }
     }
+
+    // 9. A dialog: inside the window's view of it; its title and buttons always shown
+    //    whole (the part between them scrolls), and what that part draws stays in it.
+    if let (Some(m), Some(body)) = (get("modal"), get("modal-body")) {
+        if m.visible() != Some(m.bounds) {
+            out.push(format!("modal {:?} is not whole in the window", m.bounds));
+        }
+        if let Some(ok) = get("modal-ok")
+            && (ok.visible() != Some(ok.bounds) || f32::from(ok.bounds.top()) + TOL < f32::from(body.bounds.bottom()))
+        {
+            out.push("modal-ok is not whole below modal-body".to_string());
+        }
+        for part in probes.iter().filter(|q| {
+            matches!(q.kind(), "modal-field" | "modal-check" | "modal-note" | "modal-option")
+                || matches!(q.name.as_str(), "modal-live" | "modal-text")
+        }) {
+            if let Some(v) = part.visible()
+                && !contains(&body.bounds, &v)
+            {
+                out.push(format!("{} is drawn outside modal-body", part.name));
+            }
+        }
+    }
     out
 }
 

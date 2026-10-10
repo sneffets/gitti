@@ -98,7 +98,7 @@ thread_local! {
 
 /// The clipboard's text — in a scripted run (`GITTI_SCRIPT`) the script's (`clip:`), so a
 /// run doesn't depend on what the user copied last.
-fn clipboard_text(cx: &App) -> Option<String> {
+pub(super) fn clipboard_text(cx: &App) -> Option<String> {
     if std::env::var_os("GITTI_SCRIPT").is_some() {
         return SCRIPT_CLIPBOARD.with(|c| c.borrow().clone());
     }

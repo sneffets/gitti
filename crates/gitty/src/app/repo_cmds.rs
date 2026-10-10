@@ -211,7 +211,7 @@ impl App {
                 });
             },
         ));
-        self.read_clipboard_for_clone();
+        self.read_clipboard_for(CLONE_TITLE);
     }
 
     /// Sets the clipboard text of a scripted run (`clip:` steps, copies).
@@ -221,37 +221,43 @@ impl App {
         }
     }
 
-    /// Reads the clipboard for the Clone dialog just opened: on a thread (the clipboard
-    /// program can be slow — PowerShell on Windows), the dialog fills when it answers
-    /// ([`Self::clone_clipboard`]). A scripted run takes the script's text (`clip:`) and
-    /// never reads the system clipboard.
-    fn read_clipboard_for_clone(&mut self) {
+    /// Reads the clipboard for the Clone / Add Submodule dialog just opened (`title`): on a
+    /// thread (the clipboard program can be slow — PowerShell on Windows), the dialog
+    /// fills when it answers ([`Self::clone_clipboard`]). Clone takes a local repository
+    /// too, Add Submodule URLs only (`clone_source::url_from_clipboard`). A scripted run
+    /// takes the script's text (`clip:`) and never reads the system clipboard.
+    pub(super) fn read_clipboard_for(&mut self, title: &'static str) {
+        let source = move |text: String| {
+            if title == CLONE_TITLE {
+                gitti_core::clone_source::from_clipboard(&text)
+            } else {
+                gitti_core::clone_source::url_from_clipboard(&text)
+            }
+        };
         if std::env::var_os("GITTY_SCRIPT").is_some() {
             let text = SCRIPT_CLIPBOARD.lock().ok().and_then(|c| c.clone());
-            let url = text.and_then(|t| gitti_core::clone_source::from_clipboard(&t));
-            self.clone_clipboard(url);
+            self.clone_clipboard(title, text.and_then(source));
             return;
         }
         spawn(
             &self.tx,
-            || {
+            move || {
                 let tools = crate::clipboard::paste_tools();
-                let text = crate::clipboard::paste_with(tools, None, PASTE_TIMEOUT)?;
-                gitti_core::clone_source::from_clipboard(&text)
+                source(crate::clipboard::paste_with(tools, None, PASTE_TIMEOUT)?)
             },
-            Msg::CloneClipboard,
+            move |url| Msg::CloneClipboard(title, url),
         );
     }
 
-    /// The repository location from the clipboard into the Clone dialog's URL field —
-    /// selected, with a note — as long as the dialog is open and nothing was typed there.
-    pub(super) fn clone_clipboard(&mut self, url: Option<String>) {
+    /// The repository location from the clipboard into the URL field of dialog `title` —
+    /// selected, with a note — as long as that dialog is open and nothing was typed there.
+    pub(super) fn clone_clipboard(&mut self, title: &str, url: Option<String>) {
         let Some(url) = url else {
             return;
         };
         if let Some(m) = &mut self.modal
-            && let Modal::Input { title, fields, .. } = m
-            && title == CLONE_TITLE
+            && let Modal::Input { title: open, fields, .. } = m
+            && open.as_str() == title
             && fields.first().is_some_and(|f| f.edit.is_empty())
         {
             m.prefill(0, &url, gitti_core::clone_source::CLIPBOARD_NOTE);
@@ -367,6 +373,9 @@ impl App {
 }
 
 const CLONE_TITLE: &str = "Clone Repository";
+
+/// The Add Submodule dialog's title (`app/submodules.rs`).
+pub(super) const ADD_SUBMODULE_TITLE: &str = "Add Submodule (staged — commit to record it)";
 
 /// How long the clipboard program may take.
 const PASTE_TIMEOUT: Duration = Duration::from_secs(3);

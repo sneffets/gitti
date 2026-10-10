@@ -575,3 +575,64 @@ fn ref_badges_all_in_the_header_tag_always_in_the_list() {
     // Wide: the parent's row has room for three (b1 b2 only-tag +2).
     assert!(s[0].lines().any(|l| l.contains(" b1   b2   ◆ only-tag  +2 ")), "{out}");
 }
+
+/// The lines of a screen's commit header from its "Refs" line to the subject.
+fn refs_block(screen: &str) -> String {
+    screen
+        .lines()
+        .skip_while(|l| !l.contains(" Refs "))
+        .take_while(|l| !l.contains("Rework the frobnicator"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A ref that appears while a commit is shown (another program tags it): its header is
+/// rebuilt with the new badge — it kept the old refs before.
+#[gitti_test::test]
+fn header_follows_new_refs() {
+    let dir = many_refs_repo();
+    let head = git(dir.path(), &["rev-parse", "HEAD"]);
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(
+        dir.path(),
+        config.path(),
+        "160x40",
+        &format!("key:j;dump;write:.git/refs/tags/fresh-tag={}\\n;focus;wait;dump;check", head.trim()),
+    );
+    let s = screens(&out);
+    assert!(!refs_block(s[0]).contains("fresh-tag"), "{out}");
+    let block = refs_block(s[1]);
+    assert!(block.contains("◆ fresh-tag") && block.contains("◆ v1.0.0"), "the new tag in the header:\n{block}\n{out}");
+    assert!(out.contains("check: ok"), "{out}");
+}
+
+/// A click on a list row's "+N" selects the row and says which refs it hides (gitti: the
+/// tooltip); a click elsewhere on the row doesn't.
+#[gitti_test::test]
+fn plus_n_click_names_the_hidden_refs() {
+    let dir = many_refs_repo();
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(dir.path(), config.path(), "160x40", "dump");
+    let screen = screens(&out)[0];
+    // The parent's row: "b1 b2 ◆ only-tag +2" (b3, b4 hidden); the screen's first line
+    // lost the toolbar's start, the others are whole.
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("◆ only-tag"))
+        .unwrap_or_else(|| panic!("no row with only-tag: {out}"));
+    let byte = line.find(" +2 ").unwrap_or_else(|| panic!("no +2 in {line:?}"));
+    let x = line[..byte].chars().count() + 1;
+    let out = gitty_with(
+        dir.path(),
+        config.path(),
+        "160x40",
+        &format!("click:{},{y};state;click:{x},{y};state", x + 6),
+    );
+    let st = states(&out);
+    assert!(!st[0].contains("more refs"), "a click beside +N: {out}");
+    assert!(
+        st[1].contains("2 more refs on this commit") && st[1].contains("b3 — branch") && st[1].contains("b4 — branch"),
+        "{out}"
+    );
+}
