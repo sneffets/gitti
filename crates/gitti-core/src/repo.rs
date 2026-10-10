@@ -287,7 +287,7 @@ pub(crate) struct StashEntry {
 /// gix's default permissions minus the `GIT_*` environment overrides (`GIT_WORK_TREE`,
 /// `GIT_INDEX_FILE`, … set by a git hook or alias gitti was started from): a [`Repo`] is
 /// the repository at the path it was opened with. The git CLI side: `git_cli::LOCAL_REPO_ENV`.
-fn gix_permissions() -> gix::open::Permissions {
+pub(crate) fn gix_permissions() -> gix::open::Permissions {
     let mut p = gix::open::Permissions::default();
     p.env.git_prefix = gix::sec::Permission::Deny;
     p
