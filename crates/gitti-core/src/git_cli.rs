@@ -17,7 +17,7 @@ use crate::progress::ProgressLines;
 pub enum GitError {
     #[error("failed to run git: {}", spawn_text(.0))]
     Spawn(#[from] std::io::Error),
-    #[error("git {args}: {}", summarize(stderr))]
+    #[error("git {args}: {}", summarize(*code, stderr))]
     Failed {
         args: String,
         code: i32,
@@ -923,18 +923,26 @@ fn spawn_text(e: &std::io::Error) -> String {
     e.to_string()
 }
 
-fn summarize(stderr: &str) -> String {
+/// git's message (its `fatal:` / `error:` line first); without one, how it ended — a bare
+/// "failed" told nobody anything.
+fn summarize(code: i32, stderr: &str) -> String {
     let lines: Vec<&str> = stderr
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
-    let key = lines
+    let Some(key) = lines
         .iter()
         .find(|l| l.starts_with("fatal:") || l.starts_with("error:"))
         .or(lines.last())
         .copied()
-        .unwrap_or("failed");
+    else {
+        return if code == -1 {
+            "git was stopped by a signal, without a message".to_string()
+        } else {
+            format!("git ended with exit code {code}, without a message")
+        };
+    };
     if lines.len() <= 1 {
         key.to_string()
     } else {
@@ -1005,6 +1013,21 @@ fn windows_1252(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gitti_test::test]
+    fn a_failure_without_a_message_says_how_git_ended() {
+        let err = |code, stderr: &str| {
+            GitError::Failed {
+                args: "status".into(),
+                code,
+                stderr: stderr.into(),
+            }
+            .to_string()
+        };
+        assert_eq!(err(128, "hint: x\nfatal: not a git repository\n"), "git status: fatal: not a git repository\n\nhint: x\nfatal: not a git repository\n");
+        assert_eq!(err(1, "  \n"), "git status: git ended with exit code 1, without a message");
+        assert_eq!(err(-1, ""), "git status: git was stopped by a signal, without a message");
+    }
 
     #[gitti_test::test]
     fn short_durations_fit_the_column() {
