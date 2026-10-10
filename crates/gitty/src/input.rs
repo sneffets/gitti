@@ -45,7 +45,7 @@ impl App {
         match &mut self.modal {
             Some(Modal::Input { fields, focus, .. }) => {
                 if let Some(f) = fields.get_mut(*focus) {
-                    f.edit.insert_str(text);
+                    f.paste(text);
                 }
             }
             Some(m @ Modal::Picker { .. }) => {
@@ -618,7 +618,7 @@ impl App {
                     }
                     _ => {
                         if let Some(f) = fields.get_mut(*focus) {
-                            f.edit.handle_key(key);
+                            f.key(key);
                         }
                         Outcome::Keep
                     }

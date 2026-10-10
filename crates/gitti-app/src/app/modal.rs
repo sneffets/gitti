@@ -79,6 +79,8 @@ pub struct Modal {
     choices: Vec<Choice>,
     /// Field `dst` follows field `src` until the user edits it (see `ModalSpec::derive`).
     derive: Option<Derive>,
+    /// Notes under prefilled fields (`ModalSpec::prefilled`).
+    notes: Vec<FieldNote>,
     /// Mutually exclusive options shown as a segmented row, and the chosen one.
     options: Vec<String>,
     option: usize,
@@ -119,6 +121,14 @@ pub type PickFn =
 /// Computes a derived field from its source field (`ModalSpec::derive`).
 type DeriveFn = std::rc::Rc<dyn Fn(&str) -> String>;
 
+/// A note under a prefilled field ("From the clipboard"), shown while the field still
+/// holds the value it was opened with (`ModalSpec::prefilled`).
+struct FieldNote {
+    field: usize,
+    text: String,
+    value: String,
+}
+
 struct Derive {
     src: usize,
     dst: usize,
@@ -139,6 +149,8 @@ pub struct ModalSpec {
     auth: bool,
     choices: Vec<Choice>,
     derive: Option<(usize, usize, DeriveFn)>,
+    /// Prefilled fields and their notes (`ModalSpec::prefilled`).
+    prefilled: Vec<(usize, String)>,
     options: Vec<String>,
     option: usize,
     field_options: Vec<(usize, Vec<usize>)>,
@@ -160,6 +172,7 @@ impl ModalSpec {
             auth: false,
             choices: Vec::new(),
             derive: None,
+            prefilled: Vec::new(),
             options: Vec::new(),
             option: 0,
             field_options: Vec::new(),
@@ -255,6 +268,14 @@ impl ModalSpec {
     /// while `src` is hidden by the chosen option).
     pub fn derive(mut self, src: usize, dst: usize, f: impl Fn(&str) -> String + 'static) -> Self {
         self.derive = Some((src, dst, std::rc::Rc::new(f)));
+        self
+    }
+
+    /// Field `field`'s initial value was put in for the user (e.g. from the clipboard): it
+    /// opens selected (typing replaces it), a field derived from it follows as if it had
+    /// been typed, and `note` shows under it while it still holds that value.
+    pub fn prefilled(mut self, field: usize, note: impl Into<String>) -> Self {
+        self.prefilled.push((field, note.into()));
         self
     }
 
@@ -420,6 +441,18 @@ impl GittiApp {
                 .map(|(_, d)| d.read(cx).value().to_string())
                 .unwrap_or_default(),
         });
+        let notes = spec
+            .prefilled
+            .iter()
+            .filter_map(|(ix, text)| {
+                let (_, input) = fields.get(*ix)?;
+                Some(FieldNote {
+                    field: *ix,
+                    text: text.clone(),
+                    value: input.read(cx).value().to_string(),
+                })
+            })
+            .collect();
         let mut field_options = vec![None; fields.len()];
         for (f, opts) in spec.field_options {
             if let Some(slot) = field_options.get_mut(f) {
@@ -457,6 +490,7 @@ impl GittiApp {
             extra: spec.extra,
             choices: spec.choices,
             derive,
+            notes,
             options: spec.options,
             option: spec.option,
             field_options,
@@ -468,6 +502,13 @@ impl GittiApp {
             live_now: None,
             _subscriptions: subs,
         });
+        // Prefilled fields: selected, and what follows from them as when typed.
+        for (ix, _) in spec.prefilled {
+            if let Some(input) = self.modal.as_ref().and_then(|m| m.field_input(ix)).cloned() {
+                input.update(cx, |s, cx| s.select_all(window, cx));
+                self.derive_modal_field(ix, window, cx);
+            }
+        }
         self.refresh_modal_live(cx);
         self.sync_secure_input(window);
         cx.notify();
@@ -633,6 +674,21 @@ impl GittiApp {
     /// Script hook: what the open dialog says live (`ModalSpec::live`).
     pub fn script_modal_live(&self) -> Option<ModalLive> {
         self.modal.as_ref()?.live_now.clone()
+    }
+
+    /// Script hook: the note shown under field `ix` of the open dialog (`ModalSpec::prefilled`).
+    pub fn script_modal_note(&self, ix: usize, cx: &App) -> Option<String> {
+        let m = self.modal.as_ref()?;
+        let input = m.field_input(ix)?.read(cx);
+        m.notes
+            .iter()
+            .find(|n| n.field == ix && input.value().as_ref() == n.value)
+            .map(|n| n.text.clone())
+    }
+
+    /// Script hook: the selected text range (bytes) of field `ix` of the open dialog.
+    pub fn script_modal_selection(&self, ix: usize, cx: &App) -> Option<std::ops::Range<usize>> {
+        Some(self.modal.as_ref()?.field_input(ix)?.read(cx).selected_range())
     }
 
     /// Script hook: the open dialog's message.
@@ -1198,7 +1254,20 @@ impl GittiApp {
                                 .into_any_element()
                         }
                     })
-                    .children(fill_buttons(modal.live_now.as_ref(), ix, cx)),
+                    .children(fill_buttons(modal.live_now.as_ref(), ix, cx))
+                    .children(
+                        modal
+                            .notes
+                            .iter()
+                            .find(|n| n.field == ix && input.read(cx).value().as_ref() == n.value)
+                            .map(|n| {
+                                div()
+                                    .probe(format!("modal-note:{ix}"))
+                                    .text_size(s.ui_small())
+                                    .text_color(p.text_muted)
+                                    .child(n.text.clone())
+                            }),
+                    ),
             );
         }
         if !modal.fields.is_empty() {

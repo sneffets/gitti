@@ -1104,6 +1104,21 @@ pub mod testing_menus {
         Some((app.script_modal_title()?, app.script_modal_fields(cx)))
     }
 
+    /// The note shown under field `ix` of the open dialog (a prefilled field's "From the
+    /// clipboard").
+    pub fn modal_note(ws: &Entity<Workspace>, ix: usize, cx: &App) -> Option<String> {
+        ws.read(cx).script_app()?.read(cx).script_modal_note(ix, cx)
+    }
+
+    /// The selected range (bytes) of field `ix` of the open dialog.
+    pub fn modal_selection(
+        ws: &Entity<Workspace>,
+        ix: usize,
+        cx: &App,
+    ) -> Option<std::ops::Range<usize>> {
+        ws.read(cx).script_app()?.read(cx).script_modal_selection(ix, cx)
+    }
+
     /// [`modal_live`]'s answer: (text, OK label, why OK is disabled, completion buttons'
     /// values).
     pub type ModalLive = (String, Option<String>, Option<String>, Vec<String>);

@@ -50,6 +50,7 @@ pub fn main() {
         ("gitignore_dialog", gitignore_dialog),
         ("folder_rule_files", folder_rule_files),
         ("clone_and_init", clone_and_init),
+        ("clone_from_clipboard", clone_from_clipboard),
         ("init_object_format", init_object_format),
         ("go_to_commit", go_to_commit),
         ("search_in_changes", search_in_changes),
@@ -575,6 +576,63 @@ fn bare_source(name: &str) -> PathBuf {
     s.commit("refs/heads/main", "init", None, &[("readme.md", Some("hi\n"))]);
     s.import(&bare);
     bare
+}
+
+/// The Clone dialog takes a repository location from the clipboard as if it was pasted:
+/// a forge's page URL cut back to the repository, selected (typing replaces it), the folder
+/// name derived, "From the clipboard" under it until it is changed; a local repository's
+/// path too; plain text not.
+fn clone_from_clipboard(ui: &mut Ui) {
+    let ws = ui.ws.clone();
+    let note = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_note(&ws, 0, cx));
+    let selection = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_selection(&ws, 0, cx));
+    ui.quick("focuslist");
+    ui.quick("clip:https://github.com/octo/project/blob/main/README.md");
+    ui.quick("action:gitti::CloneRepository");
+    let url = "https://github.com/octo/project";
+    match modal(ui) {
+        Some((t, f)) if t == "Clone Repository" && f[0] == url && f[2] == "project" => {}
+        other => fail!(ui, "clone dialog from the clipboard: {other:?}"),
+    }
+    if note(ui).as_deref() != Some(gitti_core::clone_source::CLIPBOARD_NOTE) {
+        let n = note(ui);
+        fail!(ui, "no clipboard note under the URL: {n:?}");
+    }
+    if selection(ui) != Some(0..url.len()) {
+        let s = selection(ui);
+        fail!(ui, "the prefilled URL is not selected: {s:?}");
+    }
+    // Typing replaces it; the folder name follows, the note goes.
+    ui.type_text("git@example.com:team/other.git");
+    match modal(ui) {
+        Some((_, f)) if f[0] == "git@example.com:team/other.git" && f[2] == "other" => {}
+        other => fail!(ui, "typing over the clipboard URL: {other:?}"),
+    }
+    if let Some(n) = note(ui) {
+        fail!(ui, "clipboard note after typing: {n:?}");
+    }
+    ui.quick("cancel");
+    // A local repository: its path, the folder named after it.
+    let repo = ui.workdir();
+    ui.quick(&format!("clip:  {}\n", repo.display()));
+    ui.quick("action:gitti::CloneRepository");
+    let name = repo.file_name().unwrap().to_string_lossy().to_string();
+    match modal(ui) {
+        Some((_, f)) if f[0] == repo.display().to_string() && f[2] == name => {}
+        other => fail!(ui, "clone dialog with a repository path on the clipboard: {other:?}"),
+    }
+    ui.quick("cancel");
+    // Plain text: an empty dialog, no note.
+    ui.quick("clip:see https://github.com/octo/project for details");
+    ui.quick("action:gitti::CloneRepository");
+    match modal(ui) {
+        Some((_, f)) if f[0].is_empty() && f[2].is_empty() => {}
+        other => fail!(ui, "clone dialog with plain text on the clipboard: {other:?}"),
+    }
+    if let Some(n) = note(ui) {
+        fail!(ui, "clipboard note without a URL: {n:?}");
+    }
+    ui.quick("cancel");
 }
 
 /// Init offers the SHA-256 object format, preset from git's default (SHA-1 from

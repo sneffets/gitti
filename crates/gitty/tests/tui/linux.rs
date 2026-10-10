@@ -1,8 +1,8 @@
 //! gitty on Linux / unix, and Unicode in the terminal.
 //!
-//! - Clipboard: the tool chain `wl-copy` → `xclip` → `xsel` → OSC 52 against fake tools on
-//!   a temporary search path (`src/clipboard.rs` is included here; the real clipboard is
-//!   never touched).
+//! - Clipboard: the tool chain `wl-copy` → `xclip` → `xsel` → OSC 52 (reading: `wl-paste`
+//!   → `xclip -o` → `xsel --output`) against fake tools on a temporary search path
+//!   (`src/clipboard.rs` is included here; the real clipboard is never touched).
 //! - Unicode width: CJK / emoji (ZWJ, flags, VS16) / combining marks / RTL / zero-width
 //!   characters / tabs / escape sequences in file names, branch names, subjects, author
 //!   names and diff lines, at several terminal sizes: columns stay aligned, the `check`
@@ -178,6 +178,63 @@ fn clipboard_without_a_working_tool_leaves_osc_52() {
             .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
     );
     assert_eq!(String::from_utf8(unbase64(payload)).unwrap(), CLIP_TEXT);
+}
+
+/// A fake clipboard reader in `dir`: records its arguments (`NAME.args`), prints `text`,
+/// sleeps `secs`, exits with `code`.
+#[cfg(unix)]
+fn fake_paste_tool(dir: &Path, name: &str, code: i32, text: &str, secs: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(dir.join(format!("{name}.out")), text).unwrap();
+    let body = format!(
+        "#!/bin/sh\nPATH=/usr/bin:/bin\nprintf '%s\\n' \"$@\" > \"$0.args\"\ncat \"$0.out\"\n\
+         [ {secs} -gt 0 ] && exec sleep {secs}\nexit {code}\n"
+    );
+    std::fs::write(&path, body).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
+fn linux_paste_tools() -> Vec<clipboard::Tool> {
+    vec![
+        ("wl-paste", &["--no-newline"]),
+        ("xclip", &["-selection", "clipboard", "-o"]),
+        ("xsel", &["--clipboard", "--output"]),
+    ]
+}
+
+#[cfg(target_os = "linux")]
+#[gitti_test::test]
+fn linux_clipboard_readers_are_wayland_first_then_x11() {
+    assert_eq!(clipboard::paste_tools(), linux_paste_tools().as_slice());
+}
+
+/// Reading the clipboard (the Clone dialog): the first tool that prints it and succeeds,
+/// the UTF-8 text intact; one that fails, prints nothing or hangs (killed after the
+/// timeout) is skipped; none at all is no text.
+#[cfg(unix)]
+#[gitti_test::test]
+fn clipboard_reads_from_the_first_working_tool() {
+    let bin = tempfile::tempdir().unwrap();
+    let path = Some(bin.path().as_os_str());
+    let timeout = std::time::Duration::from_millis(300);
+    assert_eq!(clipboard::paste_with(&linux_paste_tools(), path, timeout), None);
+    fake_paste_tool(bin.path(), "wl-paste", 1, "from a failing wl-paste", 0);
+    fake_paste_tool(bin.path(), "xclip", 0, CLIP_TEXT, 0);
+    fake_paste_tool(bin.path(), "xsel", 0, "xsel", 0);
+    let got = clipboard::paste_with(&linux_paste_tools(), path, timeout);
+    assert_eq!(got.as_deref(), Some(CLIP_TEXT));
+    let args = std::fs::read_to_string(bin.path().join("xclip.args")).unwrap();
+    assert_eq!(args, "-selection\nclipboard\n-o\n");
+    assert!(!bin.path().join("xsel.args").exists(), "xsel not tried");
+    // A hanging xclip, an empty wl-paste: xsel's text.
+    fake_paste_tool(bin.path(), "wl-paste", 0, "", 0);
+    fake_paste_tool(bin.path(), "xclip", 0, "", 5);
+    let t = std::time::Instant::now();
+    let got = clipboard::paste_with(&linux_paste_tools(), path, timeout);
+    assert_eq!(got.as_deref(), Some("xsel"));
+    assert!(t.elapsed() < std::time::Duration::from_secs(2), "{:?}", t.elapsed());
 }
 
 /// Standard base64 decoding (test-side reference for `clipboard::base64`).

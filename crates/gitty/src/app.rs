@@ -137,6 +137,9 @@ pub enum Msg {
     LfsLocks(Result<Vec<gitti_core::lfs::LfsLock>>),
     /// "Track with Git LFS…" for this path: git-lfs as found (`app/lfs.rs`).
     LfsSetup(String, gitti_core::lfs_track::LfsSetup),
+    /// The repository location on the clipboard for the open Clone dialog
+    /// (`app/repo_cmds.rs`).
+    CloneClipboard(Option<String>),
 }
 
 /// What to do after an operation succeeded.
@@ -1064,6 +1067,7 @@ impl App {
                 self.loads_in_flight -= 1;
                 self.lfs_setup_read(path, setup);
             }
+            Msg::CloneClipboard(url) => self.clone_clipboard(url),
             Msg::Working(generation, result) => {
                 self.loads_in_flight -= 1;
                 if generation == self.working_gen {
@@ -3942,6 +3946,7 @@ impl App {
         // Scripted runs (tests) must not overwrite the user's clipboard: report only.
         if std::env::var_os("GITTY_SCRIPT").is_some() {
             self.set_info(format!("Copied {}", ellipsize(&text, 50)));
+            Self::set_script_clipboard(&text);
             return;
         }
         if crate::clipboard::copy_with(&text, crate::clipboard::tools(), None).is_some() {
