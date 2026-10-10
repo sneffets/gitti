@@ -62,6 +62,10 @@ pub struct LogEntry {
     /// description, not git arguments ([`LogEntry::command_line`]).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub in_process: bool,
+    /// A user's shell command line (a custom command) instead of git: the shell's name
+    /// (`sh`, `PowerShell`); `args` holds the command line as one entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
 }
 
 impl LogEntry {
@@ -70,6 +74,8 @@ impl LogEntry {
     pub fn command_line(&self) -> String {
         if self.in_process {
             format!("{} (in-process, no git)", self.args.join(" "))
+        } else if let Some(shell) = &self.program {
+            format!("{shell}: {}", self.args.join(" "))
         } else {
             format!("git {}", self.args.join(" "))
         }
@@ -664,6 +670,7 @@ impl Git {
                 output,
                 previous_session: false,
                 in_process: false,
+                program: None,
             };
             // Before it is shown or persisted.
             redact_entry(&mut entry);
@@ -697,7 +704,105 @@ impl Git {
             output,
             previous_session: false,
             in_process: true,
+            program: None,
         });
+    }
+
+    /// Runs a user's shell command line (a custom command, [`crate::custom_command`]):
+    /// `program` with `args` in `dir`, with this runner's environment (askpass: a git the
+    /// script runs asks through the app), detached from any terminal, cancellable like git
+    /// (Esc stops its process group), its output lines streamed to the operation's
+    /// progress sink. Logged as `<shell>: <line>` with its whole output, like a typed
+    /// command. The exit code is returned, not judged.
+    pub fn run_shell(
+        &self,
+        program: &str,
+        args: &[String],
+        dir: &Path,
+        shell: &str,
+        line: &str,
+    ) -> Result<GitOutput, GitError> {
+        if crate::process::scope_cancelled() {
+            return Err(GitError::Cancelled);
+        }
+        let start = Instant::now();
+        let mut cmd = Command::new(program);
+        cmd.current_dir(dir)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0");
+        for var in LOCAL_REPO_ENV {
+            cmd.env_remove(var);
+        }
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
+        detach_from_terminal(&mut cmd);
+        let sink = crate::process::scope_progress();
+        let mut out_lines = ProgressLines::default();
+        let mut err_lines = ProgressLines::default();
+        let mut stdout = Vec::new();
+        let mut on_stdout = |bytes: &[u8]| {
+            stdout.extend_from_slice(bytes);
+            if let Some(sink) = &sink {
+                out_lines.feed(bytes, &mut |l| sink(l));
+            }
+            true
+        };
+        let mut on_stderr = |bytes: &[u8]| {
+            if let Some(sink) = &sink {
+                err_lines.feed(bytes, &mut |l| sink(l));
+            }
+        };
+        let result = crate::process::execute(
+            cmd,
+            crate::process::Io {
+                on_stdout: Some(&mut on_stdout),
+                on_stderr: Some(&mut on_stderr),
+                gentle: true,
+                ..Default::default()
+            },
+        );
+        let (code, output, result) = match result {
+            Ok(o) if o.cancelled => (-1, "(cancelled)".to_string(), Err(GitError::Cancelled)),
+            Ok(o) => {
+                let stderr = decode_native(&o.stderr);
+                let text = format!("{}{}", decode_native(&stdout), stderr);
+                let out = GitOutput {
+                    stdout: std::mem::take(&mut stdout),
+                    stderr,
+                    code: o.code,
+                };
+                (o.code, text, Ok(out))
+            }
+            Err(e) => {
+                let e = GitError::Spawn(e);
+                (-1, format!("{program}: {e}"), Err(e))
+            }
+        };
+        if let Some(log) = &self.log {
+            let mut output = output.trim().to_string();
+            if output.len() > LOG_OUTPUT_LIMIT {
+                let mut cut = LOG_OUTPUT_LIMIT;
+                while !output.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                output.truncate(cut);
+                output.push_str("\n…");
+            }
+            let mut entry = LogEntry {
+                args: vec![line.to_string()],
+                code,
+                duration: start.elapsed(),
+                at: SystemTime::now(),
+                read_only: false,
+                user: true,
+                output,
+                previous_session: false,
+                in_process: false,
+                program: Some(shell.to_string()),
+            };
+            redact_entry(&mut entry);
+            log.push(entry);
+        }
+        result
     }
 
     /// Runs git once. Inside a [`crate::process::with_progress`] scope a writing command
@@ -1042,6 +1147,7 @@ mod log_file_tests {
             output: "To https://u:pw@h/r".into(),
             previous_session: false,
             in_process: false,
+            program: None,
         };
         std::fs::write(&path, serde_json::to_string(&old).unwrap() + "\n").unwrap();
         let again = CommandLog::default();

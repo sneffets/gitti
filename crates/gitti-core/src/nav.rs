@@ -240,6 +240,7 @@ mod tests {
             output: String::new(),
             previous_session: false,
             in_process: false,
+            program: None,
         })
     }
 

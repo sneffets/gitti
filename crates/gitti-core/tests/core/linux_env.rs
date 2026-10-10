@@ -235,6 +235,7 @@ fn log_lines_stay_whole_with_concurrent_writers() {
                         output: "[main 1234567] change\n 1 file changed".repeat(20),
                         previous_session: false,
                         in_process: false,
+                        program: None,
                     });
                 }
             })

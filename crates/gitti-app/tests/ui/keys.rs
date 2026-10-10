@@ -241,6 +241,7 @@ fn seed_command_log(dir: &Path, n: usize) {
             output: format!("{i:07x}\n"),
             previous_session: false,
             in_process: false,
+            program: None,
         });
     }
 }
