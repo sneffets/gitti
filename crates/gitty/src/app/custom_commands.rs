@@ -272,6 +272,7 @@ impl App {
                 ok_label: plan.ok_label,
                 blocked: plan.blocked,
                 matches: Vec::new(),
+                ..Default::default()
             }
         });
         self.modal = Some(modal);

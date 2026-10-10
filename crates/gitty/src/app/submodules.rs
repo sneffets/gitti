@@ -231,6 +231,7 @@ impl App {
                 ok_label: if note.is_some() { "Add Submodule…" } else { "Add Submodule" }.into(),
                 blocked: note.filter(|n| n.1).map(|n| n.0.to_string()),
                 matches: Vec::new(),
+                ..Default::default()
             }
         }));
         self.read_clipboard_for(super::repo_cmds::ADD_SUBMODULE_TITLE);

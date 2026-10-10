@@ -590,18 +590,34 @@ impl App {
             return;
         };
         // Enter does nothing while the dialog says why it can't work (`Modal::with_live`).
-        let blocked = modal.live_now().is_some_and(|l| l.blocked.is_some());
+        let live = modal.live_now();
+        let blocked = live.as_ref().is_some_and(|l| l.blocked.is_some());
+        let fills = live.map(|l| l.fills).unwrap_or_default();
         let outcome = match &mut modal {
             Modal::Input {
                 fields,
                 checks,
                 focus,
                 submit,
+                pick,
                 ..
             } => {
                 let total = fields.len() + checks.len();
                 match key.code {
                     KeyCode::Esc => Outcome::Close,
+                    // The field's chooser (`Modal::with_pick`).
+                    KeyCode::Char(c)
+                        if ctrl
+                            && c == crate::modal::PICK_KEY
+                            && pick.as_ref().is_some_and(|p| p.field == *focus) =>
+                    {
+                        let values: Vec<String> = fields.iter().map(|f| f.edit.text()).collect();
+                        let flags: Vec<bool> = checks.iter().map(|c| c.on).collect();
+                        match pick.take() {
+                            Some(p) => Outcome::Run(Box::new(move |app: &mut App| (p.f)(app, values, flags))),
+                            None => Outcome::Keep,
+                        }
+                    }
                     KeyCode::Enter if blocked => Outcome::Keep,
                     KeyCode::Enter => {
                         let values: Vec<String> = fields.iter().map(|f| f.edit.text()).collect();
@@ -612,6 +628,16 @@ impl App {
                             }
                             None => Outcome::Close,
                         }
+                    }
+                    // The next of the field's fill values (`Live::fills`).
+                    KeyCode::Char(c) if ctrl && c == crate::modal::FILL_KEY => {
+                        if let Some(f) = fields.get_mut(*focus)
+                            && let Some(v) = crate::modal::next_fill(&fills, *focus, &f.edit.text())
+                        {
+                            f.edit.set_text(v);
+                            f.fresh = false;
+                        }
+                        Outcome::Keep
                     }
                     KeyCode::Tab | KeyCode::Down => {
                         *focus = (*focus + 1) % total.max(1);

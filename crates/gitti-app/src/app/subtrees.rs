@@ -293,7 +293,7 @@ impl GittiApp {
                     Action::Pull => "Pull which subtree?",
                     Action::Merge => "Merge into which subtree?",
                     Action::Push => "Push which subtree?",
-                    _ => "Split which subtree? (any other folder: type it in the dialog)",
+                    _ => "Split which subtree? (any other folder: Choose… in the dialog)",
                 };
                 self.open_picker(title, items, window, cx);
             }
@@ -370,6 +370,19 @@ impl GittiApp {
         }
         if matches!(a, Action::Add | Action::Pull | Action::Merge) {
             spec = spec.spell(form.fields.len() - 1);
+        }
+        // Split: the folder chosen from the tree it splits from (field 1, empty: HEAD).
+        if a == Action::Split {
+            spec = spec.pick("Choose…", 0, |this, field, st, w, cx| {
+                let from = st.values.get(1).map(|v| v.trim()).unwrap_or_default();
+                let (rev, what) = if from.is_empty() {
+                    let what = this.head.branch.clone().unwrap_or_else(|| "HEAD".into());
+                    ("HEAD".to_string(), what)
+                } else {
+                    (from.to_string(), from.to_string())
+                };
+                this.open_single_folder_picker(rev, what, field, &st.values[field], w, cx)
+            });
         }
         let spec = spec
             .live(move |res| {

@@ -215,6 +215,7 @@ impl App {
                     ok_label: plan.ok_label.to_string(),
                     blocked: plan.blocked,
                     matches: plan.completions,
+                    ..Default::default()
                 }
             }),
         );

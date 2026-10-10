@@ -12,6 +12,9 @@ use gitti_core::subtree::{self, Action, Request, Subtree};
 use super::{After, App, FollowUp, Msg};
 use crate::modal::{Live, MenuItem, Modal, PickItem};
 
+/// Folders Split's chooser lists at most (a tree walk in-process).
+const MAX_FOLDERS: usize = 20_000;
+
 impl App {
     /// Reads the subtrees again in the background when HEAD moved (or `force`).
     pub(super) fn refresh_subtrees(&mut self, force: bool) {
@@ -37,6 +40,8 @@ impl App {
         // An unreadable history: no list (the refresh reports what is wrong).
         self.subtrees = result.unwrap_or_default();
         self.rebuild_sidebar();
+        // The commit header's "Subtree" line may come or go.
+        self.rewrap_header();
         if std::mem::take(&mut self.subtrees_queued) {
             self.refresh_subtrees(true);
         }
@@ -178,7 +183,7 @@ impl App {
                     Action::Pull => "Pull which subtree?",
                     Action::Merge => "Merge into which subtree?",
                     Action::Push => "Push which subtree?",
-                    _ => "Split which subtree? (any other folder: type it in the dialog)",
+                    _ => "Split which subtree? (any other folder: ctrl-o in the dialog)",
                 };
                 self.modal = Some(Modal::picker(title, items));
             }
@@ -225,9 +230,16 @@ impl App {
             Action::Add | Action::Pull | Action::Push => self.remotes.iter().map(|r| r.name.clone()).collect(),
             _ => Vec::new(),
         };
-        let modal = Modal::input_checks(a.title(), fields, checks, move |app, values, checks| {
+        let mut modal = Modal::input_checks(a.title(), fields, checks, move |app, values, checks| {
             app.run_subtree(subtree::from_form(a, &values, &checks))
-        })
+        });
+        // Split: the folder chosen from the tree it splits from.
+        if a == Action::Split {
+            modal = modal.with_pick(0, "choose the folder from the tree", move |app, values, checks| {
+                app.split_folder_picker(subtree::from_form(a, &values, &checks))
+            });
+        }
+        let modal = modal
         .with_live(move |values, checks| {
             let r = subtree::from_form(a, values, checks);
             let plan = subtree::plan(&r, &ctx);
@@ -235,10 +247,46 @@ impl App {
                 text: plan.text,
                 ok_label: plan.ok_label,
                 blocked: plan.blocked,
-                matches: remotes.iter().map(|r| format!("remote {r}")).collect(),
+                matches: Vec::new(),
+                // The remotes for the repository field (field 1), like gitti's buttons.
+                fills: remotes.iter().map(|r| (1, r.clone())).collect(),
+                fills_label: "Remotes".into(),
             }
         });
         self.modal = Some(modal);
+    }
+
+    /// Split's folder chooser: every folder of the tree it splits from (`req.reference`,
+    /// empty: HEAD; at most [`MAX_FOLDERS`], read in-process), searchable as you type;
+    /// the choice opens the Split dialog again with the other values kept.
+    fn split_folder_picker(&mut self, req: Request) {
+        let rev = match req.reference.trim() {
+            "" => "HEAD".to_string(),
+            r => r.to_string(),
+        };
+        let (folders, more) = match self.repo.all_folders(&rev, MAX_FOLDERS) {
+            Ok(r) => r,
+            Err(e) => {
+                self.set_error(format!("Can't read the folders of {rev}: {e:#}"));
+                self.subtree_dialog(req);
+                return;
+            }
+        };
+        let known: Vec<String> = self.subtrees.iter().map(|s| s.prefix.clone()).collect();
+        let items = folders
+            .into_iter()
+            .map(|f| {
+                let mut r = req.clone();
+                r.prefix = f.clone();
+                let detail = if known.contains(&f) { "subtree" } else { "" };
+                PickItem::new(format!("{f}/"), detail, move |app: &mut App| app.subtree_dialog(r))
+            })
+            .collect();
+        let mut title = format!("Split which folder of {rev}?");
+        if more {
+            title.push_str(&format!(" (first {MAX_FOLDERS} — type to search)"));
+        }
+        self.modal = Some(Modal::picker(title, items));
     }
 
     /// Runs `req` as an operation; a split without a branch then offers to create one.

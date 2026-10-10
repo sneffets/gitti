@@ -42,6 +42,7 @@ pub fn main() {
         ("dialogs_say_what_happens", dialogs_say_what_happens),
         ("add", add),
         ("pull", pull),
+        ("split_folder_and_header_mark", split_folder_and_header_mark),
     ];
     common::run(tests, |name| {
         let dir = base().join(name);
@@ -339,5 +340,41 @@ fn pull(ui: &mut Ui) {
     }
     if std::fs::read_to_string(ui.repo.join("lib/x")).ok().as_deref() != Some("2\n") {
         ui.fail("lib/x not pulled".into());
+    }
+}
+
+/// Split's "Choose…" opens the folder picker in its one-folder mode over the tree it splits
+/// from (HEAD here): the folder chosen goes into the folder field. A commit that brought a
+/// subtree in says so in its header ("Subtree" row); an ordinary commit has none.
+fn split_folder_and_header_mark(ui: &mut Ui) {
+    wait_for_subtrees(ui, 2);
+    ui.step("subtree:split,");
+    ui.step("choice:0");
+    ui.quick("folders:expand,vendor");
+    ui.quick("folders:toggle,lib");
+    ui.quick("folders:toggle,vendor/y");
+    let p = ui.check("split, folder picker");
+    if !visible(&p, "folder-picker") {
+        ui.fail("no folder picker after Choose…".into());
+    }
+    ui.quick("folders:ok");
+    let ws = ui.ws.clone();
+    let fields = ui.cx.update(|cx| menus::modal(&ws, cx)).map(|m| m.1).unwrap_or_default();
+    if fields.first().map(String::as_str) != Some("vendor/y") {
+        fail!(ui, "Split's folder after Choose…: {fields:?}");
+    }
+    ui.step("cancel");
+
+    // The newest commit merged the squashed vendor/y in; the start commit is ordinary.
+    ui.step("select:1");
+    ui.wait_real(1500, |ui| visible(&ui.frame(), "commit-header"));
+    let p = ui.check("subtree commit");
+    if !visible(&p, "header-subtree") {
+        ui.fail("no Subtree row in the header of the squash merge".into());
+    }
+    ui.step("key:end");
+    ui.wait_real(1500, |ui| !visible(&ui.frame(), "header-subtree"));
+    if visible(&ui.frame(), "header-subtree") {
+        ui.fail("a Subtree row in the header of an ordinary commit".into());
     }
 }

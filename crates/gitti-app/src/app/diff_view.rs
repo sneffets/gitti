@@ -525,6 +525,11 @@ impl GittiApp {
                     .into_any_element(),
             ))
             .children(self.render_header_refs(d.id, label_w, &p, cx))
+            // A commit that brought a subtree in (`subtree::commit_mark`).
+            .when_some(
+                gitti_core::subtree::commit_mark(&self.subtrees, &d.id, &d.message),
+                |el, mark| el.child(meta("Subtree", div().probe("header-subtree").child(mark).into_any_element())),
+            )
             .child(self.render_message(&d.message, &p, cx))
     }
 
