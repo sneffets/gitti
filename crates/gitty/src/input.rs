@@ -271,6 +271,17 @@ impl App {
 
     /// Selects the sidebar entry's commit in the list.
     fn side_jump(&mut self) {
+        // A worktree's mark says what it means (gitti: its tooltip).
+        let info = match self.sidebar.get(self.side_cursor) {
+            Some(SideItem::Worktree { index, name }) => self
+                .worktree_marks(*index)
+                .filter(|m| m.mark().is_some())
+                .map(|m| format!("{name}: {}", m.describe().replace('\n', " · "))),
+            _ => None,
+        };
+        if let Some(info) = info {
+            self.set_info(info);
+        }
         if let Some(row) = self
             .sidebar
             .get(self.side_cursor)
@@ -290,6 +301,7 @@ impl App {
                 self.collapsed.insert(key);
             }
             self.rebuild_sidebar();
+            self.refresh_worktree_marks();
             return;
         }
         match item {

@@ -291,6 +291,7 @@ impl GittiApp {
             if !self.collapsed.remove(&key) {
                 self.collapsed.insert(key);
             }
+            self.refresh_worktree_marks(cx);
             cx.notify();
             return;
         }
@@ -374,8 +375,9 @@ impl GittiApp {
             .context_menu(move |menu, _, _| super::menus::stash_menu(menu, &app, index))
     }
 
-    /// A worktree: folder icon (open for this tab's), folder name, `⎇` what it has
-    /// checked out; a funnel when sparse, lock / prune state as faint words; the full path
+    /// A worktree: folder icon (open for this tab's), folder name, its mark (uncommitted
+    /// changes / commits not pushed, as on the tabs), `⎇` what it has checked out; a
+    /// funnel when sparse, lock / prune state as faint words; the full path
     /// (and the sparse folders) in the tooltip. Click selects
     /// its commit, double click opens it in a tab.
     fn worktree_row(&self, wi: usize, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
@@ -404,6 +406,18 @@ impl GittiApp {
         let name = wt.name();
         let detail = wt.checkout_detail();
         let small = self.settings.ui_small();
+        let marks = self.worktree_marks(wi).and_then(|m| {
+            let mark = m.mark()?;
+            Some(super::tab_marks::mark_element(
+                ElementId::Name(format!("wt-marks:{name}").into()),
+                "wt",
+                &name,
+                mark,
+                m.describe(),
+                self.settings.ui_font_size,
+                p,
+            ))
+        });
         self.sidebar_row(format!("wt-{}", wt.name()), 1, p)
             .cursor_pointer()
             .when(current, |d| {
@@ -418,7 +432,10 @@ impl GittiApp {
                     .items_center()
                     .child(Icon::new(icon).xsmall().text_color(icon_color)),
             )
-            .child(div().flex_1().min_w_0().truncate().child(name))
+            .child(div().min_w_0().truncate().child(name))
+            // Uncommitted changes / commits not pushed, as on the repository tabs.
+            .when_some(marks, |d, m| d.child(m))
+            .child(div().flex_1())
             .when(!detail.is_empty(), |d| {
                 d.child(
                     div()
@@ -523,6 +540,7 @@ impl GittiApp {
                 if !this.collapsed.remove(key) {
                     this.collapsed.insert(key.to_string());
                 }
+                this.refresh_worktree_marks(cx);
                 cx.notify();
             }))
             .context_menu(move |menu, _, _| {

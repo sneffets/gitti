@@ -3,7 +3,8 @@
 //! branch offers that tab; removing (with the forced second step for a dirty one); a tab
 //! opened on a linked worktree works; no git while scrolling the sidebar and none for the
 //! cached worktree list on a refresh; the main worktree listed alone (setting, its menu,
-//! Copy SHA). The sidebar's layout with worktrees across sizes is
+//! Copy SHA); the entries' marks (uncommitted / not pushed, read off the UI thread, no git
+//! while folded or navigating). The sidebar's layout with worktrees across sizes is
 //! `layout.rs::sidebar_worktrees_sweep`.
 //!
 //! Lean scenarios (well under 2 s): the 2 s sleeps for git's racy stamps are replaced by
@@ -47,6 +48,7 @@ pub fn main() {
         ("folder_picker", folder_picker),
         ("move_and_repair", move_and_repair),
         ("live_plan", live_plan),
+        ("sidebar_marks", sidebar_marks),
         // Last: it switches the shared setting off (and on again).
         ("main_worktree_alone", main_worktree_alone),
     ];
@@ -1084,5 +1086,77 @@ fn main_worktree_alone(ui: &mut Ui) {
     let copied = copy_from_menu(ui, "side:wt-main_worktree_alone-det", "Copy SHA");
     if copied != want {
         fail!(ui, "detached worktree: Copy SHA copied {copied:?}, its commit is {want}");
+    }
+}
+
+/// The sidebar's worktree entries carry the tab marks: this tab's own (the fixture's
+/// working directory has changes), a linked worktree with an untracked file, none on a
+/// clean one. A refresh reads the others with one `git status` each; folded, nothing is
+/// read; unfolding reads them again; moving through the sidebar reads none.
+fn sidebar_marks(ui: &mut Ui) {
+    let repo = base().join("sidebar_marks");
+    let clean = base().join("sidebar_marks-clean");
+    let dirty = base().join("sidebar_marks-dirty");
+    for wt in [&clean, &dirty] {
+        git(&repo, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap(), "HEAD"]);
+    }
+    std::fs::write(dirty.join("new.txt"), "new\n").unwrap();
+    // The worktrees' own statuses: without `--branch` (the refresh's has it).
+    let others = |ran: &[String]| {
+        ran.iter()
+            .filter(|c| c.starts_with("status ") && !c.contains("--branch"))
+            .count()
+    };
+    let n = ui.n_git();
+    ui.step("key:secondary-r");
+    let ran = ui.git_since(n);
+    if others(&ran) != 2 {
+        fail!(ui, "a refresh read the two other worktrees' marks? {ran:?}");
+    }
+    let p = ui.check("sidebar with worktree marks");
+    for name in ["wt-dirty:sidebar_marks", "wt-dirty:sidebar_marks-dirty"] {
+        if !visible(&p, name) {
+            fail!(ui, "no visible {name}");
+        }
+    }
+    if find(&p, "wt-marks:sidebar_marks-clean").is_some() {
+        ui.fail("a clean worktree has a mark".into());
+    }
+    // Inside its row, right of the name.
+    if let (Some(m), Some(r)) = (
+        find(&p, "wt-marks:sidebar_marks-dirty"),
+        find(&p, "side:wt-sidebar_marks-dirty"),
+    ) && !r.bounds.contains(&m.bounds.center())
+    {
+        ui.fail("the worktree mark is outside its row".into());
+    }
+
+    // Moving through the sidebar reads no marks (only the selected commit's diff).
+    let n = ui.n_git();
+    ui.click_on("side:wt-sidebar_marks-clean", MouseButton::Left);
+    ui.step("key:down");
+    ui.step("key:up");
+    let ran = ui.git_since(n);
+    if ran.iter().any(|c| c.starts_with("status")) {
+        fail!(ui, "selecting worktree entries read a status: {ran:?}");
+    }
+
+    // Folded: a refresh reads no other worktree; unfolded: read again.
+    ui.click_on("side-section:worktrees", MouseButton::Left);
+    let n = ui.n_git();
+    ui.step("key:secondary-r");
+    let ran = ui.git_since(n);
+    if others(&ran) != 0 {
+        fail!(ui, "folded, a refresh read the worktrees' marks: {ran:?}");
+    }
+    std::fs::remove_file(dirty.join("new.txt")).unwrap();
+    let n = ui.n_git();
+    ui.click_on("side-section:worktrees", MouseButton::Left);
+    let ran = ui.git_since(n);
+    if others(&ran) != 2 {
+        fail!(ui, "unfolding didn't read the worktrees' marks: {ran:?}");
+    }
+    if find(&ui.frame(), "wt-marks:sidebar_marks-dirty").is_some() {
+        ui.fail("the worktree is clean again, its mark stays".into());
     }
 }
