@@ -118,6 +118,22 @@ impl Worktree {
         }
     }
 
+    /// What "Copy SHA" copies: the full id of the checked-out commit (a branch's tip or
+    /// the detached HEAD). `Err(why)` for a greyed-out entry (bare, unborn branch).
+    pub fn copy_sha(&self) -> std::result::Result<String, &'static str> {
+        match self.head {
+            _ if self.bare => Err("bare"),
+            Some(id) => Ok(id.to_hex().to_string()),
+            None => Err("unborn branch, no commit yet"),
+        }
+    }
+
+    /// The main worktree shown alone in the WORKTREES section (no linked worktrees): its
+    /// menu has no tab, lock, move or remove entries.
+    pub fn is_lone_main(&self, list: &[Worktree]) -> bool {
+        self.is_main && list.len() == 1
+    }
+
     /// A multi-line description (path, checkout, kind, lock / prune state) for tooltips.
     pub fn describe(&self) -> String {
         let mut s = format!("Folder {}\n", self.path.display());
@@ -383,6 +399,17 @@ pub fn detached_at(list: &[Worktree], id: ObjectId) -> impl Iterator<Item = &Wor
     list.iter().filter(move |w| {
         !w.is_current && !w.bare && w.branch.is_none() && w.head == Some(id)
     })
+}
+
+/// Whether the sidebar lists the worktrees: always with linked ones; the main worktree
+/// alone (the folder the repository lives in) only with `main_alone` (the setting
+/// `show_main_worktree_alone`), and never a bare repository's git dir.
+pub fn section_shown(list: &[Worktree], main_alone: bool) -> bool {
+    match list {
+        [] => false,
+        [only] => main_alone && only.is_main && !only.bare,
+        _ => true,
+    }
 }
 
 /// The folders typed into a "sparse folders" field: separated by commas, semicolons or
@@ -1088,6 +1115,25 @@ mod tests {
             m.describe(),
             "Folder /src/gitti\nBranch main checked out\nMain worktree · open in this tab"
         );
+        // Copy SHA: the full id for a branch and a detached HEAD; greyed when bare / unborn.
+        let full = "e17b7ef0e52b94039f699d19dc084f473fca2ae0";
+        assert_eq!(m.copy_sha().as_deref(), Ok(full));
+        assert_eq!(d.copy_sha().as_deref(), Ok(full));
+        let mut unborn = m.clone();
+        unborn.head = None;
+        assert!(unborn.copy_sha().is_err());
+        let mut bare = m.clone();
+        bare.bare = true;
+        assert_eq!(bare.copy_sha(), Err("bare"));
+        // The section: linked worktrees always; the main one alone by the setting; a
+        // bare git dir alone never.
+        assert!(section_shown(std::slice::from_ref(&m), true));
+        assert!(m.is_lone_main(std::slice::from_ref(&m)));
+        assert!(!section_shown(std::slice::from_ref(&m), false));
+        assert!(!section_shown(std::slice::from_ref(&bare), true));
+        assert!(!section_shown(&[], true));
+        let two = [m.clone(), f.clone()];
+        assert!(section_shown(&two, false) && !m.is_lone_main(&two));
     }
 
     #[gitti_test::test]

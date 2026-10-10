@@ -1,5 +1,6 @@
-//! Sidebar entries ("Locations"): branches, worktrees (only with linked ones), remotes
-//! with their branches, tags, stashes, submodules and subtrees (only with some).
+//! Sidebar entries ("Locations"): branches, worktrees (with linked ones; the main one alone
+//! by the setting `show_main_worktree_alone`), remotes with their branches, tags, stashes,
+//! submodules and subtrees (only with some).
 
 use gitti_core::RefKind;
 use gitti_core::ops::Tracking;
@@ -119,8 +120,9 @@ pub fn build(app: &App) -> Vec<SideItem> {
         }
     }
 
-    // Only when there is more than the main worktree (as in gitti).
-    if app.worktrees.len() > 1 && section(&mut out, "worktrees", "WORKTREES", app.worktrees.len())
+    // With linked worktrees; the main one alone by the setting (as in gitti).
+    if gitti_core::worktree::section_shown(&app.worktrees, app.main_worktree_alone)
+        && section(&mut out, "worktrees", "WORKTREES", app.worktrees.len())
     {
         for (index, wt) in app.worktrees.iter().enumerate() {
             out.push(SideItem::Worktree {

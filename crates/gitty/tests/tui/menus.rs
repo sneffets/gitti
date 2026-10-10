@@ -214,6 +214,54 @@ fn sidebar_menus_have_the_shared_entries() {
     assert!(failures.is_empty(), "{}\n{out}", failures.join("\n"));
 }
 
+/// Without linked worktrees the WORKTREES section lists the repository's folder (the main
+/// worktree) with the folder's entries only (`SideMenu::MainWorktreeAlone`); h = Copy SHA
+/// copies HEAD's full id. The palette toggle hides it, persisted for the next run; linked
+/// worktrees still show the section, and a detached one's Copy SHA copies its commit.
+#[gitti_test::test]
+fn main_worktree_alone_copy_sha_and_the_setting() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "one\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "two", files: &[("b.txt", "two\n")] },
+    ]);
+    let d = dir.path();
+    let config = tempfile::tempdir().unwrap();
+    // Rows: 0 BRANCHES, 1 main, 2 WORKTREES, 3 the repository's folder.
+    let out = gitty_with(
+        d,
+        config.path(),
+        "160x45",
+        "press:backtab;press:g;press:j;press:j;press:j;dump;press:m;items;key:h;state;\
+         press:ctrl-p;type:main worktree when;key:enter;state;dump",
+    );
+    let s = screens(&out);
+    assert!(s[0].contains("WORKTREES (1)"), "{out}");
+    let labels: Vec<String> = items(&out).into_iter().map(String::from).collect();
+    let vars = Vars { fm: gitti_core::desktop::file_manager_name().into(), ..Default::default() };
+    let miss = missing(SideMenu::MainWorktreeAlone, &vars, &labels);
+    assert!(miss.is_empty(), "lacks {miss:?}: {out}");
+    let pointless = ["Switch", "Lock", "Move", "Remove", "Prune", "Repair"];
+    assert!(!labels.iter().any(|l| pointless.iter().any(|p| l.starts_with(p))), "{labels:?}");
+    let st = states(&out);
+    assert!(st[0].contains(&format!("Copied {}", rev(d, "HEAD"))), "{out}");
+    assert!(st[1].contains("only with linked worktrees"), "{out}");
+    assert!(!s[1].contains("WORKTREES"), "{out}");
+    // Persisted; a linked (detached) worktree shows the section anyway.
+    let wt = tempfile::tempdir().unwrap();
+    let path = wt.path().join("det");
+    git(d, &["worktree", "add", "-q", "--detach", path.to_str().unwrap(), "HEAD~1"]);
+    // Rows: 2 WORKTREES, 3 the main worktree, 4 det.
+    let out = gitty_with(
+        d,
+        config.path(),
+        "160x45",
+        "press:backtab;press:g;press:j;press:j;press:j;press:j;dump;press:m;items;key:h;state",
+    );
+    assert!(screens(&out)[0].contains("WORKTREES (2)"), "{out}");
+    assert!(items(&out).contains(&"Remove Worktree…"), "a linked one's full menu: {out}");
+    assert!(states(&out)[0].contains(&format!("Copied {}", rev(d, "HEAD~1"))), "{out}");
+}
+
 /// Sidebar menu actions: Rename… a branch, Drop a stash (asks), the STASHES header's Stash
 /// Changes…, Delete a tag; Create Branch from Stash….
 #[gitti_test::test]

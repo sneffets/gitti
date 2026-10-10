@@ -246,6 +246,9 @@ pub struct Settings {
     pub intraline_strength: u32,
     /// Commit list rows: by width, one line or two lines (shared with gitty).
     pub commit_list_layout: gitti_core::list_layout::CommitListLayout,
+    /// The sidebar's WORKTREES section with the main worktree alone (shared with gitty,
+    /// `gitti_core::worktree::section_shown`).
+    pub show_main_worktree_alone: bool,
     /// Pane sizes as fractions, shared with gitty (`gitti_core::store::PaneLayout`).
     pub pane_sidebar: f32,
     pub pane_list: f32,
@@ -273,6 +276,7 @@ impl Default for Settings {
             spell_check: true,
             intraline_strength: gitti_core::intraline::DEFAULT_STRENGTH,
             commit_list_layout: gitti_core::list_layout::CommitListLayout::Auto,
+            show_main_worktree_alone: true,
             pane_sidebar: 0.,
             pane_list: 0.,
             pane_log: 0.,

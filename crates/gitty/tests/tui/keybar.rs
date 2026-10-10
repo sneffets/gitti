@@ -10,8 +10,9 @@ use common::*;
 use support::*;
 
 /// `main` (two commits), `older` at the first, tag `v1`, `origin` with `main` / `older`.
-/// Sidebar rows: 0 BRANCHES, 1 main, 2 older, 3 REMOTES, 4 origin, 5 origin/main,
-/// 6 origin/older, 7 TAGS (folded; ⏎ unfolds), 8 v1.
+/// Sidebar rows: 0 BRANCHES, 1 main, 2 older, 3 WORKTREES, 4 the repo's folder (the main
+/// worktree, listed alone by default), 5 REMOTES, 6 origin, 7 origin/main, 8 origin/older,
+/// 9 TAGS (folded; ⏎ unfolds), 10 v1.
 fn bar_repo() -> tempfile::TempDir {
     let dir = import_with(
         &[
@@ -58,15 +59,15 @@ fn status_line(screen: &str) -> &str {
 #[gitti_test::test]
 fn the_bar_lists_the_menu_of_the_sidebar_selection() {
     let dir = bar_repo();
-    let rows = [0usize, 1, 2, 4, 5, 8];
+    let rows = [0usize, 1, 2, 4, 6, 7, 10];
     let mut script = String::from("press:backtab;press:g;");
     let mut at = 0;
     for &row in &rows {
-        if row == 8 {
-            // Unfold TAGS (row 7) first.
-            script.push_str(&"press:j;".repeat(7 - at));
+        if row == 10 {
+            // Unfold TAGS (row 9) first.
+            script.push_str(&"press:j;".repeat(9 - at));
             script.push_str("press:enter;");
-            at = 7;
+            at = 9;
         }
         script.push_str(&"press:j;".repeat(row - at));
         at = row;
@@ -86,9 +87,13 @@ fn the_bar_lists_the_menu_of_the_sidebar_selection() {
             assert!(hints.any(|(_, l)| *l == want), "`{item}` missing / out of order in {bar:?}\n{out}");
         }
     }
-    let [section, current, branch, remote, remote_branch, tag] = &bars[..rows.len()] else {
+    let [section, current, branch, worktree, remote, remote_branch, tag] = &bars[..rows.len()]
+    else {
         unreachable!()
     };
+    // The main worktree alone: the folder's entries only (no tab / lock / move / remove).
+    assert!(has(worktree, "y", "Copy Path") && has(worktree, "m h", "Copy SHA"), "{worktree:?}");
+    assert!(!worktree.iter().any(|(_, l)| l.starts_with("Remove") || l.starts_with("Move")), "{worktree:?}");
     assert!(has(section, "⏎", "fold") && has(section, "s", "Switch Branch…"), "{section:?}");
     assert!(has(section, "m b", "Create Branch at HEAD…"), "{section:?}");
     assert!(has(current, "p", "Pull") && has(current, "P", "Push"), "{current:?}");
@@ -117,10 +122,10 @@ fn the_bar_lists_the_menu_of_the_sidebar_selection() {
 #[gitti_test::test]
 fn o_pages_the_bar_and_a_new_selection_starts_over() {
     let dir = bar_repo();
-    // origin (row 4), six pages forward, then origin/main.
+    // origin (row 6), six pages forward, then origin/main.
     let script = format!(
         "press:backtab;press:g;{}dump;{}press:o;press:j;dump",
-        "press:j;".repeat(4),
+        "press:j;".repeat(6),
         "press:o;dump;".repeat(6)
     );
     let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "80x30", &script);
@@ -156,7 +161,7 @@ fn the_keys_shown_run_their_entries() {
     let d = dir.path();
     let out = gitty(
         d,
-        "press:backtab;press:g;press:j;press:j;press:j;press:j;press:a;dump;press:esc;\
+        "press:backtab;press:g;press:j;press:j;press:j;press:j;press:j;press:j;press:a;dump;press:esc;\
          press:j;press:j;key:u;state;\
          press:j;press:enter;press:j;press:d;dump;key:y;state;\
          press:tab;press:g;press:j;press:y;state",

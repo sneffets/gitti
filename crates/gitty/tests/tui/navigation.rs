@@ -264,7 +264,8 @@ fn sidebar_keys_move_fold_jump_and_checkout() {
     ]);
     let d = dir.path();
     git(d, &["tag", "t1", "HEAD~1"]);
-    // Items: 0 BRANCHES, 1 alpha, 2 main, 3 REMOTES, 4 TAGS (folded), 5 STASHES.
+    // Items: 0 BRANCHES, 1 alpha, 2 main, 3 WORKTREES, 4 the main worktree (listed alone by
+    // default), 5 REMOTES, 6 TAGS (folded), 7 STASHES.
     let out = gitty(
         d,
         "cmds;press:backtab;state;press:j;state;press:k;state;press:G;state;press:g;state;\
@@ -279,7 +280,7 @@ fn sidebar_keys_move_fold_jump_and_checkout() {
     let st = states(&out);
     let cur: Vec<usize> = st.iter().map(|s| num(s, "side_cursor")).collect();
     assert_eq!(word(st[0], "focus"), "Sidebar", "{out}");
-    assert_eq!(&cur[1..9], &[1, 0, 5, 0, 5, 0, 5, 0], "{out}");
+    assert_eq!(&cur[1..9], &[1, 0, 7, 0, 7, 0, 7, 0], "{out}");
     let s: Vec<String> = screens(&out).iter().map(|s| sidebar(s)).collect();
     assert!(s[0].contains("▸ BRANCHES (2)") && !s[0].contains("alpha"), "{out}");
     assert!(s[1].contains("▾ BRANCHES (2)") && s[1].contains("alpha"), "{out}");
