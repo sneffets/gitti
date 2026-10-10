@@ -466,6 +466,8 @@ pub struct App {
     pub line_sel: Option<LineSel>,
 
     pub message: TextEdit,
+    /// The message box's rows and scroll (`message_view.rs`).
+    pub message_view: crate::message_view::MessageView,
     /// The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`) as put into
     /// the message box, so an untouched copy can follow it and go with it
     /// (`commit_flow::sync_prepared_message`).
@@ -749,6 +751,7 @@ impl App {
             header_cols: 0,
             line_sel: None,
             message: TextEdit::multi(),
+            message_view: Default::default(),
             merge_prefill: None,
             prepared: None,
             prepared_dismissed: None,

@@ -548,6 +548,8 @@ pub mod testing {
         pub settings_max: f32,
         /// Commit message editor.
         pub message_y: f32,
+        /// Its cursor as last painted (window px: top, bottom).
+        pub message_cursor: Option<(f32, f32)>,
         /// Open picker: (selected entry, entries shown).
         pub picker: Option<(usize, usize)>,
         /// Collapsed sidebar groups, sorted.

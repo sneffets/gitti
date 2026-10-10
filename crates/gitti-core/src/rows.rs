@@ -328,7 +328,7 @@ pub fn char_cols(c: char) -> usize {
 /// Char ranges of the visual rows of a line, each at most `cols` display columns wide
 /// ([`char_cols`]; a single wider char gets a row of its own): greedy word wrap, hard
 /// break for long words.
-fn wrap_ranges(chars: &[char], cols: usize) -> Vec<(usize, usize)> {
+pub fn wrap_ranges(chars: &[char], cols: usize) -> Vec<(usize, usize)> {
     let n = chars.len().min(MAX_LINE_CHARS);
     let cols = cols.max(1);
     let mut out = Vec::new();
