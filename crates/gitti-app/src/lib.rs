@@ -895,6 +895,12 @@ pub mod testing {
     }
 
     /// The Git LFS problems the banner shows (`short` each; empty: no banner).
+    /// The "can't be checked out on this file system" banner's text (`None`: not shown).
+    pub fn fs_paths_banner(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_fs_paths_banner()
+    }
+
     pub fn lfs_issues(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
         let app = ws.read(cx).active_app().expect("a repository tab");
         app.read(cx).script_lfs_issues()

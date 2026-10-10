@@ -166,7 +166,9 @@ pub fn filter_rows(rows: &[DiffRow], filter: &HunkFilter) -> Vec<DiffRow> {
                     out.push(*row);
                 }
             }
-            DiffRow::Note { file, .. } | DiffRow::Submodule { file, .. } => {
+            DiffRow::Note { file, .. }
+            | DiffRow::PathNote { file, .. }
+            | DiffRow::Submodule { file, .. } => {
                 if cur == Some(file) {
                     out.push(*row);
                 }

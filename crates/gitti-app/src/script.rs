@@ -34,7 +34,8 @@
 //! dialog for a subtree); `ignore:PATH` ("Add to .gitignore…"
 //! for a working-directory file), `lfstrack:PATH` ("Track with Git LFS…" for it; the
 //! dialog opens after a background check of git-lfs), `lfs:ACTION[,ARG]` (Git LFS
-//! health: `fix,setup|hooks|download`, `dismiss` the banner, `check` again), `action:NAME` (dispatch e.g. `gitti::CloneRepository`, as
+//! health: `fix,setup|hooks|download`, `dismiss` the banner, `check` again),
+//! `fspaths:hide|show|dismiss` (paths this file system can't hold), `action:NAME` (dispatch e.g. `gitti::CloneRepository`, as
 //! its menu item does). Pickers: `pick:TEXT` (type into the open picker — filters, or
 //! starts its search), `pickok` (run the selected entry, as Enter). Search in Changes:
 //! `changes:TEXT` (open the bar, type), `changehit:N` (select hit N), `changetoggle:strict
@@ -514,6 +515,8 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
             let (action, rest) = arg.split_once(',').unwrap_or((arg, ""));
             app.update(cx, |a, cx| a.script_lfs(action, rest, window, cx));
         }
+        // `fspaths:ACTION` — paths this file system can't hold: `hide`, `show`, `dismiss`.
+        "fspaths" => app.update(cx, |a, cx| a.script_fs_paths(arg, window, cx)),
         "pick" => app.update(cx, |a, cx| a.script_picker_query(arg, window, cx)),
         "changes" => app.update(cx, |a, cx| a.script_change_search(arg, window, cx)),
         "changehit" => {

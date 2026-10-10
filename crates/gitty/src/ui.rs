@@ -587,6 +587,13 @@ fn draw_toolbar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
             Style::new().fg(p.accent_text).bg(p.warning),
         ));
     }
+    if let Some(fs) = app.fs_paths_badge() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!(" {} — ctrl-p: File System ", fs.to_uppercase()),
+            Style::new().fg(p.accent_text).bg(p.warning),
+        ));
+    }
     if let Some(lfs) = app.lfs_badge() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
@@ -1819,6 +1826,7 @@ fn sticky_file_row(rows: &[DiffRow], top: usize) -> Option<usize> {
             | DiffRow::Line { .. }
             | DiffRow::HunkGap
             | DiffRow::Note { .. }
+            | DiffRow::PathNote { .. }
             | DiffRow::Context { .. }
             | DiffRow::Expand { .. }
             | DiffRow::Submodule { .. }
@@ -1832,6 +1840,7 @@ fn sticky_file_row(rows: &[DiffRow], top: usize) -> Option<usize> {
                 | DiffRow::Line { .. }
                 | DiffRow::HunkGap
                 | DiffRow::Note { .. }
+                | DiffRow::PathNote { .. }
                 | DiffRow::Context { .. }
                 | DiffRow::Expand { .. }
                 | DiffRow::Submodule { .. }
@@ -2212,6 +2221,13 @@ fn draw_diff_row(
                     Style::new().fg(p.text_muted),
                 ));
             }
+            // A path this file system can't hold: why, in a few words.
+            if let Some(issue) = app.fs_issue_of(src, file) {
+                spans.push(Span::styled(
+                    format!("  ⚠ {}", issue.problem.short()),
+                    Style::new().fg(p.warning),
+                ));
+            }
             let end = put(buf, x, y, w, spans);
             let mut hint = String::new();
             if cursor && wt {
@@ -2485,6 +2501,41 @@ fn draw_diff_row(
         }
         DiffRow::Submodule { src, file, line } => {
             draw_submodule_row(buf, area, app, (src, file, line), cursor, digits, p)
+        }
+        // Why the file system can't hold this file's path (Enter: all of it).
+        DiffRow::PathNote { src, file, line } => {
+            buf.set_style(area, Style::new().bg(cursor_bg(p.bg_diff)));
+            let Some(issue) = app.fs_issue_of(src, file) else {
+                return;
+            };
+            let lines = issue.problem.lines(&issue.path, &app.working.fs_paths.rules);
+            let text = lines.get(line as usize).cloned().unwrap_or_default();
+            let color = if line == 0 { p.warning } else { p.text_muted };
+            let hint = if cursor { "  ⏎ explain / hide" } else { "" };
+            let room = (w as usize).saturating_sub(4 + hint.width());
+            let text = if text.width() > room {
+                let mut t: String = String::new();
+                for ch in text.chars() {
+                    if (t.width() + 2) > room {
+                        break;
+                    }
+                    t.push(ch);
+                }
+                t.push('…');
+                t
+            } else {
+                text
+            };
+            put(
+                buf,
+                x + 4,
+                y,
+                w.saturating_sub(4),
+                vec![
+                    Span::styled(text, Style::new().fg(color)),
+                    Span::styled(hint, Style::new().fg(p.text_faint)),
+                ],
+            );
         }
         DiffRow::Note { src, file } => {
             buf.set_style(area, Style::new().bg(cursor_bg(p.bg_diff)));

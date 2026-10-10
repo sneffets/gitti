@@ -8,6 +8,7 @@ mod support;
 mod cancel;
 mod change_search;
 mod config_safety;
+mod fs_paths;
 mod keybar;
 mod lfs;
 mod linux;

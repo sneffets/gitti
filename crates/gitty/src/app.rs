@@ -40,6 +40,7 @@ mod commit_flow;
 mod compare;
 mod context_lines;
 mod file_list;
+mod fs_paths;
 mod keybar;
 mod lfs;
 mod lfs_fetch;
@@ -410,6 +411,8 @@ pub struct App {
     subtrees_dirty: bool,
     /// Git LFS: the repository's state, the notice shown, the locks (`app/lfs.rs`).
     pub lfs: lfs::LfsUi,
+    /// The paths the "can't be checked out here" badge was hidden for (`app/fs_paths.rs`).
+    pub fs_badge_dismissed: Option<Vec<String>>,
     pub repo_state: RepoState,
     pub tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the ○ after the repository name).
@@ -720,6 +723,7 @@ impl App {
             subtrees_queued: false,
             subtrees_dirty: false,
             lfs: Default::default(),
+            fs_badge_dismissed: None,
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
             unpushed: None,
@@ -1051,7 +1055,9 @@ impl App {
                                     self.modal = Some(Modal::text(title, out.clone()));
                                 }
                             }
-                            After::OfferOpen(path) => self.offer_open(path),
+                            After::OfferOpen(path) => {
+                                self.offer_open(path, out.split_once("\n\n").map(|(_, n)| n))
+                            }
                             After::Reopen(path) => self.reopen = Some(path),
                         }
                         self.errors.succeeded(&label);
@@ -2518,7 +2524,15 @@ impl App {
         if self.defer_while_busy(|app| app.stage_all()) {
             return;
         }
-        self.git_op("Stage all", None, |r| r.stage_all());
+        // Paths this file system can't hold: asks first (`app/fs_paths.rs`).
+        let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
+        self.guard_fs_stage(paths, |app, only| match only {
+            None => app.git_op("Stage all", None, |r| r.stage_all()),
+            Some(list) => {
+                let paths = list.clone();
+                app.git_op("Stage all", Some(paths), move |r| r.stage_path_list(&list))
+            }
+        });
     }
 
     pub fn unstage_all(&mut self) {
@@ -2546,6 +2560,7 @@ impl App {
             return;
         }
         let plan = DiscardPlan::of(self.repo.workdir(), &entries);
+        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let n = entries.len();
         let (title, question, done) = match group {
             None => (
@@ -2571,7 +2586,10 @@ impl App {
                 Ok(Some(gitti_core::discard::done_note(done, &report)))
             })
         };
-        let body = format!("{question}\n{}", plan.detail());
+        let mut body = format!("{question}\n{}", plan.detail());
+        if let Some(w) = fs_warning {
+            body = format!("{body}\n{w}");
+        }
         if plan.nested.is_empty() {
             self.modal = Some(Modal::confirm(title, body, "Discard", move |app| {
                 run(app, DiscardOptions::default())
@@ -2648,6 +2666,7 @@ impl App {
             Some(
                 DiffRow::File { src, file }
                 | DiffRow::Note { src, file }
+                | DiffRow::PathNote { src, file, .. }
                 | DiffRow::Submodule { src, file, .. },
             ) if src == want => self.file_action(src, file, mode),
             Some(
@@ -2675,11 +2694,11 @@ impl App {
         let entry = wf.entry.clone();
         let path = entry.path.clone();
         match mode {
-            PatchMode::Stage => {
-                self.git_op("Stage file", Some(vec![path.clone()]), move |r| {
+            PatchMode::Stage => self.guard_fs_stage(vec![path.clone()], move |app, _| {
+                app.git_op("Stage file", Some(vec![path.clone()]), move |r| {
                     r.stage_paths(&[&path])
                 })
-            }
+            }),
             PatchMode::Unstage => {
                 self.git_op("Unstage file", Some(vec![path.clone()]), move |r| {
                     r.unstage_paths(&[&path])
@@ -2702,7 +2721,12 @@ impl App {
                 } else if entry.untracked {
                     ("Discard File", format!("Delete the untracked file {path}?"), "Discard")
                 } else {
-                    ("Discard File", format!("Discard all unstaged changes in {path}?"), "Discard")
+                    let mut what = format!("Discard all unstaged changes in {path}?");
+                    // A path this file system can't hold: what Discard can't do.
+                    if let Some(w) = self.fs_discard_warning([path.as_str()]) {
+                        what = format!("{what}\n{w}");
+                    }
+                    ("Discard File", what, "Discard")
                 };
                 let opts = DiscardOptions {
                     delete_nested_repos: nested,
@@ -2719,7 +2743,7 @@ impl App {
 
     fn apply_selection(&mut self, src: Src, file: usize, sel: Selection, mode: PatchMode) {
         // An LFS file: its index entry is the pointer — whole file only.
-        if self.refuse_lfs(src, file, mode) {
+        if self.refuse_lfs(src, file, mode) || self.refuse_fs_path(src, file, mode) {
             return;
         }
         let Some(shown) = self.file_diff(src, file) else {
@@ -3045,8 +3069,11 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        let list = paths.clone();
-        self.git_op("Stage group", Some(paths), move |r| r.stage_path_list(&list));
+        self.guard_fs_stage(paths.clone(), move |app, only| {
+            let paths = only.unwrap_or(paths);
+            let list = paths.clone();
+            app.git_op("Stage group", Some(paths), move |r| r.stage_path_list(&list));
+        });
     }
 
     pub fn set_all_expanded(&mut self, expanded: bool) {
@@ -3916,6 +3943,7 @@ impl App {
         items.extend(self.lfs_palette_items());
         items.extend(self.lfs_download_palette_items());
         items.extend(self.lfs_health_palette_items());
+        items.extend(self.fs_paths_palette_items());
         items.extend(self.worktree_palette_items());
         items.extend(self.menu_palette_items());
         items.extend(self.prepared_palette_items());

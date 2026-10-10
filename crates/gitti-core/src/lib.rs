@@ -23,6 +23,7 @@ pub mod editor;
 pub mod error_mark;
 pub mod fd_limit;
 pub mod folder_tree;
+pub mod fs_paths;
 pub mod git_cli;
 pub mod keybar;
 pub mod keys;

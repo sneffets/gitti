@@ -57,6 +57,20 @@ pub fn clone_repo_with(
     recurse_submodules: bool,
     progress: &mut dyn FnMut(&str),
 ) -> Result<PathBuf> {
+    clone_repo_noted(git, url, dest, recurse_submodules, progress).map(|(dir, _)| dir)
+}
+
+/// [`clone_repo_with`] and what the user should know about the clone: the paths that
+/// collided on this file system (git's "the following paths have collided" warning), or
+/// — when git cloned but couldn't check the files out (paths this file system can't
+/// hold) — why, in plain words; the clone is kept then.
+pub fn clone_repo_noted(
+    git: &Git,
+    url: &str,
+    dest: &Path,
+    recurse_submodules: bool,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(PathBuf, Option<String>)> {
     let url = url.trim();
     if url.is_empty() {
         bail!("no repository URL given");
@@ -83,8 +97,30 @@ pub fn clone_repo_with(
         args.push("--recurse-submodules");
     }
     args.extend(["--", url, &dest_arg]);
-    git.with_workdir(parent).run_with_progress(&args, progress)?;
-    Ok(crate::paths::canonical(dest))
+    match git.with_workdir(parent).run_with_progress(&args, progress) {
+        Ok(out) => Ok((
+            crate::paths::canonical(dest),
+            crate::fs_paths::clone_note(&out.stderr),
+        )),
+        Err(e) => {
+            let text = e.to_string();
+            if !text.contains("Clone succeeded, but checkout failed") || !dest.join(".git").exists() {
+                return Err(e.into());
+            }
+            let dir = crate::paths::canonical(dest);
+            let rules = crate::Repo::open(&dir)
+                .map(|r| r.fs_rules())
+                .unwrap_or_default();
+            let why = crate::fs_paths::explain_git_error(&text, &rules)
+                .unwrap_or_else(|| format!("git said: {text}"));
+            Ok((
+                dir,
+                Some(format!(
+                    "Cloned, but git couldn't check out the files — the repository's files show                      as deleted until it can. {why}"
+                )),
+            ))
+        }
+    }
 }
 
 /// `git init` in `dir` (created with its parents if missing) with git's default object
