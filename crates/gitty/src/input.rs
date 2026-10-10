@@ -486,6 +486,12 @@ impl App {
                 self.show_signature()
             }
             KeyCode::Enter if self.lfs_download_row(self.diff_cursor) => self.lfs_download(),
+            // A nested repository's / an untracked folder's row: what it is.
+            KeyCode::Enter if self.no_preview_at(self.diff_cursor) => {
+                if let Some(&DiffRow::Note { src, file }) = self.rows.get(self.diff_cursor) {
+                    self.no_preview_menu(src, file);
+                }
+            }
             KeyCode::Enter if self.not_loaded_at(self.diff_cursor).is_some() => {
                 if let Some(file) = self.not_loaded_at(self.diff_cursor) {
                     self.load_omitted_file(file);

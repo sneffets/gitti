@@ -116,6 +116,16 @@ pub struct WorkingState {
     /// full read gets them (cached while the index is unchanged), a path-limited one keeps
     /// the previous ones.
     pub fs_paths: Arc<crate::fs_paths::PathReport>,
+    /// Untracked folder entries that are git repositories of their own
+    /// ([`crate::discard::is_nested_repo`]), sorted; their diff pane says so.
+    pub nested_repos: Vec<String>,
+}
+
+impl WorkingState {
+    /// Whether `path` is an untracked folder that is a git repository of its own.
+    pub fn is_nested_repo(&self, path: &str) -> bool {
+        self.nested_repos.binary_search_by(|p| p.as_str().cmp(path)).is_ok()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -887,6 +897,14 @@ impl Repo {
             unstaged: merge(&prev.unstaged, part.unstaged),
             staged: merge(&prev.staged, part.staged),
             fs_paths: prev.fs_paths.clone(),
+            nested_repos: {
+                let mut v: Vec<String> =
+                    prev.nested_repos.iter().filter(|p| !touched.contains(p.as_str())).cloned().collect();
+                v.extend(part.nested_repos);
+                v.sort();
+                v.dedup();
+                v
+            },
         })
     }
 
@@ -1044,6 +1062,12 @@ impl Repo {
                 }
             }
         }
+        // Untracked folders with a `.git`: one stat each (only folder entries).
+        state.nested_repos = crate::discard::nested_repos(
+            &self.workdir,
+            status.entries.iter().filter(|e| e.untracked && e.path.ends_with('/')),
+        );
+        state.nested_repos.sort();
         state.status = status;
         state.fs_paths = fs_paths;
         // Files under an LFS path that aren't pointer changes (untracked ones): whole file.

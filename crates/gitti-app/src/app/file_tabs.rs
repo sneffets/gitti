@@ -189,7 +189,9 @@ impl GittiApp {
                         t.diff_focus.focus(w, cx);
                         t.set_worktree_tab(Some(path.clone()), cx)
                     });
-                    if t.stage == TabStage::Conflicted {
+                    // Conflicted, or a path this file system can't hold (its description
+                    // says why).
+                    if t.stage == TabStage::Conflicted || t.fs_note.is_some() {
                         it.color = Some(warning);
                     }
                     it

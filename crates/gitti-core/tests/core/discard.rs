@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use gitti_core::Repo;
-use gitti_core::discard::{DiscardFailed, DiscardOptions, DiscardPlan};
+use gitti_core::discard::{DiscardFailed, DiscardOptions, DiscardPlan, no_preview_note};
 use gitti_core::status::StatusEntry;
 
 use crate::fixture_kit::{History, append_config, f, repo_with, sh};
@@ -117,6 +117,20 @@ fn nested_repository_is_kept_and_named_unless_asked() {
     assert_eq!(plan.untracked, 1);
     assert!(plan.detail().contains("1 folder is a separate git repository (own .git): nested/"));
     assert_eq!(plan.nested_check(), "Also delete the repository nested/ (and its history)");
+    // The diff pane says what it is (no preview).
+    let ws = repo.working_state().unwrap();
+    assert_eq!(ws.nested_repos, ["nested/"]);
+    let wf = |path: &str| ws.unstaged.iter().find(|w| w.path() == path).unwrap();
+    assert_eq!(
+        no_preview_note(&ws, wf("nested/")).map(|n| n.0),
+        Some(gitti_core::discard::NESTED_REPO_NOTE)
+    );
+    assert_eq!(no_preview_note(&ws, wf("new.txt")), None);
+    // A path-limited re-read keeps it (and drops it once it is gone).
+    let after = repo
+        .working_state_after(&Default::default(), &ws, &["new.txt".to_string()])
+        .unwrap();
+    assert!(after.is_nested_repo("nested/"));
 
     let report = discard(&repo, &entries, DiscardOptions::default()).unwrap();
     assert_eq!(report.nested_kept, ["nested/"]);
@@ -141,6 +155,12 @@ fn untracked_folder_entry_keeps_a_repository_inside() {
     sh(&p, &["init", "-q", "dir/sub"]);
     let entries = unstaged(&repo);
     assert_eq!(entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), ["dir/"]);
+    let ws = repo.working_state().unwrap();
+    assert!(ws.nested_repos.is_empty(), "dir/ itself has no .git");
+    assert_eq!(
+        no_preview_note(&ws, &ws.unstaged[0]).map(|n| n.0),
+        Some(gitti_core::discard::UNTRACKED_FOLDER_NOTE)
+    );
     let report = discard(&repo, &entries, DiscardOptions::default()).unwrap();
     assert_eq!(report.nested_kept, ["dir/sub/"]);
     assert!(!p.join("dir/deep").exists());

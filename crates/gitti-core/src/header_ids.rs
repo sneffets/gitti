@@ -1,5 +1,6 @@
 //! The commit ids in the commit header (the commit's own and its parents') and what their
-//! context menus copy — the same in both frontends. The wording follows the commit
+//! context menus copy — the same in both frontends; gitty's author / committer lines too
+//! (gitti selects their text instead). The wording follows the commit
 //! list's "Copy SHA" / "Copy Short SHA".
 
 use crate::ObjectId;
@@ -28,9 +29,31 @@ pub fn copy_entries(id: &ObjectId, which: HeaderId, parents: usize) -> Vec<(Stri
     ]
 }
 
+/// The menu entries of a person line of the header (`role`: "Author", "Committer"):
+/// (label, text to copy) — "Name <email>", the name, the email.
+pub fn person_entries(role: &str, name: &str, email: &str) -> Vec<(String, String)> {
+    vec![
+        (format!("Copy {role}"), format!("{name} <{email}>")),
+        (format!("Copy {role} Name"), name.to_string()),
+        (format!("Copy {role} Email"), email.to_string()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gitti_test::test]
+    fn person_entries_copy_whole_name_and_email() {
+        assert_eq!(
+            person_entries("Author", "Ada Lovelace", "ada@example.org"),
+            [
+                ("Copy Author".to_string(), "Ada Lovelace <ada@example.org>".to_string()),
+                ("Copy Author Name".to_string(), "Ada Lovelace".to_string()),
+                ("Copy Author Email".to_string(), "ada@example.org".to_string()),
+            ]
+        );
+    }
 
     #[gitti_test::test]
     fn labels_name_the_id() {

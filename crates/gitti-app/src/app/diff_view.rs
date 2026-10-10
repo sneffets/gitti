@@ -15,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::spell_ui::{SpellEditor, SpellLook, SpellTarget, editor_context_menu};
-use super::{CommitView, Detail, GittiApp, MAX_LINE_CHARS, format_time, format_time_full, short};
+use super::{CommitView, Detail, GittiApp, MAX_LINE_CHARS, format_time, short};
 use crate::highlight::segment_styles;
 use crate::probe::ProbeExt as _;
 use crate::rows::{
@@ -491,19 +491,13 @@ impl GittiApp {
                     ))
                     .into_any_element(),
             ))
-            .child(meta(
-                "Author",
-                text(format!("{} <{}>", d.author, d.author_email)),
-            ))
-            .child(meta("Date", text(format_time_full(d.author_time))))
-            .when(
-                d.committer != d.author || d.committer_email != d.author_email,
-                |el| {
-                    el.child(meta(
-                        "Committer",
-                        text(format!("{} <{}>", d.committer, d.committer_email)),
-                    ))
-                },
+            // Author, date, committer (when it isn't the author): selectable text.
+            .children(
+                super::header_ids::header_lines(d)
+                    .into_iter()
+                    .zip(["Author", "Date", "Committer"])
+                    .enumerate()
+                    .map(|(i, (line, label))| meta(label, self.render_header_line(i, line, &p, cx))),
             )
             .child(meta("Parents", parents.into_any_element()))
             .when_some(cv.stash, |el, n| {
@@ -526,6 +520,36 @@ impl GittiApp {
             ))
             .children(self.render_header_refs(d.id, label_w, &p, cx))
             .child(self.render_message(&d.message, &p, cx))
+    }
+
+    /// Line `i` of the commit header's selectable lines (`header_ids::header_lines`):
+    /// selected like the message (double click: a word, triple: the line; ⌘C copies).
+    fn render_header_line(&self, i: usize, text: String, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let sel = self
+            .text_sel
+            .and_then(|s| s.span_in(Area::Header, i, text.len()));
+        let spans = overlay_selection(Vec::new(), sel, p.text_selection, text.len());
+        let styled = StyledText::new(text.clone()).with_highlights(spans);
+        let layout = styled.layout().clone();
+        let target = self
+            .drag_targets
+            .register(Area::Header, i, layout.clone(), text.clone());
+        div()
+            .id(("header-line", i))
+            .relative()
+            .probe(format!("header-line:{i}"))
+            .cursor(CursorStyle::IBeam)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                    this.diff_focus.focus(window, cx);
+                    this.press_text(Area::Header, i, &layout, &text, ev);
+                    cx.notify();
+                }),
+            )
+            .child(styled)
+            .child(target)
+            .into_any_element()
     }
 
     /// The commit header's "Refs" row: every branch, remote branch and tag on the commit
@@ -748,10 +772,20 @@ impl GittiApp {
         .absolute()
         .size_0();
         let list_bounds = self.diff_list_bounds.clone();
+        let note_app = cx.entity().downgrade();
+        let note_key = self.note_wrap.key.clone();
+        let note_size = self.settings.diff_small();
         let measure = canvas(
             move |bounds, window, cx| {
                 viewport_h.set(bounds.size.height);
                 list_bounds.set(Some(bounds));
+                // The explanation rows wrap at the list's width (`fs_paths.rs`).
+                let list_w = bounds.size.width;
+                if (super::fs_paths::note_width(list_w), note_size) != note_key.get() {
+                    cx.defer(move |cx| {
+                        note_app.update(cx, |this, cx| this.set_note_width(list_w, cx)).ok();
+                    });
+                }
                 let ts = window.text_system();
                 let font_id = ts.resolve_font(&font(mono_font()));
                 let Ok(adv) = ts.advance(font_id, font_px, 'm') else {
@@ -1282,6 +1316,32 @@ impl GittiApp {
                     })
                     .into_any_element()
             }
+            // A nested repository / an untracked folder entry: what it is, what Discard does
+            // with it (the tooltip in full).
+            DiffRow::Note { src, file }
+                if let Some((short, full)) = self
+                    .work_files(src)
+                    .and_then(|files| files.get(file))
+                    .and_then(|wf| gitti_core::discard::no_preview_note(&self.working, wf)) =>
+            {
+                base.pl(px(48.))
+                    .pr_2()
+                    .italic()
+                    .text_size(self.settings.diff_small())
+                    .text_color(p.text_muted)
+                    .child(
+                        div()
+                            .id(("no-preview", ix))
+                            .probe(format!("no-preview:{ix}"))
+                            .min_w_0()
+                            .truncate()
+                            .child(short)
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(full).build(window, cx)
+                            }),
+                    )
+                    .into_any_element()
+            }
             DiffRow::Note { src, file } => {
                 let diff = self.file_diff(src, file);
                 // A binary placeholder: "Binary file (… MB)", nothing to load.
@@ -1326,8 +1386,8 @@ impl GittiApp {
             DiffRow::Submodule { src, file, line } => {
                 self.render_submodule_diff_row(base, (src, file, line), &p, cx)
             }
-            DiffRow::PathNote { src, file, line } => {
-                self.render_path_note_row(base, (src, file, line), ix, &p, cx)
+            DiffRow::PathNote { src, file, line, part } => {
+                self.render_path_note_row(base, (src, file, line, part), ix, &p)
             }
         };
         // The row is diff-font tall: its buttons (rem-sized) follow the diff font too.
@@ -1699,10 +1759,11 @@ impl GittiApp {
                         .font_weight(FontWeight::NORMAL)
                         .text_size(self.settings.diff_small())
                         .text_color(p.warning)
-                        .child(format!("⚠ {short}")),
+                        .child(format!("{} {short}", gitti_core::rows::FS_MARK)),
                 )
             })
             .child(div().flex_1())
+            .children(self.render_hide_path_button(src, file, ix, cx))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 if let Some(key) = this.file_path(src, file) {
                     this.expansion.toggle(src, &key);

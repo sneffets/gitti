@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gitti_core::WorkingState;
-use gitti_core::rows::{TabStage, WorktreeTab, build_worktree_rows_for, worktree_tabs};
+use gitti_core::rows::{FS_MARK, TabStage, WorktreeTab, build_worktree_rows_noted, worktree_tabs};
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -16,6 +16,7 @@ use gpui_kit::*;
 
 use super::{GittiApp, file_tabs};
 use crate::rows::{DiffRow, Src};
+use crate::probe::ProbeExt as _;
 use crate::theme::PaletteExt as _;
 
 /// Tabs drawn at most: thousands of untracked files must not mean thousands of tabs laid
@@ -48,12 +49,15 @@ impl GittiApp {
         {
             self.worktree_tab = None;
         }
-        build_worktree_rows_for(
-            &self.working,
-            self.worktree_tab.as_deref(),
-            &self.expansion,
-            wrap,
-        )
+        self.with_note_wrap(|notes| {
+            build_worktree_rows_noted(
+                &self.working,
+                self.worktree_tab.as_deref(),
+                &self.expansion,
+                wrap,
+                notes,
+            )
+        })
     }
 
     fn has_changes(&self, path: &str) -> bool {
@@ -97,7 +101,8 @@ impl GittiApp {
         let mut labels = vec![format!("All Changes ({})", tabs.len())];
         labels.extend(tabs.iter().map(|t| {
             let mark = stage_mark(t.stage).map(|m| format!(" {m}"));
-            format!("{} {}{}", t.letter, t.path, mark.unwrap_or_default())
+            let fs = t.fs_note.as_ref().map(|_| format!(" {FS_MARK}"));
+            format!("{} {}{}{}", t.letter, t.path, mark.unwrap_or_default(), fs.unwrap_or_default())
         }));
         (labels, self.worktree_tab.clone())
     }
@@ -134,6 +139,16 @@ impl GittiApp {
                     .child(file_tabs::label(t.name().to_string()))
                     .when_some(stage_mark(t.stage), |d, mark| {
                         d.child(div().flex_none().text_color(p.text_muted).child(mark))
+                    })
+                    // A path this file system can't hold (the tooltip says why).
+                    .when(t.fs_note.is_some(), |d| {
+                        d.child(
+                            div()
+                                .probe(format!("file-tab-fs:{}", i + 1))
+                                .flex_none()
+                                .text_color(p.warning)
+                                .child(FS_MARK),
+                        )
                     })
                     .tooltip(move |window, cx| {
                         let t = &tip_tabs[i];

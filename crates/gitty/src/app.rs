@@ -482,6 +482,9 @@ pub struct App {
     pub hscroll: usize,
     /// Columns available for diff text when wrapping (set by the renderer).
     pub wrap_cols: Option<usize>,
+    /// Columns of the explanation rows of paths this file system can't hold (set by the
+    /// renderer; they always wrap).
+    pub note_cols: Option<usize>,
     pub line_sel: Option<LineSel>,
 
     pub message: TextEdit,
@@ -771,6 +774,7 @@ impl App {
             anchor_ids: 0,
             hscroll: 0,
             wrap_cols: None,
+            note_cols: None,
             header_cols: 0,
             badge_more: Vec::new(),
             line_sel: None,
@@ -2007,7 +2011,11 @@ impl App {
         self.rows = match &self.detail {
             Detail::Worktree => {
                 self.worktree_totals = gitti_core::rows::WorktreeTotals::of(&self.working);
-                gitti_core::rows::build_worktree_rows(&self.working, &self.expansion, wrap)
+                let notes = match self.note_cols {
+                    Some(cols) => gitti_core::rows::NoteWrap::Cols(cols),
+                    None => gitti_core::rows::NoteWrap::None,
+                };
+                gitti_core::rows::build_worktree_rows_noted(&self.working, None, &self.expansion, wrap, &notes)
             }
             Detail::Commit(cv) => {
                 let mut rows = vec![DiffRow::HeaderSpace; self.header.len()];
@@ -3765,6 +3773,8 @@ impl App {
                         MenuItem::new("Track with Git LFS…", move |app| app.lfs_track(p))
                             .key('L'),
                     );
+                    // A path this file system can't hold: why, hide it.
+                    items.extend(self.fs_path_menu_items(src, file));
                 }
                 let sub = if self.file_diff(src, file).is_some_and(|f| f.submodule.is_some()) {
                     self.submodule_file_items(&path)
@@ -4229,10 +4239,12 @@ impl App {
         self.refresh(false);
     }
 
-    /// The copy entries (label, id) of the header line under the detail cursor: the commit
-    /// id's line its id, the parents line each parent (`gitti_core::header_ids`).
+    /// The copy entries (label, text) of the header line under the detail cursor: the
+    /// commit id's line its id, the parents line each parent, the author line the author
+    /// (whole, name, email), the date line the date and a different committer
+    /// (`gitti_core::header_ids`).
     fn header_id_entries(&self) -> Vec<(String, String)> {
-        use gitti_core::header_ids::{HeaderId, copy_entries};
+        use gitti_core::header_ids::{HeaderId, copy_entries, person_entries};
         let Detail::Commit(cv) = &self.detail else {
             return Vec::new();
         };
@@ -4240,8 +4252,17 @@ impl App {
             return Vec::new();
         }
         let parents = &cv.details.parents;
+        let d = &cv.details;
         if self.diff_cursor == crate::ui::ID_LINE {
             copy_entries(&cv.details.id, HeaderId::Commit, parents.len())
+        } else if self.diff_cursor == crate::ui::AUTHOR_LINE {
+            person_entries("Author", &d.author, &d.author_email)
+        } else if self.diff_cursor == crate::ui::DATE_LINE {
+            let mut v = vec![("Copy Date".to_string(), crate::ui::header_date(d))];
+            if d.committer != d.author || d.committer_email != d.author_email {
+                v.extend(person_entries("Committer", &d.committer, &d.committer_email));
+            }
+            v
         } else if Some(self.diff_cursor) == crate::ui::parents_line(cv) {
             parents
                 .iter()
@@ -4255,7 +4276,8 @@ impl App {
 
     /// `y` in the diff: the selected lines, else the line under the cursor; on the commit
     /// header's id line the commit id, on its parents line the parent ids (space-separated),
-    /// elsewhere in the header the commit message; on a file header its path.
+    /// on its author line "Name <email>", on its date line the date, elsewhere in the
+    /// header the commit message; on a file header its path.
     pub fn copy_selection(&mut self) {
         let line_text = |app: &App, src: Src, file: usize, hunk: usize, line: usize| {
             app.file_diff(src, file)
@@ -4281,6 +4303,12 @@ impl App {
                 Some(DiffRow::HeaderSpace) => match &self.detail {
                     Detail::Commit(cv) if cv.compare.is_none() && self.diff_cursor == crate::ui::ID_LINE => {
                         Some(cv.details.id.to_string())
+                    }
+                    Detail::Commit(cv) if cv.compare.is_none() && self.diff_cursor == crate::ui::AUTHOR_LINE => {
+                        Some(format!("{} <{}>", cv.details.author, cv.details.author_email))
+                    }
+                    Detail::Commit(cv) if cv.compare.is_none() && self.diff_cursor == crate::ui::DATE_LINE => {
+                        Some(crate::ui::header_date(&cv.details))
                     }
                     Detail::Commit(cv) if Some(self.diff_cursor) == crate::ui::parents_line(cv) => Some(
                         cv.details

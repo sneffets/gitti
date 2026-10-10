@@ -117,6 +117,33 @@ pub fn is_nested_repo(workdir: &Path, entry: &StatusEntry) -> bool {
             .is_ok()
 }
 
+/// What a nested repository's entry shows instead of a diff, in a few words (one row,
+/// short enough for a narrow pane).
+pub const NESTED_REPO_NOTE: &str = "Nested repository — Discard keeps it";
+
+/// [`NESTED_REPO_NOTE`] in full (gitti's tooltip, gitty's Enter): what it is, what Discard
+/// does with it, what to do instead.
+pub const NESTED_REPO_EXPLANATION: &str = "A git repository of its own inside this one (it has      a .git: a clone, a worktree of another repository): git doesn't look into it, so it shows      as one untracked folder. Discard keeps it unless you choose to delete it too — that      deletes its history and everything not pushed from it. To record it here, add it as a      submodule (Add Submodule…); to stop seeing it, add it to .gitignore.";
+
+/// An untracked folder entry (`dir/`, `status.showUntrackedFiles=normal`) that isn't a
+/// repository: in a few words, and in full.
+pub const UNTRACKED_FOLDER_NOTE: &str = "Untracked folder — Discard deletes it";
+pub const UNTRACKED_FOLDER_EXPLANATION: &str = "An untracked folder: git lists it as one entry      (status.showUntrackedFiles=normal) instead of each file in it. Discard deletes it with its      files (ignored files and a git repository inside it stay); Stage adds every file in it.";
+
+/// What the diff pane says instead of a diff for a working-directory entry that has none
+/// because of what it is — (one row, in full) — or `None` (a file too large or one of too
+/// many to preview: the frontends say that).
+pub fn no_preview_note(ws: &crate::WorkingState, wf: &crate::WorkFile) -> Option<(&'static str, &'static str)> {
+    if !wf.entry.untracked || !wf.path().ends_with('/') {
+        return None;
+    }
+    Some(if ws.is_nested_repo(wf.path()) {
+        (NESTED_REPO_NOTE, NESTED_REPO_EXPLANATION)
+    } else {
+        (UNTRACKED_FOLDER_NOTE, UNTRACKED_FOLDER_EXPLANATION)
+    })
+}
+
 /// The entries of `entries` that [`is_nested_repo`].
 pub fn nested_repos<'a>(
     workdir: &Path,

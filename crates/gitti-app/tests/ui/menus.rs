@@ -630,6 +630,10 @@ fn discard_all_nested_repository(ui: &mut Ui) {
     if w.iter().any(|l| l.starts_with("U ") && !l.contains("nested/")) {
         fail!(ui, "left besides nested/: {w:?}");
     }
+    // Its diff pane says what it is instead of "no preview".
+    if !ui.check("nested/ left").iter().any(|p| p.kind() == "no-preview") {
+        ui.fail("nested/: no note saying it is a repository of its own".into());
+    }
     ui.quick("discardall");
     ui.quick("checkbox:0");
     ui.step("modalok");

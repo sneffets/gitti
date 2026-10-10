@@ -2,7 +2,8 @@
 //! in the committed message, the diff (a word broken by line wrapping too), the commit
 //! message editor, a dialog's field and the merge editor's sides; a drag from a double
 //! click extends by words. And
-//! the commit header's ids: a right click offers copying the commit's id / each parent's.
+//! the commit header's ids: a right click offers copying the commit's id / each parent's;
+//! its author / date lines select like the message.
 //!
 //! `cargo test --workspace --test ui -- selection[::FILTER]`.
 
@@ -32,6 +33,7 @@ pub fn main() {
         ("diff_word_across_a_wrap", diff_word_across_a_wrap),
         ("editor_and_dialog_field_words", editor_and_dialog_field_words),
         ("header_ids_copy", header_ids_copy),
+        ("header_lines_select", header_lines_select),
         ("merge_editor_sides", merge_editor_sides),
     ];
     common::run(tests, |name| {
@@ -259,6 +261,42 @@ fn header_ids_copy(ui: &mut Ui) {
         fail!(ui, "Copy Parent 2 SHA copied {copied:?}, want {p2}");
     }
     ui.no_git_since(n, "copying the header's ids");
+}
+
+/// The commit header's author and date lines are text: a double click selects a word, a
+/// triple click the line, a drag from the author into the message takes both (lines
+/// joined); ⌘C copies — no git.
+fn header_lines_select(ui: &mut Ui) {
+    ui.step("select:1");
+    let n = ui.n_git();
+    let author = "Layout Test <layout@example.com>";
+    for (byte, count, want) in [(1, 2, "Layout"), (author.find("example").unwrap() + 2, 2, "example"), (3, 3, author)] {
+        let got = clicks_on(ui, "header", 0, byte, count);
+        if got.as_deref() != Some(want) {
+            fail!(ui, "{count} clicks at byte {byte} of the author line selected {got:?}, want {want:?}");
+        }
+    }
+    // The date line: a triple click takes it whole (it is the author date as shown).
+    let date = clicks_on(ui, "header", 1, 2, 3).unwrap_or_default();
+    if date.is_empty() || date.contains('\n') {
+        fail!(ui, "date line selected {date:?}");
+    }
+    // From "Test" in the author line into the message's subject.
+    let (Some(from), Some(to)) = (point(ui, "header", 0, 7), point(ui, "message", 0, 3)) else {
+        return fail!(ui, "header / message not laid out");
+    };
+    ui.clicks(from, 1, Some(to));
+    let got = selected(ui);
+    if !got.starts_with("Test <layout@example.com>\n") || got.lines().count() != 3 {
+        fail!(ui, "drag from the author into the message selected {got:?}");
+    }
+    ui.cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+    ui.stroke("secondary-c");
+    let copied = ui.cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+    if copied != got {
+        fail!(ui, "⌘C copied {copied:?}, selected {got:?}");
+    }
+    ui.no_git_since(n, "selecting in the header");
 }
 
 /// The merge editor's ours / theirs sides: a double click selects the word on that side, a

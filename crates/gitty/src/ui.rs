@@ -1478,11 +1478,25 @@ fn format_time_full(secs: i64) -> String {
 
 // ---------------------------------------------------------------------- detail
 
+/// Indent of the explanation rows under a file header.
+const NOTE_INDENT: u16 = 4;
+
 /// Index of the "Signature" line in `commit_header` (after blank, hash, author, date).
 pub const SIGNATURE_LINE: usize = 4;
 
 /// Index of the commit id's line in `commit_header` (after the blank line).
 pub const ID_LINE: usize = 1;
+
+/// Index of the "Author" line in `commit_header`.
+pub const AUTHOR_LINE: usize = 2;
+
+/// Index of the "Date" line in `commit_header` (with the committer when that differs).
+pub const DATE_LINE: usize = 3;
+
+/// The date as the header's Date line shows it (`y` there copies it).
+pub fn header_date(d: &gitti_core::CommitDetails) -> String {
+    format_time_full(d.author_time)
+}
 
 /// Index of the "Parent(s)" line in `commit_header`, if it has one: after the date or
 /// the signature.
@@ -1516,10 +1530,12 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
         }),
         val(d.id.to_string()),
     ]));
+    debug_assert_eq!(out.len(), AUTHOR_LINE);
     out.push(Line::from(vec![
         label("Author"),
         val(format!("{} <{}>", d.author, d.author_email)),
     ]));
+    debug_assert_eq!(out.len(), DATE_LINE);
     let mut date = format_time_full(d.author_time);
     if d.commit_time != d.author_time || d.committer != d.author {
         date = format!(
@@ -1733,6 +1749,15 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
     if app.wrap_cols != Some(text_cols) {
         app.wrap_cols = Some(text_cols);
         if app.opts.wrap {
+            app.rebuild_rows_keep_view();
+        }
+    }
+    // The explanation rows of paths this file system can't hold always wrap (indented 4,
+    // a column to spare).
+    let note_cols = content.width.saturating_sub(NOTE_INDENT + 1).max(1) as usize;
+    if app.note_cols != Some(note_cols) {
+        app.note_cols = Some(note_cols);
+        if app.rows.iter().any(|r| matches!(r, DiffRow::PathNote { .. })) {
             app.rebuild_rows_keep_view();
         }
     }
@@ -2530,35 +2555,29 @@ fn draw_diff_row(
         DiffRow::Submodule { src, file, line } => {
             draw_submodule_row(buf, area, app, (src, file, line), cursor, digits, p)
         }
-        // Why the file system can't hold this file's path (Enter: all of it).
-        DiffRow::PathNote { src, file, line } => {
+        // Why the file system can't hold this file's path, wrapped (Enter: all of it, Hide).
+        DiffRow::PathNote { src, file, line, part } => {
             buf.set_style(area, Style::new().bg(cursor_bg(p.bg_diff)));
             let Some(issue) = app.fs_issue_of(src, file) else {
                 return;
             };
             let lines = issue.problem.lines(&issue.path, &app.working.fs_paths.rules);
-            let text = lines.get(line as usize).cloned().unwrap_or_default();
-            let color = if line == 0 { p.warning } else { p.text_muted };
-            let hint = if cursor { "  ⏎ explain / hide" } else { "" };
-            let room = (w as usize).saturating_sub(4 + hint.width());
-            let text = if text.width() > room {
-                let mut t: String = String::new();
-                for ch in text.chars() {
-                    if (t.width() + 2) > room {
-                        break;
-                    }
-                    t.push(ch);
-                }
-                t.push('…');
-                t
-            } else {
-                text
+            let whole = lines.get(line as usize).cloned().unwrap_or_default();
+            let notes = match app.note_cols {
+                Some(cols) => gitti_core::rows::NoteWrap::Cols(cols),
+                None => gitti_core::rows::NoteWrap::None,
             };
+            let text = notes.part(&whole, part).trim_end().to_string();
+            let color = if line == 0 { p.warning } else { p.text_muted };
+            // The key hint on the cursor's row where it fits after the text.
+            let room = w.saturating_sub(NOTE_INDENT) as usize;
+            let hint = "  ⏎ explain / hide";
+            let hint = if cursor && text.width() + hint.width() <= room { hint } else { "" };
             put(
                 buf,
-                x + 4,
+                x + NOTE_INDENT,
                 y,
-                w.saturating_sub(4),
+                w.saturating_sub(NOTE_INDENT),
                 vec![
                     Span::styled(text, Style::new().fg(color)),
                     Span::styled(hint, Style::new().fg(p.text_faint)),
@@ -2589,6 +2608,13 @@ fn draw_diff_row(
                 (Some(d), _) if d.binary => "Binary file".to_string(),
                 (Some(d), _) if d.hunks.is_empty() => {
                     "No content changes (mode / rename only)".to_string()
+                }
+                // A nested repository / an untracked folder entry: what it is (Enter:
+                // more).
+                (None, Some(wf)) if let Some((short, _)) =
+                    gitti_core::discard::no_preview_note(&app.working, wf) =>
+                {
+                    if cursor { format!("{short}  ⏎ more") } else { short.to_string() }
                 }
                 (None, Some(w)) if w.entry.untracked => {
                     "Untracked file — too large or too many to preview".to_string()
