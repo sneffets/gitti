@@ -540,3 +540,29 @@ fn header_ids_copy_from_their_menus_and_y() {
     assert!(st[3].contains(&format!("Copied {head}")), "y on the id: {out}");
     assert_no_git(&cmds(&out)[1..], "copying the header ids", &out);
 }
+
+/// Restore from a commit (palette): the path, the version before the commit, then a menu
+/// saying what it writes and that the local change is lost ("Overwrite My Changes and
+/// Restore"). "Branches and Tags Containing Selected Commit…" lists main without git.
+#[gitti_test::test]
+fn restore_from_a_commit_and_branches_containing_it() {
+    let dir = three_commits();
+    let d = dir.path();
+    std::fs::write(d.join("a.txt"), "local\n").unwrap();
+    let clear = "press:backspace;".repeat(12);
+    let out = gitty(
+        d,
+        &format!(
+            "press:j;press:ctrl-p;type:restore file or folder;key:enter;{clear}type:a.txt;\
+             key:enter;dump;key:b;dump;key:r;state;\
+             cmds;press:ctrl-p;type:branches and tags containing;key:enter;dump;cmds"
+        ),
+    );
+    let s = screens(&out);
+    assert!(s[0].contains("Version Before This Commit"), "{out}");
+    assert!(s[1].contains("Restore a.txt from") && s[1].contains("a.txt (modified)"), "{out}");
+    assert!(s[1].contains("Overwrite My Changes and Restore"), "{out}");
+    assert_eq!(std::fs::read_to_string(d.join("a.txt")).unwrap(), "2\n");
+    assert!(s[2].contains("Branches and tags containing") && s[2].contains("main (checked out)"), "{out}");
+    assert!(cmds(&out)[1].is_empty(), "containing ran git: {out}");
+}

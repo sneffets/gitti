@@ -12,6 +12,7 @@ mod config_ui;
 mod diff_view;
 mod file_tabs;
 mod folder_picker;
+mod from_commit;
 mod fs_paths;
 mod git_log;
 mod graph_nav;
@@ -3537,6 +3538,7 @@ impl Render for GittiApp {
         let root = self.repo_actions(root, cx);
         let root = self.navigate_actions(root, cx);
         let root = self.menu_cmd_actions(root, cx);
+        let root = self.restore_contains_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
         let root = self.worktree_actions(root, cx);
         let root = self.submodule_actions(root, cx);

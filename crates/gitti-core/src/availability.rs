@@ -224,6 +224,7 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "UnstageAll" => check(f.staged == 0, NOTHING_STAGED),
         "DiscardAll" => check(f.unstaged == 0, NO_UNSTAGED),
         "RevertCommit" | "EditCommitMessage" => commit(f).or(busy_op),
+        "ShowContaining" | "RestoreFromCommit" => commit(f),
         "CherryPickCommit" => commit(f)
             .or(check(f.selection == Selection::Commit { head: true }, IS_HEAD))
             .or(busy_op),

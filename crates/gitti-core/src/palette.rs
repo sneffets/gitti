@@ -163,6 +163,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
         "EditCommitMessage",
         "gitty gap: the commit's menu (m) has it",
     ),
+    both("ShowContaining", "Branches and Tags Containing Selected Commit…"),
+    both("RestoreFromCommit", "Restore File or Folder from Selected Commit…"),
     gitti("OpenThisVersion", "gitty gap"),
     gitti("OpenOldVersion", "gitty gap"),
     // Also on the signature (gitti: right-click / details; gitty: `m`, `K`).
