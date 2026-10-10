@@ -27,7 +27,8 @@ fn main() {
             _ => filters.push(a),
         }
     }
-    let tests = scenarios::all();
+    let mut tests = scenarios::all();
+    tests.extend(unix::all());
     if list {
         for (name, _) in &tests {
             println!("{name}: test");
@@ -52,6 +53,69 @@ fn main() {
     } else {
         println!("\nfailures: {failed:?}\ntest result: FAILED\n");
         std::process::exit(101);
+    }
+}
+
+/// Scenarios that run on every unix.
+#[cfg(not(unix))]
+mod unix {
+    pub fn all() -> Vec<(&'static str, fn())> {
+        Vec::new()
+    }
+}
+
+#[cfg(unix)]
+mod unix {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use gitti_core::askpass::{AskpassServer, Prompt};
+
+    pub fn all() -> Vec<(&'static str, fn())> {
+        vec![("askpass_names_git_lfs_ssh", askpass_names_git_lfs_ssh)]
+    }
+
+    /// A fake ssh started the way git-lfs starts it (`ssh host git-lfs-authenticate …`)
+    /// asks through the helper: the helper reads its parent's command line, the prompt
+    /// names Git LFS.
+    fn askpass_names_git_lfs_ssh() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let seen: Arc<Mutex<Vec<Prompt>>> = Arc::default();
+        let s = seen.clone();
+        let server = AskpassServer::start(Arc::new(move |p: Prompt| {
+            s.lock().unwrap().push(p);
+            Some("pw".into())
+        }))
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("ssh");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh
+answer=$(\"$SSH_ASKPASS\" \"Enter passphrase for key '/k/id': \")\n\
+             echo \"answer=$answer\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut cmd = std::process::Command::new(&fake);
+        cmd.args(["git@example.com", "git-lfs-authenticate 'project.git' upload"]);
+        cmd.envs(server.env());
+        cmd.env(gitti_core::askpass::ENV_COMMAND, "git push origin");
+        let out = cmd.output().unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("answer=pw"), "{out:?}");
+        let start = std::time::Instant::now();
+        while seen.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let seen = seen.lock().unwrap();
+        let p = &seen[0];
+        assert!(
+            p.via.as_deref().is_some_and(|v| v.contains("git-lfs-authenticate 'project.git' upload")),
+            "{:?}",
+            p.via
+        );
+        assert_eq!(p.lfs_ssh(), Some("git-lfs-authenticate"));
+        assert!(p.message().contains("Through Git LFS"), "{}", p.message());
     }
 }
 

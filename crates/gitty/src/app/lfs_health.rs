@@ -7,9 +7,12 @@
 //! problems change. A push that wouldn't upload the LFS content asks first, offering to
 //! write the hooks.
 //!
-//! Checked in the background (`Msg::LfsHealth`) once at start, when HEAD moves and after a
-//! fix — never per refresh or on navigation. Before a push only the hook files are read
-//! again.
+//! A repository that doesn't use LFS (any more) but has git-lfs's hooks gets the same
+//! badge (`LFS HOOKS WITHOUT LFS`): what they cost on every push, "Remove LFS Hooks".
+//!
+//! Checked in the background (`Msg::LfsHealth`, `Repo::lfs_check`) once at start, when HEAD
+//! moves, when the repository starts or stops using LFS and after a fix — never per
+//! refresh or on navigation. Before a push only the hook files are read again.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,8 +31,9 @@ const NOTE_WIDTH: usize = 64;
 pub struct LfsHealthUi {
     health: Option<LfsHealth>,
     issues: Vec<LfsIssue>,
-    /// HEAD at the last check started (`None`: check on the next refresh).
-    checked_head: Option<Option<ObjectId>>,
+    /// HEAD and whether the repository used LFS at the last check started (`None`: check
+    /// on the next refresh).
+    checked: Option<(Option<ObjectId>, bool)>,
     in_flight: bool,
     /// The badge was hidden for these problems.
     dismissed: Option<Vec<String>>,
@@ -45,28 +49,23 @@ impl LfsHealthUi {
 type PendingPush = Rc<RefCell<Option<Box<dyn FnOnce(&mut App)>>>>;
 
 impl App {
-    /// A refresh's LFS state: the health is checked when the repository uses LFS and HEAD
-    /// moved since the last check (the first refresh included).
+    /// A refresh's LFS state: the health is checked when HEAD moved or the repository
+    /// started / stopped using LFS since the last check (the first refresh included).
     pub(super) fn lfs_health_after_refresh(&mut self, uses: bool) {
-        if !uses {
-            if self.lfs.health.health.is_some() {
-                self.lfs.health = LfsHealthUi::default();
-            }
-            return;
-        }
-        let head = self.head.id;
-        if self.lfs.health.in_flight || self.lfs.health.checked_head == Some(head) {
+        let now = (self.head.id, uses);
+        if self.lfs.health.in_flight || self.lfs.health.checked == Some(now) {
             return;
         }
         self.start_lfs_health_check();
     }
 
     fn start_lfs_health_check(&mut self) {
+        let uses = self.lfs.state.uses;
         self.lfs.health.in_flight = true;
-        self.lfs.health.checked_head = Some(self.head.id);
+        self.lfs.health.checked = Some((self.head.id, uses));
         let repo = self.repo.clone();
         self.loads_in_flight += 1;
-        spawn(&self.tx, move || repo.lfs_health(), |h| Msg::LfsHealth(Box::new(h)));
+        spawn(&self.tx, move || repo.lfs_check(uses), |h| Msg::LfsHealth(Box::new(h)));
     }
 
     /// `Msg::LfsHealth`.
@@ -75,6 +74,10 @@ impl App {
         ui.in_flight = false;
         ui.issues = health.issues(self.repo.workdir());
         ui.health = Some(health);
+        // HEAD moved or LFS came / went while it ran: check again.
+        if ui.checked.is_some_and(|c| c != (self.head.id, self.lfs.state.uses)) {
+            self.start_lfs_health_check();
+        }
     }
 
     /// The toolbar badge: the first problem's few words (`None`: nothing wrong, or hidden).
@@ -94,7 +97,7 @@ impl App {
 
     /// `fix` as an operation; the health is checked again after it.
     fn run_lfs_fix(&mut self, fix: LfsFix) {
-        self.lfs.health.checked_head = None;
+        self.lfs.health.checked = None;
         self.run_op(fix.label(), true, After::Nothing, move |r| r.lfs_fix(fix));
     }
 
@@ -137,12 +140,9 @@ impl App {
         self.modal = Some(Modal::menu("Git LFS", items));
     }
 
-    /// Palette: "Git LFS Problems…" while there are any, the fixes, "Check Git LFS Setup"
-    /// in an LFS repository.
+    /// Palette: "Git LFS Problems…" while there are any, the fixes ("Remove LFS Hooks"
+    /// also outside an LFS repository), "Check Git LFS Setup" in an LFS repository.
     pub(super) fn lfs_health_palette_items(&self) -> Vec<PickItem> {
-        if !self.lfs.state.uses {
-            return Vec::new();
-        }
         let ui = &self.lfs.health;
         let mut items = Vec::new();
         if !ui.issues.is_empty() {
@@ -157,6 +157,9 @@ impl App {
                     app.run_lfs_fix(fix)
                 }));
             }
+        }
+        if !self.lfs.state.uses {
+            return items;
         }
         items.push(PickItem::new(
             "Check Git LFS Setup",
@@ -209,7 +212,7 @@ impl App {
                         app.set_error(format!("Installing the Git LFS hooks failed: {e:#}"));
                         return;
                     }
-                    app.lfs.health.checked_head = None;
+                    app.lfs.health.checked = None;
                     if let Some(push) = go.borrow_mut().take() {
                         push(app)
                     }

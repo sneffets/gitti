@@ -50,6 +50,10 @@ pub struct Prompt {
     pub text: String,
     /// The git command that asked (`git fetch origin`), if known.
     pub command: Option<String>,
+    /// The program that started the helper (ssh, git), its command line as the helper read
+    /// it (unix; `None` elsewhere or when unreadable) — shortened, secrets masked:
+    /// `ssh -- git@host git-lfs-authenticate 'r.git' upload`.
+    pub via: Option<String>,
     /// The helper process waiting for the answer.
     pub asker: Asker,
 }
@@ -127,6 +131,16 @@ impl Prompt {
         classify_prompt(&self.text)
     }
 
+    /// Git LFS's ssh command that asks (`git-lfs-authenticate` / `git-lfs-transfer`):
+    /// the prompt comes from `git lfs pre-push` (the pre-push hook) or another git-lfs
+    /// command, not from git's own connection.
+    pub fn lfs_ssh(&self) -> Option<&'static str> {
+        let via = self.via.as_deref()?;
+        ["git-lfs-authenticate", "git-lfs-transfer"]
+            .into_iter()
+            .find(|c| via.contains(c))
+    }
+
     /// The text a dialog shows: the prompt, which command asked and — when it asks again
     /// — why that happens and how to be asked only once.
     pub fn message(&self) -> String {
@@ -135,6 +149,12 @@ impl Prompt {
             Some(c) => format!("{text}\n\nAsked by: {c}"),
             None => text.to_string(),
         };
+        if let Some(lfs) = self.lfs_ssh() {
+            out.push_str(&format!(
+                "\nThrough Git LFS: its ssh connection ({lfs}) — on a push, the pre-push hook's \
+                 git lfs pre-push."
+            ));
+        }
         if let Some(note) = self.repeat_note() {
             out.push_str("\n\n");
             out.push_str(&note);
@@ -148,11 +168,24 @@ impl Prompt {
         if n < 2 {
             return None;
         }
-        let mut note = format!(
-            "Asked {n} times within two minutes. If the last answer was wrong, this is the retry. If \
-             it was right, the operation opened another connection that asks again (Git \
-             LFS's pre-push hook does that for each step). Cancel stops the whole operation."
-        );
+        let mut note = match self.lfs_ssh() {
+            Some(lfs) => format!(
+                "Asked {n} times within two minutes. If the last answer was wrong, this is the \
+                 retry. If it was right: Git LFS asks — git lfs pre-push, run by the \
+                 repository's pre-push hook, opens an ssh connection of its own for each step \
+                 ({lfs}, git-lfs-authenticate / git-lfs-transfer) and retries failed ones, and \
+                 each asks again. Where the server has no git-lfs they all fail, and the push \
+                 with them. A repository that doesn't use LFS doesn't need the hooks: remove \
+                 them (\"Remove LFS Hooks\", or git lfs uninstall --local). Cancel stops the \
+                 whole operation."
+            ),
+            None => format!(
+                "Asked {n} times within two minutes. If the last answer was wrong, this is the \
+                 retry. If it was right, the operation opened another connection that asks \
+                 again (Git LFS's pre-push hook does that for each step). Cancel stops the \
+                 whole operation."
+            ),
+        };
         if let Some(key) = ssh_key_of(&self.text) {
             let add = if cfg!(target_os = "macos") {
                 format!("ssh-add --apple-use-keychain '{key}'")
@@ -179,8 +212,13 @@ pub type Handler = dyn Fn(Prompt) -> Option<String> + Send + Sync;
 
 /// The value of [`ENV_COMMAND`] for a git call: `git <args>`, secrets masked, shortened.
 pub fn describe_command(args: &[&str]) -> String {
+    shortened(&crate::redact::redact(&format!("git {}", args.join(" "))))
+}
+
+/// `s` cut to 300 bytes (`…` added).
+fn shortened(s: &str) -> String {
     const MAX: usize = 300;
-    let mut s = crate::redact::redact(&format!("git {}", args.join(" "))).into_owned();
+    let mut s = s.to_string();
     if s.len() > MAX {
         let mut cut = MAX;
         while !s.is_char_boundary(cut) {
@@ -411,7 +449,8 @@ fn same_token(a: &str, b: &str) -> bool {
             == 0
 }
 
-/// Request: `token\n<prompt bytes> <command bytes>\n<prompt><command>`.
+/// Request: `token\n<prompt bytes> <command bytes> <via bytes>\n<prompt><command><via>`
+/// (`<via bytes>` may be missing: an older helper).
 /// Reply: `1<answer>` or `0` (cancelled / refused), then EOF.
 fn serve(
     stream: transport::Stream,
@@ -434,13 +473,20 @@ fn serve(
     let (Some(Ok(prompt_len)), Some(Ok(command_len))) = (lens.next(), lens.next()) else {
         return Err(anyhow!("malformed request"));
     };
-    if prompt_len.saturating_add(command_len) > MAX_REQUEST {
+    let via_len = match lens.next() {
+        Some(Ok(n)) => n,
+        Some(Err(_)) => return Err(anyhow!("malformed request")),
+        None => 0,
+    };
+    if prompt_len.saturating_add(command_len).saturating_add(via_len) > MAX_REQUEST {
         return Err(anyhow!("request too large"));
     }
     let mut prompt = vec![0u8; prompt_len as usize];
     reader.read_exact(&mut prompt)?;
     let mut command = vec![0u8; command_len as usize];
     reader.read_exact(&mut command)?;
+    let mut via = vec![0u8; via_len as usize];
+    reader.read_exact(&mut via)?;
     // The request is read completely before answering: closing with unread data makes the
     // OS reset the connection, and the client then sees an error instead of the refusal.
     if !same_token(token.trim_end(), expected) {
@@ -464,9 +510,11 @@ fn serve(
         repeat,
     };
     watch_asker(&stream, &asker);
+    let via = shortened(&crate::redact::redact(String::from_utf8_lossy(&via).trim()));
     let prompt = Prompt {
         text,
         command: (!command.is_empty()).then_some(command),
+        via: (!via.is_empty()).then_some(via),
         asker,
     };
     // The user may take as long as they like to answer.
@@ -528,8 +576,9 @@ pub fn run_client_if_requested() -> Option<i32> {
         .map(|a| a.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ");
+    let via = parent_command_line().unwrap_or_default();
     exit_with_parent();
-    Some(match client(&addr, &token, &prompt, &command) {
+    Some(match client(&addr, &token, &prompt, &command, &via) {
         Ok(Some(answer)) => {
             println!("{answer}");
             0
@@ -567,14 +616,90 @@ fn exit_with_parent() {
 #[cfg(not(unix))]
 fn exit_with_parent() {}
 
-fn client(addr: &str, token: &str, prompt: &str, command: &str) -> Result<Option<String>> {
+/// The command line of the program that started this process (ssh asking for a
+/// passphrase, git for a password), arguments joined with spaces.
+#[cfg(unix)]
+fn parent_command_line() -> Option<String> {
+    // SAFETY: getppid has no preconditions and cannot fail.
+    command_line_of(unsafe { libc::getppid() })
+}
+
+/// Windows: not read (needs the parent's process handle and its PEB; a known gap).
+#[cfg(not(unix))]
+fn parent_command_line() -> Option<String> {
+    None
+}
+
+/// The command line of process `pid` (`/proc/<pid>/cmdline`).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn command_line_of(pid: libc::pid_t) -> Option<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let args: Vec<String> = raw
+        .split(|&b| b == 0)
+        .filter(|a| !a.is_empty())
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect();
+    (!args.is_empty()).then(|| args.join(" "))
+}
+
+/// The command line of process `pid` (`sysctl` `KERN_PROCARGS2`: argc, the executable
+/// path, padding, then the arguments, NUL-terminated).
+#[cfg(target_os = "macos")]
+fn command_line_of(pid: libc::pid_t) -> Option<String> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size: libc::size_t = 0;
+    // SAFETY: a size query (null buffer) for a valid MIB of three ints.
+    let rc = unsafe {
+        libc::sysctl(mib.as_mut_ptr(), 3, std::ptr::null_mut(), &mut size, std::ptr::null_mut(), 0)
+    };
+    if rc != 0 || size < 4 {
+        return None;
+    }
+    let mut buf = vec![0u8; size];
+    // SAFETY: `buf` has `size` writable bytes; the kernel writes at most `size`.
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buf.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || size < 4 {
+        return None;
+    }
+    buf.truncate(size);
+    let argc = i32::from_ne_bytes(buf[..4].try_into().ok()?).max(0) as usize;
+    let mut rest = buf[4..].splitn(2, |&b| b == 0).nth(1)?;
+    // Padding NULs after the executable path.
+    while let [0, tail @ ..] = rest {
+        rest = tail;
+    }
+    let args: Vec<String> = rest
+        .split(|&b| b == 0)
+        .take(argc)
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect();
+    (!args.is_empty()).then(|| args.join(" "))
+}
+
+fn client(
+    addr: &str,
+    token: &str,
+    prompt: &str,
+    command: &str,
+    via: &str,
+) -> Result<Option<String>> {
     let mut stream =
         transport::connect(addr).with_context(|| format!("connecting to the app at {addr}"))?;
     write!(
         stream,
-        "{token}\n{} {}\n{prompt}{command}",
+        "{token}\n{} {} {}\n{prompt}{command}{via}",
         prompt.len(),
-        command.len()
+        command.len(),
+        via.len()
     )?;
     stream.flush()?;
     let mut reply = Vec::new();
@@ -674,18 +799,19 @@ mod tests {
                 addr,
                 token,
                 "Enter passphrase for key 'x':",
-                "git fetch origin"
+                "git fetch origin",
+                "ssh -- git@host git-lfs-authenticate 'r.git' upload"
             )
             .unwrap()
             .as_deref(),
             Some("s3cret")
         );
-        assert_eq!(client(addr, token, "other", "").unwrap(), None);
+        assert_eq!(client(addr, token, "other", "", "").unwrap(), None);
         // A wrong token (also a prefix of the right one) is refused before the handler
         // sees anything.
         for wrong in ["wrong", &token[..10], ""] {
             assert_eq!(
-                client(addr, wrong, "Enter passphrase for key 'x':", "").unwrap(),
+                client(addr, wrong, "Enter passphrase for key 'x':", "", "").unwrap(),
                 None
             );
         }
@@ -696,6 +822,7 @@ mod tests {
                 Prompt {
                     text: "Enter passphrase for key 'x':".into(),
                     command: Some("git fetch origin".into()),
+                    via: Some("ssh -- git@host git-lfs-authenticate 'r.git' upload".into()),
                     ..Prompt::default()
                 },
                 Prompt::new("other"),
@@ -703,7 +830,9 @@ mod tests {
         );
         assert_eq!(
             seen[0].message(),
-            "Enter passphrase for key 'x':\n\nAsked by: git fetch origin"
+            "Enter passphrase for key 'x':\n\nAsked by: git fetch origin\nThrough Git LFS: its \
+             ssh connection (git-lfs-authenticate) — on a push, the pre-push hook's git lfs \
+             pre-push."
         );
         assert!(is_configured(&server.env()));
     }
@@ -758,8 +887,54 @@ mod tests {
             ..Prompt::new("Password for 'https://u@host': ")
         };
         assert!(!pw.message().contains("ssh-add"), "{}", pw.message());
+        // Git LFS's own ssh connection asks: the note names git lfs pre-push and the
+        // server's missing git-lfs, and how to drop the hooks.
+        let lfs = Prompt {
+            via: Some("ssh -- git@example.com git-lfs-transfer 'project.git' upload".into()),
+            ..p.clone()
+        };
+        assert_eq!(lfs.lfs_ssh(), Some("git-lfs-transfer"));
+        let m = lfs.message();
+        for part in [
+            "Through Git LFS: its ssh connection (git-lfs-transfer)",
+            "git lfs pre-push, run by the repository's pre-push hook",
+            "the server has no git-lfs",
+            "Remove LFS Hooks",
+            "Cancel stops the whole operation",
+            "ssh-add",
+        ] {
+            assert!(m.contains(part), "{part}: {m}");
+        }
+        assert_eq!(p.lfs_ssh(), None);
+        assert!(!p.message().contains("Through Git LFS"));
         assert_eq!(ssh_key_of("Enter passphrase for key '': "), None);
         assert_eq!(ssh_key_of("Password: "), None);
+    }
+
+    /// The helper reads its parent's command line (here: this test process's own).
+    #[cfg(unix)]
+    #[gitti_test::test]
+    fn command_line_of_a_process() {
+        let own = command_line_of(std::process::id() as libc::pid_t).unwrap();
+        let exe = std::env::args().next().unwrap();
+        assert!(own.starts_with(&exe), "{own:?} / {exe:?}");
+        assert!(parent_command_line().is_some_and(|c| !c.is_empty()));
+    }
+
+    /// A request of an older helper (two lengths, no `via`) is still served.
+    #[gitti_test::test]
+    fn request_without_via() {
+        let server = AskpassServer::start(Arc::new(|p: Prompt| {
+            (p.via.is_none() && p.command.as_deref() == Some("git push")).then(|| "ok".into())
+        }))
+        .unwrap();
+        let env = env_of(&server);
+        let mut s = transport::connect(&env[ENV_ADDR]).unwrap();
+        write!(s, "{}\n2 8\nPwgit push", env[ENV_TOKEN]).unwrap();
+        s.flush().unwrap();
+        let mut reply = Vec::new();
+        s.read_to_end(&mut reply).unwrap();
+        assert_eq!(reply, b"1ok");
     }
 
     #[gitti_test::test]
@@ -786,7 +961,7 @@ mod tests {
         drop(server);
         assert!(!socket.exists() && !dir.exists(), "{}", dir.display());
         // The helper then fails instead of hanging.
-        assert!(client(&socket.to_string_lossy(), "t", "p", "").is_err());
+        assert!(client(&socket.to_string_lossy(), "t", "p", "", "").is_err());
     }
 
     #[gitti_test::test]
@@ -816,7 +991,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         // The server still answers others.
         assert_eq!(
-            client(&env[ENV_ADDR], &env[ENV_TOKEN], "Password: ", "")
+            client(&env[ENV_ADDR], &env[ENV_TOKEN], "Password: ", "", "")
                 .unwrap()
                 .as_deref(),
             Some("x")

@@ -5,7 +5,8 @@
 //! file has "whole file only" instead of hunk buttons and refuses a hunk stage before git
 //! runs. A missing git-lfs is a banner that stays until hidden; a push without the LFS
 //! pre-push hook asks first and can write the hook (a made-up health — the detection is
-//! tested in core's `lfs_health::`).
+//! tested in core's `lfs_health::`). The last LFS pattern removed while git-lfs's hooks
+//! stay: the banner offers to remove them.
 //!
 //! Own process (suite) because of the environment: `cargo test --workspace --test ui --
 //! lfs[::FILTER]`.
@@ -93,6 +94,7 @@ pub fn main() {
         ("push_without_the_lfs_hook_asks", push_without_the_lfs_hook_asks),
         ("track_without_git_lfs", track_without_git_lfs),
         ("download_missing_objects", download_missing_objects),
+        ("hooks_without_lfs_offer_removal", hooks_without_lfs_offer_removal),
     ];
     let counter = std::cell::Cell::new(0);
     common::run(tests, |_| {
@@ -281,5 +283,59 @@ fn download_missing_objects(ui: &mut Ui) {
     let rows = probes.iter().filter(|p| p.name.starts_with("lfs:")).count();
     if rows != 2 {
         fail!(ui, "{rows} LFS rows after the reload, expected doc.dat's and far.dat's");
+    }
+}
+
+/// The last LFS pattern and the LFS files removed (committed state untouched) while
+/// git-lfs's four hooks stay: after the refresh the banner says what they cost and offers
+/// "Remove LFS Hooks", which deletes them — the banner goes.
+fn hooks_without_lfs_offer_removal(ui: &mut Ui) {
+    let wd = ui.workdir();
+    let hooks = wd.join(".git").join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    for name in gitti_core::lfs_health::LFS_HOOKS {
+        let file = hooks.join(name);
+        std::fs::write(&file, gitti_core::lfs_health::hook_script(name)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    git(&wd, &["rm", "-q", "--cached", ".gitattributes", "doc.dat", "far.dat"]);
+    for f in [".gitattributes", "doc.dat", "far.dat"] {
+        let _ = std::fs::remove_file(wd.join(f));
+    }
+    let n = ui.n_git();
+    ui.step("action:gitti::Refresh");
+    let ws = ui.ws.clone();
+    let issues = ui.cx.update(|cx| gitti_app::testing::lfs_issues(&ws, cx));
+    if issues != ["LFS hooks without LFS"] {
+        fail!(ui, "issues {issues:?}");
+    }
+    if ui.git_since(n).iter().any(|c| c.contains("lfs") || c.contains("hookspath")) {
+        fail!(ui, "the hooks check ran git: {:?}", ui.git_since(n));
+    }
+    let probes = ui.check("hooks without LFS");
+    for name in ["lfs-issue:unused-hooks", "lfs-fix:remove-hooks"] {
+        if !probes.iter().any(|p| p.name == name) {
+            fail!(ui, "no {name} probe");
+        }
+    }
+    ui.click_on("lfs-fix:remove-hooks", MouseButton::Left);
+    let left: Vec<&str> = gitti_core::lfs_health::LFS_HOOKS
+        .into_iter()
+        .filter(|n| hooks.join(n).exists())
+        .collect();
+    if !left.is_empty() {
+        fail!(ui, "hooks left: {left:?}");
+    }
+    let issues = ui.cx.update(|cx| gitti_app::testing::lfs_issues(&ws, cx));
+    if !issues.is_empty() {
+        fail!(ui, "issues after the removal: {issues:?}");
+    }
+    match ui.status() {
+        Some((text, false)) if text.starts_with("Removed the Git LFS hooks pre-push") => {}
+        other => fail!(ui, "status {other:?}"),
     }
 }

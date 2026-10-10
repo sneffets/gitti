@@ -249,3 +249,34 @@ fn push_without_the_lfs_hook_asks() {
     let hook = std::fs::read_to_string(d.join(".git/hooks/pre-push")).unwrap();
     assert!(hook.contains("git lfs pre-push \"$@\""), "{hook}");
 }
+
+/// A repository without LFS that still has git-lfs's hooks (the last pattern was removed):
+/// the badge names it, "Git LFS Problems…" explains the cost and "Remove LFS Hooks" (1)
+/// deletes them — the badge goes.
+#[gitti_test::test]
+fn hooks_without_lfs_removed() {
+    let dir = fixture(&[("a.txt", "x\n")], &[]);
+    let hooks = dir.path().join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    for name in gitti_core::lfs_health::LFS_HOOKS {
+        let file = hooks.join(name);
+        std::fs::write(&file, gitti_core::lfs_health::hook_script(name)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    let config = tempfile::tempdir().unwrap();
+    let script = format!(
+        "dump;press:ctrl-p;{}press:enter;dump;press:1;wait;dump;state",
+        presses("Git LFS Problems")
+    );
+    let out = gitty_env(dir.path(), config.path(), "120x40", &[(ENV_NO_GIT_LFS, "1")], &script);
+    let s = screens(&out);
+    assert!(s[0].contains("LFS HOOKS WITHOUT LFS"), "{out}");
+    assert!(s[1].contains("tracks nothing") && s[1].contains("Remove LFS Hooks"), "{out}");
+    assert!(!s[2].contains("LFS HOOKS WITHOUT LFS"), "gone: {out}");
+    assert!(states(&out)[0].contains("Removed the Git LFS hooks pre-push"), "{out}");
+    assert!(!hooks.join("pre-push").exists() && !hooks.join("post-merge").exists());
+}

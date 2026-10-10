@@ -34,12 +34,13 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::Repo;
 use crate::lfs::{LfsCaps, MAX_POINTER_BYTES, parse_pointer};
+use crate::lfs_unused::UnusedLfsHooks;
 
 /// The hooks git-lfs installs, `pre-push` first.
 pub const LFS_HOOKS: [&str; 4] = ["pre-push", "post-checkout", "post-commit", "post-merge"];
 
 /// The smallest pointer file (`version …`, `oid sha256:<64>`, `size 0`).
-const MIN_POINTER_BYTES: usize = 120;
+pub(crate) const MIN_POINTER_BYTES: usize = 120;
 
 /// What git runs for one hook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +80,7 @@ pub struct LfsHooks {
 }
 
 /// Whether `text` (a hook script) runs `git lfs <name>` / `git-lfs <name>`.
-fn runs_lfs(text: &str, name: &str) -> bool {
+pub(crate) fn runs_lfs(text: &str, name: &str) -> bool {
     text.lines()
         .filter(|l| !l.trim_start().starts_with('#'))
         .any(|l| l.contains(&format!("lfs {name}")))
@@ -280,6 +281,9 @@ pub enum LfsFix {
     InstallHooks,
     /// `git lfs pull`.
     Download,
+    /// Deletes git-lfs's own hooks in a repository that doesn't use LFS
+    /// ([`crate::lfs_unused::UnusedLfsHooks::remove`]).
+    RemoveHooks,
 }
 
 impl LfsFix {
@@ -289,6 +293,7 @@ impl LfsFix {
             LfsFix::SetUp => "Set Up Git LFS",
             LfsFix::InstallHooks => "Install LFS Hooks",
             LfsFix::Download => "Download LFS Files",
+            LfsFix::RemoveHooks => "Remove LFS Hooks",
         }
     }
 
@@ -298,6 +303,7 @@ impl LfsFix {
             LfsFix::SetUp => "git lfs install (your global git config) + this repository's hooks",
             LfsFix::InstallHooks => "writes git-lfs's hooks, as git lfs update does",
             LfsFix::Download => "git lfs pull",
+            LfsFix::RemoveHooks => "deletes git-lfs's own hook files",
         }
     }
 
@@ -307,12 +313,18 @@ impl LfsFix {
             LfsFix::SetUp => "setup",
             LfsFix::InstallHooks => "hooks",
             LfsFix::Download => "download",
+            LfsFix::RemoveHooks => "remove-hooks",
         }
     }
 
     pub fn from_key(key: &str) -> Option<LfsFix> {
-        [LfsFix::SetUp, LfsFix::InstallHooks, LfsFix::Download]
-            .into_iter()
+        [
+            LfsFix::SetUp,
+            LfsFix::InstallHooks,
+            LfsFix::Download,
+            LfsFix::RemoveHooks,
+        ]
+        .into_iter()
             .find(|f| f.key() == key)
     }
 }
@@ -324,6 +336,8 @@ pub enum LfsIssueKind {
     NotSetUp,
     Hooks,
     NotDownloaded,
+    /// git-lfs's hooks in a repository that doesn't use LFS.
+    UnusedHooks,
 }
 
 /// One problem as the frontends show it.
@@ -364,6 +378,11 @@ pub struct LfsHealth {
     pub pointers: Vec<String>,
     /// Pointer files `lfs.fetchinclude` / `lfs.fetchexclude` leave out (not counted above).
     pub excluded: usize,
+    /// The repository doesn't use LFS ([`Repo::lfs_check`]): only [`Self::unused_hooks`]
+    /// counts, the other fields stay empty.
+    pub no_lfs: bool,
+    /// git-lfs's hooks in a repository that doesn't use LFS.
+    pub unused_hooks: Option<UnusedLfsHooks>,
 }
 
 /// `path` for display: relative to `workdir` (with `/`) when inside it.
@@ -397,6 +416,9 @@ const PUSH_CONSEQUENCE: &str = "a push would upload the commits but not the LFS 
 impl LfsHealth {
     /// The problems, most basic first (empty: all fine). git-lfs missing hides the rest.
     pub fn issues(&self, workdir: &Path) -> Vec<LfsIssue> {
+        if self.no_lfs || self.unused_hooks.is_some() {
+            return self.unused_hooks.iter().map(|u| u.issue(workdir)).collect();
+        }
         if !self.installed {
             return vec![LfsIssue {
                 kind: LfsIssueKind::NotInstalled,
@@ -472,7 +494,7 @@ impl LfsHealth {
         hooks: Option<&LfsHooks>,
         no_verify: bool,
     ) -> Option<LfsPushWarning> {
-        if !self.installed {
+        if !self.installed || self.no_lfs {
             return None;
         }
         if no_verify {
@@ -643,6 +665,18 @@ fn lfsconfig_filters(bytes: &[u8]) -> FetchFilters {
     (get("lfs.fetchinclude"), get("lfs.fetchexclude"))
 }
 
+/// Whether blob `id` is an LFS pointer (its header first: only small blobs are read).
+pub(crate) fn is_pointer_blob(repo: &gix::Repository, id: gix::ObjectId) -> bool {
+    let Ok(header) = repo.find_header(id) else {
+        return false;
+    };
+    let size = header.size() as usize;
+    (MIN_POINTER_BYTES..=MAX_POINTER_BYTES).contains(&size)
+        && repo
+            .find_object(id)
+            .is_ok_and(|o| parse_pointer(&o.data).is_some())
+}
+
 /// The start of a small file (`None`: unreadable or larger than a pointer).
 fn read_small(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read as _;
@@ -678,6 +712,8 @@ impl Repo {
             hooks: Some(hooks),
             excluded: before - pointers.len(),
             pointers,
+            no_lfs: false,
+            unused_hooks: None,
         }
     }
 
@@ -696,7 +732,14 @@ impl Repo {
     }
 
     fn lfs_hooks_with(&self, config: &LfsConfig) -> LfsHooks {
-        let dir = match config.hooks_path.as_deref() {
+        let dir = self.hooks_dir(config.hooks_path.as_deref());
+        LfsHooks::read(dir, config.hooks_path.clone(), self.lfs_lockable())
+    }
+
+    /// Where git looks for hooks: `core.hooksPath` as configured (`hooks_path`; `~/`
+    /// expanded, relative to the top of the working tree), else the common dir's `hooks/`.
+    pub(crate) fn hooks_dir(&self, hooks_path: Option<&str>) -> PathBuf {
+        match hooks_path {
             Some(p) => {
                 let p = match (p.strip_prefix("~/"), std::env::var_os("HOME")) {
                     (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
@@ -710,8 +753,7 @@ impl Repo {
                 }
             }
             None => self.common_dir().join("hooks"),
-        };
-        LfsHooks::read(dir, config.hooks_path.clone(), self.lfs_lockable())
+        }
     }
 
     /// Whether an attributes file marks LFS patterns `lockable` (file reads).
@@ -751,16 +793,7 @@ impl Repo {
         let repo = self.gix()?;
         let index = repo.index_or_empty().map_err(|e| anyhow!("{e}"))?;
         let workdir = self.workdir();
-        let pointer_blob = |id: gix::ObjectId| -> bool {
-            let Ok(header) = repo.find_header(id) else {
-                return false;
-            };
-            let size = header.size() as usize;
-            (MIN_POINTER_BYTES..=MAX_POINTER_BYTES).contains(&size)
-                && repo
-                    .find_object(id)
-                    .is_ok_and(|o| parse_pointer(&o.data).is_some())
-        };
+        let pointer_blob = |id: gix::ObjectId| is_pointer_blob(&repo, id);
         let mut candidates = Vec::new();
         let mut lfsconfig = None;
         for e in index.entries() {
@@ -818,9 +851,25 @@ impl Repo {
         Ok((lfs, filters))
     }
 
+    /// What the frontends check: [`Self::lfs_health`] in a repository that uses LFS
+    /// (`uses`: [`crate::lfs::RepoLfs::uses`]), else whether git-lfs's hooks are left
+    /// over ([`Self::lfs_unused_hooks`], in-process: no git runs).
+    pub fn lfs_check(&self, uses: bool) -> LfsHealth {
+        if uses {
+            return self.lfs_health();
+        }
+        LfsHealth {
+            no_lfs: true,
+            unused_hooks: self.lfs_unused_hooks(),
+            ..LfsHealth::default()
+        }
+    }
+
     /// Runs `fix` and says what it did.
     pub fn lfs_fix(&self, fix: LfsFix) -> Result<String> {
-        if !LfsCaps::get().installed() {
+        // Removing hooks works without git-lfs: hooks calling a missing git-lfs fail every
+        // push.
+        if fix != LfsFix::RemoveHooks && !LfsCaps::get().installed() {
             bail!("git-lfs is not installed (https://git-lfs.com)");
         }
         match fix {
@@ -854,6 +903,7 @@ impl Repo {
                     .run(&["lfs", "pull"])?;
                 Ok("Downloaded the LFS files (git lfs pull)".into())
             }
+            LfsFix::RemoveHooks => self.lfs_remove_unused_hooks(),
         }
     }
 }
@@ -1023,7 +1073,7 @@ mod tests {
         assert_eq!(set_up.push_warning(wd, Some(&hooks(HookState::Lfs, false)), false), None);
         let foreign = set_up.push_warning(wd, Some(&hooks(HookState::Foreign, true)), false).unwrap();
         assert!(foreign.fix.is_none() && foreign.text.contains("git lfs pre-push \"$@\""));
-        for f in [LfsFix::SetUp, LfsFix::InstallHooks, LfsFix::Download] {
+        for f in [LfsFix::SetUp, LfsFix::InstallHooks, LfsFix::Download, LfsFix::RemoveHooks] {
             assert_eq!(LfsFix::from_key(f.key()), Some(f));
         }
     }
