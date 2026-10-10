@@ -296,3 +296,101 @@ fn pull_with_chooses_remembers_and_forgets_the_strategy() {
     assert!(items(&out).contains(&"Forget the remembered strategy (Rebase)"), "{out}");
     assert!(st[2].contains("modal=Menu \"Pull with… (nothing remembered)\""), "x forgot it: {out}");
 }
+
+/// A bare `origin` whose `main` is at `tip`, sharing `d`'s objects (laid out by hand, no
+/// git), as `main`'s upstream.
+fn origin_at(d: &Path, tip: &str) -> tempfile::TempDir {
+    let origin = tempfile::tempdir().unwrap();
+    let o = origin.path();
+    for sub in ["objects/info", "refs/heads", "refs/tags"] {
+        std::fs::create_dir_all(o.join(sub)).unwrap();
+    }
+    std::fs::write(o.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(o.join("config"), "[core]\n\trepositoryformatversion = 0\n\tbare = true\n").unwrap();
+    let objects = config_path(&d.join(".git/objects"));
+    std::fs::write(o.join("objects/info/alternates"), format!("{objects}\n")).unwrap();
+    std::fs::write(o.join("refs/heads/main"), format!("{tip}\n")).unwrap();
+    add_config(d, &(remote_config("origin", o) + &upstream_config("main", "origin", "main")));
+    origin
+}
+
+/// Someone pushed to origin (not fetched): `P` is refused, the dialog says so in plain
+/// words and offers Pull or Fetch, Then Decide…; `F` fetches, the confirmation names what
+/// origin/main loses; Enter pushes with the lease pinned to their commit.
+#[gitti_test::test]
+fn refused_push_fetch_then_push_with_lease() {
+    let (dir, origin, theirs) = diverged_from_origin();
+    let d = dir.path();
+    let out = gitty(d, "key:P;state;items;key:F;state;key:enter;state;cmds");
+    let st = states(&out);
+    assert!(st[0].contains("modal=Menu \"origin/main has commits main doesn't\""), "{out}");
+    assert!(st[0].contains("pull them, or Push with Lease"), "{out}");
+    let it = items(&out);
+    assert!(it[0].starts_with("Pull (merge) — "), "{out}");
+    assert!(it[1].starts_with("Pull (rebase) — "), "{out}");
+    assert!(it[2].starts_with("Fetch origin, Then Decide… — "), "{out}");
+    assert!(st[1].contains("modal=Confirm \"Overwrite origin/main with main?\""), "{out}");
+    let mine = rev(d, "main");
+    assert_eq!(rev(origin.path(), "main"), mine, "pushed: {out}");
+    let lease = format!(
+        "push --force-with-lease=refs/heads/main:{theirs} origin refs/heads/main:refs/heads/main"
+    );
+    assert!(cmds(&out).last().unwrap().contains(&lease), "{out}");
+}
+
+/// main was amended after it was pushed (origin/main has the old commit): the main push
+/// runs no push at all but offers Pull or Push with Lease… right away; `f` lists what
+/// origin/main loses and pushes with the lease on Enter.
+#[gitti_test::test]
+fn push_after_an_amend_offers_push_with_lease() {
+    let commits = [
+        Commit { branch: "main", from: None, merge: None, msg: "Base", files: &[("a.txt", "a\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "Old", files: &[("o.txt", "o\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "Amended", files: &[("o.txt", "n\n")] },
+    ];
+    let dir = import_with(&commits, "reset refs/remotes/origin/main\nfrom :2\n\n");
+    let d = dir.path();
+    let old = rev(d, "origin/main");
+    let origin = origin_at(d, &old);
+    let out = gitty(d, "cmds;key:P;state;items;cmds;key:f;state;key:enter;cmds");
+    let st = states(&out);
+    let ran = cmds(&out);
+    assert!(!ran[1].iter().any(|c| c.starts_with("push")), "no push: {out}");
+    assert!(st[0].contains("modal=Menu \"origin/main has commits main doesn't\""), "{out}");
+    assert!(items(&out).iter().any(|i| i.starts_with("Push with Lease… — ")), "{out}");
+    assert!(st[1].contains("modal=Confirm \"Overwrite origin/main with main?\""), "{out}");
+    assert_eq!(rev(origin.path(), "main"), rev(d, "main"), "pushed: {out}");
+    assert!(
+        ran[2].iter().any(|c| c.starts_with(&format!("push --force-with-lease=refs/heads/main:{old}"))),
+        "{out}"
+    );
+}
+
+/// "Reset Remote Branch to Selected Commit…" (palette): the remote branches (the
+/// upstream first), then the confirmation; Enter moves origin's main back to the
+/// selected commit with the lease pinned to origin/main as shown. The local branch stays.
+/// (A stale lease and Fetch, Then Decide: `refused_push_fetch_then_push_with_lease` and
+/// core's `push::refused_push_after_someone_pushed`.)
+#[gitti_test::test]
+fn reset_remote_branch_from_the_palette() {
+    let commits = [
+        Commit { branch: "main", from: None, merge: None, msg: "Base", files: &[("a.txt", "a\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "Two", files: &[("a.txt", "b\n")] },
+    ];
+    let dir = import_with(&commits, "reset refs/remotes/origin/main\nfrom :2\n\n");
+    let d = dir.path();
+    let (base, two) = (rev(d, "main~1"), rev(d, "main"));
+    let origin = origin_at(d, &two);
+    let reset = format!("press:ctrl-p;{}key:enter;", presses("reset remote branch"));
+    // Row 0 is the working directory, row 2 Base.
+    let out = gitty(d, &format!("key:down;key:down;{reset}state;items;key:enter;state;key:enter;cmds"));
+    let st = states(&out);
+    let short = &base[..7];
+    assert!(st[0].contains(&format!("modal=Picker \"Reset which remote branch to {short}?\"")), "{out}");
+    assert_eq!(items(&out), [format!("Reset origin/main to {short}…").as_str()], "{out}");
+    assert!(st[1].contains(&format!("modal=Confirm \"Reset origin/main to {short}?\"")), "{out}");
+    assert_eq!(rev(origin.path(), "main"), base, "reset: {out}");
+    assert_eq!(rev(d, "main"), two, "the local branch stays");
+    let push = format!("push --force-with-lease=refs/heads/main:{two} origin {base}:refs/heads/main");
+    assert!(cmds(&out)[0].contains(&push), "{out}");
+}

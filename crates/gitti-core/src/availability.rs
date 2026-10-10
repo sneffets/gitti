@@ -247,6 +247,7 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "Pull" | "PullFrom" | "PullWith" => check(f.remotes == 0, NO_REMOTES)
             .or(check(f.detached, DETACHED))
             .or(busy_op),
+        "ResetRemoteBranch" => check(f.remotes == 0, NO_REMOTES).or(check(f.unborn, UNBORN)),
         "Push" | "PushTo" => check(f.remotes == 0, NO_REMOTES)
             .or(check(f.unborn, UNBORN))
             .or(check(f.detached, DETACHED)),

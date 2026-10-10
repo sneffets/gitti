@@ -465,7 +465,15 @@ impl Repo {
             }
             .into());
         };
-        let o = self.git().run(&["push"])?;
+        let o = self.git().run(&["push"]).map_err(|e| {
+            let pushed = crate::overwrite::Pushed {
+                remote: &upstream.remote,
+                local: &branch,
+                branch: &upstream.branch,
+                ..Default::default()
+            };
+            self.push_refused(e.into(), &pushed)
+        })?;
         let out = format!("{}{}", o.stdout_str(), o.stderr);
         let summary = if up_to_date(&out) {
             format!("Everything up-to-date ({branch} → {})", upstream.short())
@@ -487,6 +495,9 @@ impl Repo {
         }
         let mut report = Vec::new();
         let mut failed = Vec::new();
+        // The first refusal git explained (non-fast-forward, …): the apps offer the
+        // ways out for that remote.
+        let mut refused: Option<crate::overwrite::PushRejected> = None;
         let unpinned = opts.force_with_lease
             && opts.remotes.iter().any(|r| !opts.leases.contains_key(r));
         let if_includes = unpinned && crate::caps::GitCaps::get().force_if_includes();
@@ -501,6 +512,10 @@ impl Repo {
                 Err(e) => {
                     failed.push(remote.clone());
                     report.push(format!("{remote}: FAILED\n{e:#}"));
+                    if refused.is_none() {
+                        let pushed = crate::overwrite::Pushed::of(opts, remote);
+                        refused = self.push_refused(e.into(), &pushed).downcast().ok();
+                    }
                 }
             }
         }
@@ -529,7 +544,15 @@ impl Repo {
                     ok.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
                 ));
             }
-            Err(anyhow!("{head}\n\n{}", report.join("\n\n")))
+            match refused {
+                // One remote: its refusal in plain words (git's output in it).
+                Some(r) if opts.remotes.len() == 1 => Err(r.into()),
+                Some(mut r) => {
+                    r.output = format!("{head}\n\n{}", report.join("\n\n"));
+                    Err(r.into())
+                }
+                None => Err(anyhow!("{head}\n\n{}", report.join("\n\n"))),
+            }
         }
     }
 
@@ -562,7 +585,17 @@ impl Repo {
             args.push("-u");
         }
         args.extend([lease.as_str(), remote, branch]);
-        let o = self.git().run(&args)?;
+        let o = self.git().run(&args).map_err(|e| {
+            let pushed = crate::overwrite::Pushed {
+                remote,
+                local: branch,
+                branch,
+                forced: true,
+                set_upstream,
+                ..Default::default()
+            };
+            self.push_refused(e.into(), &pushed)
+        })?;
         Ok(format!("{}{}", o.stdout_str(), o.stderr))
     }
 }

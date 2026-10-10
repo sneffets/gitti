@@ -113,6 +113,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Create Tag…",
             "Set as Upstream of {head}",
             "Mark for Comparison",
+            "Reset {name} to Selected Commit…",
             "Add as Subtree…",
             "Delete {branch} on {remote}…",
             "Copy Name",

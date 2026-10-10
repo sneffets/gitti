@@ -62,6 +62,7 @@ pub fn main() {
         ("open_this_version", open_this_version),
         ("merge_unrelated_histories", merge_unrelated_histories),
         ("pull_diverged", pull_diverged),
+        ("push_refused_ways_out", push_refused_ways_out),
         ("sidebar_menus", sidebar_menus),
         ("startup_timings", startup_timings),
         ("unavailable_commands", unavailable_commands),
@@ -70,7 +71,7 @@ pub fn main() {
     ];
     common::run(tests, |name| {
         let d = base().join(name);
-        if name == "pull_diverged" {
+        if name == "pull_diverged" || name == "push_refused_ways_out" {
             diverged_repo(&d);
             return d;
         }
@@ -1340,8 +1341,9 @@ fn diverged_repo(d: &Path) {
     s.reset("refs/remotes/origin/main", Some(one));
     let ids = s.import(d);
     read_tree(d, &ids[mine]);
-    let origin = base().join("pull-origin.git");
-    git(&base(), &["init", "-q", "--bare", "-b", "main", "pull-origin.git"]);
+    let name = format!("{}-origin.git", d.file_name().unwrap().to_string_lossy());
+    let origin = base().join(&name);
+    git(&base(), &["init", "-q", "--bare", "-b", "main", &name]);
     std::fs::create_dir_all(origin.join("objects/info")).unwrap();
     let objects = d.join(".git/objects");
     std::fs::write(origin.join("objects/info/alternates"), format!("{}\n", objects.display())).unwrap();
@@ -1423,6 +1425,73 @@ fn pull_diverged(ui: &mut Ui) {
     if !cmds.iter().any(|c| c == "pull --rebase") {
         let st = status(ui);
         ui.fail(format!("Pull with… Rebase: {cmds:?} {st:?}"));
+    }
+}
+
+/// A push origin refuses (someone pushed, not fetched): the dialog says so in plain words
+/// and offers Pull (merge / rebase) or Fetch, Then Decide…; that one fetches and lists
+/// what origin/main loses (their commit, its author), then pushes with the lease pinned
+/// to it. Remote ▸ Reset Remote Branch to Selected Commit… moves origin's main back to
+/// Base (the upstream first in its picker); the local branch stays.
+fn push_refused_ways_out(ui: &mut Ui) {
+    let dir = ui.workdir();
+    let rev = |r: &str| git_out(&dir, &["rev-parse", r]).trim().to_string();
+    let (mine, base) = (rev("main"), rev("main~1"));
+    ui.step("action:gitti::Push");
+    match modal(ui) {
+        Some((t, _)) if t == "origin/main has commits main doesn't" => {}
+        other => fail!(ui, "no ways-out dialog after the refusal: {other:?} {:?}", status(ui)),
+    }
+    match status(ui) {
+        Some((s, false)) if s.contains("pull them, or Push with Lease") => {}
+        other => fail!(ui, "status while asking: {other:?}"),
+    }
+    let ws = ui.ws.clone();
+    let message = ui.cx.update(|cx| gitti_app::testing::modal_message(&ws, cx)).unwrap_or_default();
+    for want in ["git only lets a push add commits", "Pull (merge):", "Fetch origin, Then Decide…:"] {
+        if !message.contains(want) {
+            fail!(ui, "dialog text lacks {want:?}: {message}");
+        }
+    }
+    // Fetch, Then Decide.
+    ui.quick("option:2");
+    ui.step("modalok");
+    match modal(ui) {
+        Some((t, _)) if t == "Overwrite origin/main with main?" => {}
+        other => fail!(ui, "no overwrite confirmation after the fetch: {other:?} {:?}", status(ui)),
+    }
+    let message = ui.cx.update(|cx| gitti_app::testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("origin/main loses 1 commit") || !message.contains("Theirs") {
+        fail!(ui, "what origin/main loses: {message}");
+    }
+    let theirs = rev("origin/main");
+    ui.step("modalok");
+    let origin = dir.with_file_name("push_refused_ways_out-origin.git");
+    let on_origin = || git_out(&origin, &["rev-parse", "main"]).trim().to_string();
+    if on_origin() != mine {
+        fail!(ui, "not pushed: {:?} {:?}", ui.git_commands(), status(ui));
+    }
+    let lease = format!("push --force-with-lease=refs/heads/main:{theirs} origin refs/heads/main:refs/heads/main");
+    if !ui.git_commands().contains(&lease) {
+        fail!(ui, "lease not pinned to what was listed: {:?}", ui.git_commands());
+    }
+
+    // Reset origin/main to Base from the menu bar.
+    ui.step(&format!("select:{base}"));
+    ui.step("action:gitti::ResetRemoteBranch");
+    let want = format!("Reset origin/main to {}…", &base[..7]);
+    match picker_labels(ui) {
+        Some(l) if l.first() == Some(&want) => {}
+        other => fail!(ui, "remote branches: {other:?} {:?}", status(ui)),
+    }
+    ui.step("pickok");
+    match modal(ui) {
+        Some((t, _)) if t == format!("Reset origin/main to {}?", &base[..7]) => {}
+        other => fail!(ui, "no reset confirmation: {other:?} {:?}", status(ui)),
+    }
+    ui.step("modalok");
+    if on_origin() != base || rev("main") != mine {
+        fail!(ui, "reset: origin {} local {}: {:?}", on_origin(), rev("main"), status(ui));
     }
 }
 

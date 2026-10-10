@@ -829,7 +829,17 @@ impl Repo {
         }
         args.push(remote);
         args.push(branch);
-        self.out(&args)
+        self.out(&args).map_err(|e| {
+            let pushed = crate::overwrite::Pushed {
+                remote,
+                local: branch,
+                branch,
+                forced: force,
+                set_upstream,
+                ..Default::default()
+            };
+            self.push_refused(e, &pushed)
+        })
     }
 
     pub fn delete_remote_branch(&self, remote: &str, branch: &str) -> Result<String> {

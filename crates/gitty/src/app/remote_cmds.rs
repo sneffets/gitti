@@ -320,6 +320,11 @@ impl App {
                 app.pull_with_menu()
             }),
             PickItem::new("Fetch from…", "a remote", |app: &mut App| app.fetch_step()),
+            PickItem::new(
+                "Reset Remote Branch to Selected Commit…",
+                "a push with lease; the local branch stays",
+                |app: &mut App| app.reset_remote_selected(),
+            ),
             PickItem::new("Add Remote…", "name and URL", |app: &mut App| app.add_remote_dialog()),
             PickItem::cmd("Show Error Details", KC::ErrorDetails, |app: &mut App| {
                 if !app.show_error_details() {

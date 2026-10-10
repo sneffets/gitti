@@ -46,6 +46,7 @@ mod lfs_fetch;
 mod lfs_health;
 mod op_cancel;
 mod op_output;
+mod overwrite;
 mod remote_cmds;
 mod repo_cmds;
 mod search;
@@ -121,6 +122,8 @@ pub enum Msg {
     MergeLoaded(Result<gitti_core::merge_session::MergeSession>),
     /// "Edit Commit Message": why the commit can't be reworded, else its message.
     RewordChecked(ObjectId, Result<(Option<String>, String)>),
+    /// What overwriting a remote branch does (`app/overwrite.rs`), read in the background.
+    OverwritePlan(Box<Result<gitti_core::overwrite::Overwrite>>),
     Ask(gitti_core::askpass::Prompt, Sender<Option<String>>),
     /// The helper of a shown or queued prompt went away: its dialog closes.
     AskGone,
@@ -217,6 +220,8 @@ pub enum FollowUp {
         /// gitty ran in the removed worktree: restart in the main one afterwards.
         reopen: Option<std::path::PathBuf>,
     },
+    /// Fetch, Then Decide (a refused push): what a push with lease overwrites now.
+    Overwrite(Box<gitti_core::overwrite::Overwrite>),
 }
 
 impl std::fmt::Display for FollowUp {
@@ -227,6 +232,7 @@ impl std::fmt::Display for FollowUp {
             FollowUp::WorktreeRefused { wt, .. } => write!(f, "{} has changes", wt.name()),
             FollowUp::UnmergedBranch { branch, .. } => write!(f, "{branch} is not fully merged"),
             FollowUp::SplitDone { message, .. } => write!(f, "{message}"),
+            FollowUp::Overwrite(o) => write!(f, "{}", o.title()),
         }
     }
 }
@@ -1073,6 +1079,11 @@ impl App {
                         } else if let Some(block) = e.downcast_ref::<PushBlock>() {
                             // The same for the main push.
                             self.push_blocked(block.clone());
+                        } else if let Some(r) =
+                            e.downcast_ref::<gitti_core::overwrite::PushRejected>()
+                        {
+                            // A refused push: the ways out (pull, push with lease, …).
+                            self.push_rejected(r.clone());
                         } else if let Some(d) = e.downcast_ref::<DivergentPull>() {
                             // Diverged, no strategy: the user chooses one.
                             self.pull_diverged(d.clone());
@@ -1187,6 +1198,10 @@ impl App {
             Msg::RewordChecked(id, checked) => {
                 self.loads_in_flight -= 1;
                 self.reword_checked(id, checked);
+            }
+            Msg::OverwritePlan(plan) => {
+                self.loads_in_flight -= 1;
+                self.overwrite_planned(*plan);
             }
             Msg::FileLoaded(file, result) => {
                 self.loads_in_flight -= 1;
@@ -2438,11 +2453,13 @@ impl App {
     /// passphrase before the user chose anything). Decided from the last refresh, as
     /// Pull; `Repo::push_current` checks once more if that is stale.
     pub fn push(&mut self) {
-        let has_upstream = self
-            .current_branch()
-            .and_then(|b| self.tracking_of(b))
-            .is_some_and(|t| t.upstream.is_some());
+        let tracking = self.current_branch().and_then(|b| self.tracking_of(b));
+        let has_upstream = tracking.is_some_and(|t| t.upstream.is_some());
+        // Behind its upstream (amended / rebased after the push, or someone pushed): git
+        // would refuse — the ways out right away, read locally (no network).
+        let behind = has_upstream && tracking.is_some_and(|t| t.behind > 0);
         match push_block(self.current_branch(), has_upstream, !self.remotes.is_empty()) {
+            None if behind => self.run_op("Push", true, After::Summary, |r| r.push_diverged()),
             None => self.run_push_op("Push", After::Summary, false, |r| r.push_current()),
             Some(block) => self.push_blocked(block),
         }
@@ -3168,6 +3185,7 @@ impl App {
     fn follow_up(&mut self, f: FollowUp) {
         match f {
             FollowUp::SplitDone { prefix, id, message } => self.split_done(&prefix, id, &message),
+            FollowUp::Overwrite(plan) => self.overwrite_confirm(*plan),
             FollowUp::Switch(target, block) => {
                 // What blocks, then one entry per way out, each explained.
                 let name = target.name().to_string();
@@ -3534,6 +3552,8 @@ impl App {
                 ));
             }
         }
+        // The remote branch moves (push with lease); the local one stays.
+        items.extend(self.remote_reset_items(&sha));
         items.push(MenuItem::separator());
         let s = sha.clone();
         items.push(
