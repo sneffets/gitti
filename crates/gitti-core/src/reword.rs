@@ -123,13 +123,28 @@ fn copy_editor(path: &str) -> String {
     )
 }
 
+/// [`copy_editor`] that copies only once: it empties the file at `path` afterwards and
+/// leaves the messages of later calls alone (a `reword` further down a rebase's todo
+/// keeps its own). Builtins only (`: >` empties).
+pub(crate) fn copy_editor_once(path: &str) -> String {
+    let quoted = format!("'{}'", path.replace('\'', r"'\''"));
+    format!(
+        "gitti_msg() {{ if [ -s {quoted} ]; then while IFS= read -r l || [ -n \"$l\" ]; do \
+         printf '%s\\n' \"$l\"; done < {quoted} > \"$1\"; : > {quoted}; fi; }}; gitti_msg"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[gitti_test::test]
     fn editors_use_no_external_tools() {
-        for script in [REWORD_FIRST_PICK.to_string(), copy_editor("/r/.git/GITTI_REWORD_MSG")] {
+        for script in [
+            REWORD_FIRST_PICK.to_string(),
+            copy_editor("/r/.git/GITTI_REWORD_MSG"),
+            copy_editor_once("/r/.git/GITTI_CONTINUE_MSG"),
+        ] {
             for tool in ["sed", "cp ", "cat ", "mv ", "awk", "perl"] {
                 assert!(!script.contains(tool), "{tool} in {script}");
             }

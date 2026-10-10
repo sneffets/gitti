@@ -108,3 +108,36 @@ fn merge_into_subtree_only_for_commits_from_elsewhere() {
     let blocks = cmds(&out);
     assert_no_git(&[blocks[1].clone(), blocks[3].clone()], "the menus", &out);
 }
+
+/// The palette's Merge into Subtree…, a commit typed in: one that doesn't continue lib/'s
+/// history (main's first commit) gets the warning, the subtree's own branch doesn't — the
+/// commit resolved in the loaded history, no git.
+#[gitti_test::test]
+fn merge_dialog_warns_about_a_typed_commit_from_elsewhere() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "start", files: &[("README", "app\n")] },
+        Commit { branch: "upstream", from: None, merge: None, msg: "lib 1", files: &[("x", "1\n")] },
+    ]);
+    let d = dir.path();
+    // A subtree add whose trailers name the real split commit (as `git subtree add` writes).
+    let lib1 = rev(d, "upstream");
+    git(d, &["merge", "-q", "-s", "ours", "--no-commit", "--allow-unrelated-histories", "upstream"]);
+    git(d, &["read-tree", "--prefix=lib/", "-u", "upstream"]);
+    let msg = format!(
+        "Add 'lib/' from commit '{lib1}'\n\ngit-subtree-dir: lib\ngit-subtree-mainline: {lib1}\n\
+         git-subtree-split: {lib1}\n"
+    );
+    git(d, &["commit", "-qm", &msg]);
+    let start = rev(d, "main~1")[..9].to_string();
+    let script = format!(
+        "wait;cmds;press:ctrl-p;{}key:enter;press:tab;{}dump;press:ctrl-u;{}dump;cmds",
+        presses("merge into subtree"),
+        presses(&start),
+        presses("upstream"),
+    );
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "200x40", &script);
+    let s = screens(&out);
+    assert!(s[0].contains(&format!("Warning: {start} doesn't continue the history")), "{out}");
+    assert!(!s[1].contains("Warning:"), "{out}");
+    assert_no_git(&[cmds(&out)[1].clone()], "the Merge dialog", &out);
+}

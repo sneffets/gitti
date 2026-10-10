@@ -9,6 +9,9 @@
 //! (`cherry-pick -n -x` on the command line) fills an empty box and commits; next to the
 //! user's own text a note offers it instead (Keep Mine — kept across a reopen —, Use It).
 //! The hooks' output shows in the status bar while the commit runs.
+//! Continue of a cherry-pick commits the message edited in the box; a merge concluded
+//! with the box emptied leaves git's "# Conflicts:" lines out. An edited amend message is
+//! a draft for its commit: back after a reopen while that commit is HEAD.
 //!
 //! Own `main` like `layout.rs`: `cargo test --workspace --test ui -- commit[::FILTER]`.
 
@@ -35,6 +38,8 @@ pub fn main() {
         ("close_tab_while_git_runs_asks", close_tab_while_git_runs_asks),
         ("prepared_message_after_cherry_pick", prepared_message_after_cherry_pick),
         ("hook_output_shows_while_committing", hook_output_shows_while_committing),
+        ("continue_with_the_edited_message", continue_with_the_edited_message),
+        ("amend_draft_for_its_commit", amend_draft_for_its_commit),
     ];
     common::run(tests, |name| {
         let dir = BASE.with(|b| b.borrow().join(name));
@@ -42,6 +47,8 @@ pub fn main() {
             make_sha256_repo(&dir)
         } else if name.starts_with("prepared") {
             make_pick_repo(&dir)
+        } else if name.starts_with("continue") {
+            make_conflict_repo(&dir)
         } else {
             make_repo(&dir)
         }
@@ -184,6 +191,132 @@ fn prepared_message_after_cherry_pick(ui: &mut Ui) {
     if message(ui) != want {
         let m = message(ui);
         ui.fail(format!("after Use It: box {m:?}"));
+    }
+}
+
+/// `main`: `init` (a.txt), `main a` (a.txt changed); `side` from `init`: "Change a" (a.txt
+/// — conflicts with main), "Add c"; `other` from `init`: "Other a" (a.txt, conflicts).
+fn make_conflict_repo(dir: &std::path::Path) -> PathBuf {
+    init_repo(dir);
+    let mut s = Stream::new();
+    let init = s.commit("refs/heads/main", "init", None, &[("a.txt", Some("a\n"))]);
+    s.commit("refs/heads/side", "Change a", Some(init), &[("a.txt", Some("side\n"))]);
+    s.commit("refs/heads/side", "Add c", None, &[("c.txt", Some("c\n"))]);
+    s.commit("refs/heads/other", "Other a", Some(init), &[("a.txt", Some("other\n"))]);
+    s.commit("refs/heads/main", "main a", None, &[("a.txt", Some("main\n"))]);
+    s.import(dir);
+    git(dir, &["reset", "-q", "--hard"]);
+    dir.to_path_buf()
+}
+
+/// git on the command line that must fail (a conflict).
+fn git_fails(dir: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git").args(args).current_dir(dir).output().unwrap();
+    assert!(!out.status.success(), "git {args:?} should have failed");
+}
+
+/// A cherry-pick of two commits stops on a conflict (resolved on the command line): the
+/// box holds git's message; edited, the palette's Continue commits the resolution with it
+/// and picks the rest, the box empties. A merge whose conflict is resolved, concluded by
+/// Commit with the box emptied, gets git's message without its "# Conflicts:" lines.
+fn continue_with_the_edited_message(ui: &mut Ui) {
+    let dir = ui.repo.clone();
+    git_fails(&dir, &["cherry-pick", "side~1", "side"]);
+    ui.step("key:f5");
+    if message(ui) != "Change a" {
+        let m = message(ui);
+        ui.fail(format!("the stopped pick's message: {m:?}"));
+    }
+    git(&dir, &["checkout", "--theirs", "a.txt"]);
+    git(&dir, &["add", "a.txt"]);
+    ui.step("key:f5");
+    ui.step("msg:Change a, resolved\\n\\n#7 kept");
+    ui.step("palette:continue cherry-picking");
+    let log = git_out(&dir, &["log", "-3", "--format=%B%x00"]);
+    let bodies: Vec<&str> = log.split('\0').map(str::trim).filter(|b| !b.is_empty()).collect();
+    if bodies != ["Add c", "Change a, resolved\n\n#7 kept", "main a"] || !message(ui).is_empty() {
+        let (m, st) = (message(ui), ui.status());
+        ui.fail(format!("after Continue: log {bodies:?}, box {m:?}, status {st:?}"));
+    }
+    git_fails(&dir, &["merge", "other"]);
+    ui.step("key:f5");
+    if message(ui) != "Merge branch 'other'" {
+        let m = message(ui);
+        ui.fail(format!("the merge's message: {m:?}"));
+    }
+    git(&dir, &["checkout", "--ours", "a.txt"]);
+    git(&dir, &["add", "a.txt"]);
+    ui.step("key:f5");
+    ui.step("msg:");
+    ui.step("commit");
+    let log = git_out(&dir, &["log", "-1", "--format=%P%n%B"]);
+    let (parents, body) = log.split_once('\n').unwrap_or_default();
+    if parents.split_whitespace().count() != 2 || body.trim() != "Merge branch 'other'" {
+        let st = ui.status();
+        ui.fail(format!("the concluded merge: {log:?}, status {st:?}"));
+    }
+}
+
+fn amend_draft(ui: &mut Ui) -> Option<(String, String)> {
+    gitti_core::store::flush();
+    let ws = ui.ws.clone();
+    ui.cx.update(|cx| testing::amend_draft(&ws, cx))
+}
+
+/// Types `text` into the emptied message box and lets the draft write happen.
+fn type_message(ui: &mut Ui, text: &str) {
+    ui.step("msg:");
+    ui.quick("focusmsg");
+    ui.type_text(text);
+    ui.cx.executor().advance_clock(Duration::from_millis(600));
+    ui.cx.run_until_parked();
+}
+
+/// The amend message edited is a draft for the commit it amends: turning amend on again
+/// after a reopen brings it back (not HEAD's message); once HEAD moved, amend starts
+/// with HEAD's message; the amend that succeeds drops it.
+fn amend_draft_for_its_commit(ui: &mut Ui) {
+    let dir = ui.repo.clone();
+    let head = git_out(&dir, &["rev-parse", "HEAD"]);
+    ui.step("action:gitti::ToggleAmend");
+    if !message(ui).starts_with("Rework the frobnicator") {
+        let m = message(ui);
+        ui.fail(format!("amend starts with HEAD's message: {m:?}"));
+    }
+    type_message(ui, "Reworked, edited");
+    if amend_draft(ui) != Some((head.clone(), "Reworked, edited".into())) {
+        let d = amend_draft(ui);
+        ui.fail(format!("amend draft after typing: {d:?}"));
+    }
+    if draft(ui).is_some() {
+        let d = draft(ui);
+        ui.fail(format!("the amend message became the commit draft: {d:?}"));
+    }
+    ui.step("action:gitti::ToggleAmend");
+    ui.step("msg:");
+    ui.step("action:gitti::CloseTab");
+    ui.step(&format!("open:{}", dir.display()));
+    ui.step("action:gitti::ToggleAmend");
+    if message(ui) != "Reworked, edited" {
+        let m = message(ui);
+        ui.fail(format!("amend after reopening: {m:?}"));
+    }
+    ui.step("action:gitti::ToggleAmend");
+    ui.step("msg:");
+    // HEAD moved: the draft was for the commit before.
+    git(&dir, &["commit", "--allow-empty", "-qm", "Moved on"]);
+    ui.step("key:f5");
+    ui.step("action:gitti::ToggleAmend");
+    if message(ui) != "Moved on" {
+        let m = message(ui);
+        ui.fail(format!("amend after HEAD moved: {m:?}"));
+    }
+    type_message(ui, "Moved on, edited");
+    ui.step("commit");
+    let subject = git_out(&dir, &["log", "-1", "--format=%s"]);
+    if subject != "Moved on, edited" || amend_draft(ui).is_some() {
+        let d = amend_draft(ui);
+        ui.fail(format!("after the amend: HEAD {subject:?}, amend draft {d:?}"));
     }
 }
 

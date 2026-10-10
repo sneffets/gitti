@@ -118,7 +118,7 @@ pub enum Msg {
     /// The commit message draft's write may be due (`app/commit_flow.rs`).
     DraftDue,
     /// The commit message draft stored for this worktree, read at start.
-    Draft(Option<gitti_core::store::Draft>),
+    Draft(Option<gitti_core::store::Draft>, Option<gitti_core::store::AmendDraft>),
     /// Only the working state, re-read after a display option changed (generation).
     Working(u64, Result<WorkingState>),
     /// The merge editor's session for a conflicted file, loaded in the background.
@@ -127,6 +127,8 @@ pub enum Msg {
     RewordChecked(ObjectId, Result<(Option<String>, String)>),
     /// What overwriting a remote branch does (`app/overwrite.rs`), read in the background.
     OverwritePlan(Box<Result<gitti_core::overwrite::Overwrite>>),
+    /// Push…'s force with lease: what each remote loses (`app/remote_cmds.rs`).
+    ForcePushPlan(Box<Result<gitti_core::overwrite::ForcePush>>),
     Ask(gitti_core::askpass::Prompt, Sender<Option<String>>),
     /// The helper of a shown or queued prompt went away: its dialog closes.
     AskGone,
@@ -1103,6 +1105,14 @@ impl App {
                             // Diverged, no strategy: the user chooses one.
                             self.pull_diverged(d.clone());
                         } else {
+                            if matches!(after, After::ClearMessage)
+                                && e.is::<gitti_core::ops::MessageCommitted>()
+                            {
+                                // Continue used the box's text before git stopped again.
+                                self.message = TextEdit::multi();
+                                self.merge_prefill = None;
+                                self.committed();
+                            }
                             self.errors.failed(&label, format!("{e:#}"));
                             self.set_error(format!("{label} failed: {e:#}"));
                             if let Some(u) = e.downcast_ref::<UnrelatedHistories>() {
@@ -1170,7 +1180,7 @@ impl App {
             }
             Msg::Tick => {}
             Msg::DraftDue => self.draft_due(),
-            Msg::Draft(draft) => self.restore_draft(draft),
+            Msg::Draft(draft, amend) => self.restore_draft(draft, amend),
             Msg::CommitSearch(generation, r) => self.on_commit_search(generation, *r),
             Msg::ChangeScan(generation, ev) => self.on_change_scan(generation, *ev),
             Msg::ChangeScanDone(generation) => self.on_change_scan_done(generation),
@@ -1221,6 +1231,10 @@ impl App {
             Msg::Apply(f) => {
                 self.loads_in_flight -= 1;
                 f(self);
+            }
+            Msg::ForcePushPlan(plan) => {
+                self.loads_in_flight -= 1;
+                self.force_push_planned(*plan);
             }
             Msg::FileLoaded(file, result) => {
                 self.loads_in_flight -= 1;
@@ -2523,13 +2537,18 @@ impl App {
     }
 
     pub fn toggle_amend(&mut self) {
-        // What was typed before is the draft, not HEAD's message that may come now.
+        // What was typed before is the draft (or the amend draft), not HEAD's message
+        // that may come now.
         self.save_draft_now();
         self.amend = !self.amend;
         if self.amend && self.message.is_empty() {
-            match self.repo.head_message() {
-                Ok(m) => self.message.set_text(m.trim_end()),
-                Err(e) => self.set_error(format!("{e:#}")),
+            // The amend message edited before for this commit, else HEAD's.
+            match self.amend_draft_for_head() {
+                Some(m) => self.message.set_text(&m),
+                None => match self.repo.head_message() {
+                    Ok(m) => self.message.set_text(m.trim_end()),
+                    Err(e) => self.set_error(format!("{e:#}")),
+                },
             }
         } else if !self.amend
             && self.repo.head_message().ok().as_deref().map(str::trim_end)
@@ -4008,9 +4027,14 @@ impl App {
             if !clean {
                 items.insert(
                     0,
-                    PickItem::new(format!("Continue {label}"), "", |app: &mut App| {
-                        app.run_op("Continue", true, After::Nothing, |r| r.continue_operation())
-                    }),
+                    PickItem::new(
+                        format!("Continue {label}"),
+                        match self.continue_message() {
+                            Some(_) => gitti_core::ops::CONTINUE_WITH_BOX,
+                            None => "",
+                        },
+                        |app: &mut App| app.continue_operation(),
+                    ),
                 );
             }
         }

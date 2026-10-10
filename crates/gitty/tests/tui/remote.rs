@@ -366,6 +366,31 @@ fn push_after_an_amend_offers_push_with_lease() {
     );
 }
 
+/// main was amended after it was pushed: Push…'s Options with "Force with lease"
+/// (checks: origin, set upstream, force, …) lists what origin/main loses first, as Push
+/// with Lease… does; Enter pushes with the lease pinned to what the list was read from.
+#[gitti_test::test]
+fn push_options_force_with_lease_lists_what_the_remote_loses() {
+    let commits = [
+        Commit { branch: "main", from: None, merge: None, msg: "Base", files: &[("a.txt", "a\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "Old", files: &[("o.txt", "o\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "Amended", files: &[("o.txt", "n\n")] },
+    ];
+    let dir = import_with(&commits, "reset refs/remotes/origin/main\nfrom :2\n\n");
+    let d = dir.path();
+    let old = rev(d, "origin/main");
+    let origin = origin_at(d, &old);
+    let script = "press:ctrl-p;type:push…;press:enter;type:options;press:enter;\
+                  press:tab;press:tab;press:tab;press:tab;press:space;key:enter;wait;state;dump;key:enter;cmds";
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "160x40", script);
+    assert!(states(&out)[0].contains("modal=Confirm \"Overwrite origin/main with main?\""), "{out}");
+    let s = screens(&out);
+    assert!(s[0].contains("origin/main loses 1 commit") && s[0].contains("Old"), "{out}");
+    assert_eq!(rev(origin.path(), "main"), rev(d, "main"), "pushed: {out}");
+    let lease = format!("push --force-with-lease=refs/heads/main:{old} origin main");
+    assert!(cmds(&out).last().unwrap().iter().any(|c| c.starts_with(&lease)), "{out}");
+}
+
 /// "Reset Remote Branch to Selected Commit…" (palette): the remote branches (the
 /// upstream first), then the confirmation; Enter moves origin's main back to the
 /// selected commit with the lease pinned to origin/main as shown. The local branch stays.

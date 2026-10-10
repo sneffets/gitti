@@ -1,7 +1,8 @@
 //! The merge editor and conflicts: taking chunks, undo / redo, moving and panning, saving,
 //! the single view, edit mode, questions before closing, outside edits, both halves
 //! scrolling together; the merge message and committing a merge; the message git
-//! prepared after `cherry-pick -n -x` (alone, next to the user's text).
+//! prepared after `cherry-pick -n -x` (alone, next to the user's text); Continue with the
+//! message edited in the box, a merge concluded with the box emptied.
 
 use crate::common;
 use crate::support;
@@ -431,4 +432,63 @@ fn keep_mine_survives_a_restart() {
     let s = screens(&out);
     assert!(s[0].contains("My own text"), "the draft is back: {out}");
     assert!(!s[0].contains("git prepared a message"), "Keep Mine kept: {out}");
+}
+
+/// `git <args>` in `d`, which must fail (a conflict).
+fn git_fails(d: &Path, args: &[&str]) {
+    let out = std::process::Command::new("git").args(args).current_dir(d).output().unwrap();
+    assert!(!out.status.success(), "git {args:?} should fail");
+}
+
+/// `main`: init, "main a" (a.txt); `side` from init: "Change a" (a.txt, conflicts), "Add
+/// c"; `other` from init: "Other a" (a.txt, conflicts).
+fn conflicting_branches() -> tempfile::TempDir {
+    let c = |branch, from, msg, files| Commit { branch, from, merge: None, msg, files };
+    import(&[
+        c("main", None, "init", &[("a.txt", "a\n")]),
+        c("side", Some(1), "Change a", &[("a.txt", "side\n")]),
+        c("side", None, "Add c", &[("c.txt", "c\n")]),
+        c("other", Some(1), "Other a", &[("a.txt", "other\n")]),
+        c("main", None, "main a", &[("a.txt", "main\n")]),
+    ])
+}
+
+/// A cherry-pick of two commits stopped on a conflict (resolved on the command line): the
+/// box holds git's message; edited, the palette's Continue — its detail says it takes the
+/// box's text — commits the resolution with it and picks the rest; the box empties.
+#[gitti_test::test]
+fn continue_with_the_edited_message() {
+    let dir = conflicting_branches();
+    let d = dir.path();
+    git_fails(d, &["cherry-pick", "side~1", "side"]);
+    std::fs::write(d.join("a.txt"), "side\n").unwrap();
+    git(d, &["add", "a.txt"]);
+    let script = format!(
+        "wait;press:c;{}press:esc;press:ctrl-p;{}dump;key:enter;dump",
+        presses(", resolved"),
+        presses("continue cherry"),
+    );
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "160x30", &script);
+    let s = screens(&out);
+    assert!(s[0].contains("Continue Cherry-picking") && s[0].contains("with your edited message"), "{out}");
+    let log = git(d, &["log", "-3", "--format=%s"]);
+    assert_eq!(log, "Add c\nChange a, resolved\nmain a\n", "{out}");
+    let in_box = |s: &str| s.lines().any(|l| l.trim_end().ends_with("   Change a, resolved"));
+    assert!(!in_box(s[1]), "the box emptied: {out}");
+}
+
+/// A merge whose conflict is resolved, concluded with the box emptied (ctrl-s): git's
+/// message without its "# Conflicts:" lines.
+#[gitti_test::test]
+fn merge_concluded_with_the_box_emptied() {
+    let dir = conflicting_branches();
+    let d = dir.path();
+    git_fails(d, &["merge", "other"]);
+    std::fs::write(d.join("a.txt"), "main\n").unwrap();
+    git(d, &["add", "a.txt"]);
+    let out = gitty(d, "wait;press:c;press:ctrl-u;key:ctrl-s;state");
+    let log = git(d, &["log", "-1", "--format=%P%n%B"]);
+    let (parents, body) = log.split_once('\n').unwrap();
+    assert_eq!(parents.split_whitespace().count(), 2, "a merge commit: {out}");
+    assert_eq!(body.trim(), "Merge branch 'other'", "{out}");
 }

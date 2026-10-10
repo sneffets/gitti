@@ -301,6 +301,46 @@ fn force_push_pins_the_lease_the_user_saw() {
     );
 }
 
+/// Push…'s "Force with lease" confirms first with what each remote loses (as Push with
+/// Lease…): the old commit on origin (amended), nothing on a remote that doesn't have
+/// the branch yet (created, refused if it exists there); the leases are pinned to what the
+/// list was read from, and the request goes through as listed — no network before.
+#[gitti_test::test]
+fn force_push_options_list_what_each_remote_loses() {
+    let dir = tempfile::tempdir().unwrap();
+    let (work, origin, rewritten) = rewritten_after_push(dir.path());
+    let backup = dir.path().join("backup.git");
+    fx::bare(&backup);
+    fx::remote(&work, "backup", &backup);
+    let repo = Repo::open(&work).unwrap();
+    let upstream = repo.upstream_of("main").unwrap();
+    let mut opts = PushOptions {
+        force_with_lease: true,
+        ..PushOptions::to_remote("main", "origin", upstream.as_ref())
+    };
+    opts.pin_leases(&repo.refs().unwrap());
+    let one = repo.force_push_plan(opts.clone()).unwrap();
+    assert_eq!(one.plans.len(), 1);
+    assert_eq!((one.plans[0].lost_total, one.plans[0].lost[0].subject.as_str()), (1, "one"));
+    assert!(one.plans[0].rewritten, "amended after the push");
+    assert_eq!(one.title(), "Overwrite origin/main with main?");
+    assert!(one.describe().contains("origin/main loses 1 commit"), "{}", one.describe());
+
+    opts.remotes.push("backup".into());
+    opts.pin_leases(&repo.refs().unwrap());
+    let both = repo.force_push_plan(opts).unwrap();
+    assert_eq!(both.title(), "Overwrite main on 2 remotes with main?");
+    let text = both.describe();
+    assert!(text.contains("origin/main:\norigin/main is replaced by main"), "{text}");
+    assert!(text.contains("backup/main:\nCreates main on backup"), "{text}");
+    assert!(text.contains("Whoever pulled the lost commits"), "{text}");
+    assert_eq!(both.opts.leases["backup"].expect, None);
+    no_network(&repo);
+    repo.push_with(&both.opts).unwrap();
+    assert_eq!(fx::ref_id(&origin, "refs/heads/main"), Some(rewritten.clone()));
+    assert_eq!(fx::ref_id(&backup, "refs/heads/main"), Some(rewritten));
+}
+
 /// Rewritten history: a plain push is rejected, with lease it goes through; a refusing
 /// pre-push hook is skipped with no-verify.
 #[gitti_test::test]

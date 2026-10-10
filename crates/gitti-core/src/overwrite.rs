@@ -128,15 +128,37 @@ impl Overwrite {
     /// The dialog's text: what moves where, what the remote loses (with authors), when
     /// git refuses, what follows for others and for the local branch.
     pub fn describe(&self) -> String {
+        let mut parts = self.what();
+        if self.lease.expect.is_some() {
+            parts.push(self.after());
+        }
+        parts.join("\n\n")
+    }
+
+    /// What follows for others: who pulled the lost commits, the server's protection.
+    fn after(&self) -> String {
+        let mut after = String::new();
+        if self.lost_total > 0 {
+            after.push_str(
+                "Whoever pulled the lost commits keeps them and must reset or rebase onto the \
+                 new state (a plain pull merges them back). ",
+            );
+        }
+        after.push_str("A server that protects the branch may refuse anyway — its settings decide, not gitti.");
+        after
+    }
+
+    /// [`Self::describe`] without [`Self::after`]: what moves, what is lost, the lease.
+    fn what(&self) -> Vec<String> {
         let target = self.target();
         let new = format!("{} \"{}\"", short(&self.new_id), self.new_subject);
         let mut parts = Vec::new();
         let Some(seen) = self.lease.expect.as_deref() else {
-            return format!(
+            return vec![format!(
                 "Creates {} on {} at {new} (git push --force-with-lease) — refused if it \
                  exists there already (not fetched yet).",
                 self.branch, self.remote
-            );
+            )];
         };
         parts.push(match &self.source {
             Source::Branch(b) => format!(
@@ -180,16 +202,7 @@ impl Overwrite {
             lease.push_str(&format!(" Your local {local} stays where it is."));
         }
         parts.push(lease);
-        let mut after = String::new();
-        if self.lost_total > 0 {
-            after.push_str(
-                "Whoever pulled the lost commits keeps them and must reset or rebase onto the \
-                 new state (a plain pull merges them back). ",
-            );
-        }
-        after.push_str("A server that protects the branch may refuse anyway — its settings decide, not gitti.");
-        parts.push(after);
-        parts.join("\n\n")
+        parts
     }
 
     /// The source side of the refspec.
@@ -219,6 +232,57 @@ impl Overwrite {
         args.push(self.remote.clone());
         args.push(format!("{}:refs/heads/{}", self.source_ref(), self.branch));
         args
+    }
+}
+
+/// The Push… dialog's "Force with lease", confirmed first like Push with Lease…: per
+/// remote what its branch loses ([`Repo::force_push_plan`]); OK runs the request
+/// ([`Repo::push_with`], one push per remote), each lease pinned to the remote-tracking
+/// commit its list was read from. No `--force-if-includes`: git ignores it next to a
+/// pinned lease, and the list shows what a background fetch brought in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForcePush {
+    pub opts: PushOptions,
+    /// One per remote of `opts`, in order.
+    pub plans: Vec<Overwrite>,
+}
+
+impl ForcePush {
+    /// The dialog's title.
+    pub fn title(&self) -> String {
+        match self.plans.as_slice() {
+            [one] => one.title(),
+            many => format!("Overwrite {} on {} remotes with {}?", self.opts.target(), many.len(), self.opts.branch),
+        }
+    }
+
+    /// The dialog's OK button.
+    pub fn ok_label(&self) -> String {
+        "Push with Lease".to_string()
+    }
+
+    /// The dialog's text: one remote as Push with Lease… says it; several one after the
+    /// other (one push each, in order), what follows for others once.
+    pub fn describe(&self) -> String {
+        match self.plans.as_slice() {
+            [one] => one.describe(),
+            many => {
+                let mut parts = vec![
+                    "One push per remote, in order — each only while its branch is still where \
+                     shown here; a refused one doesn't stop the others."
+                        .to_string(),
+                ];
+                for p in many {
+                    parts.push(format!("{}:\n{}", p.target(), p.what().join("\n")));
+                }
+                let after = many
+                    .iter()
+                    .find(|p| p.lost_total > 0)
+                    .or_else(|| many.iter().find(|p| p.lease.expect.is_some()));
+                parts.extend(after.map(Overwrite::after));
+                parts.join("\n\n")
+            }
+        }
     }
 }
 
@@ -687,6 +751,34 @@ impl Repo {
             tags: PushTags::None,
             no_verify: false,
         })
+    }
+
+    /// [`ForcePush`] of `opts` (force with lease): per remote the plan of overwriting its
+    /// branch with `opts.branch`, the lease as pinned in `opts.leases` (the remote-tracking
+    /// commit as shown; unpinned: as it is now — and then pinned to that). Local git only.
+    pub fn force_push_plan(&self, mut opts: PushOptions) -> Result<ForcePush> {
+        let target = opts.target().to_string();
+        let mut plans = Vec::new();
+        for (i, remote) in opts.remotes.iter().enumerate() {
+            let lease = opts
+                .leases
+                .get(remote)
+                .cloned()
+                .unwrap_or_else(|| self.tracking_lease(remote, &target));
+            let mut plan = self.overwrite_plan(
+                remote,
+                &target,
+                Source::Branch(opts.branch.clone()),
+                lease,
+                Some(&opts.branch),
+            )?;
+            plan.set_upstream = opts.set_upstream && i == 0;
+            plan.tags = opts.tags;
+            plan.no_verify = opts.no_verify;
+            plans.push(plan);
+        }
+        opts.leases = plans.iter().map(|p| (p.remote.clone(), p.lease.clone())).collect();
+        Ok(ForcePush { opts, plans })
     }
 
     /// Runs the overwrite. A refusal is a [`PushRejected`] ([`Rejection::Stale`]: someone

@@ -107,6 +107,14 @@ const MIGRATIONS: &[&str] = &[
     // 6: the message git prepared (MERGE_MSG / SQUASH_MSG) the user chose to keep their
     // draft over ("Keep Mine"), so its note stays hidden after a restart.
     "ALTER TABLE commit_drafts ADD COLUMN kept_prepared TEXT;",
+    // 7: the message being edited for an amend, per worktree, for the commit it amends
+    // (`head`, hex): it comes back only while that commit is still HEAD.
+    "CREATE TABLE amend_drafts (
+         worktree TEXT PRIMARY KEY,
+         head     TEXT NOT NULL,
+         message  TEXT NOT NULL,
+         saved    INTEGER NOT NULL
+     );",
 ];
 
 /// The settings both apps use (gitty reads and writes only these; gitti's `Settings` is a
@@ -820,6 +828,83 @@ fn write_kept_prepared(conn: &Connection, worktree: &Path, kept: Option<&str>) -
     Ok(())
 }
 
+/// The message edited for an amend of commit `head` (hex) in a worktree and not used yet
+/// ([`load_amend_draft`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AmendDraft {
+    pub head: String,
+    pub message: String,
+}
+
+impl AmendDraft {
+    /// Its message while `head` (the commit HEAD is now) is still the one it amends.
+    pub fn for_head(&self, head: Option<&str>) -> Option<&str> {
+        (head == Some(self.head.as_str())).then_some(self.message.as_str())
+    }
+}
+
+/// The message edited for an amend in `worktree` (its work dir), whatever commit it was
+/// for — the apps use it only while that commit is HEAD ([`AmendDraft::for_head`]). Shared
+/// by gitti and gitty. A read: call it off the UI thread.
+pub fn load_amend_draft(worktree: &Path) -> Option<AmendDraft> {
+    read_amend_draft(&open()?, worktree)
+}
+
+/// [`load_amend_draft`] from the db at `db` (tests of a gitty / gitti process with a
+/// config dir of its own).
+pub fn load_amend_draft_in(db: &Path, worktree: &Path) -> Option<AmendDraft> {
+    read_amend_draft(&open_at(db).ok()?, worktree)
+}
+
+/// Remembers `message` as the amend message of commit `head` (hex) in `worktree` — one
+/// per worktree, the newest wins; an empty (blank) one removes it. Queued like every
+/// write. The apps call it debounced while the box is edited in amend mode, and drop it
+/// (blank) when the box holds HEAD's own message again or the amend succeeded.
+pub fn save_amend_draft(worktree: &Path, head: &str, message: &str) {
+    let (worktree, head, message, at) =
+        (worktree.to_path_buf(), head.to_string(), message.to_string(), now_millis());
+    write_later("saving the amend message draft", move |conn| {
+        write_amend_draft(conn, &worktree, &head, &message, at)
+    });
+}
+
+/// Drops `worktree`'s amend message: the amend with it succeeded.
+pub fn clear_amend_draft(worktree: &Path) {
+    save_amend_draft(worktree, "", "");
+}
+
+fn read_amend_draft(conn: &Connection, worktree: &Path) -> Option<AmendDraft> {
+    conn.query_row(
+        "SELECT head, message FROM amend_drafts WHERE worktree = ?1",
+        params![worktree.to_string_lossy()],
+        |r| {
+            Ok(AmendDraft {
+                head: r.get(0)?,
+                message: r.get(1)?,
+            })
+        },
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .filter(|d| !d.message.trim().is_empty())
+}
+
+fn write_amend_draft(conn: &Connection, worktree: &Path, head: &str, message: &str, at: i64) -> Result<()> {
+    let key = worktree.to_string_lossy();
+    if message.trim().is_empty() {
+        conn.execute("DELETE FROM amend_drafts WHERE worktree = ?1", params![key])?;
+    } else {
+        conn.execute(
+            "INSERT INTO amend_drafts (worktree, head, message, saved) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(worktree) DO UPDATE SET head = excluded.head,
+                 message = excluded.message, saved = excluded.saved",
+            params![key, head, message, at],
+        )?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------- window placement
 
 /// Where a window was, so it reopens there. Stored per window kind (`"main"`, `"merge"`)
@@ -1032,6 +1117,33 @@ mod tests {
             .query_row("SELECT count(*) FROM commit_drafts", [], |r| r.get(0))
             .unwrap();
         assert_eq!(rows, 1, "a cleared draft leaves no row");
+    }
+
+    /// The amend message: one per worktree for the commit it amends (a newer one for
+    /// another commit replaces it), gone when blanked; a db of the level before (6) gets
+    /// the table.
+    #[gitti_test::test]
+    fn amend_drafts_are_kept_per_worktree_for_their_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        drop(open_at_with(&path, &MIGRATIONS[..6]).unwrap());
+        let conn = open_at(&path).unwrap();
+        assert_eq!(level(&conn), MIGRATIONS.len());
+        let (w, other) = (Path::new("/r/main"), Path::new("/r/linked"));
+        assert_eq!(read_amend_draft(&conn, w), None);
+        write_amend_draft(&conn, w, "aaa", "Fix it\n\n#12 body", 1).unwrap();
+        write_amend_draft(&conn, other, "ccc", "Other", 1).unwrap();
+        let d = read_amend_draft(&conn, w).unwrap();
+        assert_eq!(d.for_head(Some("aaa")), Some("Fix it\n\n#12 body"));
+        assert_eq!(d.for_head(Some("bbb")), None, "HEAD moved: not this commit's");
+        assert_eq!(d.for_head(None), None);
+        write_amend_draft(&conn, w, "bbb", "Newer", 2).unwrap();
+        assert_eq!(read_amend_draft(&conn, w).unwrap(), AmendDraft { head: "bbb".into(), message: "Newer".into() });
+        write_amend_draft(&conn, w, "bbb", " \n", 3).unwrap();
+        assert_eq!(read_amend_draft(&conn, w), None, "blank = none");
+        assert_eq!(read_amend_draft(&conn, other).unwrap().message, "Other");
+        // The commit draft is a row of its own.
+        assert_eq!(read_draft(&conn, other), None);
     }
 
     /// "Keep Mine" is stored with the draft: it survives typing on, goes with

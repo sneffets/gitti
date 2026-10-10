@@ -6,7 +6,9 @@
 //!   window closes or the app quits (the entity's release), read in the background when
 //!   the repository opens, dropped only after a successful commit / amend — by the
 //!   commit's own job, so also when the tab was closed while it ran. Amend's prefilled
-//!   HEAD message and the merge message are no drafts.
+//!   HEAD message and the merge message are no drafts. An edited amend message is a draft
+//!   of its own (`store::save_amend_draft`), kept for the commit it amends: turning amend
+//!   on again brings it back while that commit is still HEAD, else HEAD's message.
 //! - The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`: a merge,
 //!   `cherry-pick` / `revert` — also `-n`, which leaves no CHERRY_PICK_HEAD —, `merge
 //!   --squash`; `gitti_core::Repo::prepared_message`) fills an empty box like `git commit`
@@ -15,6 +17,10 @@
 //!   "Keep Mine"), the palette too (`gitti_core::ops::{sync_prefill, offers_prepared}`).
 //!   Keep Mine is stored with the draft (`store::save_kept_prepared`): after a restart the
 //!   note stays hidden while git's message is the same.
+//! - Continue (banner, palette) of a merge / cherry-pick / revert / rebase commits with the
+//!   box's text when the user edited git's message (`gitti_core::ops::continue_message`,
+//!   `Repo::continue_with`), else with git's own; a used message empties the box like a
+//!   commit — also when git stops again after it (`gitti_core::ops::MessageCommitted`).
 //! - Commit with nothing staged asks instead of failing (`gitti_core::ops::plan_commit`,
 //!   `nothing_staged_prompt`, which says what each choice stages): "Stage All and Commit"
 //!   (`add -A`), "Stage Tracked Files and Commit" (`add -u`, when untracked files would
@@ -81,6 +87,54 @@ impl GittiApp {
         cx.notify();
     }
 
+    /// The message Continue commits with: the box's text when the user edited git's
+    /// ([`gitti_core::ops::continue_message`]); `None`: git's own.
+    pub(super) fn continue_message(&self, cx: &App) -> Option<String> {
+        let current = self.message.read(cx).value().to_string();
+        gitti_core::ops::continue_message(self.prepared.as_deref(), &current, self.amend)
+    }
+
+    /// Continue (the banner, the palette): the operation goes on, its stopped commit with
+    /// the box's text when the user edited git's message (`Repo::continue_with`).
+    pub(super) fn continue_operation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let msg = self.continue_message(cx);
+        let used = msg.is_some();
+        self.run_op(
+            "Continue",
+            true,
+            window,
+            cx,
+            move |r| {
+                let out = r.continue_with(msg.as_deref());
+                let committed = match &out {
+                    Ok(_) => used,
+                    Err(e) => e.is::<gitti_core::ops::MessageCommitted>(),
+                };
+                if committed {
+                    // Here, not in `message_committed`: a tab closed meanwhile keeps no
+                    // stale draft.
+                    gitti_core::store::clear_draft(r.workdir());
+                }
+                out
+            },
+            move |this, out, window, cx| {
+                if used {
+                    this.message_committed(window, cx);
+                }
+                this.set_info(super::last_line(&out, "Continue done"));
+            },
+        );
+    }
+
+    /// Continue committed the box's text (`run_op` also calls it when git stopped again
+    /// right after, [`gitti_core::ops::MessageCommitted`]): the box empties as after a
+    /// commit; git's next message can fill it.
+    pub(super) fn message_committed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.message.update(cx, |m, cx| m.set_value("", window, cx));
+        self.merge_prefill = None;
+        self.committed();
+    }
+
     /// "Stage All and Commit" / "Stage Tracked Files and Commit" / "Create Empty Commit"
     /// from the menu or the palette (and the nothing-staged question): needs a message like
     /// Commit.
@@ -119,6 +173,9 @@ impl GittiApp {
                 let out = r.commit_as(&msg, kind)?;
                 // Here, not in `committed`: a tab closed meanwhile keeps no stale draft.
                 gitti_core::store::clear_draft(r.workdir());
+                if kind == CommitKind::Amend {
+                    gitti_core::store::clear_amend_draft(r.workdir());
+                }
                 Ok(out)
             },
             |this, out, window, cx| {
@@ -155,6 +212,8 @@ impl GittiApp {
     fn committed(&mut self) {
         self.draft_dirty = false;
         self.draft_save = None;
+        // HEAD moved: an amend draft was for the commit before.
+        self.amend_draft = None;
         self.prepared_dismissed = None;
         if let Some(repo) = &self.repo {
             gitti_core::store::clear_draft(repo.workdir());
@@ -164,9 +223,9 @@ impl GittiApp {
     // ------------------------------------------------------------------ drafts
 
     /// The message box changed by typing (not by `set_value`): write the draft once the
-    /// typing pauses. While amending the box holds HEAD's message, no draft.
+    /// typing pauses — while amending the amend draft.
     pub(super) fn draft_changed(&mut self, cx: &mut Context<Self>) {
-        if self.amend || self.repo.is_none() {
+        if self.repo.is_none() {
             return;
         }
         self.draft_dirty = true;
@@ -177,13 +236,18 @@ impl GittiApp {
         }));
     }
 
-    /// Writes the draft if it changed since the last write (queued, returns at once).
+    /// Writes the draft if it changed since the last write (queued, returns at once);
+    /// while amending the amend draft.
     pub(super) fn save_draft_now(&mut self, cx: &App) {
-        if !std::mem::take(&mut self.draft_dirty) || self.amend {
+        if !std::mem::take(&mut self.draft_dirty) {
             return;
         }
-        let Some(repo) = &self.repo else { return };
+        let Some(repo) = self.repo.clone() else { return };
         let text = self.message.read(cx).value().to_string();
+        if self.amend {
+            self.save_amend_draft(&repo, &text);
+            return;
+        }
         // The merge message git prepared is git's, not the user's.
         let text = if self.merge_prefill.as_deref() == Some(text.as_str()) {
             String::new()
@@ -193,16 +257,51 @@ impl GittiApp {
         gitti_core::store::save_draft(repo.workdir(), &text);
     }
 
+    /// The amend draft: the box's text while amending, kept for HEAD — none while it is
+    /// HEAD's own message ([`gitti_core::ops::amend_draft_text`]).
+    fn save_amend_draft(&mut self, repo: &gitti_core::Repo, text: &str) {
+        let Some(head) = self.head.id.map(|id| id.to_string()) else { return };
+        let head_message = repo.head_message().unwrap_or_default();
+        let text = gitti_core::ops::amend_draft_text(text, &head_message);
+        gitti_core::store::save_amend_draft(repo.workdir(), &head, text);
+        self.amend_draft = (!text.trim().is_empty()).then(|| gitti_core::store::AmendDraft {
+            head,
+            message: text.to_string(),
+        });
+    }
+
+    /// What amend starts the empty box with: the amend draft while its commit is still
+    /// HEAD, else HEAD's message.
+    pub(super) fn amend_start_message(&self) -> Option<String> {
+        let head = self.head.id.map(|id| id.to_string());
+        if let Some(m) = self.amend_draft.as_ref().and_then(|d| d.for_head(head.as_deref())) {
+            return Some(m.to_string());
+        }
+        let msg = self.repo.as_ref()?.head_message().ok()?;
+        Some(msg.trim_end().to_string())
+    }
+
     /// The repository opened: its draft (read in the background) goes into the message
     /// box unless the user typed meanwhile; it replaces a merge message nobody edited.
-    /// A Keep Mine stored with it hides the note again.
+    /// A Keep Mine stored with it hides the note again. The amend draft is kept for when
+    /// amend is turned on.
     pub(super) fn restore_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else { return };
-        let task = cx
-            .background_executor()
-            .spawn(async move { gitti_core::store::load_draft(repo.workdir()) });
+        let task = cx.background_executor().spawn(async move {
+            let w = repo.workdir();
+            (gitti_core::store::load_draft(w), gitti_core::store::load_amend_draft(w))
+        });
         cx.spawn_in(window, async move |this, cx| {
-            let Some(draft) = task.await else { return };
+            let (draft, amend) = task.await;
+            if amend.is_some() {
+                this.update(cx, |this, _| {
+                    if this.amend_draft.is_none() {
+                        this.amend_draft = amend;
+                    }
+                })
+                .ok();
+            }
+            let Some(draft) = draft else { return };
             this.update_in(cx, |this, window, cx| {
                 let current = this.message.read(cx).value().to_string();
                 let untouched =
@@ -390,6 +489,12 @@ impl GittiApp {
     /// The draft as stored for this worktree (tests).
     pub fn script_draft(&self) -> Option<String> {
         gitti_core::store::load_draft(self.repo.as_ref()?.workdir()).map(|d| d.message)
+    }
+
+    /// The amend draft stored for this worktree: (commit, message) (tests).
+    pub fn script_amend_draft(&self) -> Option<(String, String)> {
+        let d = gitti_core::store::load_amend_draft(self.repo.as_ref()?.workdir())?;
+        Some((d.head, d.message))
     }
 
     /// The Keep Mine stored with this worktree's draft (tests).

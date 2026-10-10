@@ -960,6 +960,13 @@ pub mod testing {
         app.read(cx).script_draft()
     }
 
+    /// The amend draft as stored for the active tab's worktree: (commit, message) (a db
+    /// read).
+    pub fn amend_draft(ws: &Entity<Workspace>, cx: &App) -> Option<(String, String)> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_amend_draft()
+    }
+
     /// The Keep Mine stored with the active tab's draft (a db read).
     pub fn commit_draft_kept(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
         let app = ws.read(cx).active_app().expect("a repository tab");

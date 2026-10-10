@@ -382,6 +382,10 @@ pub struct Context {
     /// A warning about the commit the Merge dialog opened with ([`super::merge_warning`]),
     /// shown while its folder and commit are the ones entered.
     pub merge_warning: Option<MergeWarning>,
+    /// The loaded history and every ref, as shown: the Merge dialog resolves a commit
+    /// typed into it ([`super::resolve_commit`]) and warns as for one it opened with.
+    pub history: Option<std::sync::Arc<crate::History>>,
+    pub refs: Vec<RefInfo>,
 }
 
 /// A warning of the Merge dialog for one folder and commit (decided when it opens, from
@@ -408,6 +412,8 @@ impl Default for Context {
             remotes: Vec::new(),
             branches: Vec::new(),
             merge_warning: None,
+            history: None,
+            refs: Vec::new(),
         }
     }
 }
@@ -452,7 +458,25 @@ impl Context {
                 .map(|r| r.short_name.clone())
                 .collect(),
             merge_warning: None,
+            history: None,
+            refs: refs.to_vec(),
         }
+    }
+
+    /// The Merge dialog's warning for folder `prefix` and the commit entered: the one
+    /// decided when it opened while they are unchanged, else the typed commit's, resolved
+    /// in the loaded history ([`super::merge_warning`]). No git.
+    fn merge_warning_for(&self, prefix: &str, reference: &str) -> Option<MergeWarning> {
+        if let Some(w) = &self.merge_warning
+            && w.prefix == prefix
+            && w.reference == reference
+        {
+            return Some(w.clone());
+        }
+        let history = self.history.as_deref()?;
+        let s = self.subtrees.iter().find(|s| s.prefix == prefix)?;
+        let id = super::resolve_commit(history, &self.refs, reference)?;
+        super::merge_warning(history, s, &id, reference)
     }
 }
 
@@ -478,9 +502,7 @@ pub fn plan(req: &Request, ctx: &Context) -> Plan {
     let prefix = normalize_prefix(&req.prefix);
     let mut text = describe(req, ctx, &prefix);
     if req.action == Action::Merge
-        && let Some(w) = &ctx.merge_warning
-        && w.prefix == prefix
-        && w.reference == req.reference.trim()
+        && let Some(w) = ctx.merge_warning_for(&prefix, req.reference.trim())
     {
         text.push_str("\n\nWarning: ");
         text.push_str(&w.text);

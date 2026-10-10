@@ -278,7 +278,8 @@ fn dialogs_say_what_happens(ui: &mut Ui) {
 }
 
 /// Add from this repository's `upstream-v1` (repository `.`): `git subtree add` runs, the
-/// list shows it with its remembered source, a branch's menu merges into it directly.
+/// list shows it with its remembered source, a branch's menu merges into it directly; the
+/// Merge dialog warns about a typed commit from elsewhere.
 fn add(ui: &mut Ui) {
     if !subtrees(ui).is_empty() {
         fail!(ui, "subtrees before the add: {:?}", subtrees(ui));
@@ -307,6 +308,23 @@ fn add(ui: &mut Ui) {
     if !labels.iter().any(|l| l == "Merge into Subtree lib/… (already in the history of main)") {
         fail!(ui, "upstream-v1's menu offers to merge it again: {labels:?}");
     }
+    // The menu bar's Merge into Subtree…, a commit typed in: main's first commit doesn't
+    // continue lib/'s history (warned), the subtree's newer branch does — no git.
+    let start = git_out(&ui.repo, &["rev-parse", "--short=9", "main~1"]);
+    let n = ui.n_git();
+    ui.step("action:gitti::MergeIntoSubtree");
+    ui.quick(&format!("field:1={start}"));
+    match live(ui) {
+        Some((t, _, _, _)) if t.contains(&format!("Warning: {start} doesn't continue the history of lib/")) => {}
+        other => fail!(ui, "typed commit from elsewhere: {other:?}"),
+    }
+    ui.quick("field:1=upstream");
+    match live(ui) {
+        Some((t, _, _, _)) if !t.contains("Warning") => {}
+        other => fail!(ui, "typed upstream: {other:?}"),
+    }
+    ui.step("action:gitti::ModalCancel");
+    ui.no_git_since(n, "the Merge dialog's live text");
 }
 
 /// The labels of branch `name`'s sidebar menu (closed again).
