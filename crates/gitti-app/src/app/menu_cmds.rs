@@ -21,7 +21,7 @@ use crate::{
     OpenOldVersion, OpenThisVersion, RebaseCurrentOnto, RenameCurrentBranch, RevertCommit,
     SetUpstreamMenu, StashIncludingUntracked, ToggleSidebar,
 };
-use crate::{CreateEmptyCommit, StageAllAndCommit};
+use crate::{CreateEmptyCommit, StageAllAndCommit, StageTrackedAndCommit};
 use gitti_core::ops::CommitKind;
 
 fn entry(
@@ -89,6 +89,9 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &StageAllAndCommit, w, cx| {
             this.commit_kind(CommitKind::StageAll, w, cx)
         }))
+        .on_action(cx.listener(|this, _: &StageTrackedAndCommit, w, cx| {
+            this.commit_kind(CommitKind::StageTracked, w, cx)
+        }))
         .on_action(cx.listener(|this, _: &CreateEmptyCommit, w, cx| {
             this.commit_kind(CommitKind::Empty, w, cx)
         }))
@@ -112,6 +115,12 @@ impl GittiApp {
                 t.commit_kind(CommitKind::StageAll, w, cx)
             })
             .act(&StageAllAndCommit),
+            entry(
+                gitti_core::ops::STAGE_TRACKED_LABEL,
+                "git add -u, then commit (untracked files stay out)",
+                |t, w, cx| t.commit_kind(CommitKind::StageTracked, w, cx),
+            )
+            .act(&StageTrackedAndCommit),
             entry("Create Empty Commit", "a commit without changes", |t, w, cx| {
                 t.commit_kind(CommitKind::Empty, w, cx)
             })

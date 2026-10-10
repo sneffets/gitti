@@ -35,27 +35,60 @@ fn esc_cancels_a_hanging_fetch() {
     assert!(!out.contains("ERROR"), "{out}");
 }
 
-/// `q` while an operation runs (a commit held up by its hook) asks before quitting;
-/// Esc keeps gitty, and the commit ends normally.
-#[gitti_test::test]
-fn quit_while_an_operation_runs_asks_first() {
+/// A repository with `a.txt` staged and a pre-commit hook running `hook` (shell).
+fn slow_commit_repo(hook: &str) -> tempfile::TempDir {
     let dir = repo();
     let d = dir.path();
     git(d, &["add", "a.txt"]);
-    let hook = d.join(".git/hooks/pre-commit");
-    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(&hook, "#!/bin/sh\nsleep 0.3\n").unwrap();
+    let path = d.join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, format!("#!/bin/sh\n{hook}\n")).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let out = gitty(d, "press:c;press:x;press:ctrl-s;press:q;state;press:esc;wait;state");
+    dir
+}
+
+/// `q` while an operation runs (a commit held up by its hook) asks before quitting —
+/// Quit When Done / Stop and Quit, explained; Esc keeps gitty, and the commit ends
+/// normally.
+#[gitti_test::test]
+fn quit_while_an_operation_runs_asks_first() {
+    let dir = slow_commit_repo("sleep 0.3");
+    let d = dir.path();
+    let out = gitty(d, "press:c;press:x;press:ctrl-s;press:q;state;items;press:esc;wait;state");
     let st = crate::support::states(&out);
-    assert!(st[0].contains(r#"modal=Confirm "A git operation is still running""#), "{out}");
+    assert!(st[0].contains(r#"modal=Menu "Commit is still running""#), "{out}");
+    assert!(out.contains("item: Quit When Done\nitem: Stop and Quit"), "{out}");
     assert!(!out.contains("(quit)"), "{out}");
     assert!(st[1].contains("Commit — ") && !st[1].contains("modal="), "{out}");
     assert_eq!(git(d, &["log", "-1", "--format=%s"]), "x\n");
+}
+
+/// Quit When Done: gitty waits for the commit, then quits; the commit is made.
+#[gitti_test::test]
+fn quit_when_done_waits_for_the_operation() {
+    let dir = slow_commit_repo("sleep 0.2");
+    let d = dir.path();
+    let out = gitty(d, "press:c;press:x;press:ctrl-s;press:q;press:w;wait;state");
+    assert!(out.contains("(quit)"), "{out}");
+    assert_eq!(git(d, &["log", "-1", "--format=%s"]), "x\n");
+}
+
+/// Stop and Quit: the hook (and git) are stopped, gitty quits long before the hook would
+/// have ended; no commit, the message stays a draft.
+#[cfg(unix)]
+#[gitti_test::test]
+fn stop_and_quit_stops_the_operation() {
+    let dir = slow_commit_repo("sleep 30");
+    let d = dir.path();
+    let start = Instant::now();
+    let out = gitty(d, "press:c;press:x;press:ctrl-s;sleep:50;press:q;press:s;wait;state");
+    assert!(start.elapsed() < Duration::from_secs(8), "{out}");
+    assert!(out.contains("(quit)"), "{out}");
+    assert_eq!(git(d, &["log", "-1", "--format=%s"]), "Initial commit\n");
 }
 
 /// Esc right after an operation started (busy label not shown yet) keeps its old meaning

@@ -58,6 +58,33 @@ impl GittiApp {
         true
     }
 
+    /// Quit's "Stop and Quit": stops the running operation at once (also before its busy
+    /// mark shows) and drops the ones queued behind it; one that can't be cancelled
+    /// (stage / unstage / discard) runs to its end — they are short.
+    pub(crate) fn stop_for_quit(&mut self, cx: &mut Context<Self>) {
+        self.deferred.clear();
+        if self.busy.is_none() {
+            return;
+        }
+        if let Some(token) = self.op_cancel.as_ref().filter(|t| !t.is_cancelled()) {
+            token.cancel();
+            if let Some(b) = &mut self.busy {
+                *b = format!("Cancelling: {b}");
+            }
+        }
+        self.set_info("Stopping git, then quitting");
+        cx.notify();
+    }
+
+    /// Quit's "Quit When Done": the status line says what is waited for.
+    pub(crate) fn note_quit_when_done(&mut self, cx: &mut Context<Self>) {
+        if let Some(b) = &self.busy {
+            let label = b.trim_end_matches('…').to_string();
+            self.set_info(format!("Quitting once {label} is done"));
+            cx.notify();
+        }
+    }
+
     /// An operation failed on a stale lock file: says so and offers to remove it.
     pub(super) fn offer_stale_lock(
         &mut self,

@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use crate::Repo;
+use crate::{Repo, WorkingState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetMode {
@@ -965,8 +965,11 @@ pub enum CommitKind {
     Staged,
     /// Replace HEAD with the staged changes and the message.
     Amend,
-    /// `git add -A` first ("Stage All and Commit").
+    /// `git add -A` first ("Stage All and Commit"): changes, deletions and untracked files.
     StageAll,
+    /// `git add -u` first ("Stage Tracked Files and Commit", as `git commit -a`): changes
+    /// and deletions of tracked files; untracked files stay out.
+    StageTracked,
     /// `--allow-empty`: a commit without changes ("Create Empty Commit").
     Empty,
 }
@@ -1018,27 +1021,151 @@ pub fn plan_commit(
     CommitPlan::Run(CommitKind::Staged)
 }
 
+/// What the unstaged side holds, for the nothing-staged question: what "Stage All and
+/// Commit" (`git add -A`) and "Stage Tracked Files and Commit" (`git add -u`) would take.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnstagedCounts {
+    /// Tracked files with changes `git add -u` stages: modified, deleted, type changed,
+    /// a submodule checked out at another commit.
+    pub tracked: usize,
+    /// Untracked files `git add -A` adds (ignored ones stay out).
+    pub untracked_files: usize,
+    /// Untracked folders listed as one entry (`status.showUntrackedFiles=normal`).
+    pub untracked_folders: usize,
+    /// `status.showUntrackedFiles=no`: untracked files are not listed, yet `git add -A`
+    /// adds them.
+    pub untracked_hidden: bool,
+    /// Submodules with only changes inside them (modified / untracked files there): no
+    /// `git add` in the superproject takes those.
+    pub inside_submodules: usize,
+}
+
+impl UnstagedCounts {
+    pub fn of(working: &WorkingState) -> Self {
+        let mut c = Self {
+            untracked_hidden: working.status.untracked_hidden(),
+            ..Self::default()
+        };
+        for f in &working.unstaged {
+            let e = &f.entry;
+            if e.untracked {
+                if e.path.ends_with('/') {
+                    c.untracked_folders += 1;
+                } else {
+                    c.untracked_files += 1;
+                }
+            } else if e.submodule.is_some_and(|s| !s.commit_changed) {
+                c.inside_submodules += 1;
+            } else {
+                c.tracked += 1;
+            }
+        }
+        c
+    }
+
+    fn untracked(&self) -> usize {
+        self.untracked_files + self.untracked_folders
+    }
+
+    /// "2 untracked files and 1 untracked folder".
+    fn untracked_words(&self) -> String {
+        let files = (self.untracked_files > 0).then(|| count(self.untracked_files, "untracked file"));
+        let folders =
+            (self.untracked_folders > 0).then(|| count(self.untracked_folders, "untracked folder"));
+        match (files, folders) {
+            (Some(a), Some(b)) => format!("{a} and {b}"),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => String::new(),
+        }
+    }
+}
+
+/// "1 file" / "3 files".
+fn count(n: usize, noun: &str) -> String {
+    if n == 1 { format!("1 {noun}") } else { format!("{n} {noun}s") }
+}
+
+/// The button / menu label of [`CommitKind::StageTracked`].
+pub const STAGE_TRACKED_LABEL: &str = "Stage Tracked Files and Commit";
+
 /// Title, detail and choices (first = default) of the question Commit asks with nothing
-/// staged; [`CommitKind::StageAll`] only when there are changes.
-pub fn nothing_staged_prompt(unstaged: usize) -> (String, String, Vec<(&'static str, CommitKind)>) {
+/// staged. "Stage All and Commit" when anything can be staged; "Stage Tracked Files and
+/// Commit" besides it when `git add -A` would also take untracked files (listed or
+/// hidden by config); "Create Empty Commit" always. The detail says in plain words what
+/// each one stages, that a failed commit leaves the files staged and that the commit
+/// still has to be pushed.
+pub fn nothing_staged_prompt(c: &UnstagedCounts) -> (String, String, Vec<(&'static str, CommitKind)>) {
     let empty = ("Create Empty Commit", CommitKind::Empty);
-    if unstaged == 0 {
-        return (
-            "Nothing to commit".into(),
-            "There are no changes. Create a commit without changes?".into(),
-            vec![empty],
+    let untracked = c.untracked();
+    let empty_line = "Create Empty Commit makes a commit without any changes (git commit \
+         --allow-empty)";
+    let push_line = "The new commit stays in this repository until you push it.";
+    let sub_line = (c.inside_submodules > 0).then(|| {
+        format!(
+            "{} changed only inside — commit there first, then stage the submodule here.",
+            if c.inside_submodules == 1 {
+                "1 submodule has".to_string()
+            } else {
+                format!("{} submodules have", c.inside_submodules)
+            }
+        )
+    });
+    if c.tracked == 0 && untracked == 0 && !c.untracked_hidden {
+        let mut detail = format!("There are no changes to commit. {empty_line}. {push_line}");
+        if let Some(l) = sub_line {
+            detail = format!("{detail}\n\n{l}");
+        }
+        return ("Nothing to commit".into(), detail, vec![empty]);
+    }
+    // What is there.
+    let tracked = (c.tracked > 0).then(|| {
+        format!(
+            "{} with changes (modified or deleted)",
+            count(c.tracked, "tracked file")
+        )
+    });
+    let new = (untracked > 0).then(|| format!("{} (new, not in git yet)", c.untracked_words()));
+    let there = match (tracked, new) {
+        (Some(a), Some(b)) => format!("{a} and {b}"),
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => "no listed changes".into(),
+    };
+    let mut lines = vec![format!("Nothing is staged. The working tree has {there}.")];
+    if c.untracked_hidden {
+        lines.push(
+            "Untracked files are not listed here (status.showUntrackedFiles = no), but \
+             Stage All adds them too."
+                .into(),
         );
     }
-    let files = if unstaged == 1 {
-        "1 changed file".to_string()
+    let all = if c.untracked_hidden || untracked > 0 {
+        "Stage All and Commit stages everything — changes, deletions and new files (git add \
+         -A; ignored files stay out) — and commits it."
     } else {
-        format!("{unstaged} changed files")
+        "Stage All and Commit stages these changes and deletions (git add -A) and commits them."
     };
-    (
-        "Nothing staged".into(),
-        format!("Stage all {files} and commit them, or create a commit without changes?"),
-        vec![("Stage All and Commit", CommitKind::StageAll), empty],
-    )
+    lines.push(all.into());
+    let offer_tracked = c.tracked > 0 && (untracked > 0 || c.untracked_hidden);
+    if offer_tracked {
+        lines.push(format!(
+            "{STAGE_TRACKED_LABEL} stages only the {} (git add -u, like git commit -a); \
+             untracked files stay out.",
+            count(c.tracked, "changed tracked file")
+        ));
+    }
+    lines.push(format!("{empty_line}; your changes stay as they are."));
+    lines.push(format!(
+        "If the commit fails (e.g. a hook refuses it), what was staged stays staged. {push_line}"
+    ));
+    if let Some(l) = sub_line {
+        lines.push(l);
+    }
+    let mut choices = vec![("Stage All and Commit", CommitKind::StageAll)];
+    if offer_tracked {
+        choices.push((STAGE_TRACKED_LABEL, CommitKind::StageTracked));
+    }
+    choices.push(empty);
+    ("Nothing staged".into(), lines.join("\n\n"), choices)
 }
 
 /// Why the palette's "Create Empty Commit" refuses: staged changes would go into it.
@@ -1054,27 +1181,49 @@ pub fn empty_commit_blocker(staged: usize, amend: bool) -> Option<String> {
     }
 }
 
+/// The choice that waits for the running git operations and quits once they are done.
+pub const QUIT_WHEN_DONE: &str = "Quit When Done";
+/// The choice that stops the running git operations (as Esc on the busy mark) and quits.
+pub const STOP_AND_QUIT: &str = "Stop and Quit";
+
 /// Title and detail of the question before quitting while git operations run (their
-/// busy labels): both apps ask, the operation may be left half done.
+/// busy labels); both apps ask with [`QUIT_WHEN_DONE`], [`STOP_AND_QUIT`] and Cancel.
+/// Quitting without either would cut git off mid-way: it loses its output pipes.
 pub fn quit_while_busy_prompt(running: &[String]) -> (String, String) {
     let list: Vec<&str> = running.iter().map(|l| l.trim_end_matches('…')).collect();
+    let title = match list.as_slice() {
+        [one] => format!("{one} is still running"),
+        _ => "git operations are still running".into(),
+    };
+    let what = match list.as_slice() {
+        [_] => "it".to_string(),
+        _ => format!("them ({})", list.join(", ")),
+    };
     (
-        "A git operation is still running".into(),
+        title,
         format!(
-            "{} — quitting now may leave it unfinished. Quit anyway?",
-            list.join(", ")
+            "{QUIT_WHEN_DONE} waits for {what} to finish, then quits. A password or passphrase \
+             git asks for meanwhile is still asked.\n\n\
+             {STOP_AND_QUIT} stops git now (git removes its lock files): what it finished stays \
+             done, the rest does not happen — e.g. a pull may have fetched but not merged, a \
+             rebase or merge may wait to be continued or aborted. Look at the repository when \
+             you open it next.\n\n\
+             Your commit message is kept either way."
         ),
     )
 }
 
 /// Title and detail of the question before closing a tab (gitti) whose git operation
-/// `running` still runs, worded like [`quit_while_busy_prompt`].
+/// `running` still runs: closing does not stop it — git finishes in the background, only
+/// its result is not shown (the draft is kept, a commit that succeeds drops it).
 pub fn close_tab_while_busy_prompt(running: &str) -> (String, String) {
+    let label = running.trim_end_matches('…');
     (
-        "A git operation is still running".into(),
+        format!("{label} is still running"),
         format!(
-            "{} — closing the tab now may leave it unfinished. Close anyway?",
-            running.trim_end_matches('…')
+            "Closing the tab does not stop it: git finishes {label} in the background, but its \
+             result and any error are not shown. Open the repository again to see how it \
+             went. Quitting gitti before it is done would cut it off."
         ),
     )
 }

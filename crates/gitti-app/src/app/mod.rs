@@ -275,6 +275,9 @@ pub struct GittiApp {
     /// the pending debounced write.
     draft_dirty: bool,
     draft_save: Option<Task<()>>,
+    /// The message box was blank in the last frame (with nothing staged the Commit button
+    /// is off only then): typing re-renders when that flips.
+    message_was_blank: Cell<bool>,
     status: Option<Status>,
     /// Failed operations not looked at yet: the toolbar's ⚠ mark (`toolbar.rs`).
     errors: gitti_core::error_mark::ErrorMarks,
@@ -539,6 +542,10 @@ impl GittiApp {
                 InputEvent::Change => {
                     this.update_spell_of(SpellTarget::Message, cx);
                     this.draft_changed(cx);
+                    let blank = this.message.read(cx).value().trim().is_empty();
+                    if blank != this.message_was_blank.get() {
+                        cx.notify();
+                    }
                 }
                 _ => {}
             }),
@@ -622,6 +629,7 @@ impl GittiApp {
             amend: false,
             draft_dirty: false,
             draft_save: None,
+            message_was_blank: Cell::new(true),
             status: None,
             errors: Default::default(),
             status_gen: 0,
@@ -1920,6 +1928,9 @@ impl GittiApp {
         }
         if let Some(next) = self.deferred.pop_front() {
             next(self, window, cx);
+        }
+        if self.busy.is_none() {
+            cx.emit(AppEvent::Idle);
         }
     }
 

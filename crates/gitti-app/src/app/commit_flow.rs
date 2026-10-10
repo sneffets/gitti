@@ -4,17 +4,21 @@
 //!   (`gitti_core::store::save_draft`, shared with gitty): written once typing pauses
 //!   ([`DRAFT_DELAY`], queued on the store's writer thread — no db I/O here), when the tab /
 //!   window closes or the app quits (the entity's release), read in the background when
-//!   the repository opens, dropped only after a successful commit / amend. Amend's
-//!   prefilled HEAD message and the merge message are no drafts.
+//!   the repository opens, dropped only after a successful commit / amend — by the
+//!   commit's own job, so also when the tab was closed while it ran. Amend's prefilled
+//!   HEAD message and the merge message are no drafts.
 //! - The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`: a merge,
 //!   `cherry-pick` / `revert` — also `-n`, which leaves no CHERRY_PICK_HEAD —, `merge
 //!   --squash`; `gitti_core::Repo::prepared_message`) fills an empty box like `git commit`
 //!   starts its editor with it, and goes again with the file if nobody edited it. Text the
 //!   user typed is never replaced: a note under the box offers git's message ("Use It" /
 //!   "Keep Mine"), the palette too (`gitti_core::ops::{sync_prefill, offers_prepared}`).
-//! - Commit with nothing staged asks instead of failing (`gitti_core::ops::plan_commit`):
-//!   "Stage All and Commit" (when there are changes) or "Create Empty Commit"; both are
-//!   menu / palette commands too.
+//!   Keep Mine is stored with the draft (`store::save_kept_prepared`): after a restart the
+//!   note stays hidden while git's message is the same.
+//! - Commit with nothing staged asks instead of failing (`gitti_core::ops::plan_commit`,
+//!   `nothing_staged_prompt`, which says what each choice stages): "Stage All and Commit"
+//!   (`add -A`), "Stage Tracked Files and Commit" (`add -u`, when untracked files would
+//!   come along) or "Create Empty Commit"; all three are menu / palette commands too.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -57,7 +61,11 @@ impl GittiApp {
                     true,
                     window,
                     cx,
-                    |r| r.continue_operation(),
+                    |r| {
+                        let out = r.continue_operation()?;
+                        gitti_core::store::clear_draft(r.workdir());
+                        Ok(out)
+                    },
                     |this, out, _, _| {
                         this.merge_prefill = None;
                         this.committed();
@@ -73,8 +81,9 @@ impl GittiApp {
         cx.notify();
     }
 
-    /// "Stage All and Commit" / "Create Empty Commit" from the menu or the palette (and
-    /// the nothing-staged question): needs a message like Commit.
+    /// "Stage All and Commit" / "Stage Tracked Files and Commit" / "Create Empty Commit"
+    /// from the menu or the palette (and the nothing-staged question): needs a message like
+    /// Commit.
     pub(super) fn commit_kind(&mut self, kind: CommitKind, window: &mut Window, cx: &mut Context<Self>) {
         let msg = self.message.read(cx).value().to_string();
         if let Some(why) =
@@ -106,7 +115,12 @@ impl GittiApp {
             true,
             window,
             cx,
-            move |r| r.commit_as(&msg, kind),
+            move |r| {
+                let out = r.commit_as(&msg, kind)?;
+                // Here, not in `committed`: a tab closed meanwhile keeps no stale draft.
+                gitti_core::store::clear_draft(r.workdir());
+                Ok(out)
+            },
             |this, out, window, cx| {
                 this.message.update(cx, |m, cx| m.set_value("", window, cx));
                 this.merge_prefill = None;
@@ -119,8 +133,8 @@ impl GittiApp {
 
     /// Nothing staged: Stage All and Commit (with changes) / Create Empty Commit / Cancel.
     fn ask_nothing_staged(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (title, detail, choices) =
-            gitti_core::ops::nothing_staged_prompt(self.working.unstaged.len());
+        let counts = gitti_core::ops::UnstagedCounts::of(&self.working);
+        let (title, detail, choices) = gitti_core::ops::nothing_staged_prompt(&counts);
         let mut buttons: Vec<&str> = choices.iter().map(|(label, _)| *label).collect();
         buttons.push("Cancel");
         let answer = window.prompt(PromptLevel::Info, &title, Some(&detail), &buttons, cx);
@@ -136,9 +150,12 @@ impl GittiApp {
     }
 
     /// A commit / amend / merge conclusion succeeded: its message is no draft any more.
+    /// Its job dropped the stored one already (so does a tab closed meanwhile); again here,
+    /// as the box empties: text typed while the commit ran must not come back as a draft.
     fn committed(&mut self) {
         self.draft_dirty = false;
         self.draft_save = None;
+        self.prepared_dismissed = None;
         if let Some(repo) = &self.repo {
             gitti_core::store::clear_draft(repo.workdir());
         }
@@ -178,6 +195,7 @@ impl GittiApp {
 
     /// The repository opened: its draft (read in the background) goes into the message
     /// box unless the user typed meanwhile; it replaces a merge message nobody edited.
+    /// A Keep Mine stored with it hides the note again.
     pub(super) fn restore_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else { return };
         let task = cx
@@ -190,8 +208,11 @@ impl GittiApp {
                 let untouched =
                     current.trim().is_empty() || this.merge_prefill.as_deref() == Some(&current);
                 if untouched && !this.amend {
-                    this.message.update(cx, |m, cx| m.set_value(draft, window, cx));
+                    this.message.update(cx, |m, cx| m.set_value(draft.message, window, cx));
                     this.merge_prefill = None;
+                    if this.prepared_dismissed.is_none() {
+                        this.prepared_dismissed = draft.kept_prepared;
+                    }
                     cx.notify();
                 }
             })
@@ -230,8 +251,12 @@ impl GittiApp {
             }
             PrefillSync::Forget => self.merge_prefill = None,
         }
-        if prepared.is_none() {
-            self.prepared_dismissed = None;
+        if prepared.is_none()
+            && self.prepared_dismissed.take().is_some()
+            && let Some(repo) = &self.repo
+        {
+            // git's message went (committed, aborted): Keep Mine has nothing to hide.
+            gitti_core::store::save_kept_prepared(repo.workdir(), None);
         }
         self.prepared = prepared;
     }
@@ -257,9 +282,18 @@ impl GittiApp {
     }
 
     /// "Keep Mine": the note goes for this prepared message (Commit uses the box's text;
-    /// git removes its file with the commit).
+    /// git removes its file with the commit) — stored with the draft, so also after a
+    /// restart.
     fn keep_my_message(&mut self, cx: &mut Context<Self>) {
         self.prepared_dismissed = self.prepared.clone();
+        if let Some(repo) = self.repo.clone() {
+            // The box's text (the user's own, else no note) as the draft first — writes are
+            // queued in order: the row the choice is kept in.
+            self.draft_dirty = true;
+            self.save_draft_now(cx);
+            let kept = self.prepared_dismissed.as_deref();
+            gitti_core::store::save_kept_prepared(repo.workdir(), kept);
+        }
         cx.notify();
     }
 
@@ -355,6 +389,11 @@ impl GittiApp {
 
     /// The draft as stored for this worktree (tests).
     pub fn script_draft(&self) -> Option<String> {
-        gitti_core::store::load_draft(self.repo.as_ref()?.workdir())
+        gitti_core::store::load_draft(self.repo.as_ref()?.workdir()).map(|d| d.message)
+    }
+
+    /// The Keep Mine stored with this worktree's draft (tests).
+    pub fn script_kept_prepared(&self) -> Option<String> {
+        gitti_core::store::load_draft(self.repo.as_ref()?.workdir())?.kept_prepared
     }
 }

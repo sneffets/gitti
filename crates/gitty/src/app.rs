@@ -114,7 +114,7 @@ pub enum Msg {
     /// The commit message draft's write may be due (`app/commit_flow.rs`).
     DraftDue,
     /// The commit message draft stored for this worktree, read at start.
-    Draft(Option<String>),
+    Draft(Option<gitti_core::store::Draft>),
     /// Only the working state, re-read after a display option changed (generation).
     Working(u64, Result<WorkingState>),
     /// The merge editor's session for a conflicted file, loaded in the background.
@@ -562,6 +562,9 @@ pub struct App {
     /// mouse wheel scrolls without moving the cursor).
     pub follow: bool,
     pub quit: bool,
+    /// Quit was answered "Quit When Done" / "Stop and Quit": gitty quits once no
+    /// operation runs (`commit_flow::request_quit`).
+    pub quit_when_idle: bool,
 }
 
 pub fn spawn<T: Send + 'static>(
@@ -808,6 +811,7 @@ impl App {
             areas: Areas::default(),
             follow: true,
             quit: false,
+            quit_when_idle: false,
         }
     }
 
@@ -839,6 +843,9 @@ impl App {
     pub fn handle(&mut self, msg: Msg) {
         self.handle_msg(msg);
         self.save_settings();
+        if self.quit_when_idle && self.busy.is_none() {
+            self.quit = true;
+        }
     }
 
     /// The view options as shared settings (see `store::SharedSettings`).
@@ -3567,6 +3574,10 @@ impl App {
                 app.commit_kind(gitti_core::ops::CommitKind::StageAll)
             })
             .unless(self.why_not("StageAllAndCommit")),
+            MenuItem::new(gitti_core::ops::STAGE_TRACKED_LABEL, |app| {
+                app.commit_kind(gitti_core::ops::CommitKind::StageTracked)
+            })
+            .unless(self.why_not("StageTrackedAndCommit")),
             MenuItem::new("Create Empty Commit", |app| {
                 app.commit_kind(gitti_core::ops::CommitKind::Empty)
             }),
@@ -3835,6 +3846,11 @@ impl App {
             PickItem::new("Stage All and Commit", "git add -A, then commit", |app: &mut App| {
                 app.commit_kind(gitti_core::ops::CommitKind::StageAll)
             }),
+            PickItem::new(
+                gitti_core::ops::STAGE_TRACKED_LABEL,
+                "git add -u, then commit (untracked files stay out)",
+                |app: &mut App| app.commit_kind(gitti_core::ops::CommitKind::StageTracked),
+            ),
             PickItem::new("Create Empty Commit", "a commit without changes", |app: &mut App| {
                 app.commit_kind(gitti_core::ops::CommitKind::Empty)
             }),

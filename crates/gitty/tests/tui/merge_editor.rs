@@ -382,3 +382,26 @@ fn prepared_message_next_to_the_users_text() {
     assert!(!s[2].contains("My own text"), "Use It: {out}");
     assert_eq!(git(d, &["status", "--porcelain"]).trim(), "A  other.txt", "not committed");
 }
+
+/// Keep Mine is kept with the draft: a draft from an earlier run next to git's message
+/// (`cherry-pick -n -x` on the command line meanwhile) shows the note; Keep Mine hides it,
+/// and the next start shows the draft without the note.
+#[gitti_test::test]
+fn keep_mine_survives_a_restart() {
+    let dir = pick_repo();
+    let d = dir.path();
+    let config = tempfile::tempdir().unwrap();
+    let run = |script: &str| gitty_with(d, config.path(), "220x30", script);
+    let out = run("wait;press:c;type:My own text;press:esc;press:q");
+    assert!(out.contains("(quit)"), "{out}");
+    git(d, &["cherry-pick", "-n", "-x", "side"]);
+    let keep = "press:ctrl-p;type:keep my commit;press:enter";
+    let out = run(&format!("wait;dump;{keep};dump;press:q"));
+    let s = screens(&out);
+    assert!(s[0].contains("My own text") && s[0].contains("git prepared a message"), "{out}");
+    assert!(!s[1].contains("git prepared a message"), "Keep Mine: {out}");
+    let out = run("wait;dump");
+    let s = screens(&out);
+    assert!(s[0].contains("My own text"), "the draft is back: {out}");
+    assert!(!s[0].contains("git prepared a message"), "Keep Mine kept: {out}");
+}

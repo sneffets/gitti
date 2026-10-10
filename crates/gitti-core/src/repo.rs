@@ -1372,6 +1372,10 @@ impl Repo {
             CommitKind::Staged => {}
             CommitKind::Amend => args.push("--amend"),
             CommitKind::StageAll => self.stage_all()?,
+            // The whole tree (`:/`), as `git commit -a`: untracked files stay out.
+            CommitKind::StageTracked => {
+                self.git.run(&["add", "-u", "--", ":/"])?;
+            }
             CommitKind::Empty => args.push("--allow-empty"),
         }
         let out = self.git.run_stdin(&args, Some(message.as_bytes()))?;

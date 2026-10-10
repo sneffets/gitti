@@ -4,16 +4,20 @@
 //!   (`gitti_core::store::save_draft`): written once typing pauses ([`DRAFT_DELAY`], a
 //!   timer thread sends [`Msg::DraftDue`]; the write itself is queued on the store's
 //!   writer thread) and when gitty ends, read by a job when it starts, dropped only after
-//!   a successful commit / amend. Amend's prefilled HEAD message and the merge message are
-//!   no drafts.
-//! - Commit with nothing staged asks instead of failing (`gitti_core::ops::plan_commit`):
-//!   "Stage All and Commit" (when there are changes) or "Create Empty Commit"; both are in
-//!   the palette and the working directory's menu too.
+//!   a successful commit / amend (by the commit's job and again as the box empties).
+//!   Amend's prefilled HEAD message and the merge message are no drafts.
+//! - Commit with nothing staged asks instead of failing (`gitti_core::ops::plan_commit`,
+//!   `nothing_staged_prompt`, whose notes say what each choice stages): "Stage All and
+//!   Commit" (`add -A`), "Stage Tracked Files and Commit" (`add -u`, when untracked files
+//!   would come along) or "Create Empty Commit"; all are in the palette and the working
+//!   directory's menu too.
 //! - The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`) fills an empty
 //!   box and goes again with git's file if nobody edited it; the user's own text is never
 //!   replaced — a note under the box offers git's message (Use It / Keep Mine: a click
-//!   or the palette), as gitti (`gitti_core::ops::{sync_prefill, offers_prepared}`).
-//! - Quitting while an operation runs asks first.
+//!   or the palette), as gitti (`gitti_core::ops::{sync_prefill, offers_prepared}`). Keep
+//!   Mine is stored with the draft, so the note stays hidden after a restart.
+//! - Quitting while an operation runs asks first: Quit When Done / Stop and Quit
+//!   (`gitti_core::ops::quit_while_busy_prompt`); quitting at once would cut git off.
 
 use std::time::{Duration, Instant};
 
@@ -52,7 +56,9 @@ impl App {
                 self.focus = Focus::Detail;
                 self.merge_prefill = None;
                 self.run_op("Commit", true, After::ClearMessage, |r| {
-                    r.continue_operation()
+                    let out = r.continue_operation()?;
+                    gitti_core::store::clear_draft(r.workdir());
+                    Ok(out)
                 });
             }
             CommitPlan::NoMessage => {
@@ -64,8 +70,8 @@ impl App {
         }
     }
 
-    /// "Stage All and Commit" / "Create Empty Commit" (palette, menu, the nothing-staged
-    /// question): needs a message like Commit.
+    /// "Stage All and Commit" / "Stage Tracked Files and Commit" / "Create Empty Commit"
+    /// (palette, menu, the nothing-staged question): needs a message like Commit.
     pub fn commit_kind(&mut self, kind: CommitKind) {
         if let Some(why) =
             gitti_core::ops::commit_blocker(self.repo_state, self.working.conflicted.len())
@@ -88,23 +94,31 @@ impl App {
         let msg = self.message.text();
         self.focus = Focus::Detail;
         let label = if kind == CommitKind::Amend { "Amend" } else { "Commit" };
-        self.run_op(label, true, After::ClearMessage, move |r| r.commit_as(&msg, kind));
+        self.run_op(label, true, After::ClearMessage, move |r| {
+            let out = r.commit_as(&msg, kind)?;
+            gitti_core::store::clear_draft(r.workdir());
+            Ok(out)
+        });
     }
 
-    /// Nothing staged: a menu of what can be done (one choice: a confirm).
+    /// Nothing staged: a menu of what can be done under notes saying what each stages
+    /// (one choice: a confirm).
     fn ask_nothing_staged(&mut self) {
-        let (title, detail, choices) =
-            gitti_core::ops::nothing_staged_prompt(self.working.unstaged.len());
+        let counts = gitti_core::ops::UnstagedCounts::of(&self.working);
+        let (title, detail, choices) = gitti_core::ops::nothing_staged_prompt(&counts);
         self.modal = Some(if let &[(label, kind)] = choices.as_slice() {
             Modal::confirm(title, detail, label, move |app: &mut App| app.commit_kind(kind))
         } else {
-            let items = choices
-                .into_iter()
-                .map(|(label, kind)| {
-                    let key = if kind == CommitKind::StageAll { 'S' } else { 'e' };
-                    MenuItem::new(label, move |app: &mut App| app.commit_kind(kind)).key(key)
-                })
-                .collect();
+            let mut items = notes(&detail);
+            items.push(MenuItem::separator());
+            items.extend(choices.into_iter().map(|(label, kind)| {
+                let key = match kind {
+                    CommitKind::StageAll => 'S',
+                    CommitKind::StageTracked => 't',
+                    _ => 'e',
+                };
+                MenuItem::new(label, move |app: &mut App| app.commit_kind(kind)).key(key)
+            }));
             Modal::menu(title, items)
         });
     }
@@ -113,6 +127,7 @@ impl App {
     /// is no draft any more.
     pub(super) fn committed(&mut self) {
         self.draft.edited = None;
+        self.prepared_dismissed = None;
         store_draft(self, "");
     }
 
@@ -171,15 +186,19 @@ impl App {
     }
 
     /// The draft read at start goes into the message box unless the user typed meanwhile;
-    /// it replaces a merge message nobody edited.
-    pub(super) fn restore_draft(&mut self, draft: Option<String>) {
+    /// it replaces a merge message nobody edited. A Keep Mine stored with it hides the
+    /// note again.
+    pub(super) fn restore_draft(&mut self, draft: Option<gitti_core::store::Draft>) {
         let Some(draft) = draft else { return };
         let current = self.message.text();
         let untouched =
             current.trim().is_empty() || self.merge_prefill.as_deref() == Some(current.as_str());
         if untouched && !self.amend {
-            self.message.set_text(&draft);
+            self.message.set_text(&draft.message);
             self.merge_prefill = None;
+            if self.prepared_dismissed.is_none() {
+                self.prepared_dismissed = draft.kept_prepared;
+            }
         }
     }
 
@@ -206,8 +225,9 @@ impl App {
             }
             PrefillSync::Forget => self.merge_prefill = None,
         }
-        if prepared.is_none() {
-            self.prepared_dismissed = None;
+        if prepared.is_none() && self.prepared_dismissed.take().is_some() {
+            // git's message went (committed, aborted): Keep Mine has nothing to hide.
+            gitti_core::store::save_kept_prepared(self.repo.workdir(), None);
         }
         self.prepared = prepared;
     }
@@ -243,9 +263,16 @@ impl App {
     }
 
     /// Keep Mine: the note goes for this prepared message (Commit uses the box's text;
-    /// git removes its file with the commit).
+    /// git removes its file with the commit) — stored with the draft, so also after a
+    /// restart.
     pub fn keep_my_message(&mut self) {
         self.prepared_dismissed = self.prepared.clone();
+        // The box's text (the user's own, else no note) as the draft first — writes are
+        // queued in order: the row the choice is kept in.
+        self.draft.edited = Some(Instant::now());
+        self.save_draft_now();
+        let kept = self.prepared_dismissed.as_deref();
+        gitti_core::store::save_kept_prepared(self.repo.workdir(), kept);
     }
 
     /// Palette: Use the Message git Prepared (while it differs from the box's text), Keep
@@ -311,17 +338,57 @@ impl App {
 
     // ------------------------------------------------------------------ quitting
 
-    /// q / ctrl-c / Quit: asks first while an operation runs (it may be left unfinished).
+    /// q / ctrl-c / Quit: while an operation runs asks first — wait for it and quit
+    /// ("Quit When Done"), stop it and quit ("Stop and Quit"), or Esc. Quitting at once is
+    /// not offered: git would lose its output pipes mid-way. `App::handle` quits once
+    /// nothing runs; asking again while a quit waits, Esc drops it.
     pub fn request_quit(&mut self) {
         let Some((label, _)) = &self.busy else {
             self.quit = true;
             return;
         };
-        let (title, detail) = gitti_core::ops::quit_while_busy_prompt(std::slice::from_ref(label));
-        self.modal = Some(Modal::confirm(title, detail, "Quit Anyway", |app: &mut App| {
-            app.quit = true
-        }));
+        let label = label.trim_start_matches("Cancelling: ").to_string();
+        self.quit_when_idle = false;
+        let (title, detail) = gitti_core::ops::quit_while_busy_prompt(std::slice::from_ref(&label));
+        let mut items = notes(&detail);
+        items.push(MenuItem::separator());
+        items.push(
+            MenuItem::new(gitti_core::ops::QUIT_WHEN_DONE, move |app: &mut App| {
+                app.quit_when_idle = true;
+                // Done while the question was open: quit now.
+                app.quit = app.busy.is_none();
+                let label = label.trim_end_matches('…');
+                app.set_info(format!("Quitting once {label} is done (q again to change)"));
+            })
+            .key('w'),
+        );
+        items.push(
+            MenuItem::new(gitti_core::ops::STOP_AND_QUIT, |app: &mut App| {
+                app.stop_op_for_ask();
+                app.deferred.clear();
+                app.quit_when_idle = true;
+                app.quit = app.busy.is_none();
+                app.set_info("Stopping git, then quitting");
+            })
+            .key('s'),
+        );
+        self.modal = Some(Modal::menu(title, items));
     }
+}
+
+/// Width of the explaining notes in the commit / quit menus.
+const NOTE_WIDTH: usize = 64;
+
+/// `text` (paragraphs) as menu notes, a blank line between paragraphs.
+fn notes(text: &str) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    for (i, para) in text.split("\n\n").enumerate() {
+        if i > 0 {
+            items.push(MenuItem::separator());
+        }
+        items.extend(MenuItem::notes(para, NOTE_WIDTH));
+    }
+    items
 }
 
 fn store_draft(app: &App, text: &str) {
