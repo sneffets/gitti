@@ -164,6 +164,19 @@ fn sidebar_and_menus(ui: &mut Ui) {
         ui.quick("key:escape");
     }
 
+    // Merge into a subtree: offered for a commit from elsewhere (upstream's newer one,
+    // a submenu of both folders — listed flat here); greyed with the reason for one
+    // already in main.
+    for (branch, want) in [
+        ("upstream", "vendor/y/…"),
+        ("upstream-v1", "Merge into Subtree… (already in the history of main)"),
+    ] {
+        let labels = branch_menu(ui, branch);
+        if !labels.iter().any(|l| l == want) {
+            fail!(ui, "{branch}'s menu lacks {want:?}: {labels:?}");
+        }
+    }
+
     // A commit's menu: Add as Subtree… opens the Add dialog with the commit.
     testing::menu_labels();
     ui.click_on("commit-row:2", MouseButton::Right);
@@ -285,14 +298,24 @@ fn add(ui: &mut Ui) {
     if !ui.git_commands().iter().any(|c| c.contains("subtree add --prefix=lib . upstream-v1")) {
         fail!(ui, "no git subtree add: {:?}", ui.git_commands());
     }
-    // One subtree: a branch's menu merges into it directly.
-    testing::menu_labels();
-    ui.click_on("side:ref-refs/heads/upstream", MouseButton::Right);
-    let labels = testing::menu_labels();
+    // One subtree: a branch's menu merges into it directly — not the branch just added.
+    let labels = branch_menu(ui, "upstream");
     if !labels.iter().any(|l| l == "Merge into Subtree lib/…") {
         fail!(ui, "branch menu without Merge into Subtree lib/…: {labels:?}");
     }
+    let labels = branch_menu(ui, "upstream-v1");
+    if !labels.iter().any(|l| l == "Merge into Subtree lib/… (already in the history of main)") {
+        fail!(ui, "upstream-v1's menu offers to merge it again: {labels:?}");
+    }
+}
+
+/// The labels of branch `name`'s sidebar menu (closed again).
+fn branch_menu(ui: &mut Ui, name: &str) -> Vec<String> {
+    testing::menu_labels();
+    ui.click_on(&format!("side:ref-refs/heads/{name}"), MouseButton::Right);
+    let labels = testing::menu_labels();
     ui.quick("key:escape");
+    labels
 }
 
 /// Pull from the row's menu: pre-filled from the remembered source; the newer branch is

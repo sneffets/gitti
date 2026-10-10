@@ -278,7 +278,8 @@ pub(super) fn commit_menu(
             this.edit_commit_message(rev.clone(), w, cx)
         })
     });
-    super::subtrees::ref_items(menu, app, &subtree_rev, None, window, cx)
+    let commit_id = gitti_core::ObjectId::from_hex(subtree_rev.as_bytes()).ok();
+    super::subtrees::ref_items(menu, app, &subtree_rev, commit_id, None, window, cx)
     .separator()
     .item(copy_item("Copy SHA", rev.clone()))
     .item(copy_item("Copy Short SHA", short.clone()))
@@ -652,7 +653,7 @@ pub(super) fn ref_menu(
             let menu = match is_head {
                 // The checked-out branch can't be added into itself.
                 true => menu,
-                false => super::subtrees::ref_items(menu, app, &name, None, window, cx),
+                false => super::subtrees::ref_items(menu, app, &name, Some(target), None, window, cx),
             };
             menu.separator()
                 .item({
@@ -716,7 +717,7 @@ pub(super) fn ref_menu(
             .item(create_tag(&name))
             .item(upstream_of_head)
             .item(compare_item(app, target));
-            super::subtrees::ref_items(menu, app, &name, subtree_src, window, cx)
+            super::subtrees::ref_items(menu, app, &name, Some(target), subtree_src, window, cx)
             .separator()
             .item(item(
                 format!("Delete {branch} on {remote}…"),
@@ -756,7 +757,7 @@ pub(super) fn ref_menu(
                 .item(merge(&name))
                 .item(create_branch(&name))
                 .item(compare_item(app, target));
-            let mut menu = super::subtrees::ref_items(menu, app, &name, None, window, cx).separator();
+            let mut menu = super::subtrees::ref_items(menu, app, &name, Some(target), None, window, cx).separator();
             for remote in remotes {
                 let (n, rm) = (name.clone(), remote.clone());
                 menu = menu.item(item(

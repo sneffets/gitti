@@ -90,13 +90,16 @@ pub(super) fn section_menu(menu: PopupMenu, app: &AppHandle) -> PopupMenu {
     })
 }
 
-/// "Add as Subtree…" and "Merge into Subtree…" for a commit / branch / tag (`rev`);
-/// `remote`: a remote branch's remote and branch name (its Add fetches from there, so
-/// Pull knows where it comes from later).
+/// "Add as Subtree…" and "Merge into Subtree…" for a commit / branch / tag (`rev`, the
+/// commit `target`); `remote`: a remote branch's remote and branch name (its Add fetches
+/// from there, so Pull knows where it comes from later). Merge is greyed with the reason
+/// for a commit already in HEAD's history (git would only say "already up to date") —
+/// decided from the loaded history, no git.
 pub(super) fn ref_items(
     menu: PopupMenu,
     app: &AppHandle,
     rev: &str,
+    target: Option<ObjectId>,
     remote: Option<(String, String)>,
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
@@ -104,7 +107,13 @@ pub(super) fn ref_items(
     let Some(this) = app.upgrade() else {
         return menu;
     };
-    let subtrees: Vec<Subtree> = this.read(cx).subtrees.clone();
+    let (subtrees, merged) = {
+        let this = this.read(cx);
+        let merged = target.and_then(|t| {
+            subtree::merge_unavailable(&this.history, &t, this.head.branch.as_deref())
+        });
+        (this.subtrees.clone(), merged)
+    };
     let mut add = Request::new(Action::Add, "");
     match &remote {
         Some((r, b)) => {
@@ -125,26 +134,32 @@ pub(super) fn ref_items(
         r.reference = rev.to_string();
         r
     };
-    match subtrees.as_slice() {
-        [] => menu,
-        [one] => {
-            let r = merge(one);
-            menu.item(item(
-                format!("Merge into Subtree {}/…", one.prefix),
-                app,
-                move |this, w, cx| this.subtree_dialog(r.clone(), w, cx),
-            ))
+    let open = move |r: Request| {
+        move |this: &mut GittiApp, w: &mut Window, cx: &mut Context<GittiApp>| {
+            this.subtree_merge_dialog(r.clone(), target, w, cx)
         }
-        many => {
+    };
+    match (subtrees.as_slice(), merged) {
+        ([], _) => menu,
+        ([one], why) => {
+            let label = format!("Merge into Subtree {}/…", one.prefix);
+            let label = match &why {
+                Some(why) => gitti_core::availability::with_reason(&label, why),
+                None => label,
+            };
+            menu.item(item(label, app, open(merge(one))).disabled(why.is_some()))
+        }
+        (_, Some(why)) => menu.item(
+            item(gitti_core::availability::with_reason("Merge into Subtree…", &why), app, |_, _, _| {})
+                .disabled(true),
+        ),
+        (many, None) => {
             let app = app.clone();
             let reqs: Vec<(String, Request)> =
                 many.iter().map(|s| (format!("{}/", s.prefix), merge(s))).collect();
             menu.submenu("Merge into Subtree", window, cx, move |mut m, _, _| {
                 for (label, r) in &reqs {
-                    let r = r.clone();
-                    m = m.item(item(format!("{label}…"), &app, move |this, w, cx| {
-                        this.subtree_dialog(r.clone(), w, cx)
-                    }));
+                    m = m.item(item(format!("{label}…"), &app, open(r.clone())));
                 }
                 m
             })
@@ -303,11 +318,38 @@ impl GittiApp {
     /// remotes as fill buttons for the repository, and live under them what OK does and
     /// why it can't run (`subtree::plan`).
     pub(super) fn subtree_dialog(&mut self, req: Request, window: &mut Window, cx: &mut Context<Self>) {
+        self.subtree_dialog_with(req, None, window, cx)
+    }
+
+    /// The Merge dialog for commit `target` (a commit / branch / tag menu's): it warns when
+    /// the commit doesn't continue the subtree's history (`subtree::merge_warning`).
+    fn subtree_merge_dialog(
+        &mut self,
+        req: Request,
+        target: Option<ObjectId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let warning = target.and_then(|t| {
+            let s = self.subtrees.iter().find(|s| s.prefix == subtree::normalize_prefix(&req.prefix))?;
+            subtree::merge_warning(&self.history, s, &t, &req.reference)
+        });
+        self.subtree_dialog_with(req, warning, window, cx)
+    }
+
+    fn subtree_dialog_with(
+        &mut self,
+        req: Request,
+        warning: Option<subtree::MergeWarning>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.repo.is_none() {
             return;
         }
         let a = req.action;
-        let ctx = self.subtree_context();
+        let mut ctx = self.subtree_context();
+        ctx.merge_warning = warning;
         let form = subtree::form(&req);
         let mut spec = ModalSpec::new(a.title());
         for (label, value) in &form.fields {

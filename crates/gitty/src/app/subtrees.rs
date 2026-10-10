@@ -87,10 +87,17 @@ impl App {
             .collect()
     }
 
-    /// "Add as Subtree…" and "Merge into Subtree…" for a commit / branch / tag `rev`;
-    /// `remote`: a remote branch's remote and branch (its Add fetches from there, so Pull
-    /// knows where it comes from later).
-    pub(crate) fn subtree_ref_items(&self, rev: &str, remote: Option<(String, String)>) -> Vec<MenuItem> {
+    /// "Add as Subtree…" and "Merge into Subtree…" for a commit / branch / tag `rev` (the
+    /// commit `target`); `remote`: a remote branch's remote and branch (its Add fetches
+    /// from there, so Pull knows where it comes from later). Merge is greyed with the
+    /// reason for a commit already in HEAD's history (git would only say "already up to
+    /// date") — from the loaded history, no git (the key bar builds this every frame).
+    pub(crate) fn subtree_ref_items(
+        &self,
+        rev: &str,
+        target: Option<ObjectId>,
+        remote: Option<(String, String)>,
+    ) -> Vec<MenuItem> {
         let mut add = Request::new(Action::Add, "");
         match remote {
             Some((r, b)) => {
@@ -105,25 +112,31 @@ impl App {
         }
         let mut v = vec![MenuItem::new("Add as Subtree…", move |app: &mut App| app.subtree_dialog(add))];
         let rev = rev.to_string();
+        let merged = target.and_then(|t| subtree::merge_unavailable(&self.history, &t, self.head.branch.as_deref()));
         match self.subtrees.as_slice() {
             [] => {}
             [one] => {
                 let mut r = Request::for_subtree(Action::Merge, one);
                 r.reference = rev;
-                v.push(MenuItem::new(
-                    format!("Merge into Subtree {}/…", one.prefix),
-                    move |app: &mut App| app.subtree_dialog(r),
-                ));
+                v.push(
+                    MenuItem::new(format!("Merge into Subtree {}/…", one.prefix), move |app: &mut App| {
+                        app.subtree_merge_dialog(r, target)
+                    })
+                    .unless(merged.as_deref()),
+                );
             }
-            _ => v.push(MenuItem::new("Merge into Subtree…", move |app: &mut App| {
-                app.merge_into_subtree_picker(rev)
-            })),
+            _ => v.push(
+                MenuItem::new("Merge into Subtree…", move |app: &mut App| {
+                    app.merge_into_subtree_picker(rev, target)
+                })
+                .unless(merged.as_deref()),
+            ),
         }
         v
     }
 
-    /// Which subtree to merge `rev` into (several of them).
-    fn merge_into_subtree_picker(&mut self, rev: String) {
+    /// Which subtree to merge `rev` (commit `target`) into (several of them).
+    fn merge_into_subtree_picker(&mut self, rev: String, target: Option<ObjectId>) {
         let items = self
             .subtrees
             .iter()
@@ -132,7 +145,7 @@ impl App {
                 let mut r = Request::for_subtree(Action::Merge, s);
                 r.reference = rev.clone();
                 PickItem::new(format!("{}/", s.prefix), s.detail(), move |app: &mut App| {
-                    app.subtree_dialog(r)
+                    app.subtree_merge_dialog(r, target)
                 })
             })
             .collect();
@@ -188,8 +201,23 @@ impl App {
     /// The dialog of `req.action`, filled from `req`; under its fields what Enter does
     /// and why it can't run now, the remotes listed for the repository field.
     pub(crate) fn subtree_dialog(&mut self, req: Request) {
+        self.subtree_dialog_with(req, None)
+    }
+
+    /// The Merge dialog for commit `target` (a commit / branch / tag menu's): it warns when
+    /// the commit doesn't continue the subtree's history (`subtree::merge_warning`).
+    fn subtree_merge_dialog(&mut self, req: Request, target: Option<ObjectId>) {
+        let warning = target.and_then(|t| {
+            let s = self.subtrees.iter().find(|s| s.prefix == subtree::normalize_prefix(&req.prefix))?;
+            subtree::merge_warning(&self.history, s, &t, &req.reference)
+        });
+        self.subtree_dialog_with(req, warning)
+    }
+
+    fn subtree_dialog_with(&mut self, req: Request, warning: Option<subtree::MergeWarning>) {
         let a = req.action;
-        let ctx = self.subtree_context();
+        let mut ctx = self.subtree_context();
+        ctx.merge_warning = warning;
         let form = subtree::form(&req);
         let fields: Vec<(&str, &str)> = form.fields.iter().map(|(l, v)| (*l, v.as_str())).collect();
         let checks: Vec<(&str, bool)> = form.checks.clone();

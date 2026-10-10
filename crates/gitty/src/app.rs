@@ -1951,6 +1951,14 @@ impl App {
     }
 
     /// Row of the commit a ref (full name) points at.
+    /// The commit ref `short` of `kind` points at.
+    pub fn ref_target(&self, kind: RefKind, short: &str) -> Option<ObjectId> {
+        self.refs
+            .iter()
+            .find(|r| r.kind == kind && r.short_name == short)
+            .map(|r| r.target)
+    }
+
     pub fn row_of_ref(&self, kind: RefKind, short: &str) -> Option<usize> {
         let r = self
             .refs
@@ -3430,7 +3438,7 @@ impl App {
             MenuItem::new("Edit Commit Message…", move |app| app.edit_commit_message(&s)).key('e'),
         );
         items.push(MenuItem::separator());
-        items.extend(self.subtree_ref_items(&sha, None));
+        items.extend(self.subtree_ref_items(&sha, ObjectId::from_hex(sha.as_bytes()).ok(), None));
         items.push(MenuItem::separator());
         let s = sha.clone();
         items.push(MenuItem::new("Copy SHA", move |app| app.copy(s)).key('y'));

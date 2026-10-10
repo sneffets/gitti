@@ -23,7 +23,9 @@ use crate::git_cli::GitError;
 use crate::ops::RepoState;
 use crate::repo::Repo;
 
-pub use request::{Action, Context, Form, Plan, Request, form, from_form, normalize_prefix, plan, prefix_problem};
+pub use request::{
+    Action, Context, Form, MergeWarning, Plan, Request, form, from_form, normalize_prefix, plan, prefix_problem,
+};
 pub use source::Source;
 
 /// How a subtree came in last.
@@ -145,6 +147,40 @@ pub fn default_prefix(repository: &str, reference: &str) -> String {
     }
     let r = reference.trim().trim_end_matches('/');
     r.rsplit('/').next().unwrap_or(r).to_string()
+}
+
+/// Why "Merge into Subtree…" can do nothing with commit `target` (a commit row's, a
+/// branch's or a tag's): it is in HEAD's history already, so git would only say "already
+/// up to date" — `branch` names HEAD's branch in the reason. `None`: offer it (a commit
+/// from elsewhere, e.g. a fetched branch of the subtree's source, or one the loaded
+/// history can't tell about). In-process, from the loaded history; no git.
+pub fn merge_unavailable(history: &crate::History, target: &gix::oid, branch: Option<&str>) -> Option<String> {
+    (history.in_head_history(target) == Some(true))
+        .then(|| format!("already in the history of {}", branch.unwrap_or("HEAD")))
+}
+
+/// The Merge dialog's warning when commit `target` (entered as `reference`) doesn't look
+/// like a version of subtree `s`: the subtree commit merged last (`git-subtree-split`) is
+/// loaded but not in `target`'s history — then `target` comes from another project (or an
+/// unrelated branch) and merging it mixes its files into the folder. Not shown when the
+/// history can't tell (that commit isn't loaded, e.g. after a squash). No git.
+pub fn merge_warning(history: &crate::History, s: &Subtree, target: &gix::oid, reference: &str) -> Option<MergeWarning> {
+    let split = s.split?;
+    if history.is_ancestor(&split, target) != Some(false) {
+        return None;
+    }
+    let prefix = &s.prefix;
+    let reference = reference.trim();
+    Some(MergeWarning {
+        prefix: prefix.clone(),
+        reference: reference.to_string(),
+        text: format!(
+            "{reference} doesn't continue the history of {prefix}/ — the subtree commit merged \
+             last ({}) is not in its history. If it comes from another project, its files are \
+             mixed into {prefix}/: check that it is the right commit.",
+            short(split)
+        ),
+    })
 }
 
 /// A short commit id.

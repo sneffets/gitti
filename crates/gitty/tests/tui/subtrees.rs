@@ -73,3 +73,35 @@ fn add_a_subtree_from_the_palette() {
     let s = screens(&out);
     assert!(s[0].contains("SUBTREES (1)") && s[0].contains("lib"), "{out}");
 }
+
+/// "Merge into Subtree lib/…" on commits: greyed with the reason on HEAD (already in its
+/// history), offered on a newer commit of the subtree's own history (`upstream`) —
+/// decided from the loaded history, no git.
+#[gitti_test::test]
+fn merge_into_subtree_only_for_commits_from_elsewhere() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "start", files: &[("README", "app\n")] },
+        Commit { branch: "upstream", from: None, merge: None, msg: "lib 1", files: &[("x", "1\n")] },
+        Commit { branch: "main", from: None, merge: Some(2), msg: TRAILERS, files: &[("lib/x", "1\n")] },
+        Commit { branch: "upstream", from: None, merge: None, msg: "lib 2", files: &[("x", "2\n")] },
+    ]);
+    let d = dir.path();
+    let script = "cmds;press:j;press:m;state;items;press:esc;press:j;press:m;state;items;press:esc;cmds";
+    let out = gitty(d, script);
+    let lists = item_lists(&out);
+    let states = states(&out);
+    let merge_label = |list: &Vec<&str>| {
+        list.iter().find(|l| l.contains("Merge into Subtree")).map(|l| l.to_string()).unwrap_or_default()
+    };
+    // Rows 1 and 2: the newest commit (lib 2, upstream) and HEAD (main).
+    let (foreign, head) = if states[0].contains("lib 2") { (0, 1) } else { (1, 0) };
+    assert!(merge_label(&lists[foreign]).contains("Merge into Subtree lib/…"), "{out}");
+    assert!(!merge_label(&lists[foreign]).contains("already"), "{out}");
+    assert!(
+        merge_label(&lists[head]).contains("(already in the history of main)"),
+        "{:?}\n{out}",
+        lists[head]
+    );
+    // No git for the menus.
+    assert_no_git(&cmds(&out)[1..], "the menus", &out);
+}

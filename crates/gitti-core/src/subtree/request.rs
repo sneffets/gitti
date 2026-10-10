@@ -379,6 +379,20 @@ pub struct Context {
     pub remotes: Vec<RemoteInfo>,
     /// The local branch names.
     pub branches: Vec<String>,
+    /// A warning about the commit the Merge dialog opened with ([`super::merge_warning`]),
+    /// shown while its folder and commit are the ones entered.
+    pub merge_warning: Option<MergeWarning>,
+}
+
+/// A warning of the Merge dialog for one folder and commit (decided when it opens, from
+/// the loaded history).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeWarning {
+    /// The subtree's folder (normalized).
+    pub prefix: String,
+    /// The commit, branch or tag as entered.
+    pub reference: String,
+    pub text: String,
 }
 
 impl Default for Context {
@@ -393,6 +407,7 @@ impl Default for Context {
             subtrees: Vec::new(),
             remotes: Vec::new(),
             branches: Vec::new(),
+            merge_warning: None,
         }
     }
 }
@@ -436,6 +451,7 @@ impl Context {
                 .filter(|r| r.kind == RefKind::LocalBranch)
                 .map(|r| r.short_name.clone())
                 .collect(),
+            merge_warning: None,
         }
     }
 }
@@ -460,7 +476,15 @@ pub fn plan(req: &Request, ctx: &Context) -> Plan {
     }
     .to_string();
     let prefix = normalize_prefix(&req.prefix);
-    let text = describe(req, ctx, &prefix);
+    let mut text = describe(req, ctx, &prefix);
+    if req.action == Action::Merge
+        && let Some(w) = &ctx.merge_warning
+        && w.prefix == prefix
+        && w.reference == req.reference.trim()
+    {
+        text.push_str("\n\nWarning: ");
+        text.push_str(&w.text);
+    }
     let blocked = blocker(req, ctx, &prefix);
     Plan {
         text,

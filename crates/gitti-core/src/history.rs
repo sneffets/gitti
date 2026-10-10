@@ -190,6 +190,8 @@ pub struct History {
     newest_time: i64,
     /// HEAD's file paths for "Go to Commit…" ([`crate::commit_search`]), built on first use.
     pub(crate) head_paths: std::sync::OnceLock<Arc<crate::search_paths::PathIndex>>,
+    /// Which rows are in HEAD's history, decided as far as asked ([`crate::reach`]).
+    pub(crate) head_reach: Mutex<crate::reach::Sweep>,
 }
 
 impl History {
@@ -214,6 +216,11 @@ impl History {
     /// The row of commit `id`, if it is loaded (never the working-directory row).
     pub fn row_of(&self, id: &gix::oid) -> Option<usize> {
         self.commits.row_of(id)
+    }
+
+    /// The commit HEAD pointed at when this history was loaded (`None`: unborn).
+    pub fn head(&self) -> Option<ObjectId> {
+        self.basis.head
     }
 
     /// Whether commit `id` is loaded.
@@ -665,6 +672,7 @@ fn finish(table: Arc<Table>, refs: Vec<RefInfo>, shared: Shared) -> History {
         load: shared.load,
         meta: shared.meta,
         head_paths: Default::default(),
+        head_reach: Default::default(),
         basis: shared.basis,
         newest_time,
     }

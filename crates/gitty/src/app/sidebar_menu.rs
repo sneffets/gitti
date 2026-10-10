@@ -169,7 +169,7 @@ impl App {
         if !current {
             // The checked-out branch can't be added into itself.
             v.push(MenuItem::separator());
-            v.extend(self.subtree_ref_items(name, None));
+            v.extend(self.subtree_ref_items(name, self.ref_target(RefKind::LocalBranch, name), None));
         }
         v.push(MenuItem::separator());
         let n = name.to_string();
@@ -246,7 +246,11 @@ impl App {
         }
         v.push(self.compare_item(self.row_of_ref(RefKind::RemoteBranch, full)));
         v.push(MenuItem::separator());
-        v.extend(self.subtree_ref_items(full, Some((remote.clone(), branch.clone()))));
+        v.extend(self.subtree_ref_items(
+            full,
+            self.ref_target(RefKind::RemoteBranch, full),
+            Some((remote.clone(), branch.clone())),
+        ));
         v.push(MenuItem::separator());
         let f = full.to_string();
         v.push(
@@ -283,7 +287,7 @@ impl App {
         v.push(MenuItem::new("Create Branch From…", move |app| app.create_branch_dialog(n)).key('b'));
         v.push(self.compare_item(self.row_of_ref(RefKind::Tag, name)));
         v.push(MenuItem::separator());
-        v.extend(self.subtree_ref_items(name, None));
+        v.extend(self.subtree_ref_items(name, self.ref_target(RefKind::Tag, name), None));
         v.push(MenuItem::separator());
         for remote in self.remotes.iter().map(|r| r.name.clone()) {
             let n = name.to_string();

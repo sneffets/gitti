@@ -30,10 +30,12 @@ fn trailers(subject: &str, dir: &str, mainline: Option<&str>, split: &str) -> St
 }
 
 struct Fixture {
+    l1: C,
     l2: C,
     l3: C,
     pull: C,
     sq_merge2: C,
+    sq2: C,
     rejoin: C,
     old_add: C,
     tip: C,
@@ -93,10 +95,12 @@ fn history() -> (History, Fixture) {
     (
         h,
         Fixture {
+            l1,
             l2,
             l3,
             pull,
             sq_merge2,
+            sq2,
             rejoin,
             old_add,
             tip,
@@ -146,6 +150,66 @@ fn subtrees_come_from_the_trailers_and_merges() {
     fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
     assert_eq!(repo.subtrees().unwrap(), list);
     let _ = (fx.pull, fx.l2, fx.tip);
+}
+
+/// "Merge into Subtree…" is offered for commits outside HEAD's history only, decided from
+/// the loaded history (no git); the dialog warns about a commit that doesn't continue the
+/// subtree's history.
+#[gitti_test::test]
+fn merge_into_subtree_only_for_commits_from_elsewhere() {
+    use gitti_core::LogOrder;
+    use gitti_core::subtree::{merge_unavailable, merge_warning};
+    let (h, fx) = history();
+    let (_tmp, dir, ids) = repo_with(&h);
+    let repo = Repo::open(&dir).unwrap();
+    let hist = repo.history(LogOrder::Topo).unwrap();
+    // In main's history: merged before (l2, l1), main's own commits, HEAD itself.
+    for c in [fx.l1, fx.l2, fx.pull, fx.sq2, fx.tip] {
+        assert_eq!(hist.in_head_history(&ids[c]), Some(true), "{}", c.0);
+        assert_eq!(
+            merge_unavailable(&hist, &ids[c], Some("main")).as_deref(),
+            Some("already in the history of main")
+        );
+    }
+    // Upstream's newer commit (only on `upstream` / `next`): offered.
+    assert_eq!(hist.in_head_history(&ids[fx.l3]), Some(false));
+    assert_eq!(merge_unavailable(&hist, &ids[fx.l3], Some("main")), None);
+    // Asked again (remembered sweep), and in the other order.
+    assert_eq!(hist.in_head_history(&ids[fx.l1]), Some(true));
+    assert_eq!(hist.in_head_history(&oid(FAKE1)), Some(false), "not loaded: in no history");
+
+    assert_eq!(hist.is_ancestor(&ids[fx.l2], &ids[fx.l3]), Some(true));
+    assert_eq!(hist.is_ancestor(&ids[fx.l3], &ids[fx.l2]), Some(false));
+    assert_eq!(hist.is_ancestor(&ids[fx.l3], &ids[fx.l3]), Some(true));
+
+    // lib/ last merged from l2: l3 continues it; vendor/y's squash commit doesn't.
+    let mut lib = repo.subtrees().unwrap().remove(0);
+    lib.split = Some(ids[fx.l2]);
+    assert_eq!(merge_warning(&hist, &lib, &ids[fx.l3], "upstream"), None);
+    let w = merge_warning(&hist, &lib, &ids[fx.sq2], " squashes ").expect("a warning");
+    assert_eq!((w.prefix.as_str(), w.reference.as_str()), ("lib", "squashes"));
+    assert!(w.text.starts_with("squashes doesn't continue the history of lib/"), "{}", w.text);
+    // The split commit not loaded (here: a made-up one): no warning.
+    lib.split = Some(oid(FAKE1));
+    assert_eq!(merge_warning(&hist, &lib, &ids[fx.sq2], "squashes"), None);
+
+    // The plan shows the warning only for that folder and commit.
+    let ctx = gitti_core::subtree::Context {
+        workdir: dir.clone(),
+        branch: Some("main".into()),
+        merge_warning: Some(w),
+        ..Default::default()
+    };
+    let mut req = Request::new(Action::Merge, "lib");
+    req.reference = "squashes".into();
+    assert!(gitti_core::subtree::plan(&req, &ctx).text.contains("\n\nWarning: squashes doesn't"));
+    req.reference = "upstream".into();
+    assert!(!gitti_core::subtree::plan(&req, &ctx).text.contains("Warning"));
+
+    // The quick partial history can't tell about commits it didn't load.
+    let quick = repo.history_newest(LogOrder::Topo, 2).unwrap();
+    assert!(quick.partial);
+    assert_eq!(quick.in_head_history(&ids[fx.l1]), None);
 }
 
 #[gitti_test::test]
