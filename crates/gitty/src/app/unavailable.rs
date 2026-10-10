@@ -38,6 +38,7 @@ impl App {
                 .count(),
             staged: self.working.staged.len(),
             unstaged: self.working.unstaged.len(),
+            tracked_unstaged: gitti_core::ops::UnstagedCounts::of(&self.working).tracked,
             conflicted: self.working.conflicted.len(),
             state: self.repo_state,
             linked_worktree: self.worktrees.iter().any(|w| w.is_current && !w.is_main),

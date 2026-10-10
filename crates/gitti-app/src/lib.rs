@@ -942,6 +942,19 @@ pub mod testing {
         app.read(cx).script_draft()
     }
 
+    /// The Keep Mine stored with the active tab's draft (a db read).
+    pub fn commit_draft_kept(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_kept_prepared()
+    }
+
+    /// (A quit waiting for git is pending, how often a waiting quit fired) — the test
+    /// platform's quit does nothing, so the window stays.
+    pub fn quit_state(ws: &Entity<Workspace>, cx: &App) -> (bool, usize) {
+        let ws = ws.read(cx);
+        (ws.quit_pending(), ws.quits_fired())
+    }
+
     /// Puts the active tab back to its first frame with panes, with the body last measured
     /// at `body_width` in a window `viewport_width` wide (fresh resize states). A real
     /// window gets there when it changes size right after its first frame (Windows
@@ -1296,6 +1309,7 @@ actions!(
         OpenThisVersion,
         OpenOldVersion,
         StageAllAndCommit,
+        StageTrackedAndCommit,
         CreateEmptyCommit,
     ]
 );
@@ -1553,6 +1567,7 @@ fn menu_bar() -> Vec<Menu> {
             vec![
                 MenuItem::action("Commit", Commit),
                 MenuItem::action("Stage All and Commit", StageAllAndCommit),
+                MenuItem::action(gitti_core::ops::STAGE_TRACKED_LABEL, StageTrackedAndCommit),
                 MenuItem::action("Create Empty Commit", CreateEmptyCommit),
                 MenuItem::action("Amend Previous Commit", ToggleAmend),
                 MenuItem::action("Go to Working Directory", GoToWorkingDirectory),

@@ -82,6 +82,9 @@ pub enum AppEvent {
     FirstLoadDone,
     /// The global allowed signers file was set: every tab checks its shown signature again.
     SignersChanged,
+    /// This tab's git operation ended and nothing queued started after it (a quit waiting
+    /// for the operations to finish checks again).
+    Idle,
 }
 
 impl EventEmitter<AppEvent> for GittiApp {}

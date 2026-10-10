@@ -42,6 +42,9 @@ pub struct RepoFacts {
     pub staged: usize,
     /// Unstaged changes, untracked files included.
     pub unstaged: usize,
+    /// Unstaged changes of tracked files `git add -u` stages
+    /// (`ops::UnstagedCounts::tracked`).
+    pub tracked_unstaged: usize,
     pub conflicted: usize,
     /// A merge / rebase / cherry-pick / revert git left half-done.
     pub state: RepoState,
@@ -80,6 +83,7 @@ impl Default for RepoFacts {
             other_branches: 0,
             staged: 0,
             unstaged: 0,
+            tracked_unstaged: 0,
             conflicted: 0,
             state: RepoState::Clean,
             linked_worktree: false,
@@ -108,6 +112,7 @@ pub const NOTHING_STAGED: &str = "nothing staged";
 pub const NOTHING_TO_STAGE: &str = "nothing to stage";
 pub const NO_UNSTAGED: &str = "no unstaged changes";
 pub const NO_CHANGES: &str = "no changes";
+pub const NO_TRACKED_CHANGES: &str = "no changes to tracked files";
 pub const NO_SUBMODULES: &str = "no submodules";
 pub const MAIN_WORKTREE: &str = "this is the main worktree";
 pub const NO_LINKED_WORKTREES: &str = "no linked worktrees";
@@ -211,6 +216,10 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "DeleteBranchMenu" => check(f.other_branches == 0, NO_OTHER_BRANCH),
         // Commit.
         "StageAllAndCommit" => check(changes == 0, NO_CHANGES),
+        "StageTrackedAndCommit" => check(
+            f.staged + f.tracked_unstaged + f.conflicted == 0,
+            NO_TRACKED_CHANGES,
+        ),
         "StageAll" => check(f.unstaged + f.conflicted == 0, NOTHING_TO_STAGE),
         "UnstageAll" => check(f.staged == 0, NOTHING_STAGED),
         "DiscardAll" => check(f.unstaged == 0, NO_UNSTAGED),
@@ -364,6 +373,7 @@ mod tests {
             ("DiscardAll", NO_UNSTAGED),
             ("StashChanges", NO_CHANGES),
             ("StageAllAndCommit", NO_CHANGES),
+            ("StageTrackedAndCommit", NO_TRACKED_CHANGES),
             ("PopStash", NO_STASHES),
             ("DropStash", NO_STASHES),
             ("UpdateSubmodules", NO_SUBMODULES),

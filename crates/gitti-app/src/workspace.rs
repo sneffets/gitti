@@ -103,18 +103,49 @@ pub struct Workspace {
     loading: Option<EntityId>,
     /// Esc closes the active tab's dialog / picker even with the focus behind it.
     _overlay_keys: Subscription,
+    /// The user chose to quit (or close the window) once the running git operations are
+    /// done ([`QuitWhileBusy`]); every tab going idle checks ([`AppEvent::Idle`]).
+    quit_pending: Option<QuitTarget>,
+    /// How often a waiting quit fired (tests: the test platform's quit does nothing).
+    quits_fired: usize,
 }
 
-/// "Quit anyway?" while `running` git operations run; resolves to whether to quit.
+/// What a quit waiting for git ends: the app (⌘Q, File ▸ Exit) or the window (its close
+/// button, which quits gitti on Windows / Linux).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuitTarget {
+    App,
+    Window,
+}
+
+/// The answer to quitting while git runs (`gitti_core::ops::quit_while_busy_prompt`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuitWhileBusy {
+    /// Wait for the operations, then quit.
+    WhenDone,
+    /// Cancel them (git removes its locks), then quit once they ended.
+    Stop,
+    Cancel,
+}
+
+/// Asks what to do while `running` git operations run. Quitting at once is not offered:
+/// git would lose its output pipes mid-way.
 fn ask_quit_while_busy(
     running: &[String],
     window: &mut Window,
     cx: &mut App,
-) -> impl std::future::Future<Output = bool> + 'static {
+) -> impl std::future::Future<Output = QuitWhileBusy> + 'static {
+    use gitti_core::ops::{QUIT_WHEN_DONE, STOP_AND_QUIT};
     let (title, detail) = gitti_core::ops::quit_while_busy_prompt(running);
-    let answer =
-        window.prompt(PromptLevel::Warning, &title, Some(&detail), &["Quit Anyway", "Cancel"], cx);
-    async move { answer.await == Ok(0) }
+    let buttons = [QUIT_WHEN_DONE, STOP_AND_QUIT, "Cancel"];
+    let answer = window.prompt(PromptLevel::Warning, &title, Some(&detail), &buttons, cx);
+    async move {
+        match answer.await {
+            Ok(0) => QuitWhileBusy::WhenDone,
+            Ok(1) => QuitWhileBusy::Stop,
+            _ => QuitWhileBusy::Cancel,
+        }
+    }
 }
 
 /// Closing a tab while its git operation runs asks first, as quitting does; `false`
@@ -152,6 +183,8 @@ impl Workspace {
             load_queue: Default::default(),
             loading: None,
             _overlay_keys: crate::app::intercept_overlay_keys(cx.weak_entity(), window, cx),
+            quit_pending: None,
+            quits_fired: 0,
         };
         // Scripted runs (tests) show exactly the given repository.
         let saved = if scripted {
@@ -196,9 +229,13 @@ impl Workspace {
             let answer = ask_quit_while_busy(&running, window, cx);
             window
                 .spawn(cx, async move |cx| {
-                    if answer.await {
-                        cx.update(|window, _| window.remove_window()).ok();
-                    }
+                    let answer = answer.await;
+                    cx.update(|window, cx| {
+                        ws.update(cx, |ws, cx| {
+                            ws.answer_quit(answer, QuitTarget::Window, window, cx)
+                        })
+                    })
+                    .ok();
                 })
                 .detach();
             false
@@ -243,7 +280,8 @@ impl Workspace {
             .collect()
     }
 
-    /// Quit (⌘Q, File ▸ Exit) while a git operation runs: asks first.
+    /// Quit (⌘Q, File ▸ Exit) while a git operation runs: asks first — wait for it, stop
+    /// it, or cancel the quit (also a quit already waiting).
     fn on_quit(&mut self, _: &crate::Quit, window: &mut Window, cx: &mut Context<Self>) {
         let running = self.running_ops(cx);
         if running.is_empty() {
@@ -251,12 +289,67 @@ impl Workspace {
             return;
         }
         let answer = ask_quit_while_busy(&running, window, cx);
-        cx.spawn(async move |_, cx| {
-            if answer.await {
-                cx.update(|cx| cx.quit());
-            }
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = answer.await;
+            this.update_in(cx, |this, window, cx| {
+                this.answer_quit(answer, QuitTarget::App, window, cx)
+            })
+            .ok();
         })
         .detach();
+    }
+
+    /// The answer to [`ask_quit_while_busy`]: Quit When Done waits, Stop and Quit cancels
+    /// the operations first; both quit once every tab is idle. Cancel also drops a quit
+    /// that was waiting.
+    fn answer_quit(
+        &mut self,
+        answer: QuitWhileBusy,
+        target: QuitTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if answer == QuitWhileBusy::Cancel {
+            self.quit_pending = None;
+            return;
+        }
+        // A quit of the app outranks closing the window.
+        if self.quit_pending != Some(QuitTarget::App) {
+            self.quit_pending = Some(target);
+        }
+        let apps: Vec<_> = self.tabs.iter().map(|t| t.app.clone()).collect();
+        for app in apps {
+            app.update(cx, |a, cx| match answer {
+                QuitWhileBusy::Stop => a.stop_for_quit(cx),
+                _ => a.note_quit_when_done(cx),
+            });
+        }
+        // The operations may have ended while the question was open.
+        self.quit_if_idle(window, cx);
+    }
+
+    /// A quit waiting for git ([`Self::answer_quit`]): quits once no tab runs one.
+    fn quit_if_idle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.quit_pending else { return };
+        if !self.running_ops(cx).is_empty() {
+            return;
+        }
+        self.quit_pending = None;
+        self.quits_fired += 1;
+        match target {
+            QuitTarget::App => cx.quit(),
+            QuitTarget::Window => window.remove_window(),
+        }
+    }
+
+    /// Tests: a quit is waiting for git to finish.
+    pub fn quit_pending(&self) -> bool {
+        self.quit_pending.is_some()
+    }
+
+    /// Tests: how often a waiting quit fired.
+    pub fn quits_fired(&self) -> usize {
+        self.quits_fired
     }
 
     /// The app of the active tab.
@@ -317,6 +410,7 @@ impl Workspace {
             }
             AppEvent::RepositoryMoved { from, to } => this.retarget(from, to, window, cx),
             AppEvent::StartupDone(record) => this.startup_finished(record, cx),
+            AppEvent::Idle => this.quit_if_idle(window, cx),
             AppEvent::SignersChanged => {
                 for t in &this.tabs {
                     if t.app != *app {

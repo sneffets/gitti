@@ -1,11 +1,13 @@
 //! Committing: the typed message is a draft per worktree that survives closing the tab /
 //! window or quitting (here: closing the tab and opening the repository again — a new app
 //! on the same db) and a failed hook, and goes after a successful commit; typing runs no
-//! git. Commit with nothing staged asks: "Stage All and Commit" (`add -A`, then the commit)
-//! or "Create Empty Commit" (`--allow-empty`). Quitting while git runs asks first, so does
-//! closing the tab. A SHA-256 repository opens, stages a line and commits like a SHA-1 one.
-//! The message git prepared (`cherry-pick -n -x` on the command line) fills an empty box
-//! and commits; next to the user's own text a note offers it instead (Keep Mine, Use It).
+//! git. Commit with nothing staged asks (the button is on once a message is typed):
+//! "Stage All and Commit" (`add -A`, then the commit), "Stage Tracked Files and Commit"
+//! (`add -u`) or "Create Empty Commit" (`--allow-empty`). Quitting while git runs asks
+//! first (Quit When Done / Stop and Quit), so does closing the tab. A SHA-256 repository
+//! opens, stages a line and commits like a SHA-1 one. The message git prepared
+//! (`cherry-pick -n -x` on the command line) fills an empty box and commits; next to the
+//! user's own text a note offers it instead (Keep Mine — kept across a reopen —, Use It).
 //!
 //! Own `main` like `layout.rs`: `cargo test --workspace --test ui -- commit[::FILTER]`.
 
@@ -123,7 +125,8 @@ fn make_pick_repo(dir: &std::path::Path) -> PathBuf {
 /// `git cherry-pick -n -x` on the command line leaves only MERGE_MSG: the refresh puts
 /// it into the empty box (no note), Commit commits it and git drops the file. With the
 /// user's own text in the box, the text stays and a note offers git's message: Keep Mine
-/// hides it, the palette's "Use the Message git Prepared" takes it (no git).
+/// hides it (stored with the draft: the reopened repository shows no note), the
+/// palette's "Use the Message git Prepared" takes it (no git).
 fn prepared_message_after_cherry_pick(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let note = |ui: &mut Ui| find(&ui.frame(), "prepared-note").is_some();
@@ -156,10 +159,26 @@ fn prepared_message_after_cherry_pick(ui: &mut Ui) {
         let (m, n) = (message(ui), note(ui));
         ui.fail(format!("after Keep Mine: box {m:?}, note {n}"));
     }
+    let want = format!("Add other\n\n(cherry picked from commit {other})");
+    let kept = |ui: &mut Ui| {
+        gitti_core::store::flush();
+        let ws = ui.ws.clone();
+        ui.cx.update(|cx| testing::commit_draft_kept(&ws, cx))
+    };
+    if kept(ui).as_deref() != Some(want.as_str()) {
+        let k = kept(ui);
+        ui.fail(format!("Keep Mine stored with the draft: {k:?}"));
+    }
+    // "Restart": the draft comes back, the note stays hidden.
+    ui.step("action:gitti::CloseTab");
+    ui.step(&format!("open:{}", dir.display()));
+    if message(ui) != "My own text" || note(ui) {
+        let (m, n) = (message(ui), note(ui));
+        ui.fail(format!("reopened after Keep Mine: box {m:?}, note {n}"));
+    }
     let n = ui.n_git();
     ui.step("palette:use the message git prepared");
     ui.no_git_since(n, "Use the Message git Prepared");
-    let want = format!("Add other\n\n(cherry picked from commit {other})");
     if message(ui) != want {
         let m = message(ui);
         ui.fail(format!("after Use It: box {m:?}"));
@@ -230,15 +249,17 @@ fn draft_survives_a_restart(ui: &mut Ui) {
     }
 }
 
-/// Nothing staged: Commit asks. "Stage All and Commit" = `add -A` + the commit (all files
-/// in); with no changes left only "Create Empty Commit" is offered, and it makes one; the
-/// palette's entry refuses while files are staged.
+/// Nothing staged: the Commit button is on once a message is typed, and asks. "Stage All
+/// and Commit" = `add -A` + the commit (all files in); with no changes left only "Create
+/// Empty Commit" is offered, and it makes one; the palette's entry refuses while files
+/// are staged. With an untracked file next to a changed one, "Stage Tracked Files and
+/// Commit" leaves the untracked file out.
 fn nothing_staged_choices(ui: &mut Ui) {
     let dir = ui.repo.clone();
     ui.step("action:gitti::UnstageAll");
     ui.step("msg:Everything");
     let n = ui.n_git();
-    ui.step("commit");
+    ui.click_on("commit-button", MouseButton::Left);
     if !ui.cx.has_pending_prompt() {
         ui.fail("Commit with nothing staged did not ask".into());
         return;
@@ -282,38 +303,71 @@ fn nothing_staged_choices(ui: &mut Ui) {
     if !err.as_deref().is_some_and(|e| e.contains("1 file(s) staged")) {
         ui.fail(format!("palette Create Empty Commit with a staged file: error {err:?}"));
     }
+    // Tracked only: new.txt changed again, an untracked file beside it.
+    ui.step("action:gitti::Commit");
+    std::fs::write(dir.join("new.txt"), "changed\n").unwrap();
+    std::fs::write(dir.join("untracked.txt"), "u\n").unwrap();
+    ui.step("key:f5");
+    ui.step("msg:Tracked only");
+    ui.step("commit");
+    if !ui.cx.has_pending_prompt() {
+        ui.fail("Commit with a changed and an untracked file did not ask".into());
+        return;
+    }
+    ui.cx.simulate_prompt_answer("Stage Tracked Files and Commit");
+    ui.settle();
+    let files = git_out(&dir, &["show", "--name-only", "--format=", "HEAD"]);
+    let status = git_out(&dir, &["status", "--porcelain"]);
+    if !subjects(ui).starts_with("Tracked only\n") || files.trim() != "new.txt" || status.trim() != "?? untracked.txt" {
+        let s = subjects(ui);
+        ui.fail(format!("after Stage Tracked: log {s:?}, files {files:?}, status {status:?}"));
+    }
 }
 
-/// Quit (⌘Q) while an operation runs asks; Cancel keeps gitti and the operation.
+/// Quit (⌘Q) while an operation runs asks; Cancel keeps gitti and the operation. Quit
+/// When Done waits for the commit, then quits; Stop and Quit quits once it stopped (the
+/// test executor runs a job to its end at once, so it can't be caught midway here — gitty's
+/// `cancel::stop_and_quit_stops_the_operation` stops a real one).
 fn quit_while_git_runs_asks(ui: &mut Ui) {
-    ui.quick("msg:Slow");
-    // Both in one update: the commit's job hasn't run when Quit comes (a step would run it
-    // to the end first).
+    let dir = ui.repo.clone();
     let ws = ui.ws.clone();
-    let busy = ui
-        .cx
-        .update_window(ui.window, |_, window, cx| {
-            testing::step(&ws, "commit", window, cx);
-            let busy = !testing::idle(&ws, cx);
-            if busy {
-                testing::step(&ws, "action:gitti::Quit", window, cx);
-            }
-            busy
-        })
-        .unwrap();
-    if !busy {
-        ui.fail("the commit was not running".into());
-        return;
-    }
-    if !ui.cx.has_pending_prompt() {
-        ui.fail("Quit while committing did not ask".into());
-        return;
-    }
-    ui.cx.simulate_prompt_answer("Cancel");
-    ui.settle();
-    if !subjects(ui).starts_with("Slow\n") {
-        let s = subjects(ui);
-        ui.fail(format!("after Cancel: log {s:?}"));
+    for (round, answer) in ["Cancel", "Quit When Done", "Stop and Quit"].into_iter().enumerate() {
+        if round > 0 {
+            std::fs::write(dir.join(format!("round{round}.txt")), "r\n").unwrap();
+            ui.step("key:f5");
+            ui.step("action:gitti::StageAll");
+        }
+        ui.quick(&format!("msg:Slow {round}"));
+        // Both in one update: the commit's job hasn't run when Quit comes (a step would
+        // run it to the end first).
+        let busy = ui
+            .cx
+            .update_window(ui.window, |_, window, cx| {
+                testing::step(&ws, "commit", window, cx);
+                let busy = !testing::idle(&ws, cx);
+                if busy {
+                    testing::step(&ws, "action:gitti::Quit", window, cx);
+                }
+                busy
+            })
+            .unwrap();
+        if !busy {
+            ui.fail(format!("{answer}: the commit was not running"));
+            return;
+        }
+        if !ui.cx.has_pending_prompt() {
+            ui.fail(format!("{answer}: Quit while committing did not ask"));
+            return;
+        }
+        ui.cx.simulate_prompt_answer(answer);
+        ui.settle();
+        let (pending, fired) = ui.cx.update(|cx| testing::quit_state(&ws, cx));
+        let committed = subjects(ui).starts_with(&format!("Slow {round}\n"));
+        let want_fired = round;
+        if pending || fired != want_fired || (round < 2 && !committed) {
+            let s = subjects(ui);
+            ui.fail(format!("after {answer}: pending {pending}, quits {fired}, log {s:?}"));
+        }
     }
 }
 

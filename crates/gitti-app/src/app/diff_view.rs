@@ -103,6 +103,8 @@ impl GittiApp {
         let staged = self.working.staged.len();
         let busy = self.busy_visible;
         let merging = self.repo_state == gitti_core::ops::RepoState::Merging;
+        let no_message = self.message.read(cx).value().trim().is_empty();
+        self.message_was_blank.set(no_message);
         let blocker =
             gitti_core::ops::commit_blocker(self.repo_state, self.working.conflicted.len());
         // The editor's rows for this frame's message, width and limit.
@@ -257,8 +259,11 @@ impl GittiApp {
                             .small()
                             .primary()
                             .tooltip(tips::COMMIT.text(cx))
+                            // Nothing staged but a message typed: on — Commit then asks
+                            // what to commit (`ask_nothing_staged`).
                             .disabled(
-                                busy || blocker.is_some() || (staged == 0 && !self.amend && !merging),
+                                busy || blocker.is_some()
+                                    || (staged == 0 && !self.amend && !merging && no_message),
                             )
                             .on_click(cx.listener(|this, _, w, cx| this.commit(w, cx))),
                     )),

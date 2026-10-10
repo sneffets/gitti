@@ -213,9 +213,11 @@ fn latin1_line_stages_exactly() {
     assert_eq!(index.stdout, b"a\nb\n\xe4\xf6\nc\n");
 }
 
-/// Commit with nothing staged asks. With changes: "Stage All and Commit" (S) runs
-/// `add -A` and the commit — modified and untracked files go in; with none: "Create Empty
-/// Commit" (y) makes a commit without changes. (The palette's entries: `palette.rs`; the
+/// Commit with nothing staged asks, its notes saying what each choice stages. With
+/// changes: "Stage All and Commit" (S) runs `add -A` and the commit — modified and
+/// untracked files go in ("Stage Tracked Files and Commit" is offered beside it, as an
+/// untracked file would come along); with none: "Create Empty Commit" (y) makes a commit
+/// without changes. (The palette's entries: `palette.rs`; the
 /// refusal of an empty commit with files staged: core's `ops` tests.)
 #[gitti_test::test]
 fn nothing_staged_offers_stage_all_or_an_empty_commit() {
@@ -223,7 +225,7 @@ fn nothing_staged_offers_stage_all_or_an_empty_commit() {
     let d = dir.path();
     std::fs::write(d.join("new.txt"), "n\n").unwrap();
     let script = format!(
-        "press:c;{}press:ctrl-s;state;items;cmds;key:S;state;cmds;\
+        "press:c;{}press:ctrl-s;state;items;dump;cmds;key:S;state;cmds;\
          press:c;{}press:ctrl-s;state;key:y;state",
         presses("Everything"),
         presses("Nothing"),
@@ -232,7 +234,16 @@ fn nothing_staged_offers_stage_all_or_an_empty_commit() {
     let st = states(&out);
     let blocks = cmds(&out);
     assert!(st[0].contains(r#"modal=Menu "Nothing staged""#), "{out}");
-    assert!(out.contains("item: Stage All and Commit\nitem: Create Empty Commit"), "{out}");
+    assert!(
+        out.contains(
+            "item: Stage All and Commit\nitem: Stage Tracked Files and Commit\n\
+             item: Create Empty Commit"
+        ),
+        "{out}"
+    );
+    let menu = screens(&out)[0];
+    assert!(menu.contains("has 2 tracked files with"), "{out}");
+    assert!(menu.contains("1 untracked file (new"), "{out}");
     assert!(!st[1].contains("modal="), "{out}");
     assert_eq!(&blocks[1][..2], ["add -A", "commit --cleanup=whitespace -F -"], "{out}");
     assert!(st[2].contains(r#"modal=Confirm "Nothing to commit""#), "{out}");

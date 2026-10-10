@@ -141,6 +141,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // Commit
     both("Commit", "Commit"),
     both("StageAllAndCommit", "Stage All and Commit"),
+    both("StageTrackedAndCommit", "Stage Tracked Files and Commit"),
     both("CreateEmptyCommit", "Create Empty Commit"),
     both("ToggleAmend", "Toggle Amend"),
     both("GoToWorkingDirectory", "Go to Working Directory"),

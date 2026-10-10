@@ -104,6 +104,9 @@ const MIGRATIONS: &[&str] = &[
          message  TEXT NOT NULL,
          saved    INTEGER NOT NULL
      );",
+    // 6: the message git prepared (MERGE_MSG / SQUASH_MSG) the user chose to keep their
+    // draft over ("Keep Mine"), so its note stays hidden after a restart.
+    "ALTER TABLE commit_drafts ADD COLUMN kept_prepared TEXT;",
 ];
 
 /// The settings both apps use (gitty reads and writes only these; gitti's `Settings` is a
@@ -704,21 +707,32 @@ fn write_repo_pref<T: Serialize>(conn: &Connection, repo: &Path, key: &str, valu
 
 // ---------------------------------------------------------- commit message drafts
 
+/// A commit message typed in a worktree and not committed yet ([`load_draft`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Draft {
+    pub message: String,
+    /// The message git prepared for the next commit that the user chose to keep this
+    /// draft over ("Keep Mine", [`save_kept_prepared`]): its note stays hidden while git's
+    /// message is the same.
+    pub kept_prepared: Option<String>,
+}
+
 /// The commit message typed in `worktree` (its work dir) and not committed yet, if any:
 /// it survives a crash, a quit, a failed hook and a restart. Shared by gitti and
 /// gitty. A read: call it off the UI thread.
-pub fn load_draft(worktree: &Path) -> Option<String> {
+pub fn load_draft(worktree: &Path) -> Option<Draft> {
     read_draft(&open()?, worktree)
 }
 
 /// [`load_draft`] from the db at `db` (tests of a gitty / gitti process with a config dir
 /// of its own).
-pub fn load_draft_in(db: &Path, worktree: &Path) -> Option<String> {
+pub fn load_draft_in(db: &Path, worktree: &Path) -> Option<Draft> {
     read_draft(&open_at(db).ok()?, worktree)
 }
 
-/// Remembers `message` as `worktree`'s draft; an empty (blank) one removes it. Queued
-/// like every write. The apps call it debounced while typing and once more on quit.
+/// Remembers `message` as `worktree`'s draft; an empty (blank) one removes it (and its
+/// [`Draft::kept_prepared`]). Queued like every write. The apps call it debounced while
+/// typing and once more on quit.
 pub fn save_draft(worktree: &Path, message: &str) {
     let (worktree, message, at) = (worktree.to_path_buf(), message.to_string(), now_millis());
     write_later("saving the commit message draft", move |conn| {
@@ -731,16 +745,31 @@ pub fn clear_draft(worktree: &Path) {
     save_draft(worktree, "");
 }
 
-fn read_draft(conn: &Connection, worktree: &Path) -> Option<String> {
+/// Records that `worktree`'s draft is kept over git's prepared message `kept` ("Keep
+/// Mine"), or forgets it (`None`: git's message went). Without a draft there is nothing
+/// to keep: no row, no write. Queued.
+pub fn save_kept_prepared(worktree: &Path, kept: Option<&str>) {
+    let (worktree, kept) = (worktree.to_path_buf(), kept.map(str::to_string));
+    write_later("saving the kept commit message", move |conn| {
+        write_kept_prepared(conn, &worktree, kept.as_deref())
+    });
+}
+
+fn read_draft(conn: &Connection, worktree: &Path) -> Option<Draft> {
     conn.query_row(
-        "SELECT message FROM commit_drafts WHERE worktree = ?1",
+        "SELECT message, kept_prepared FROM commit_drafts WHERE worktree = ?1",
         params![worktree.to_string_lossy()],
-        |r| r.get::<_, String>(0),
+        |r| {
+            Ok(Draft {
+                message: r.get(0)?,
+                kept_prepared: r.get(1)?,
+            })
+        },
     )
     .optional()
     .ok()
     .flatten()
-    .filter(|m| !m.trim().is_empty())
+    .filter(|d| !d.message.trim().is_empty())
 }
 
 fn write_draft(conn: &Connection, worktree: &Path, message: &str, at: i64) -> Result<()> {
@@ -755,6 +784,14 @@ fn write_draft(conn: &Connection, worktree: &Path, message: &str, at: i64) -> Re
             params![key, message, at],
         )?;
     }
+    Ok(())
+}
+
+fn write_kept_prepared(conn: &Connection, worktree: &Path, kept: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE commit_drafts SET kept_prepared = ?2 WHERE worktree = ?1",
+        params![worktree.to_string_lossy(), kept],
+    )?;
     Ok(())
 }
 
@@ -953,22 +990,45 @@ mod tests {
         let conn = open_at(&path).unwrap();
         assert_eq!(level(&conn), MIGRATIONS.len());
         let (main, linked) = (Path::new("/repo"), Path::new("/repo-wt"));
+        let text = |conn: &Connection, w| read_draft(conn, w).map(|d| d.message);
         assert_eq!(read_draft(&conn, main), None);
         write_draft(&conn, main, "Fix the parser", 1).unwrap();
         write_draft(&conn, linked, "WIP linked\n\nbody", 2).unwrap();
         write_draft(&conn, main, "Fix the parser\n\n#123 details", 3).unwrap();
         assert_eq!(
-            read_draft(&conn, main).as_deref(),
+            text(&conn, main).as_deref(),
             Some("Fix the parser\n\n#123 details")
         );
-        assert_eq!(read_draft(&conn, linked).as_deref(), Some("WIP linked\n\nbody"));
+        assert_eq!(text(&conn, linked).as_deref(), Some("WIP linked\n\nbody"));
         write_draft(&conn, main, "  \n", 4).unwrap();
         assert_eq!(read_draft(&conn, main), None, "blank = no draft");
-        assert_eq!(read_draft(&conn, linked).as_deref(), Some("WIP linked\n\nbody"));
+        assert_eq!(text(&conn, linked).as_deref(), Some("WIP linked\n\nbody"));
         let rows: i64 = conn
             .query_row("SELECT count(*) FROM commit_drafts", [], |r| r.get(0))
             .unwrap();
         assert_eq!(rows, 1, "a cleared draft leaves no row");
+    }
+
+    /// "Keep Mine" is stored with the draft: it survives typing on, goes with
+    /// `None` (git's message went) and with the draft; without a draft nothing is written.
+    #[gitti_test::test]
+    fn kept_prepared_message_lives_with_its_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_at(&dir.path().join("gitti.db")).unwrap();
+        let w = Path::new("/repo");
+        write_kept_prepared(&conn, w, Some("Merge x")).unwrap();
+        assert_eq!(read_draft(&conn, w), None, "no draft, nothing kept");
+        write_draft(&conn, w, "Mine", 1).unwrap();
+        write_kept_prepared(&conn, w, Some("Merge x")).unwrap();
+        write_draft(&conn, w, "Mine, more", 2).unwrap();
+        let d = read_draft(&conn, w).unwrap();
+        assert_eq!((d.message.as_str(), d.kept_prepared.as_deref()), ("Mine, more", Some("Merge x")));
+        write_kept_prepared(&conn, w, None).unwrap();
+        assert_eq!(read_draft(&conn, w).unwrap().kept_prepared, None);
+        write_kept_prepared(&conn, w, Some("Merge y")).unwrap();
+        write_draft(&conn, w, "", 3).unwrap();
+        write_draft(&conn, w, "Again", 4).unwrap();
+        assert_eq!(read_draft(&conn, w).unwrap().kept_prepared, None, "went with the draft");
     }
 
     /// Saving goes through the writer thread like every write; a load right after sees it.
@@ -983,7 +1043,8 @@ mod tests {
             });
         }
         assert!(wait_for_writes(Duration::from_secs(10)));
-        assert_eq!(read_draft(&open_at(&path).unwrap(), Path::new("/w")).as_deref(), Some("abc"));
+        let d = read_draft(&open_at(&path).unwrap(), Path::new("/w")).map(|d| d.message);
+        assert_eq!(d.as_deref(), Some("abc"));
     }
 
     fn level(conn: &Connection) -> usize {
@@ -1185,7 +1246,8 @@ mod tests {
         assert_eq!(read_recent(&conn), [PathBuf::from("/a")]);
         write_repo_pref(&conn, Path::new("/a"), "push", &1u32).unwrap();
         assert_eq!(read_repo_pref::<u32>(&conn, Path::new("/a"), "push"), Some(1));
-        assert_eq!(read_draft(&conn, Path::new("/d")).as_deref(), Some("from the future"));
+        let d = read_draft(&conn, Path::new("/d")).map(|d| d.message);
+        assert_eq!(d.as_deref(), Some("from the future"));
         write_draft(&conn, Path::new("/d"), "rewritten", 2).unwrap();
         write_draft(&conn, Path::new("/e"), "new", 3).unwrap();
         assert_eq!(level(&conn), newer.len(), "an older build never lowers the level");

@@ -464,12 +464,15 @@ fn ssh_signed_commit_verification() {
 }
 
 /// With nothing staged Commit asks — "Stage All and Commit" takes modified,
-/// deleted and untracked files in (one `add -A` + the commit); "Create Empty Commit" makes
-/// a commit without changes; the plan says which applies.
+/// deleted and untracked files in (one `add -A` + the commit); "Stage Tracked Files and
+/// Commit" only the tracked ones (`add -u`, offered when untracked files would come along);
+/// "Create Empty Commit" makes a commit without changes; the plan says which applies, the
+/// question says in plain words what each one stages.
 #[gitti_test::test]
 fn nothing_staged_stage_all_or_empty_commit() {
     use gitti_core::ops::{
-        CommitKind, CommitPlan, empty_commit_blocker, nothing_staged_prompt, plan_commit,
+        CommitKind, CommitPlan, UnstagedCounts, empty_commit_blocker, nothing_staged_prompt,
+        plan_commit,
     };
     let (_tmp, p, r) = one_commit(&[("a.txt", "1\n"), ("gone.txt", "x\n")]);
     let plan = |staged, unstaged, amend, msg| {
@@ -489,11 +492,41 @@ fn nothing_staged_stage_all_or_empty_commit() {
         CommitPlan::Run(CommitKind::Staged)
     );
     assert!(matches!(plan_commit(RepoState::Merging, 1, 0, 0, false, "m"), CommitPlan::Blocked(_)));
-    let (title, _, choices) = nothing_staged_prompt(2);
+    let kinds = |c: &UnstagedCounts| -> Vec<CommitKind> {
+        nothing_staged_prompt(c).2.into_iter().map(|(_, k)| k).collect()
+    };
+    let tracked = UnstagedCounts { tracked: 2, ..Default::default() };
+    let (title, detail, _) = nothing_staged_prompt(&tracked);
     assert_eq!(title, "Nothing staged");
-    assert_eq!(choices[0], ("Stage All and Commit", CommitKind::StageAll));
-    let (_, _, choices) = nothing_staged_prompt(0);
+    assert!(detail.contains("2 tracked files with changes"), "{detail}");
+    assert!(detail.contains("until you push it"), "{detail}");
+    assert!(detail.contains("stays staged"), "{detail}");
+    assert_eq!(kinds(&tracked), [CommitKind::StageAll, CommitKind::Empty]);
+    let both = UnstagedCounts { tracked: 1, untracked_files: 2, untracked_folders: 1, ..Default::default() };
+    let (_, detail, choices) = nothing_staged_prompt(&both);
+    assert!(
+        detail.contains("1 tracked file with changes (modified or deleted) and 2 untracked files and 1 untracked folder"),
+        "{detail}"
+    );
+    assert!(detail.contains("git add -u"), "{detail}");
+    assert_eq!(choices[1], ("Stage Tracked Files and Commit", CommitKind::StageTracked));
+    assert_eq!(kinds(&both).len(), 3);
+    // Untracked only: nothing tracked to stage alone.
+    let new = UnstagedCounts { untracked_files: 1, ..Default::default() };
+    assert_eq!(kinds(&new), [CommitKind::StageAll, CommitKind::Empty]);
+    // Hidden by `status.showUntrackedFiles=no`: said, and the tracked-only way offered.
+    let hidden = UnstagedCounts { tracked: 1, untracked_hidden: true, ..Default::default() };
+    let (_, detail, _) = nothing_staged_prompt(&hidden);
+    assert!(detail.contains("showUntrackedFiles"), "{detail}");
+    assert_eq!(kinds(&hidden).len(), 3);
+    let (title, _, choices) = nothing_staged_prompt(&UnstagedCounts::default());
+    assert_eq!(title, "Nothing to commit");
     assert_eq!(choices, [("Create Empty Commit", CommitKind::Empty)]);
+    // Only changes inside a submodule: nothing to stage here, said so.
+    let sub = UnstagedCounts { inside_submodules: 1, ..Default::default() };
+    let (title, detail, _) = nothing_staged_prompt(&sub);
+    assert_eq!(title, "Nothing to commit");
+    assert!(detail.contains("1 submodule has changed only inside"), "{detail}");
     // The palette's "Create Empty Commit" with files staged / amend on: refused.
     assert!(empty_commit_blocker(1, false).is_some_and(|w| w.contains("1 file(s) staged")));
     assert!(empty_commit_blocker(0, true).is_some());
@@ -502,6 +535,9 @@ fn nothing_staged_stage_all_or_empty_commit() {
     fs::write(p.join("a.txt"), "2\n").unwrap();
     fs::remove_file(p.join("gone.txt")).unwrap();
     fs::write(p.join("new.txt"), "n\n").unwrap();
+    let counts = UnstagedCounts::of(&r.working_state().unwrap());
+    let want = UnstagedCounts { tracked: 2, untracked_files: 1, ..Default::default() };
+    assert_eq!(counts, want);
     r.commit_as("Everything", CommitKind::StageAll).unwrap();
     assert_eq!(sh(&p, &["status", "--porcelain"]), "");
     assert_eq!(
@@ -511,4 +547,10 @@ fn nothing_staged_stage_all_or_empty_commit() {
     r.commit_as("Nothing", CommitKind::Empty).unwrap();
     assert_eq!(sh(&p, &["log", "--format=%s"]), "Nothing\nEverything\ninit\n");
     assert_eq!(sh(&p, &["diff", "HEAD~1", "HEAD", "--stat"]), "");
+    // Tracked only: the untracked file stays out.
+    fs::write(p.join("a.txt"), "3\n").unwrap();
+    fs::write(p.join("later.txt"), "l\n").unwrap();
+    r.commit_as("Tracked", CommitKind::StageTracked).unwrap();
+    assert_eq!(sh(&p, &["show", "--name-status", "--format=", "HEAD"]).trim(), "M\ta.txt");
+    assert_eq!(sh(&p, &["status", "--porcelain"]), "?? later.txt\n");
 }
