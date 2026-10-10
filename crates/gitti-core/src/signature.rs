@@ -206,6 +206,15 @@ impl SignatureInfo {
 
     /// A short explanation for `CannotCheck`, derived from the verifier's output.
     pub fn hint(&self) -> Option<&'static str> {
+        // ssh-keygen couldn't open the file: an empty value (it overrides the others) or
+        // a file that doesn't exist.
+        if self.kind == SigKind::Ssh && self.output.contains("Unable to open allowed keys file") {
+            return Some(if self.output.contains("allowed keys file \"\"") {
+                "gpg.ssh.allowedSignersFile is set empty"
+            } else {
+                "the allowed signers file (gpg.ssh.allowedSignersFile) doesn't exist"
+            });
+        }
         if self.ssh_signer_unknown() {
             return Some("signer not listed in the allowed signers file");
         }
@@ -465,5 +474,22 @@ mod tests {
         i.output = "gpg: Can't check signature: No public key".into();
         assert!(i.details().starts_with("Not verified: signing key not in your keyring\n"), "{}", i.details());
         assert!(info(SigStatus::Good, "x").details().starts_with("Type: "));
+    }
+
+    /// An empty `gpg.ssh.allowedSignersFile` (it overrides every other) or a missing file:
+    /// git's verification "succeeds" with an unknown signer — the hint says why.
+    #[gitti_test::test]
+    fn hint_for_an_empty_or_missing_allowed_signers_file() {
+        let mut i = info(SigStatus::GoodUntrusted, "");
+        i.kind = SigKind::Ssh;
+        i.output = "Good \"git\" signature with ED25519 key SHA256:x\nUnable to open allowed keys file \"\": No such file or directory\nNo principal matched.".into();
+        assert_eq!(i.hint(), Some("gpg.ssh.allowedSignersFile is set empty"));
+        assert!(crate::allowed_signers::missing_setting(&i));
+        i.output = "Unable to open allowed keys file \"/x/signers\": No such file or directory".into();
+        assert_eq!(i.hint(), Some("the allowed signers file (gpg.ssh.allowedSignersFile) doesn't exist"));
+        assert!(crate::allowed_signers::missing_setting(&i));
+        i.output = "No principal matched.".into();
+        assert_eq!(i.hint(), Some("signer not listed in the allowed signers file"));
+        assert!(!crate::allowed_signers::missing_setting(&i));
     }
 }

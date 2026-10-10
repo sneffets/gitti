@@ -5,7 +5,8 @@
 //! goes; Import writes the allowed signers file and the commit verifies — after which the
 //! entry is gone. With an allowed signers file at a usual place (but none set) they offer
 //! it instead: "for This Repository" writes the repository's config and the commit
-//! verifies.
+//! verifies. With the user's own SSH signing key (the fixture's) they offer an allowed
+//! signers file with that key; it is created, set, and the commit verifies.
 //!
 //! Own process (suite) because of the environment: `cargo test --workspace --test ui --
 //! signature[::FILTER]`.
@@ -55,6 +56,7 @@ pub fn main() {
     // one sets it).
     let tests: &[(&str, Scenario)] = &[
         ("a_signers_file_is_offered", a_signers_file_is_offered),
+        ("own_key_file", own_key_file),
         ("github_keys_verify_the_commit", github_keys_verify_the_commit),
     ];
     common::run(tests, |name| repo(&base.join(name), &github));
@@ -130,6 +132,8 @@ fn github_keys_verify_the_commit(ui: &mut Ui) {
         let e = e.as_ref().unwrap();
         (e.home.clone(), e.github.clone())
     });
+    // Not the user's own key (no SSH signing configured): GitHub is the way here.
+    git(&ui.repo, &["config", "--unset", "gpg.format"]);
     ui.step("select:1");
     if !ui.wait_real(1500, signature_shown) {
         fail!(ui, "no verified signature in the commit header");
@@ -235,7 +239,7 @@ fn a_signers_file_is_offered(ui: &mut Ui) {
         Some((text, Some(ok), None, _))
             if ok == "Use for This Repository"
                 && text.contains("It lists 1 key — of layout@example.com.")
-                && text.contains("`git config --local gpg.ssh.allowedSignersFile ")
+                && text.contains("`git config --local --replace-all gpg.ssh.allowedSignersFile ")
                 && text.contains("not how you sign") => {}
         other => fail!(ui, "dialog text: {other:?}"),
     }
@@ -260,4 +264,61 @@ fn a_signers_file_is_offered(ui: &mut Ui) {
     if labels.iter().any(|l| l.starts_with("Use ~/")) {
         fail!(ui, "a verified signature still offers the file: {labels:?}");
     }
+}
+
+/// The fixture signs with the user's own SSH key (`user.signingKey`, `gpg.format = ssh`)
+/// and no file lists it: the signature's menu offers a file with that key, and so does
+/// the details window (it made this signature — before GitHub); the dialog says what it
+/// creates and writes where; for this repository (another file than the default: the
+/// next scenario wants none) it creates the file, sets it and the commit verifies.
+fn own_key_file(ui: &mut Ui) {
+    use gitti_core::allowed_signers::{OWN_LABEL, OWN_TITLE};
+    let home = ENV.with(|e| e.borrow().as_ref().unwrap().home.clone());
+    ui.step("select:1");
+    if !ui.wait_real(1500, signature_shown) {
+        fail!(ui, "no signature in the commit header");
+        return;
+    }
+    let (_, labels) = menu_has_action(ui);
+    if !labels.iter().any(|l| l == OWN_LABEL) {
+        fail!(ui, "signature menu lacks {OWN_LABEL:?}: {labels:?}");
+    }
+    ui.click_on("commit-signature", MouseButton::Left);
+    ui.click_on("modal-extra", MouseButton::Left);
+    match ui.modal() {
+        Some((t, f)) if t == OWN_TITLE && f.first().map(String::as_str) == Some("~/.config/git/allowed_signers") => {}
+        other => fail!(ui, "no own-key dialog from the details window: {other:?}"),
+    }
+    ui.quick("field:0=~/own_signers");
+    ui.quick("option:0");
+    let ws = ui.ws.clone();
+    let live = ui.cx.update(|cx| gitti_app::testing_menus::modal_live(&ws, cx));
+    match &live {
+        Some((text, Some(ok), None, _))
+            if ok == "Create and Use for This Repository"
+                && text.contains("This creates ~/own_signers with one line, for your own signing key: `layout@example.com namespaces=\"git\" ssh-ed25519 ")
+                && text.contains("`git config --local --replace-all gpg.ssh.allowedSignersFile ") => {}
+        other => fail!(ui, "dialog text: {other:?}"),
+    }
+    ui.check("own-key dialog");
+    ui.step("modalok");
+    let file = home.join("own_signers");
+    let verified = ui.wait_real(1500, |ui| {
+        ui.status().is_some_and(|(s, _)| s.contains("~/own_signers now lists your key")) && signature_shown(ui)
+    });
+    if !verified || !file.exists() {
+        fail!(ui, "after OK: status {:?}", ui.status());
+        return;
+    }
+    ui.click_on("commit-signature", MouseButton::Left);
+    let text = viewer_text(ui);
+    if !text.contains("Status: Good") {
+        fail!(ui, "after OK, details: {text}");
+    }
+    ui.quick("key:escape");
+    let (_, labels) = menu_has_action(ui);
+    if labels.iter().any(|l| l == OWN_LABEL) {
+        fail!(ui, "a verified signature still offers {OWN_LABEL:?}: {labels:?}");
+    }
+    let _ = std::fs::remove_file(file);
 }

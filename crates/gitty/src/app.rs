@@ -1765,6 +1765,12 @@ impl App {
                 )),
                 None => {}
             }
+            if self.own_signers_offered().is_some() {
+                text.push_str(&format!(
+                    "\nAn allowed signers file with your own key: m on the Signature line → {}",
+                    gitti_core::allowed_signers::OWN_LABEL.trim_end_matches('…')
+                ));
+            }
             if self.signing_keys_offered() {
                 text.push_str(&format!(
                     "\nThe signer's keys may be on GitHub: m on the Signature line → {}",

@@ -1082,13 +1082,22 @@ impl Repo {
     pub fn import_target(&self, email: &str, dirs: &UserDirs) -> ImportTarget {
         let programs = self.verify_programs();
         let signers = match self.allowed_signers_setting() {
-            Some((value, origin)) => {
+            Some((value, origin)) if !value.is_empty() => {
                 let path = crate::create::expand_home(&value);
                 // Relative paths resolve against the work tree (where git runs ssh-keygen).
                 let path = if path.is_absolute() { path } else { self.workdir().join(path) };
                 SignersFile::Configured { path, origin }
             }
-            None => SignersFile::Create {
+            // Set empty: that value overrides every other one, so the new file is set
+            // where it is (`git config --file` replaces it there).
+            Some((_, origin)) if origin.starts_with("file:") => {
+                let file = PathBuf::from(&origin["file:".len()..]);
+                SignersFile::Create {
+                    path: dirs.default_signers_file(),
+                    config_file: if file.is_absolute() { file } else { self.workdir().join(file) },
+                }
+            }
+            _ => SignersFile::Create {
                 path: dirs.default_signers_file(),
                 config_file: dirs.global_config_file(),
             },
@@ -1104,7 +1113,8 @@ impl Repo {
         }
     }
 
-    /// `gpg.ssh.allowedSignersFile` (path-expanded) and the config file that sets it.
+    /// `gpg.ssh.allowedSignersFile` (path-expanded; empty when set empty) and where it is
+    /// set (`file:<path>` as git shows it for an empty value, else the path).
     fn allowed_signers_setting(&self) -> Option<(String, String)> {
         let out = self
             .git()
@@ -1115,7 +1125,7 @@ impl Repo {
         let (origin, value) = line.split_once('\t')?;
         let value = value.trim();
         if value.is_empty() {
-            return None;
+            return Some((String::new(), origin.to_string()));
         }
         let origin = origin.strip_prefix("file:").unwrap_or(origin).to_string();
         Some((value.to_string(), origin))
@@ -1192,6 +1202,16 @@ pub fn plan_text(set: &KeySet, target: &ImportTarget) -> String {
                  keys as made by {principal} — in every repository that uses this file.",
                 target.dirs.show(Path::new(origin))
             )),
+            SignersFile::Create { config_file, .. } if *config_file != target.dirs.global_config_file() => {
+                out.push_str(&format!(
+                    "No allowed signers file is set up: {} sets gpg.ssh.allowedSignersFile to \
+                     an empty value, which overrides every other setting of it. Importing \
+                     creates {file} with one line per key — `{principal} namespaces=\"git\" \
+                     <key>` — and sets gpg.ssh.allowedSignersFile to it there instead of the \
+                     empty value.",
+                    target.dirs.show(config_file)
+                ))
+            }
             SignersFile::Create { config_file, .. } => out.push_str(&format!(
                 "No allowed signers file is set up (gpg.ssh.allowedSignersFile), which git \
                  needs to check SSH signatures. Importing creates {file} with one line per \
@@ -1248,7 +1268,7 @@ impl Repo {
                 let value = path.to_string_lossy().replace('\\', "/");
                 let file = config_file.to_string_lossy().into_owned();
                 self.git()
-                    .run(&["config", "--file", &file, "gpg.ssh.allowedSignersFile", &value])
+                    .run(&["config", "--file", &file, "--replace-all", "gpg.ssh.allowedSignersFile", &value])
                     .map_err(anyhow::Error::from)
                     .with_context(|| format!("setting gpg.ssh.allowedSignersFile in {file}"))?;
             }

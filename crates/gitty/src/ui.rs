@@ -1555,8 +1555,12 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
                 };
                 let more = if app.signers_files_known().is_some_and(|n| n > 0) {
                     "⏎: details · m: use an allowed signers file"
+                } else if app.own_signers_offered() == Some(true) {
+                    "⏎: details · m: allowed signers file with your key"
                 } else if app.signing_keys_offered() {
                     "⏎: details · m: Get Signing Keys from GitHub"
+                } else if app.own_signers_offered().is_some() {
+                    "⏎: details · m: allowed signers file with your key"
                 } else if app.signers_files_known().is_some() {
                     "⏎: details · m: how to check SSH signatures"
                 } else {

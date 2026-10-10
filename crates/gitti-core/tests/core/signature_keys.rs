@@ -307,6 +307,19 @@ fn signature_keys_plan_text_says_what_goes_where() {
     ] {
         assert!(text.contains(want), "{want:?} missing in:\n{text}");
     }
+    // Set empty in the repository's own config (it overrides every other): the new
+    // file is set there instead.
+    let over_empty = SignersFile::Create {
+        path: home.join(".config/git/allowed_signers"),
+        config_file: home.join("repo/.git/config"),
+    };
+    let text = sk::plan_text(&set, &target(over_empty, true, home));
+    for want in [
+        "~/repo/.git/config sets gpg.ssh.allowedSignersFile to an empty value",
+        "sets gpg.ssh.allowedSignersFile to it there instead of the empty value",
+    ] {
+        assert!(text.contains(want), "{want:?} missing in:\n{text}");
+    }
     let configured = SignersFile::Configured {
         path: home.join("signers"),
         origin: "/home/a/.gitconfig".into(),
