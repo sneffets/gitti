@@ -9,6 +9,8 @@
 //! text), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status),
 //! `changes` (Search in Changes: query, toggles, scans, hits with why, note),
 //! `write:PATH=TEXT` (writes a working-tree file as another program would; `\n` = newline),
+//! `clip:TEXT` (the clipboard's text as the Clone dialog reads it — a scripted run never
+//! reads the system clipboard, and copies land there too), `paste:TEXT` (a bracketed paste),
 //! `focus` (terminal focus gained), `cmds` (the git commands run since the previous `cmds`:
 //! a `cmds: N` line, then one `  git …` line each), `items` (the entries of the open picker /
 //! menu: one `item: LABEL` line each; after a typed query the matches, best first), `bar`
@@ -112,6 +114,10 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                 pump(app, &rx, Duration::from_millis(1));
                 term.draw(|f| crate::ui::draw(f, app))?;
             }
+            "paste" => {
+                app.on_event(Event::Paste(arg.to_string()));
+                settle(app, &rx, &mut term, Duration::from_secs(20))?;
+            }
             "type" => {
                 for ch in arg.chars() {
                     app.on_event(Event::Key(KeyEvent::new(
@@ -167,6 +173,7 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                 let full = gitti_core::paths::join_repo_path(app.repo.workdir(), path);
                 std::fs::write(full, text.replace("\\n", "\n"))?;
             }
+            "clip" => App::set_script_clipboard(arg),
             "focus" => {
                 app.on_event(Event::FocusGained);
                 settle(app, &rx, &mut term, Duration::from_secs(20))?;

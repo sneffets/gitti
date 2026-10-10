@@ -48,6 +48,7 @@ pub fn main() {
         ("spell_marks_dialogs", spell_marks_dialogs),
         ("folder_picker_sweep", folder_picker_sweep),
         ("go_to_commit_picker", go_to_commit_picker),
+        ("clone_clipboard_note", clone_clipboard_note),
         ("toolbar_command_bar", toolbar_command_bar),
         ("palette_keys_column", palette_keys_column),
         ("commit_list_layouts", commit_list_layouts),
@@ -1518,6 +1519,34 @@ fn folder_picker_sweep(ui: &mut Ui) {
         }
         ui.step("key:escape");
         ui.step("cancel");
+    }
+    reset_point(ui);
+}
+
+/// The Clone dialog with a URL from the clipboard at the sweep points: "From the
+/// clipboard" whole under the URL field, inside the dialog, above the next field.
+fn clone_clipboard_note(ui: &mut Ui) {
+    for pt in points() {
+        let ctx = set_point(ui, pt);
+        ui.step("focuslist");
+        ui.quick("clip:git@github.com:team/a-rather-long-repository-name-for-the-dialog.git");
+        ui.quick("action:gitti::CloneRepository");
+        let p = ui.check(&format!("{ctx}, clone dialog"));
+        let get = |n: &str| find(&p, n);
+        // (At the most cramped point the dialog has no room for its fields at all.)
+        let field_shown = get("modal-field:0").is_some_and(|f| f.visible().is_some());
+        match (get("modal-note:0"), get("modal-field:0"), get("modal-field:1"), get("modal")) {
+            (Some(n), Some(f), Some(next), Some(m))
+                if (n.visible() == Some(n.bounds) || !field_shown)
+                    && n.bounds.bottom() <= f.bounds.bottom() + px(1.)
+                    && n.bounds.bottom() <= next.bounds.top()
+                    && n.bounds.right() <= m.bounds.right() => {}
+            other => ui.fail(format!(
+                "{ctx}: clipboard note not whole under the URL field: {:?}",
+                other.0.map(|n| (n.bounds, n.visible()))
+            )),
+        }
+        ui.quick("cancel");
     }
     reset_point(ui);
 }

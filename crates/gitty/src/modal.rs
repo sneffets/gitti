@@ -3,6 +3,8 @@
 
 use std::sync::mpsc::Sender;
 
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use crate::app::App;
 use crate::edit::TextEdit;
 
@@ -30,6 +32,45 @@ pub struct Field {
     pub label: String,
     pub edit: TextEdit,
     pub secret: bool,
+    /// The text was put in for the user ([`Modal::prefill`]) and is shown selected: the
+    /// first typed character or a paste replaces it, Backspace / Delete clear it, any
+    /// other key keeps it as text.
+    pub fresh: bool,
+    /// A muted line under the field and the value it is about: shown while the field
+    /// holds that value ("From the clipboard").
+    pub note: Option<(String, String)>,
+}
+
+impl Field {
+    /// An editing key in the field.
+    pub fn key(&mut self, key: KeyEvent) {
+        if std::mem::take(&mut self.fresh) {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            match key.code {
+                KeyCode::Char(_) if !ctrl => self.edit.set_text(""),
+                KeyCode::Backspace | KeyCode::Delete => {
+                    self.edit.set_text("");
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.edit.handle_key(key);
+    }
+
+    /// Pasted text (bracketed paste) at the cursor — instead of a fresh text.
+    pub fn paste(&mut self, text: &str) {
+        if std::mem::take(&mut self.fresh) {
+            self.edit.set_text("");
+        }
+        self.edit.insert_str(text);
+    }
+
+    /// The note under the field now.
+    pub fn note_now(&self) -> Option<&str> {
+        let (value, text) = self.note.as_ref()?;
+        (self.edit.text() == *value).then_some(text.as_str())
+    }
 }
 
 pub struct Check {
@@ -308,6 +349,8 @@ impl Modal {
                     label: label.to_string(),
                     edit: TextEdit::single(value),
                     secret: false,
+                    fresh: false,
+                    note: None,
                 })
                 .collect(),
             checks: checks
@@ -348,6 +391,19 @@ impl Modal {
                 Some(f(&values, &flags))
             }
             _ => None,
+        }
+    }
+
+    /// Puts `value` into field `ix` of an input dialog for the user (e.g. from the
+    /// clipboard): selected, so typing replaces it, with `note` under it while it is
+    /// unchanged.
+    pub fn prefill(&mut self, ix: usize, value: &str, note: &str) {
+        if let Modal::Input { fields, .. } = self
+            && let Some(f) = fields.get_mut(ix)
+        {
+            f.edit.set_text(value);
+            f.fresh = true;
+            f.note = Some((value.to_string(), note.to_string()));
         }
     }
 

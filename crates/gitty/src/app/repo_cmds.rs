@@ -1,17 +1,20 @@
 //! Repository-level commands (gitti's menu bar): "Add to .gitignore…" (the top-level
 //! file, a folder's own one or `info/exclude`), edit `.gitignore` / `.gitattributes`, open
-//! the repository in the file manager, clone / init a repository.
+//! the repository in the file manager, clone / init a repository. The Clone dialog takes a
+//! repository location from the clipboard (`gitti_core::clone_source`).
 //!
 //! gitty shows one repository per process. After a clone / init it offers to switch: the
 //! main loop then restarts gitty in the new repository (`reopen`), so no job or watcher of
 //! the old one can reach the new state.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use gitti_core::create::{expand_home, name_from_url};
 use gitti_core::ignore::{IgnoreFile, rule_dirs, suggestions_in};
 
-use super::{After, App, Msg};
+use super::{After, App, Msg, spawn};
 use crate::modal::{MenuItem, Modal, PickItem};
 
 impl App {
@@ -174,7 +177,7 @@ impl App {
     pub fn clone_dialog(&mut self) {
         let parent = self.parent_dir();
         self.modal = Some(Modal::input_checks(
-            "Clone Repository",
+            CLONE_TITLE,
             vec![
                 ("Repository URL", ""),
                 ("Parent directory", parent.as_str()),
@@ -204,6 +207,51 @@ impl App {
                 });
             },
         ));
+        self.read_clipboard_for_clone();
+    }
+
+    /// Sets the clipboard text of a scripted run (`clip:` steps, copies).
+    pub fn set_script_clipboard(text: &str) {
+        if let Ok(mut c) = SCRIPT_CLIPBOARD.lock() {
+            *c = Some(text.to_string());
+        }
+    }
+
+    /// Reads the clipboard for the Clone dialog just opened: on a thread (the clipboard
+    /// program can be slow — PowerShell on Windows), the dialog fills when it answers
+    /// ([`Self::clone_clipboard`]). A scripted run takes the script's text (`clip:`) and
+    /// never reads the system clipboard.
+    fn read_clipboard_for_clone(&mut self) {
+        if std::env::var_os("GITTY_SCRIPT").is_some() {
+            let text = SCRIPT_CLIPBOARD.lock().ok().and_then(|c| c.clone());
+            let url = text.and_then(|t| gitti_core::clone_source::from_clipboard(&t));
+            self.clone_clipboard(url);
+            return;
+        }
+        spawn(
+            &self.tx,
+            || {
+                let tools = crate::clipboard::paste_tools();
+                let text = crate::clipboard::paste_with(tools, None, PASTE_TIMEOUT)?;
+                gitti_core::clone_source::from_clipboard(&text)
+            },
+            Msg::CloneClipboard,
+        );
+    }
+
+    /// The repository location from the clipboard into the Clone dialog's URL field —
+    /// selected, with a note — as long as the dialog is open and nothing was typed there.
+    pub(super) fn clone_clipboard(&mut self, url: Option<String>) {
+        let Some(url) = url else {
+            return;
+        };
+        if let Some(m) = &mut self.modal
+            && let Modal::Input { title, fields, .. } = m
+            && title == CLONE_TITLE
+            && fields.first().is_some_and(|f| f.edit.is_empty())
+        {
+            m.prefill(0, &url, gitti_core::clone_source::CLIPBOARD_NOTE);
+        }
     }
 
     pub fn init_dialog(&mut self) {
@@ -311,6 +359,14 @@ impl App {
         ]
     }
 }
+
+const CLONE_TITLE: &str = "Clone Repository";
+
+/// How long the clipboard program may take.
+const PASTE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The clipboard of a scripted run: `clip:TEXT` steps and copies.
+static SCRIPT_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
 
 /// Starts gitty again in `path` (the terminal is already restored): `exec` on unix, a child
 /// process whose exit code we pass on elsewhere.

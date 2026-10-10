@@ -2844,15 +2844,31 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                 let (_, col) = field.edit.cursor();
                 let skip = (col + 2).saturating_sub(input.width as usize);
                 let shown: String = text.chars().skip(skip).collect();
+                // A text put in for the user shows selected: typing replaces it.
+                let style = if field.fresh {
+                    Style::new().fg(p.text_strong).bg(p.bg_list_selected)
+                } else {
+                    Style::new().fg(p.text_strong)
+                };
                 put(
                     buf,
                     input.x + 1,
                     y,
                     input.width.saturating_sub(1),
-                    vec![Span::styled(shown, Style::new().fg(p.text_strong))],
+                    vec![Span::styled(shown, style)],
                 );
                 if active {
                     cursor = Some((input.x + 1 + (col - skip) as u16, y));
+                }
+                // Its note ("From the clipboard") in the gap under it.
+                if let Some(note) = field.note_now() {
+                    put(
+                        buf,
+                        inner.x + 1,
+                        y + 1,
+                        inner.width.saturating_sub(2),
+                        vec![Span::styled(note.to_string(), Style::new().fg(p.text_muted))],
+                    );
                 }
                 y += 2;
             }

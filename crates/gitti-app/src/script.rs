@@ -14,7 +14,8 @@
 //! `tab:N` (activate tab), `win:merge` / `win:main` (window for the following `shot`, mouse,
 //! `wheel`, `key` and `clipboard` steps; `merge` = the last opened merge editor),
 //! `mergeeditor:N` (open the merge editor for conflicted file N), `clipboard` (print the
-//! clipboard text; merge window), `fonts:UI,DIFF` (font sizes), `focusmsg` / `focuslist` /
+//! clipboard text; merge window), `clip:TEXT` (the clipboard text the Clone dialog takes —
+//! a scripted run never reads the system clipboard for it), `fonts:UI,DIFF` (font sizes), `focusmsg` / `focuslist` /
 //! `focusdiff` (commit message editor / commit list / diff), `clickon:NAME[@X,Y]` /
 //! `rclickon:` / `dclickon:` (the probe NAME of a fresh frame — `NAME*` = first one
 //! starting with NAME — at its centre, or X,Y from its top left; a negative X / Y counts
@@ -201,6 +202,10 @@ pub(crate) fn main_window_step(
     match cmd {
         "open" => ws.update(cx, |w, cx| w.open(arg.into(), window, cx)),
         "tab" => ws.update(cx, |w, cx| w.script_activate(arg.parse().unwrap_or(0), window, cx)),
+        // A real scripted run keeps its own clipboard; the headless tests have the test
+        // platform's.
+        "clip" if std::env::var_os("GITTI_SCRIPT").is_some() => GittiApp::script_set_clipboard(arg),
+        "clip" => cx.write_to_clipboard(ClipboardItem::new_string(arg.to_string())),
         "action" => {
             if let Err(e) = crate::testing_menus::dispatch(arg, window, cx) {
                 eprintln!("[script] action {arg}: {e:#}");

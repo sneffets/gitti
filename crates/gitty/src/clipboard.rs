@@ -1,13 +1,16 @@
 //! Copying text to the system clipboard: the platform's clipboard program, else the
 //! terminal's OSC 52 escape (works over ssh, in kitty / WezTerm / foot / iTerm2 / tmux with
-//! `set-clipboard on`; GNOME Terminal ignores it).
+//! `set-clipboard on`; GNOME Terminal ignores it). Reading it ([`paste_with`]): the
+//! platform's program only — OSC 52 reads are refused by most terminals.
 //!
 //! std only and free of `crate::` paths: `tests/linux.rs` includes this file with
-//! `#[path]` and drives [`copy_with`] against fake tools on a temporary search path.
+//! `#[path]` and drives [`copy_with`] / [`paste_with`] against fake tools on a temporary
+//! search path.
 
 use std::ffi::OsStr;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 /// A clipboard program and its arguments; it reads the text from stdin.
 pub type Tool = (&'static str, &'static [&'static str]);
@@ -51,6 +54,72 @@ pub fn copy_with(text: &str, tools: &[Tool], path: Option<&OsStr>) -> Option<&'s
         }
         if child.wait().is_ok_and(|s| s.success()) {
             return Some(tool);
+        }
+    }
+    None
+}
+
+/// The programs that print the clipboard's text, tried in order: `pbpaste` on macOS,
+/// PowerShell's `Get-Clipboard` on Windows (UTF-8 out); elsewhere Wayland's `wl-paste`,
+/// then X11's `xclip` and `xsel`.
+pub fn paste_tools() -> &'static [Tool] {
+    if cfg!(target_os = "macos") {
+        &[("pbpaste", &[])]
+    } else if cfg!(windows) {
+        &[(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Clipboard -Raw",
+            ],
+        )]
+    } else {
+        &[
+            ("wl-paste", &["--no-newline"]),
+            ("xclip", &["-selection", "clipboard", "-o"]),
+            ("xsel", &["--clipboard", "--output"]),
+        ]
+    }
+}
+
+/// The clipboard's text from the first of `tools` that prints it and exits successfully
+/// within `timeout` (each); `None` when none did (missing, no display server, an empty or
+/// non-text clipboard, not UTF-8). `path` as for [`copy_with`].
+pub fn paste_with(tools: &[Tool], path: Option<&OsStr>, timeout: Duration) -> Option<String> {
+    for &(tool, args) in tools {
+        let mut cmd = Command::new(tool);
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        if let Some(path) = path {
+            cmd.env("PATH", path);
+        }
+        let Ok(mut child) = cmd.spawn() else {
+            continue;
+        };
+        // Read on a thread: a tool that hangs (an X11 clipboard owner that doesn't answer)
+        // is killed after `timeout` instead of blocking the caller.
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Some(mut out) = child.stdout.take() {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = out.read_to_end(&mut buf);
+                let _ = tx.send(buf);
+            });
+        }
+        let Ok(out) = rx.recv_timeout(timeout) else {
+            let _ = child.kill();
+            let _ = child.wait();
+            continue;
+        };
+        if child.wait().is_ok_and(|s| s.success())
+            && let Ok(text) = String::from_utf8(out)
+            && !text.is_empty()
+        {
+            return Some(text);
         }
     }
     None

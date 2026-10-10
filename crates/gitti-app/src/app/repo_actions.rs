@@ -84,6 +84,20 @@ pub enum AppEvent {
 
 impl EventEmitter<AppEvent> for GittiApp {}
 
+thread_local! {
+    /// The clipboard of a scripted run (`GittiApp::script_set_clipboard`).
+    static SCRIPT_CLIPBOARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The clipboard's text — in a scripted run (`GITTI_SCRIPT`) the script's (`clip:`), so a
+/// run doesn't depend on what the user copied last.
+fn clipboard_text(cx: &App) -> Option<String> {
+    if std::env::var_os("GITTI_SCRIPT").is_some() {
+        return SCRIPT_CLIPBOARD.with(|c| c.borrow().clone());
+    }
+    cx.read_from_clipboard().and_then(|c| c.text())
+}
+
 impl GittiApp {
     /// Registers the handlers of the menu-bar actions on the app's root element.
     pub(super) fn repo_actions(&self, root: Div, cx: &mut Context<Self>) -> Div {
@@ -274,6 +288,12 @@ impl GittiApp {
 
     // ------------------------------------------------------------------ clone / init
 
+    /// Script hook (`clip:TEXT`): the clipboard text the Clone dialog sees in a scripted
+    /// run, which never reads the system clipboard for it.
+    pub fn script_set_clipboard(text: &str) {
+        SCRIPT_CLIPBOARD.with(|c| *c.borrow_mut() = Some(text.to_string()));
+    }
+
     /// Folder offered for new repositories: next to the current one, else the folder this
     /// tab was opened on, else home.
     fn default_parent_dir(&self) -> String {
@@ -299,16 +319,23 @@ impl GittiApp {
         }
     }
 
+    /// The Clone dialog; a repository location on the clipboard (`gitti_core::clone_source`)
+    /// is put into its URL field, selected, the folder name derived as if it was pasted.
     pub fn clone_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = ModalSpec::new("Clone Repository")
+        let from_clipboard =
+            clipboard_text(cx).and_then(|t| gitti_core::clone_source::from_clipboard(&t));
+        let mut spec = ModalSpec::new("Clone Repository")
             .message("git clone runs in the background; the clone opens in a new tab.")
-            .field("Repository URL", "")
+            .field("Repository URL", from_clipboard.clone().unwrap_or_default())
             .field("Parent directory", self.default_parent_dir())
             .field("Folder name", "")
             .derive(0, 2, |url| name_from_url(url).unwrap_or_default())
             .browse("Choose Parent Directory…", 1)
             .check("Also clone the submodules (--recurse-submodules)", true)
             .ok("Clone");
+        if from_clipboard.is_some() {
+            spec = spec.prefilled(0, gitti_core::clone_source::CLIPBOARD_NOTE);
+        }
         self.open_modal(spec, window, cx, |this, res, w, cx| {
             let url = res.values[0].trim().to_string();
             let name = match res.values[2].trim() {

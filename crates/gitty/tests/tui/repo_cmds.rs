@@ -107,6 +107,34 @@ fn clone_from_the_palette() {
     );
 }
 
+/// The Clone dialog takes a repository location from the clipboard: a forge's page URL
+/// cut back to the repository, shown selected with "From the clipboard" under it; typing
+/// replaces it (the note goes), so does a paste, Backspace clears it; plain text on the
+/// clipboard leaves the field empty.
+#[gitti_test::test]
+fn clone_url_from_the_clipboard() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let open = format!("press:ctrl-p;{}press:enter;", presses("clone repo"));
+    let out = gitty(
+        dir.path(),
+        &format!(
+            "clip:https://github.com/octo/project/tree/main/src;{open}dump;type:git@example.com:o/x.git;dump;press:esc;\
+             {open}paste:/srv/r.git;dump;press:esc;\
+             {open}press:backspace;dump;press:esc;\
+             clip:see the README;{open}dump"
+        ),
+    );
+    let s = screens(&out);
+    let note = gitti_core::clone_source::CLIPBOARD_NOTE;
+    assert!(s[0].contains("https://github.com/octo/project") && !s[0].contains("tree/main"), "{out}");
+    assert!(s[0].contains(note), "{out}");
+    assert!(s[1].contains("git@example.com:o/x.git") && !s[1].contains("octo/project"), "{out}");
+    assert!(!s[1].contains(note), "the note goes with the clipboard text: {out}");
+    assert!(s[2].contains("/srv/r.git") && !s[2].contains("octo/project"), "{out}");
+    assert!(!s[3].contains("octo/project") && !s[3].contains(note), "{out}");
+    assert!(s[4].contains("Clone Repository") && !s[4].contains("README") && !s[4].contains(note), "{out}");
+}
+
 /// Init: the new repository is offered; n keeps gitty where it is.
 #[gitti_test::test]
 fn init_from_the_palette() {
