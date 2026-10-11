@@ -29,6 +29,10 @@ impl App {
             Some(_) => CursorFile::Changed,
             None => CursorFile::None,
         };
+        let (this_version, old_version) = match self.version_sides() {
+            Some((new, old)) => (new.is_some(), old.is_some()),
+            None => (false, false),
+        };
         RepoFacts {
             repo: true,
             tabs: 1,
@@ -53,9 +57,8 @@ impl App {
             comparing: self.compare.mode.is_some(),
             selection,
             diff_file: self.rows.iter().any(|r| r.file_ref().is_some()),
-            // gitty has no "Open This Version" (a noted gap).
-            this_version: false,
-            old_version: false,
+            this_version,
+            old_version,
             cursor_file,
             github_remote: gitti_core::signing_keys::github_repo(&self.remotes).is_some(),
             signing_keys: self.signing_keys_offered(),
