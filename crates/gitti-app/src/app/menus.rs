@@ -36,6 +36,60 @@ pub fn take_menu_labels() -> Vec<String> {
     BUILT.with(|b| std::mem::take(&mut *b.borrow_mut()))
 }
 
+/// What a context-menu entry does when chosen.
+type EntryAction = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
+
+thread_local! {
+    /// The entries of the menus built lately with what they do, newest last (only while
+    /// the layout probes are on): the `menu:LABEL` script step chooses one by its label.
+    static ACTIONS: std::cell::RefCell<Vec<(String, EntryAction)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A context-menu entry that runs `f` when chosen — by a click, or by the `menu:LABEL`
+/// script step ([`run_menu_entry`]).
+pub(super) fn menu_action(
+    label: impl Into<SharedString>,
+    f: impl Fn(&mut Window, &mut App) + 'static,
+) -> PopupMenuItem {
+    let label = label.into();
+    let f: EntryAction = std::rc::Rc::new(f);
+    if crate::probe::enabled() {
+        ACTIONS.with(|a| {
+            let mut a = a.borrow_mut();
+            // Menus are built on every open: keep the recent ones.
+            if a.len() >= 512 {
+                a.drain(..256);
+            }
+            a.push((label.to_string(), f.clone()));
+        });
+    }
+    menu_entry(label).on_click(move |_, window, cx| f(window, cx))
+}
+
+/// Runs the entry `label` (exactly as shown, a greyed one with its reason) of the menu
+/// built last that has it — what clicking it does, without the menu's coordinates. The
+/// caller closes the open menu first. An error when no such entry was built.
+pub fn run_menu_entry(label: &str, window: &mut Window, cx: &mut App) -> Result<(), String> {
+    let found = ACTIONS.with(|a| {
+        a.borrow()
+            .iter()
+            .rev()
+            .find(|(l, _)| l == label)
+            .map(|(_, f)| f.clone())
+    });
+    match found {
+        Some(f) => {
+            f(window, cx);
+            Ok(())
+        }
+        None => {
+            let known: Vec<String> = ACTIONS.with(|a| a.borrow().iter().rev().take(40).map(|(l, _)| l.clone()).collect());
+            Err(format!("no menu entry {label:?} (latest: {known:?})"))
+        }
+    }
+}
+
 /// A menu entry that runs `f` on the app.
 fn item(
     label: impl Into<SharedString>,
@@ -43,7 +97,7 @@ fn item(
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
 ) -> PopupMenuItem {
     let app = app.clone();
-    menu_entry(label).on_click(move |_, window, cx| {
+    menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }

@@ -23,6 +23,8 @@ embed-resource = "3"
 [dev-dependencies]
 tempfile = "3"
 gitti-test.workspace = true
+# Workflow tests (`wf_*`): fixtures, "another program", expectations.
+gitti-workflow.workspace = true
 
 # RELEASE TESTS — slow / randomized; run only before a release, never in daily work or per
 # merge. Uncomment to compile; see release-tests/README.md. Comment out again before

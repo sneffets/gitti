@@ -41,6 +41,7 @@ mod subtrees;
 mod switching;
 mod tab_marks;
 mod unix_fs;
+mod wf_pilot;
 mod worktrees;
 
 /// The test repositories' settings — identity, no signing, contents as written whatever

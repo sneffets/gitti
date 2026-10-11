@@ -88,6 +88,9 @@ impl GittiApp {
                 .get(self.selected)
                 .filter(|c| !c.id.is_null())
                 .map(|c| c.id.to_string()),
+            selected_row: self.selected,
+            repo_state: format!("{:?}", self.repo_state).to_lowercase(),
+            conflicted: paths(&self.working.conflicted),
             unstaged: paths(&self.working.unstaged),
             staged: paths(&self.working.staged),
             stashes: self.stashes.len(),

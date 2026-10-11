@@ -21,7 +21,9 @@
 //! `rclickon:` / `dclickon:` (the probe NAME of a fresh frame — `NAME*` = first one
 //! starting with NAME — at its centre, or X,Y from its top left; a negative X / Y counts
 //! from its right / bottom edge), `clickrel:DX,DY`
-//! (relative to the last click, e.g. a context menu item), `layout` (probes of the next frame
+//! (relative to the last click, e.g. a context menu item), `menu:LABEL` (choose the entry
+//! LABEL — exactly as shown — of the context menu opened last, e.g. after
+//! `rclickon:commit-row:3`; entries made with `menus::menu_action`), `layout` (probes of the next frame
 //! as JSON lines, see `probe.rs`), `check` (layout invariants, `layout_check.rs`), `quit`.
 //! Dialogs: `field:N=TEXT` (type into field N), `choice:N` (its Nth fill-in button),
 //! `checkbox:N` (flip checkbox N; `check:N` with an argument is an alias, `check` alone is
@@ -374,6 +376,17 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
         "mergeeditor" => {
             let file = arg.parse().unwrap_or(0);
             app.update(cx, |a, cx| a.open_merge_editor(file, window, cx));
+        }
+        "menu" => {
+            // As a click on the entry: the menu closes, then the entry acts.
+            if app.read(cx).script_state(window, cx).focus == "other"
+                && let Ok(k) = Keystroke::parse("escape")
+            {
+                window.dispatch_keystroke(k, cx);
+            }
+            if let Err(e) = crate::app::run_menu_entry(arg, window, cx) {
+                eprintln!("[script] menu: {e}");
+            }
         }
         "select" => {
             // A row number or a commit id prefix.

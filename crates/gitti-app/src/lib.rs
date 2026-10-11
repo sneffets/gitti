@@ -1063,6 +1063,13 @@ pub mod testing {
         pub commits: usize,
         /// Id of the selected commit (`None` for the worktree row).
         pub selected_commit: Option<String>,
+        /// The selected row of the commit list (`commit-row:N`).
+        pub selected_row: usize,
+        /// The operation git left half-done: `clean`, `merging`, `rebasing`,
+        /// `cherrypicking`, `reverting` (as `gitti_workflow::OpState::name`).
+        pub repo_state: String,
+        /// Paths in the worktree view's conflicted list.
+        pub conflicted: Vec<String>,
         /// Paths in the worktree view's unstaged / staged lists.
         pub unstaged: Vec<String>,
         pub staged: Vec<String>,
