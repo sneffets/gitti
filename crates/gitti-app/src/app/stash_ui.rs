@@ -262,9 +262,9 @@ impl GittiApp {
             .stashes
             .iter()
             .map(|st| {
-                let index = st.index;
+                let stash = st.target();
                 palette_entry(&st.message, &st.name, move |t, w, cx| {
-                    t.rename_stash_dialog(index, w, cx)
+                    t.rename_stash_dialog(stash, w, cx)
                 })
             })
             .collect();
@@ -280,11 +280,12 @@ impl GittiApp {
     /// dialog says how git does it (no rename command) and the new list entry.
     pub(super) fn rename_stash_dialog(
         &mut self,
-        index: usize,
+        stash: gitti_core::ops::StashRef,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(st) = self.stashes.iter().find(|s| s.index == index) else {
+        let index = stash.index;
+        let Some(st) = self.stashes.iter().find(|s| s.id == stash.id) else {
             self.set_info("No such stash");
             cx.notify();
             return;
@@ -306,7 +307,7 @@ impl GittiApp {
             });
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let text = res.values[0].clone();
-            this.git_op("Rename stash", w, cx, move |r| r.stash_rename(index, &text))
+            this.git_op("Rename stash", w, cx, move |r| r.stash_rename(stash, &text))
         });
     }
 }

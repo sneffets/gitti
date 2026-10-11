@@ -179,3 +179,28 @@ fn a_refused_patch_reads_plainly() {
     assert!(text.contains("git apply: error:"), "{text}");
     assert!(text.contains("| -nope"), "{text}");
 }
+
+/// A stash pushed elsewhere after the list was shown shifts the positions: the stash
+/// commands still act on the stash the user chose (found by its commit); one dropped
+/// elsewhere is refused, nothing else is touched.
+#[gitti_test::test]
+fn stash_commands_act_on_the_chosen_stash() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    five_lines(p);
+    fx::git(p, &["stash", "push", "-q", "-m", "first"]);
+    let r = Repo::open(p).unwrap();
+    let shown = r.stashes().unwrap();
+    assert_eq!(shown.len(), 1);
+    // A terminal pushes another one: "first" is stash@{1} now.
+    fs::write(p.join("a.txt"), "1\n2\n3\n4\nFIVE\n").unwrap();
+    fx::git(p, &["stash", "push", "-q", "-m", "second"]);
+    r.stash_drop(shown[0].target()).unwrap();
+    let left = fx::git(p, &["stash", "list", "--format=%gs"]);
+    assert_eq!(left, "On main: second", "the chosen stash went, not the newer one");
+    // Dropped elsewhere since: refused, the other stash stays.
+    let again = r.stash_apply(shown[0].target(), false).unwrap_err();
+    assert!(format!("{again:#}").contains("no longer in the stash list"), "{again:#}");
+    assert_eq!(fx::git(p, &["stash", "list", "--format=%gs"]), "On main: second");
+    assert_eq!(fx::git(p, &["status", "--porcelain"]), "", "nothing applied");
+}

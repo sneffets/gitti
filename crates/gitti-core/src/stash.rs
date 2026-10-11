@@ -745,10 +745,10 @@ impl Repo {
         }
     }
 
-    /// Gives `stash@{index}` the message `text` (see the module docs): `git reflog
-    /// delete` of it and the entries above it, then `git stash store` of each again,
-    /// oldest first.
-    pub fn stash_rename(&self, index: usize, text: &str) -> Result<String> {
+    /// Gives `stash` the message `text` (see the module docs): `git reflog delete` of
+    /// it and the entries above it, then `git stash store` of each again, oldest first.
+    /// The entry is found by its commit (it may have moved in the list meanwhile).
+    pub fn stash_rename(&self, stash: crate::ops::StashRef, text: &str) -> Result<String> {
         if text.trim().is_empty() {
             bail!("The new message is empty");
         }
@@ -761,10 +761,16 @@ impl Repo {
             .filter_map(|l| l.split_once('\0'))
             .map(|(id, m)| (id.to_string(), m.to_string()))
             .collect();
-        let entries = &all[..all.len().min(index + 1)];
-        if entries.len() <= index {
-            bail!("There is no stash@{{{index}}}");
-        }
+        let is_it = |k: usize| all.get(k).is_some_and(|(id, _)| ObjectId::from_hex(id.as_bytes()).ok() == Some(stash.id));
+        let Some(index) = (is_it(stash.index).then_some(stash.index)).or_else(|| (0..all.len()).find(|&k| is_it(k)))
+        else {
+            bail!(
+                "The stash {} is no longer in the stash list (dropped or replaced outside gitti \
+                 meanwhile): nothing was renamed.",
+                stash.id.to_hex_with_len(7)
+            );
+        };
+        let entries = &all[..=index];
         let new = renamed_message(&entries[index].1, text);
         let refs: Vec<String> = (0..=index).rev().map(|k| format!("refs/stash@{{{k}}}")).collect();
         let mut args = vec!["reflog", "delete", "--rewrite", "--updateref"];

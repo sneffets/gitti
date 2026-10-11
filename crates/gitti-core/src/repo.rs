@@ -856,6 +856,7 @@ impl Repo {
                             name,
                             index,
                             message,
+                            id,
                         },
                         id,
                         parents,

@@ -337,8 +337,19 @@ impl GittiApp {
 
     /// "Drop stash@{n}?" → `git stash drop`.
     fn drop_stash_at(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(st) = self.stashes.iter().find(|s| s.index == index) else {
-            self.set_info("No stashes");
+        match self.stashes.iter().find(|s| s.index == index).map(|s| s.target()) {
+            Some(stash) => self.drop_stash(stash, window, cx),
+            None => {
+                self.set_info("No stashes");
+                cx.notify();
+            }
+        }
+    }
+
+    /// "Drop stash@{n}?" for the stash chosen (found by its commit when the list moved).
+    fn drop_stash(&mut self, stash: gitti_core::ops::StashRef, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(st) = self.stashes.iter().find(|s| s.id == stash.id) else {
+            self.set_info("No such stash");
             cx.notify();
             return;
         };
@@ -349,7 +360,7 @@ impl GittiApp {
             "Drop",
             window,
             cx,
-            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(index)),
+            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(stash)),
         );
     }
 
@@ -358,9 +369,9 @@ impl GittiApp {
             .stashes
             .iter()
             .map(|st| {
-                let index = st.index;
+                let stash = st.target();
                 entry(st.message.clone(), st.name.clone(), move |t, w, cx| {
-                    t.drop_stash_at(index, w, cx)
+                    t.drop_stash(stash, w, cx)
                 })
             })
             .collect();

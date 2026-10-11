@@ -200,9 +200,9 @@ impl App {
             .stashes
             .iter()
             .map(|s| {
-                let index = s.index;
+                let stash = s.target();
                 PickItem::new(s.message.clone(), s.name.clone(), move |app: &mut App| {
-                    app.rename_stash_dialog(index)
+                    app.rename_stash_dialog(stash)
                 })
             })
             .collect();
@@ -214,8 +214,9 @@ impl App {
 
     /// Renames `stash@{index}` (see `gitti_core::stash`): the field holds the part the
     /// user wrote; the dialog says how git does it and the new list entry.
-    pub fn rename_stash_dialog(&mut self, index: usize) {
-        let Some(s) = self.stashes.iter().find(|s| s.index == index) else {
+    pub fn rename_stash_dialog(&mut self, stash: gitti_core::ops::StashRef) {
+        let index = stash.index;
+        let Some(s) = self.stashes.iter().find(|s| s.id == stash.id) else {
             return self.set_info("No such stash");
         };
         let old = s.message.clone();
@@ -224,7 +225,7 @@ impl App {
             Modal::input(format!("Rename stash@{{{index}}}"), vec![("Message", &text)], move |app, v| {
                 let text = v[0].clone();
                 app.run_op("Rename stash", true, After::Nothing, move |r| {
-                    r.stash_rename(index, &text)
+                    r.stash_rename(stash, &text)
                 });
             })
             .with_note(stash::RENAME_NOTE)

@@ -53,7 +53,7 @@ fn branch_tag_stash_remote_ops() {
     let st = r.stashes().unwrap();
     assert_eq!(st.len(), 1);
     assert!(st[0].message.contains("wip"));
-    r.stash_apply(0, true).unwrap();
+    r.stash_apply(r.stashes().unwrap()[0].target(), true).unwrap();
     assert_eq!(read(&p, "a.txt"), "2\n");
     assert!(r.stashes().unwrap().is_empty());
 
@@ -152,7 +152,7 @@ fn conflict_from_stash_apply() {
     sh(&p, &["stash", "-q"]);
     fs::write(p.join("a.txt"), "committed\n").unwrap();
     sh(&p, &["commit", "-q", "-am", "c"]);
-    assert!(r.stash_apply(0, false).is_err());
+    assert!(r.stash_apply(r.stashes().unwrap()[0].target(), false).is_err());
     assert_eq!(r.state(), RepoState::Clean);
     assert_eq!(r.conflict_sides().theirs, "stash");
     let st = r.working_state().unwrap();

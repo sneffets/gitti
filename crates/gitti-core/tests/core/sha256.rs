@@ -193,7 +193,7 @@ fn line_staging_untracked_files_commit_and_stash() {
         .map(|f| f.path().to_string())
         .collect();
     assert!(paths.contains(&"b.txt".to_string()) && paths.contains(&"new.txt".to_string()), "{paths:?}");
-    r.stash_apply(0, true).unwrap();
+    r.stash_apply(r.stashes().unwrap()[0].target(), true).unwrap();
     assert_eq!(fs::read_to_string(fx.p.join("b.txt")).unwrap(), "BEE\n");
 }
 

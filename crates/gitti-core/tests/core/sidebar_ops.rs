@@ -23,7 +23,7 @@ fn stash_branch_checks_out_a_branch_with_the_stash() {
     // HEAD moves on; the branch starts where the stash was made.
     fx::git(work, &["reset", "-q", "--hard", "next"]);
     let repo = Repo::open(work).unwrap();
-    repo.stash_branch("from-stash", 0).unwrap();
+    repo.stash_branch("from-stash", repo.stashes().unwrap()[0].target()).unwrap();
     assert_eq!(
         fs::read_to_string(work.join(".git/HEAD")).unwrap().trim(),
         "ref: refs/heads/from-stash"

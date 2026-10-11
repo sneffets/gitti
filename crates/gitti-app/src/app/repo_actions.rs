@@ -700,15 +700,16 @@ impl GittiApp {
         self.status.as_ref().map(|s| (s.text.clone(), s.error))
     }
 
-    /// Applies / pops `stash@{0}`.
-    fn latest_stash(&mut self, pop: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.stashes.is_empty() {
+    /// Applies / pops `stash@{0}` — the latest one as shown (not one pushed elsewhere
+    /// since).
+    pub(super) fn latest_stash(&mut self, pop: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(stash) = self.stashes.iter().find(|s| s.index == 0).map(|s| s.target()) else {
             self.set_info("No stashes");
             cx.notify();
             return;
-        }
+        };
         let label = if pop { "Stash pop" } else { "Stash apply" };
-        self.git_op(label, window, cx, move |r| r.stash_apply(0, pop));
+        self.git_op(label, window, cx, move |r| r.stash_apply(stash, pop));
     }
 
     fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {

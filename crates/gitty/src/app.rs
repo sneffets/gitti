@@ -3648,7 +3648,8 @@ impl App {
         let short = sha[..7.min(sha.len())].to_string();
         let merge = c.parents.len() > 1;
         if let Some(n) = c.stash {
-            return Some((format!("stash@{{{n}}}"), sidebar_menu::stash_items(n)));
+            let stash = gitti_core::ops::StashRef { index: n, id: c.id };
+            return Some((format!("stash@{{{n}}}"), sidebar_menu::stash_items(stash)));
         }
         let head = self.current_branch().unwrap_or("HEAD").to_string();
         // Why the entries acting on the commit can't (HEAD itself, an operation git
@@ -4203,13 +4204,13 @@ impl App {
             }
         }
         for s in self.stashes.iter().take(9) {
-            let i = s.index;
+            let stash = s.target();
             items.push(PickItem::new(
                 format!("Apply {} — {}", s.name, s.message),
                 "",
                 move |app: &mut App| {
                     app.run_op("Apply stash", true, After::Nothing, move |r| {
-                        r.stash_apply(i, false)
+                        r.stash_apply(stash, false)
                     })
                 },
             ));

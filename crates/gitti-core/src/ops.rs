@@ -2,6 +2,7 @@
 //! hooks, signing and user configuration apply. Each returns git's (combined) output.
 
 use anyhow::{Context as _, Result};
+use gix::ObjectId;
 
 use crate::{Repo, WorkingState};
 
@@ -63,6 +64,25 @@ pub struct StashInfo {
     pub name: String,
     pub index: usize,
     pub message: String,
+    /// The stash's commit.
+    pub id: ObjectId,
+}
+
+impl StashInfo {
+    /// What the stash commands act on: this stash, wherever it is in the list by then.
+    pub fn target(&self) -> StashRef {
+        StashRef { index: self.index, id: self.id }
+    }
+}
+
+/// A stash as the user chose it: its position in the list shown then and its commit.
+/// The list is shared (a terminal, another worktree may push or drop meanwhile): the
+/// stash commands act on the entry that is still this commit ([`Repo::stash_name`]),
+/// never on whatever moved into the position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StashRef {
+    pub index: usize,
+    pub id: ObjectId,
 }
 
 /// Fast-forward behaviour of `git merge`.
@@ -984,21 +1004,70 @@ impl Repo {
         self.stash_push(message, flags, &[])
     }
 
-    pub fn stash_apply(&self, index: usize, pop: bool) -> Result<String> {
-        let name = format!("stash@{{{index}}}");
+    pub fn stash_apply(&self, stash: StashRef, pop: bool) -> Result<String> {
+        let name = self.stash_name(stash)?;
         self.out(&["stash", if pop { "pop" } else { "apply" }, &name])
     }
 
-    pub fn stash_drop(&self, index: usize) -> Result<String> {
-        let name = format!("stash@{{{index}}}");
+    pub fn stash_drop(&self, stash: StashRef) -> Result<String> {
+        let name = self.stash_name(stash)?;
         self.out(&["stash", "drop", &name])
     }
 
-    /// `git stash branch <branch> stash@{index}`: a new branch at the commit the stash was
+    /// `git stash branch <branch> stash@{N}`: a new branch at the commit the stash was
     /// made on, checked out, the stash applied there and dropped when that worked.
-    pub fn stash_branch(&self, branch: &str, index: usize) -> Result<String> {
-        let name = format!("stash@{{{index}}}");
+    pub fn stash_branch(&self, branch: &str, stash: StashRef) -> Result<String> {
+        let name = self.stash_name(stash)?;
         self.out(&["stash", "branch", branch, &name])
+    }
+
+    /// `stash@{N}` of `stash` right now: its position when the list still has it there
+    /// (the usual case), else wherever its commit moved (a stash pushed or dropped
+    /// elsewhere meanwhile shifts the positions). Refuses when it is gone. The stash
+    /// reflog is read in-process (git for a reftable repository).
+    pub fn stash_name(&self, stash: StashRef) -> Result<String> {
+        let ids = self.stash_ids()?;
+        let at = if ids.get(stash.index) == Some(&stash.id) {
+            Some(stash.index)
+        } else {
+            ids.iter().position(|id| *id == stash.id)
+        };
+        match at {
+            Some(n) => Ok(format!("stash@{{{n}}}")),
+            None => anyhow::bail!(
+                "The stash {} is no longer in the stash list (dropped or replaced outside \
+                 gitti meanwhile): nothing was done. The list is read again.",
+                stash.id.to_hex_with_len(7)
+            ),
+        }
+    }
+
+    /// The stash list's commits, newest (`stash@{0}`) first.
+    fn stash_ids(&self) -> Result<Vec<ObjectId>> {
+        let in_process = || -> Result<Vec<ObjectId>> {
+            let repo = self.gix()?;
+            let Some(r) = repo.try_find_reference("refs/stash").map_err(crate::repo::gx)? else {
+                return Ok(Vec::new());
+            };
+            let mut platform = r.log_iter();
+            let Some(lines) = platform.all()? else {
+                return Ok(Vec::new());
+            };
+            let mut ids = Vec::new();
+            for line in lines {
+                ids.push(line.map_err(crate::repo::gx)?.new_oid());
+            }
+            ids.reverse();
+            Ok(ids)
+        };
+        in_process().or_else(|_| {
+            let out = self.git().run_raw(&["log", "-g", "--format=%H", "refs/stash", "--"], None)?;
+            Ok(out
+                .stdout_str()
+                .lines()
+                .filter_map(|l| ObjectId::from_hex(l.trim().as_bytes()).ok())
+                .collect())
+        })
     }
 }
 
