@@ -265,7 +265,7 @@ fn narrow_panes_never_draw_into_their_neighbours() {
     let d = dir.path();
     let config = tempfile::tempdir().unwrap();
     let out = gitty_with(d, config.path(), "70x30", "dump;check");
-    let row = out.lines().nth(2).unwrap();
+    let row = screens(&out)[0].lines().nth(2).unwrap();
     assert!(row.chars().skip(31).take(3).all(|c| c == ' '), "'No changes' runs into the detail pane: {row:?}\n{out}");
     write_files(d, &[("new.txt", "a\nb\n"), ("r.txt", "changed\n")]);
     let tour = "check;press:enter;check;press:j;check;press:esc;press:L;check;press:j;check;\
@@ -339,10 +339,11 @@ fn pane_separators_drag_and_are_kept_as_fractions() {
     // 120 columns: sidebar separator 26 → 30 (25 %); the log (L) and its title bar (row
     // 19 of 30) dragged up to row 14.
     let out = gitty_with(a.path(), config.path(), "120x30", "drag:26,5,30,5;dump;press:L;drag:0,19,0,14");
-    assert_eq!(out.lines().nth(1).unwrap_or_default().find("Commits"), Some(32), "{out}");
+    assert_eq!(screens(&out)[0].lines().nth(1).unwrap_or_default().find("Commits"), Some(32), "{out}");
     let out = gitty_with(b.path(), config.path(), "240x30", "dump");
-    assert_eq!(out.lines().nth(1).unwrap_or_default().find("Commits"), Some(62), "{out}");
-    assert_eq!(out.lines().position(|l| l.contains("Git Command Log")), Some(14), "{out}");
+    let screen = screens(&out)[0];
+    assert_eq!(screen.lines().nth(1).unwrap_or_default().find("Commits"), Some(62), "{out}");
+    assert_eq!(screen.lines().position(|l| l.contains("Git Command Log")), Some(14), "{out}");
 }
 
 /// H hides / shows the sidebar — persisted (shared with gitti); hidden, tab skips it and h

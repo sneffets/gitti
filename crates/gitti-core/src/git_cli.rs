@@ -27,6 +27,10 @@ pub enum GitError {
     /// because an earlier command of the operation was (`process::with_cancel`).
     #[error("cancelled")]
     Cancelled,
+    /// git exited, but its output didn't arrive in full ([`crate::process::READ_PIPE_GRACE`];
+    /// the machine very busy): nothing is taken from a part of it.
+    #[error("git {args}: its output didn't arrive in full (the computer is very busy?) — try again")]
+    OutputCut { args: String },
 }
 
 #[derive(Debug, Clone)]
@@ -554,11 +558,15 @@ impl Git {
             crate::process::Io {
                 on_stderr: Some(&mut on_stderr),
                 gentle: !is_read_only(args),
+                whole_output: is_read_only(args),
                 ..Default::default()
             },
         )?;
         if out.cancelled {
             return Err(GitError::Cancelled);
+        }
+        if out.cut && is_read_only(args) {
+            return Err(GitError::OutputCut { args: args.join(" ") });
         }
         Ok(GitOutput {
             stdout: out.stdout,
@@ -598,10 +606,12 @@ impl Git {
                 stdin,
                 on_stdout: Some(on_data),
                 cancel: Some(cancel),
+                whole_output: true,
                 ..Default::default()
             },
         );
         let stopped = result.as_ref().is_ok_and(|o| o.cancelled);
+        let cut = result.as_ref().is_ok_and(|o| o.cut);
         let result = result.map_err(GitError::from).map(|o| GitOutput {
             stdout: Vec::new(),
             stderr: if o.cancelled {
@@ -615,6 +625,9 @@ impl Git {
         let out = result?;
         if stopped {
             return Ok(false);
+        }
+        if cut {
+            return Err(GitError::OutputCut { args: args.join(" ") });
         }
         if out.code != 0 {
             return Err(GitError::Failed {
@@ -706,6 +719,45 @@ impl Git {
             in_process: true,
             program: None,
         });
+    }
+
+    /// git `args` for the user's terminal — a terminal diff / merge tool that gitty hands
+    /// the terminal to ([`crate::ext_tool::TerminalRun`]): this runner's directory and
+    /// environment, the terminal's stdin / stdout / stderr, not detached from it. Run it
+    /// with the terminal handed over, then log it with [`Git::log_terminal_run`].
+    pub fn terminal_command(&self, args: &[String]) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(&self.workdir)
+            .args(["-c", "core.quotepath=false"])
+            .args(args);
+        for var in LOCAL_REPO_ENV {
+            cmd.env_remove(var);
+        }
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
+        cmd
+    }
+
+    /// Logs a [`Git::terminal_command`] that ran for `took` and exited with `code` (-1:
+    /// it couldn't start); its output went to the terminal.
+    pub fn log_terminal_run(&self, args: &[String], took: Duration, code: i32) {
+        let Some(log) = &self.log else {
+            return;
+        };
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let mut entry = LogEntry {
+            args: args.to_vec(),
+            code,
+            duration: took,
+            at: SystemTime::now(),
+            read_only: is_read_only(&refs),
+            user: false,
+            output: "(ran in the terminal: its output went there)".into(),
+            previous_session: false,
+            in_process: false,
+            program: None,
+        };
+        redact_entry(&mut entry);
+        log.push(entry);
     }
 
     /// Runs a user's shell command line (a custom command, [`crate::custom_command`]):
@@ -841,11 +893,15 @@ impl Git {
                     None
                 },
                 gentle: !read_only,
+                whole_output: read_only,
                 ..Default::default()
             },
         )?;
         if out.cancelled {
             return Err(GitError::Cancelled);
+        }
+        if out.cut && read_only {
+            return Err(GitError::OutputCut { args: args.join(" ") });
         }
         let mut stderr = decode_native(&out.stderr);
         if flag {
@@ -937,8 +993,20 @@ fn summarize(code: i32, stderr: &str) -> String {
         .or(lines.last())
         .copied()
     else {
-        return if code == -1 {
-            "git was stopped by a signal, without a message".to_string()
+        return if code < 0 {
+            // `process::execute`: minus the signal's number.
+            let name = match -code {
+                1 => " (SIGHUP)",
+                2 => " (SIGINT)",
+                6 => " (SIGABRT)",
+                9 => " (SIGKILL)",
+                11 => " (SIGSEGV)",
+                13 => " (SIGPIPE)",
+                14 => " (SIGALRM)",
+                15 => " (SIGTERM)",
+                _ => "",
+            };
+            format!("git was stopped by signal {}{name}, without a message", -code)
         } else {
             format!("git ended with exit code {code}, without a message")
         };
@@ -1026,7 +1094,7 @@ mod tests {
         };
         assert_eq!(err(128, "hint: x\nfatal: not a git repository\n"), "git status: fatal: not a git repository\n\nhint: x\nfatal: not a git repository\n");
         assert_eq!(err(1, "  \n"), "git status: git ended with exit code 1, without a message");
-        assert_eq!(err(-1, ""), "git status: git was stopped by a signal, without a message");
+        assert_eq!(err(-9, ""), "git status: git was stopped by signal 9 (SIGKILL), without a message");
     }
 
     #[gitti_test::test]

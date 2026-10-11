@@ -29,7 +29,7 @@ fn esc_cancels_a_hanging_fetch() {
     );
     let start = Instant::now();
     // Esc cancels once the busy label shows (`BUSY_SHOW_DELAY`, 250 ms).
-    let out = gitty(d, "press:f;sleep:320;press:esc;wait;state");
+    let out = gitty(d, "press:f;until:⟳ Fetch;press:esc;wait;state");
     let took = start.elapsed();
     assert!(took < Duration::from_secs(15), "took {took:?}\n{out}");
     assert!(out.contains("Fetch cancelled"), "{out}");
@@ -176,20 +176,50 @@ fn prompt_of_a_gone_helper_closes() {
     let dir = repo();
     let d = dir.path();
     let ssh = d.join(".git/fake-ssh");
+    // ssh gives up once the dialog is open (the script writes `.git/go` then; at most 5 s).
+    let go = d.join(".git/go");
     std::fs::write(
         &ssh,
-        "\"$SSH_ASKPASS\" 'Password: ' >/dev/null &\nsleep 0.1\nexit 255\n",
+        format!(
+            "\"$SSH_ASKPASS\" 'Password: ' >/dev/null &\ni=0\n\
+             while [ ! -e '{}' ] && [ $i -lt 250 ]; do sleep 0.02; i=$((i+1)); done\nexit 255\n",
+            go.display()
+        ),
     )
     .unwrap();
+    // `ssh.variant`: git runs the command once (without it first `-G` to probe the
+    // variant — a second prompt that raced with the first one's close).
     crate::support::add_config(
         d,
         &format!(
-            "[core]\n\tsshCommand = sh '{}'\n[remote \"origin\"]\n\turl = ssh://host/r.git\n",
+            "[core]\n\tsshCommand = sh '{}'\n[ssh]\n\tvariant = simple\n[remote \"origin\"]\n\turl = ssh://host/r.git\n",
             ssh.display()
         ),
     );
-    let out = gitty(d, "key:f;state;closed;wait;state");
+    let out = gitty(d, "key:f;state;write:.git/go=;closed;wait;state");
     let st = crate::support::states(&out);
     assert!(st[0].contains("modal=Ask"), "{out}");
     assert!(!st[1].contains("modal="), "{out}");
+}
+
+/// The program that asks is gone before its helper even starts (ssh gives up at once; on a
+/// loaded machine the helper's start takes longer): the helper ends instead of asking, or
+/// its dialog closes by itself — none stays open.
+#[cfg(unix)]
+#[gitti_test::test]
+fn prompt_of_a_helper_orphaned_before_it_started_closes() {
+    let dir = repo();
+    let d = dir.path();
+    let ssh = d.join(".git/fake-ssh");
+    std::fs::write(&ssh, "\"$SSH_ASKPASS\" 'Password: ' >/dev/null &\nexit 255\n").unwrap();
+    crate::support::add_config(
+        d,
+        &format!(
+            "[core]\n\tsshCommand = sh '{}'\n[ssh]\n\tvariant = simple\n[remote \"origin\"]\n\turl = ssh://host/r.git\n",
+            ssh.display()
+        ),
+    );
+    let out = gitty(d, "key:f;closed;wait;state");
+    let st = crate::support::states(&out);
+    assert!(st[0].contains("Fetch failed") && !st[0].contains("modal="), "{out}");
 }

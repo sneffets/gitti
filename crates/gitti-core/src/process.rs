@@ -27,6 +27,13 @@ use std::time::{Duration, Instant};
 /// the pipe already; this only waits for a slow reader thread).
 pub const PIPE_GRACE: Duration = Duration::from_millis(200);
 
+/// The same for a command that only reads ([`Io::whole_output`]): no hook or helper of it
+/// holds its pipes, so their end comes — late only when the machine is very busy and the
+/// reader threads aren't scheduled. Its output counts only once it arrived in full: a
+/// 200 ms grace lost a whole `git show` under heavy load (git had written it into the
+/// pipe and exited) and an empty diff was taken for the commit's.
+pub const READ_PIPE_GRACE: Duration = Duration::from_secs(10);
+
 /// How often the process is checked while its pipes stay open, and the cancel flag.
 const TICK: Duration = Duration::from_millis(20);
 
@@ -123,6 +130,9 @@ pub(crate) struct Io<'a> {
     pub cancel: Option<&'a AtomicBool>,
     /// Stop with SIGTERM first (commands that write) instead of SIGKILL.
     pub gentle: bool,
+    /// The output is complete only at the pipes' end (commands that only read): wait for
+    /// it up to [`READ_PIPE_GRACE`] after the process exited, else [`Output::cut`].
+    pub whole_output: bool,
 }
 
 pub(crate) struct Output {
@@ -131,6 +141,9 @@ pub(crate) struct Output {
     pub code: i32,
     /// Stopped by a cancel flag or `on_stdout` (then git did not finish on its own).
     pub cancelled: bool,
+    /// The process exited but its pipes didn't end within the grace: the output may be
+    /// missing its end (for [`Io::whole_output`] commands an error, see there).
+    pub cut: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -151,6 +164,8 @@ fn pump(mut pipe: impl Read + Send + 'static, which: Stream, tx: mpsc::Sender<Ev
         .stack_size(64 * 1024)
         .spawn(move || {
             let mut buf = vec![0u8; 64 * 1024];
+            #[cfg(test)]
+            std::thread::sleep(Duration::from_millis(tests::READER_DELAY_MS.load(Ordering::Relaxed)));
             loop {
                 match pipe.read(&mut buf) {
                     Ok(0) => break,
@@ -183,8 +198,10 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
             stderr: Vec::new(),
             code: -1,
             cancelled: true,
+            cut: false,
         });
     }
+    prepare_fork();
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if io.stdin.is_some() {
         Stdio::piped()
@@ -275,7 +292,8 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
                 last_poll = Instant::now();
                 if let Some(s) = child.try_wait()? {
                     status = Some(s);
-                    grace_until = Some(Instant::now() + PIPE_GRACE);
+                    let grace = if io.whole_output { READ_PIPE_GRACE } else { PIPE_GRACE };
+                    grace_until = Some(Instant::now() + grace);
                 }
             }
         }
@@ -292,10 +310,50 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
     Ok(Output {
         stdout,
         stderr,
-        code: status.code().unwrap_or(-1),
+        code: exit_code(status),
         cancelled: cancelled_at.is_some(),
+        cut: open > 0 && cancelled_at.is_none(),
     })
 }
+
+/// The exit code, or minus the signal that ended the process (unix; `-1` when unknown).
+fn exit_code(status: ExitStatus) -> i32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        if let Some(signal) = status.signal() {
+            return -signal;
+        }
+    }
+    status.code().unwrap_or(-1)
+}
+
+/// macOS: libSystem's child-side fork handler (`_notify_fork_child`) reads libnotify's
+/// globals through an `os_once` gate. When another thread of ours was initialising them
+/// at the moment of a fork (the first time-zone lookup — chrono / CoreFoundation — or
+/// another first use of notify), the child found the gate held by a thread it doesn't
+/// have and aborted before exec ("BUG IN CLIENT OF LIBPLATFORM: os_once_t is corrupt",
+/// "crashed on child side of fork pre-exec"): a git command "stopped by signal 9" without
+/// a message — gitty's "Refresh failed" at start-up under load, where several reads are
+/// spawned at once. Every spawn first waits for the globals to be initialised once.
+#[cfg(target_os = "macos")]
+fn prepare_fork() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        unsafe extern "C" {
+            // libnotify (part of libSystem): looks the token up in the globals, which
+            // initialises them.
+            fn notify_is_valid_token(val: libc::c_int) -> bool;
+        }
+        // SAFETY: a plain lookup without preconditions.
+        unsafe {
+            notify_is_valid_token(0);
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn prepare_fork() {}
 
 /// Asks git and everything it started (hooks, helpers: its process group, as git runs
 /// under `setsid`) to stop; git removes its lock files on SIGTERM.
@@ -333,4 +391,31 @@ pub(crate) fn kill_process_tree(child: &mut Child) {
 #[cfg(not(unix))]
 pub(crate) fn kill_process_tree(child: &mut Child) {
     let _ = child.kill();
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU64;
+
+    /// A delay before each reader thread's first read: a reader not scheduled in time.
+    pub(super) static READER_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+    fn run(whole_output: bool) -> Output {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'the whole diff'"]);
+        execute(cmd, Io { whole_output, ..Default::default() }).unwrap()
+    }
+
+    /// A reader that comes late (a very busy machine) still gets a read's whole output;
+    /// without the wait the output is reported as cut, never as a short success.
+    #[gitti_test::test]
+    fn late_readers_lose_nothing_of_a_read() {
+        READER_DELAY_MS.store(400, Ordering::Relaxed);
+        let read = run(true);
+        let other = run(false);
+        READER_DELAY_MS.store(0, Ordering::Relaxed);
+        assert_eq!((read.stdout.as_slice(), read.code, read.cut), (&b"the whole diff"[..], 0, false));
+        assert!(other.cut, "a command that may leave its pipes to helpers says its output was cut");
+    }
 }

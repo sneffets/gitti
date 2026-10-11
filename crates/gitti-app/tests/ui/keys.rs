@@ -699,10 +699,16 @@ fn whole_file_menu(ui: &mut Ui) {
         ui.fail(format!("diff row {line} is not drawn"));
         return;
     };
+    testing::menu_labels();
     ui.click_on(&name, MouseButton::Right);
-    // Copy (disabled: nothing selected; the first ↓ still lands on it), Open in Editor,
-    // Ignore Whitespace, Wrap Lines, Syntax Highlighting, Show Whole File.
-    for _ in 0..6 {
+    // ↓ to Show Whole File, wherever the menu has it (the first ↓ lands on the first
+    // entry, also a disabled one: Copy with nothing selected).
+    let labels = testing::menu_labels();
+    let Some(at) = labels.iter().position(|l| l.starts_with("Show Whole File")) else {
+        ui.fail(format!("no Show Whole File in the diff menu: {labels:?}"));
+        return;
+    };
+    for _ in 0..=at {
         ui.step("key:down");
     }
     let p = press(ui, "enter");
@@ -723,7 +729,7 @@ fn whole_file_palette(ui: &mut Ui) {
     ui.step("action:gitti::CommandPalette");
     let picker = state(ui).picker.expect("palette");
     let want = ui.cx.update(|cx| testing::key_hint("gitti::ShowWholeFile", cx));
-    match picker.labels.iter().position(|l| l == "Show Whole File") {
+    match picker.labels.iter().position(|l| l.starts_with("Show Whole File")) {
         Some(i) if picker.keys[i] == want && !want.is_empty() => {}
         Some(i) => ui.fail(format!("palette Show Whole File: `{}`, expected `{want}`", picker.keys[i])),
         None => ui.fail("no Show Whole File in the palette".into()),
