@@ -212,6 +212,10 @@ impl App {
         if !matches!(self.detail, Detail::Worktree) {
             return items;
         }
+        // A stash would end a merge / rebase / cherry-pick / revert half-done.
+        let busy = gitti_core::availability::in_progress(self.repo_state);
+        let stash_item =
+            |label: String, paths: Vec<String>| MenuItem::new(label, move |app| app.stash_paths_dialog(paths)).unless(busy);
         if let Some((src, f)) = self.folder_at(self.diff_cursor) {
             let paths = self.folder_paths(src, &f);
             let n = files_word(paths.len());
@@ -230,10 +234,7 @@ impl App {
                 _ => {}
             }
             if matches!(src, Src::Unstaged | Src::Staged) {
-                let p = paths.clone();
-                items.push(MenuItem::new(format!("Stash Folder ({n})…"), move |app| {
-                    app.stash_paths_dialog(p)
-                }));
+                items.push(stash_item(format!("Stash Folder ({n})…"), paths.clone()));
             }
             let dir = format!("{}/", f.path);
             items.push(MenuItem::new("Copy Folder Path", move |app| app.copy(dir)));
@@ -261,8 +262,7 @@ impl App {
             }));
         }
         let paths = self.marks.all_paths();
-        let p = paths.clone();
-        items.push(MenuItem::new(format!("Stash Marked ({n})…"), move |app| app.stash_paths_dialog(p)));
+        items.push(stash_item(format!("Stash Marked ({n})…"), paths.clone()));
         items.push(MenuItem::new(format!("Open Marked in Editor ({n})"), |app| app.open_marked()));
         let text = paths.join("\n");
         items.push(MenuItem::new(format!("Copy Marked Paths ({n})"), move |app| app.copy(text)));

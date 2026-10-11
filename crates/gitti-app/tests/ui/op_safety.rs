@@ -63,8 +63,8 @@ fn merge(ui: &mut Ui, branch: &str) {
 }
 
 /// Merge feat: a stop, said plainly (no error, no error mark); Stash Changes says why it
-/// can't; Stage All asks about a.txt's markers (Cancel: nothing staged). The line-ending
-/// change of w.txt has its note row.
+/// can't; Stage All asks about a.txt's markers (Cancel: nothing staged); the diff menu's
+/// stash entries are greyed. The line-ending change of w.txt has its note row.
 fn merge_stop_stash_and_stage_all(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let probes = ui.check("worktree");
@@ -95,6 +95,27 @@ fn merge_stop_stash_and_stage_all(ui: &mut Ui) {
     if git_out(&dir, &["ls-files", "-u"]).is_empty() {
         ui.fail("a.txt was marked resolved".into());
     }
+    // The diff menu's stash entries (a file, the marked files) are greyed with the reason.
+    let mut files: Vec<(usize, String)> = ui
+        .frame()
+        .iter()
+        .filter(|p| p.name.starts_with("diff-row:") && p.name.ends_with(":file") && p.visible().is_some())
+        .filter_map(|p| Some((p.name.split(':').nth(1)?.parse().ok()?, p.name.clone())))
+        .collect();
+    files.sort();
+    let Some((_, last)) = files.pop() else {
+        return ui.fail("no file header".into());
+    };
+    ui.click_on_with(&last, MouseButton::Left, Modifiers::secondary_key());
+    testing::menu_labels();
+    ui.click_on(&last, MouseButton::Right);
+    let labels = testing::menu_labels();
+    for want in ["Stash This File… (a merge is in progress)", "Stash Marked (1 file)… (a merge is in progress)"] {
+        if !labels.iter().any(|l| l == want) {
+            ui.fail(format!("diff menu during the merge: no {want:?} in {labels:?}"));
+        }
+    }
+    ui.quick("key:escape");
 }
 
 /// Picking `same` stops with nothing to commit (on the command line): the banner offers

@@ -47,13 +47,17 @@ fn merging() -> tempfile::TempDir {
 }
 
 /// During the merge: z (Stash) says it can't; S asks about a.txt's conflict markers
-/// (esc: nothing staged).
+/// (esc: nothing staged); the diff menu's stash entries are greyed.
 #[gitti_test::test]
 fn during_a_merge_stash_waits_and_stage_all_asks() {
     let dir = merging();
     let d = dir.path();
-    let out = gitty(d, "press:z;state;press:S;dump;press:esc;state");
+    let out = gitty(d, "press:z;state;press:S;dump;press:esc;state;press:enter;press:];press:];press:space;press:m;dump");
     let st = states(&out);
+    // The diff menu's stash entries (the file, the marked files) are greyed with the reason.
+    let menu = screens(&out)[1];
+    assert!(menu.contains("Stash This File… (a merge is in progress)"), "{out}");
+    assert!(menu.contains("Stash Marked (1 file)… (a merge is in progress)"), "{out}");
     assert!(st[0].contains("not available: a merge is in progress"), "{out}");
     assert!(screens(&out)[0].contains("a.txt still contains conflict markers"), "{out}");
     assert!(st[1].contains("staged=1 ") && !st[1].contains("modal="), "{out}");

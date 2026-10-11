@@ -44,6 +44,14 @@ fn entry(
     })
 }
 
+/// A Stash entry's label, with the reason it is greyed during an operation.
+fn stash_label(label: String, busy: Option<&str>) -> String {
+    match busy {
+        Some(why) => gitti_core::availability::with_reason(&label, why),
+        None => label,
+    }
+}
+
 /// Width of one tree level.
 const INDENT: f32 = 16.;
 
@@ -301,6 +309,8 @@ impl GittiApp {
         if !matches!(self.detail, super::Detail::Worktree) {
             return menu;
         }
+        // A stash would end a merge / rebase / cherry-pick / revert half-done.
+        let busy = gitti_core::availability::in_progress(self.repo_state);
         let row = self.menu_row.and_then(|r| self.rows.get(r).copied());
         if let Some(DiffRow::Folder { src, folder }) = row
             && let Some(f) = self.folders.get(folder)
@@ -329,9 +339,12 @@ impl GittiApp {
             }
             if matches!(src, Src::Unstaged | Src::Staged) {
                 let p = paths.clone();
-                menu = menu.item(entry(format!("Stash Folder ({n})…"), app, move |this, w, cx| {
-                    this.stash_paths_dialog(p.clone(), w, cx)
-                }));
+                menu = menu.item(
+                    entry(stash_label(format!("Stash Folder ({n})…"), busy), app, move |this, w, cx| {
+                        this.stash_paths_dialog(p.clone(), w, cx)
+                    })
+                    .disabled(busy.is_some()),
+                );
             }
             menu = menu
                 .item(super::menus::copy_item("Copy Folder Path", format!("{}/", key.path)))
@@ -361,9 +374,12 @@ impl GittiApp {
         }
         let paths = self.file_marks.all_paths();
         let p = paths.clone();
-        menu.item(entry(format!("Stash Marked ({n})…"), app, move |this, w, cx| {
-            this.stash_paths_dialog(p.clone(), w, cx)
-        }))
+        menu.item(
+            entry(stash_label(format!("Stash Marked ({n})…"), busy), app, move |this, w, cx| {
+                this.stash_paths_dialog(p.clone(), w, cx)
+            })
+            .disabled(busy.is_some()),
+        )
         .item(entry(format!("Open Marked in Editor ({n})"), app, |this, _, cx| this.open_marked(cx)))
         .item(super::menus::copy_item(format!("Copy Marked Paths ({n})"), paths.join("\n")))
         .item(entry("Clear Marks", app, |this, _, cx| {

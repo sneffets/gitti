@@ -17,8 +17,15 @@ fn lines_word(n: usize) -> String {
 
 impl App {
     /// The diff menu's stash entries for diff row `row`: the selected lines, the hunk,
-    /// the file, or a group of the unstaged section.
+    /// the file, or a group of the unstaged section — greyed with the reason while a
+    /// merge / rebase / cherry-pick / revert is in progress (a stash would end it
+    /// half-done).
     pub(crate) fn stash_row_items(&self, row: Option<DiffRow>) -> Vec<MenuItem> {
+        let busy = gitti_core::availability::in_progress(self.repo_state);
+        self.stash_row_entries(row).into_iter().map(|i| i.unless(busy)).collect()
+    }
+
+    fn stash_row_entries(&self, row: Option<DiffRow>) -> Vec<MenuItem> {
         let mut items = Vec::new();
         let Some(row) = row else {
             return items;

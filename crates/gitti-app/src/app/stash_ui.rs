@@ -23,15 +23,25 @@ use crate::{RenameStash, StashSelection};
 
 type AppHandle = WeakEntity<GittiApp>;
 
+/// A stash entry of the diff's menu; greyed with the reason while `busy` (a merge /
+/// rebase / cherry-pick / revert is in progress: a stash would end it half-done).
 fn entry(
-    label: impl Into<SharedString>,
+    label: impl Into<String>,
+    busy: Option<&str>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
 ) -> PopupMenuItem {
+    let label = label.into();
+    let label = match busy {
+        Some(why) => gitti_core::availability::with_reason(&label, why),
+        None => label,
+    };
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
-        app.update(cx, |this, cx| f(this, window, cx)).ok();
-    })
+    super::menus::menu_entry(label)
+        .on_click(move |_, window, cx| {
+            app.update(cx, |this, cx| f(this, window, cx)).ok();
+        })
+        .disabled(busy.is_some())
 }
 
 fn palette_entry(
@@ -64,10 +74,11 @@ pub(super) fn diff_menu_items(mut menu: PopupMenu, app: &AppHandle, cx: &App) ->
     let Some(&at) = a.rows.get(row) else {
         return menu;
     };
+    let busy = gitti_core::availability::in_progress(a.repo_state);
     if let DiffRow::Group(group) = at {
         let paths = crate::rows::group_paths(&a.working, group);
         if !paths.is_empty() {
-            menu = menu.item(entry(format!("Stash {}…", group.title()), app, move |this, w, cx| {
+            menu = menu.item(entry(format!("Stash {}…", group.title()), busy, app, move |this, w, cx| {
                 this.menu_row = None;
                 this.stash_paths_dialog(paths.clone(), w, cx)
             }));
@@ -84,19 +95,19 @@ pub(super) fn diff_menu_items(mut menu: PopupMenu, app: &AppHandle, cx: &App) ->
         .map(|s| s.to_selection());
     if let Some(sel) = selected {
         let n = a.file_diff(src, file).map_or(0, |d| stash::selected_lines(d, &sel));
-        menu = menu.item(entry(format!("Stash {}…", lines_word(n)), app, move |this, w, cx| {
+        menu = menu.item(entry(format!("Stash {}…", lines_word(n)), busy, app, move |this, w, cx| {
             this.menu_row = None;
             this.stash_lines_dialog(src, file, sel.clone(), w, cx)
         }));
     }
     if let DiffRow::Hunk { hunk, .. } | DiffRow::Line { hunk, .. } = at {
-        menu = menu.item(entry("Stash This Hunk…", app, move |this, w, cx| {
+        menu = menu.item(entry("Stash This Hunk…", busy, app, move |this, w, cx| {
             this.menu_row = None;
             this.stash_lines_dialog(src, file, Selection::whole_hunk(hunk), w, cx)
         }));
     }
     if let Some(path) = a.file_path(src, file) {
-        menu = menu.item(entry("Stash This File…", app, move |this, w, cx| {
+        menu = menu.item(entry("Stash This File…", busy, app, move |this, w, cx| {
             this.menu_row = None;
             this.stash_paths_dialog(vec![path.clone()], w, cx)
         }));
