@@ -38,7 +38,7 @@
 
 use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Result, anyhow};
 use ratatui::Terminal;
@@ -57,10 +57,14 @@ static STEP: Mutex<String> = Mutex::new(String::new());
 /// The paths the file watcher reported in this run (`seen:`).
 static FS_SEEN: Mutex<Vec<std::path::PathBuf>> = Mutex::new(Vec::new());
 
+/// When the file watcher's last report was handled ([`settle`]).
+static FS_LAST: Mutex<Option<SystemTime>> = Mutex::new(None);
+
 /// Hands `msg` to the app, noting what the file watcher reported.
 fn handle(app: &mut App, msg: Msg) {
     if let Msg::Fs(change) = &msg {
         FS_SEEN.lock().unwrap().extend(change.paths.iter().map(|(p, _)| p.clone()));
+        *FS_LAST.lock().unwrap() = Some(SystemTime::now());
     }
     app.handle(msg);
 }
@@ -427,6 +431,16 @@ fn pump(app: &mut App, rx: &Receiver<Msg>, wait: Duration) -> bool {
 /// to wait for (most steps, several times faster).
 const QUIET_AFTER_WRITE: Duration = Duration::from_millis(150);
 const QUIET_READ_ONLY: Duration = Duration::from_millis(25);
+/// A watcher report handled this long after the step's last write ended is its echo: the
+/// watcher reports a batch once no event came for its debounce (100 ms), and FSEvents /
+/// inotify / ReadDirectoryChangesW deliver a write's events within a few ms (FSEvents:
+/// latency 0, `NoDefer`) — a batch that closed this long after the write has all of its
+/// events. Then the step only waits as one that read (the echo's own re-read keeps the
+/// app busy), instead of [`QUIET_AFTER_WRITE`] after the echo for a second one: over the
+/// whole tui suite (macOS, 395 writing steps, load ~20) none came. A write with no echo
+/// (config, a push: nothing watched changed) or one that arrived sooner still waits the
+/// whole [`QUIET_AFTER_WRITE`].
+const ECHO_AFTER_WRITE: Duration = Duration::from_millis(50);
 
 /// Runs until no background job is pending and nothing arrived for a moment.
 fn settle(
@@ -436,7 +450,7 @@ fn settle(
     timeout: Duration,
 ) -> Result<()> {
     let start = Instant::now();
-    let started_at = std::time::SystemTime::now();
+    let started_at = SystemTime::now();
     let mut quiet_since = Instant::now();
     loop {
         term.draw(|f| crate::ui::draw(f, app))?;
@@ -445,15 +459,23 @@ fn settle(
         }
         // A credential prompt blocks the running job until the script answers it.
         let asking = matches!(app.modal, Some(Modal::Ask { .. }));
-        let wrote = app
+        // When the step's last write ended (a log entry is pushed when its command ends).
+        let last_write = app
             .repo
             .command_log()
             .shared()
             .iter()
             .rev()
             .take_while(|e| e.at >= started_at)
-            .any(|e| !e.read_only);
-        let quiet = if wrote { QUIET_AFTER_WRITE } else { QUIET_READ_ONLY };
+            .filter(|e| !e.read_only)
+            .map(|e| e.at)
+            .max();
+        let echoed =
+            |w: SystemTime| FS_LAST.lock().unwrap().is_some_and(|fs| fs >= w + ECHO_AFTER_WRITE);
+        let quiet = match last_write {
+            Some(w) if !echoed(w) => QUIET_AFTER_WRITE,
+            _ => QUIET_READ_ONLY,
+        };
         if (app.is_idle() || asking) && quiet_since.elapsed() > quiet {
             term.draw(|f| crate::ui::draw(f, app))?;
             return Ok(());
