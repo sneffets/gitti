@@ -423,6 +423,8 @@ impl History {
             });
         }
         let index = self.head_paths();
+        // HEAD's names that are not UTF-8 reach git (`git log -- <path>`) by their bytes.
+        index.learn_into(git);
         let mut plans = self.plan(query, Some(&index));
         self.load_paths(git, &mut plans, limit, cancel, progress)?;
         let mut result = self.scan(&mut plans, limit, cancel)?;

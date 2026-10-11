@@ -668,7 +668,7 @@ pub struct App {
     /// Merge editor shows only the result (shared setting `merge_single_view`).
     pub merge_single: bool,
     /// A terminal editor to run with the terminal handed over (the main loop does it).
-    pub run_in_terminal: Option<(Vec<String>, std::path::PathBuf)>,
+    pub run_in_terminal: Option<(Vec<std::ffi::OsString>, std::path::PathBuf)>,
     /// A terminal diff / merge tool to run with the terminal handed over (the main loop
     /// does it, then [`App::terminal_tool_done`]).
     pub run_tool_in_terminal: Option<Box<gitti_core::ext_tool::TerminalRun>>,
@@ -2895,7 +2895,7 @@ impl App {
         question: String,
         done: &'static str,
     ) {
-        let plan = DiscardPlan::of(self.repo.workdir(), &entries);
+        let plan = DiscardPlan::of(&*self.repo, &entries);
         let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let run = move |app: &mut App, opts: DiscardOptions| {
             let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
@@ -3030,7 +3030,7 @@ impl App {
             PatchMode::Discard => {
                 // A folder that is a repository of its own: Discard would keep it (as
                 // `git clean` does); deleting it is asked for in plain words.
-                let nested = gitti_core::discard::is_nested_repo(self.repo.workdir(), &entry);
+                let nested = gitti_core::discard::is_nested_repo(&*self.repo, &entry);
                 let (title, what, button) = if nested {
                     (
                         "Delete Repository Folder",
@@ -4607,7 +4607,8 @@ impl App {
     /// Opens working-tree file `path` at `line` (1-based) in the editor; terminal editors
     /// run with the terminal handed over (the main loop does it).
     pub fn open_path_in_editor(&mut self, path: &str, line: u32) {
-        let full = gitti_core::paths::join_repo_path(self.repo.workdir(), path);
+        // A name that is not UTF-8 by its bytes.
+        let full = self.repo.fs_path(path);
         if !full.exists() {
             self.set_error(format!("{path} does not exist in the working tree"));
             return;
@@ -4628,10 +4629,11 @@ impl App {
             template = var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_default();
         }
         match gitti_core::editor::editor_argv(&template, full, line) {
+            // A file name that is not UTF-8 reaches the editor as its bytes.
             Ok(argv) if gitti_core::editor::is_terminal_editor(&argv) => {
-                self.run_in_terminal = Some((argv, workdir));
+                self.run_in_terminal = Some((gitti_core::editor::os_argv(&argv, full), workdir));
             }
-            Ok(argv) => match gitti_core::editor::spawn_editor(&argv, &workdir) {
+            Ok(argv) => match gitti_core::editor::spawn_editor(&gitti_core::editor::os_argv(&argv, full), &workdir) {
                 Ok(()) => self.set_info(info),
                 Err(e) => self.set_error(format!("{e:#}")),
             },

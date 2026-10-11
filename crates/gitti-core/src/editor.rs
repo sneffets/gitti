@@ -4,6 +4,7 @@
 //! syntax of well-known editors) is appended; an empty command uses the system's default
 //! application for the file.
 
+use std::ffi::OsString;
 use std::path::Path;
 use anyhow::{Context as _, Result};
 
@@ -46,6 +47,33 @@ pub fn editor_argv(template: &str, file: &Path, line: u32) -> Result<Vec<String>
     Ok(argv)
 }
 
+/// `argv` (from [`editor_argv`] for `file`) as the process gets it: where `file`'s name
+/// is not UTF-8 (unix), the text shows it with U+FFFD — the editor gets its bytes.
+pub fn os_argv(argv: &[String], file: &Path) -> Vec<OsString> {
+    #[cfg(unix)]
+    if file.to_str().is_none() {
+        use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+        let shown = file.to_string_lossy();
+        let raw = file.as_os_str().as_bytes();
+        return argv
+            .iter()
+            .map(|a| {
+                let mut out = Vec::with_capacity(a.len());
+                let mut rest = a.as_str();
+                while let Some(at) = rest.find(shown.as_ref()) {
+                    out.extend_from_slice(&rest.as_bytes()[..at]);
+                    out.extend_from_slice(raw);
+                    rest = &rest[at + shown.len()..];
+                }
+                out.extend_from_slice(rest.as_bytes());
+                OsString::from_vec(out)
+            })
+            .collect();
+    }
+    let _ = file;
+    argv.iter().map(OsString::from).collect()
+}
+
 fn system_opener(file: &str) -> Vec<String> {
     if cfg!(target_os = "macos") {
         vec!["open".into(), file.into()]
@@ -78,11 +106,12 @@ pub fn is_terminal_editor(argv: &[String]) -> bool {
     terminal && !argv.iter().any(|a| a.contains('{'))
 }
 
-/// Starts the editor detached (GUI editors, terminal-emulator wrappers).
-pub fn spawn_editor(argv: &[String], workdir: &Path) -> Result<()> {
+/// Starts the editor detached (GUI editors, terminal-emulator wrappers); `argv` as
+/// [`os_argv`] gives it.
+pub fn spawn_editor(argv: &[OsString], workdir: &Path) -> Result<()> {
     let program = argv.first().context("empty editor command")?;
     crate::desktop::spawn_detached(argv, workdir)
-        .with_context(|| format!("cannot start editor `{program}`"))
+        .with_context(|| format!("cannot start editor `{}`", program.to_string_lossy()))
 }
 
 #[cfg(test)]
@@ -112,5 +141,20 @@ mod tests {
         assert!(is_terminal_editor(&argv("emacs -nw")));
         assert!(is_terminal_editor(&argv("emacsclient -t")));
         assert!(!is_terminal_editor(&argv("emacsclient -c")));
+    }
+
+    /// A file name that is not UTF-8 reaches the editor as its bytes, wherever the
+    /// template puts it.
+    #[cfg(unix)]
+    #[gitti_test::test]
+    fn names_that_are_not_utf8_reach_the_editor_as_bytes() {
+        use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+        let file = Path::new(std::ffi::OsStr::from_bytes(b"/r/caf\xe9.txt"));
+        let argv = editor_argv("subl {file}:{line}", file, 3).unwrap();
+        assert_eq!(argv, ["subl", "/r/caf\u{fffd}.txt:3"]);
+        let os: Vec<Vec<u8>> = os_argv(&argv, file).into_iter().map(|a| a.into_vec()).collect();
+        assert_eq!(os, [b"subl".to_vec(), b"/r/caf\xe9.txt:3".to_vec()]);
+        let plain = Path::new("/r/a.txt");
+        assert_eq!(os_argv(&editor_argv("nvim", plain, 1).unwrap(), plain), ["nvim", "+1", "/r/a.txt"]);
     }
 }

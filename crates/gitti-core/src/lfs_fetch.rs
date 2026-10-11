@@ -119,14 +119,14 @@ impl LfsDownload {
 
     /// `--include=<paths>`: comma-separated gitignore patterns for git-lfs. A path git-lfs
     /// would read as a pattern or split (a comma, a wildcard, a leading `!` / `#`, outer
-    /// spaces) can't be given exactly: then `--include=` (no limit — the commits' other
-    /// LFS files come too).
+    /// spaces, a name that is not UTF-8 — the argument is text) can't be given exactly:
+    /// then `--include=` (no limit — the commits' other LFS files come too).
     pub fn include_arg(&self) -> String {
         let plain = |p: &str| {
             !p.is_empty()
                 && p.trim() == p
                 && !p.starts_with(['!', '#'])
-                && !p.contains([',', '*', '?', '[', ']', '\\'])
+                && !p.contains([',', '*', '?', '[', ']', '\\', crate::raw_names::REPLACEMENT])
         };
         if self.include.iter().all(|p| plain(p)) {
             format!("--include={}", self.include.join(","))

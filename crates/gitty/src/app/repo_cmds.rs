@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use gitti_core::create::{expand_home, name_from_url};
-use gitti_core::ignore::{IgnoreFile, rule_dirs, suggestions_in};
+use gitti_core::ignore::{IgnoreFile, suggestions_in};
 
 use super::{After, App, Msg, spawn};
 use crate::modal::{MenuItem, Modal, PickItem};
@@ -24,7 +24,9 @@ impl App {
     /// take a pattern for it (the file's folder, folders above it that have one).
     pub fn ignore_menu(&mut self, path: &str, tracked: bool) {
         let mut items = self.ignore_items(path, tracked, IgnoreFile::Gitignore);
-        let nested: Vec<String> = rule_dirs(self.repo.workdir(), path, ".gitignore")
+        let nested: Vec<String> = self
+            .repo
+            .rule_dirs(path, ".gitignore")
             .into_iter()
             .filter(|d| !d.is_empty())
             .collect();
@@ -139,7 +141,10 @@ impl App {
     /// (ctrl-s saves; created if new).
     pub fn edit_rules_file(&mut self, name: &'static str) {
         let path = self.repo.workdir().join(name);
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let text = match gitti_core::ignore::read_rules_file(&path) {
+            Ok(t) => t,
+            Err(e) => return self.set_error(format!("{e:#}")),
+        };
         let hint = if name == ".gitattributes" {
             "one pattern and its attributes per line · ctrl-s save · esc cancel"
         } else {

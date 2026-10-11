@@ -365,6 +365,10 @@ pub struct Prepared {
     pub display: String,
     pub workdir: PathBuf,
     pub confirm: bool,
+    /// The command and its values, for a shell line in bytes (file names that are not
+    /// UTF-8, [`Repo::run_custom`]).
+    template: String,
+    values: Values,
 }
 
 /// `entry` filled from `ctx`; an error says why it can't run (a missing value, a broken
@@ -396,6 +400,8 @@ pub fn prepare(entry: &Entry, ctx: &Context) -> Result<Prepared, String> {
         display,
         workdir,
         confirm: c.confirm,
+        template: c.command.clone(),
+        values: ctx.values.clone(),
     })
 }
 
@@ -432,10 +438,41 @@ impl Repo {
         let out = match p.kind {
             Kind::Git => {
                 let args: Vec<&str> = p.args.iter().map(String::as_str).collect();
-                self.git().with_workdir(&p.workdir).run_logged(&args, None, true)?
+                // In the repository's own folder file names that are not UTF-8 reach git
+                // as their bytes (`crate::raw_names`; another folder is another
+                // repository's names).
+                let git = if p.workdir == self.workdir() {
+                    self.git().clone()
+                } else {
+                    self.git().with_workdir(&p.workdir)
+                };
+                git.run_logged(&args, None, true)?
             }
             Kind::Shell => {
                 let (program, args) = p.shell.argv(&p.line);
+                #[cfg_attr(not(unix), allow(unused_mut))]
+                let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+                // A file name that is not UTF-8: the shell line names it by its bytes.
+                #[cfg(unix)]
+                if p.shell == Shell::Posix && !self.git().raw_names().is_empty() {
+                    use std::os::unix::ffi::OsStringExt as _;
+                    let names = self.git().raw_names();
+                    let line = expand::shell_line_bytes(&p.template, &p.values, p.shell, |x| {
+                        let (dot, path) = match x.strip_prefix("./") {
+                            Some(rest) => ("./", rest),
+                            None => ("", x),
+                        };
+                        match names.resolve(path) {
+                            crate::raw_names::Resolved::Bytes(b) => Ok(Some([dot.as_bytes(), &b].concat())),
+                            crate::raw_names::Resolved::Ambiguous => Err(crate::raw_names::ambiguous_text(path)),
+                            _ => Ok(None),
+                        }
+                    })
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", p.name))?;
+                    if let Some(last) = args.last_mut() {
+                        *last = std::ffi::OsString::from_vec(line);
+                    }
+                }
                 self.git()
                     .run_shell(&program, &args, &p.workdir, p.shell.name(), &p.line)
                     .map_err(|e| match e {

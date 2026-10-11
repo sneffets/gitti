@@ -9,7 +9,7 @@
 //! `.gitattributes` and one entry per folder `.gitattributes`, then the pattern line.
 
 use anyhow::Result;
-use gitti_core::ignore::rule_dirs;
+
 use gitti_core::lfs::{LfsLock, RepoLfs};
 use gitti_core::lfs_track::{
     EXPLANATION, LfsSetup, LfsTrackOptions, NOT_INSTALLED, NOT_SET_UP, refusal,
@@ -143,7 +143,9 @@ impl App {
         }
         items.push(MenuItem::separator());
         items.extend(lfs_track_items(&path, "", setup.filters));
-        let nested: Vec<String> = rule_dirs(self.repo.workdir(), &path, ".gitattributes")
+        let nested: Vec<String> = self
+            .repo
+            .rule_dirs(&path, ".gitattributes")
             .into_iter()
             .filter(|d| !d.is_empty())
             .collect();
@@ -151,7 +153,7 @@ impl App {
             items.push(MenuItem::separator());
         }
         for (dir, key) in nested.into_iter().zip('a'..='h') {
-            let exists = self.repo.workdir().join(&dir).join(".gitattributes").is_file();
+            let exists = self.repo.fs_path(&dir).join(".gitattributes").is_file();
             let label = format!(
                 "Patterns for {dir}/.gitattributes…{}",
                 if exists { "" } else { " (new file)" }

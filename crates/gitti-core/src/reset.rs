@@ -103,9 +103,9 @@ impl Repo {
         };
         let args = ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignore-submodules=dirty"];
         let out = self.git().run(&args)?;
-        let status = crate::status::parse_porcelain_v2(&out.stdout);
+        let status = self.parse_status(&out.stdout);
         let in_target = |p: &str| {
-            tree.lookup_entry_by_path(p)
+            self.tree_entry(&tree, p)
                 .ok()
                 .flatten()
                 .is_some_and(|e| !e.mode().is_tree())

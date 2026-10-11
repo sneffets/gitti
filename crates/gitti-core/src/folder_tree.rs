@@ -48,8 +48,8 @@ impl Repo {
             let tree = if dir.is_empty() {
                 Some(root.clone())
             } else {
-                root.lookup_entry_by_path(dir)
-                    .map_err(gx)?
+                // A folder name that is not UTF-8 by its bytes (`crate::raw_names`).
+                self.tree_entry(&root, dir)?
                     .filter(|e| e.mode().is_tree())
                     .map(|e| repo.find_tree(e.object_id()))
                     .transpose()
@@ -60,6 +60,7 @@ impl Repo {
                 continue;
             };
             let mut list = Vec::new();
+            let raw_dir = self.path_bytes(dir)?.into_owned();
             for entry in tree.iter() {
                 let entry = entry.map_err(gx)?;
                 if !entry.mode().is_tree() {
@@ -67,8 +68,16 @@ impl Repo {
                 }
                 let sub = repo.find_tree(entry.object_id()).map_err(gx)?;
                 let has_folders = sub.iter().any(|c| c.is_ok_and(|c| c.mode().is_tree()));
+                // The folder's whole path learned when it is not UTF-8: picked, it
+                // reaches git by its bytes.
+                let raw: Vec<u8> = if raw_dir.is_empty() {
+                    entry.filename().to_vec()
+                } else {
+                    [&raw_dir[..], b"/", entry.filename().as_ref()].concat()
+                };
+                let shown = self.show_path(&raw);
                 list.push(FolderEntry {
-                    name: entry.filename().to_string(),
+                    name: shown.rsplit('/').next().unwrap_or(&shown).to_string(),
                     has_folders,
                 });
             }
@@ -90,25 +99,29 @@ impl Repo {
             .peel_to_tree()
             .map_err(gx)?;
         let mut out = Vec::new();
-        let mut queue = std::collections::VecDeque::from([(String::new(), root.id)]);
+        // Each folder by its bytes too: one that is not UTF-8 is learned.
+        let mut queue = std::collections::VecDeque::from([(Vec::<u8>::new(), root.id)]);
         while let Some((dir, id)) = queue.pop_front() {
             let tree = repo.find_tree(id).map_err(gx)?;
             let mut level = Vec::new();
             for entry in tree.iter() {
                 let entry = entry.map_err(gx)?;
                 if entry.mode().is_tree() {
-                    let name = entry.filename().to_string();
-                    let path = if dir.is_empty() { name } else { format!("{dir}/{name}") };
-                    level.push((path, entry.object_id()));
+                    let raw: Vec<u8> = if dir.is_empty() {
+                        entry.filename().to_vec()
+                    } else {
+                        [&dir[..], b"/", entry.filename().as_ref()].concat()
+                    };
+                    level.push((self.show_path(&raw), raw, entry.object_id()));
                 }
             }
-            level.sort_by_cached_key(|(p, _)| (p.to_lowercase(), p.clone()));
-            for (path, id) in level {
+            level.sort_by_cached_key(|(p, ..)| (p.to_lowercase(), p.clone()));
+            for (path, raw, id) in level {
                 if out.len() == limit {
                     return Ok((out, true));
                 }
-                out.push(path.clone());
-                queue.push_back((path, id));
+                out.push(path);
+                queue.push_back((raw, id));
             }
         }
         Ok((out, false))

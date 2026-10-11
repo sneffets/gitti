@@ -12,7 +12,6 @@
 
 use std::rc::Rc;
 
-use gitti_core::ignore::rule_dirs;
 use gitti_core::lfs::{LfsLock, RepoLfs};
 use gitti_core::lfs_track::{
     EXPLANATION, LfsSetup, LfsTrackOptions, NOT_INSTALLED, NOT_SET_UP, refusal,
@@ -231,7 +230,7 @@ impl GittiApp {
             self.open_modal(spec, window, cx, |_, _, _, _| {});
             return;
         }
-        let dirs = rule_dirs(repo.workdir(), path, ".gitattributes");
+        let dirs = repo.rule_dirs(path, ".gitattributes");
         let file_of = |d: &str| {
             if d.is_empty() {
                 ".gitattributes".to_string()
@@ -241,7 +240,7 @@ impl GittiApp {
         };
         let selected = dirs
             .iter()
-            .rposition(|d| !d.is_empty() && repo.workdir().join(file_of(d)).is_file())
+            .rposition(|d| !d.is_empty() && repo.fs_path(&file_of(d)).is_file())
             .unwrap_or(0);
         let targets: Vec<RuleTarget> = dirs
             .iter()

@@ -342,14 +342,15 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
         app.save_settings();
         // Like the terminal loop, without handing over a terminal.
         if let Some((argv, dir)) = app.run_in_terminal.take() {
-            println!("(terminal editor: {})", argv.join(" "));
+            let line: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+            println!("(terminal editor: {})", line.join(" "));
             let status = std::process::Command::new(&argv[0])
                 .args(&argv[1..])
                 .current_dir(dir)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .status();
-            app.terminal_editor_done(&argv[0], status);
+            app.terminal_editor_done(&argv[0].to_string_lossy(), status);
             settle(app, &rx, &mut term, Duration::from_secs(20))?;
         }
         // The same for a terminal diff / merge tool.

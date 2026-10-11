@@ -206,10 +206,8 @@ impl App {
     /// Opens the marked files in the editor (a terminal editor: one after the other).
     pub fn open_marked(&mut self) {
         let paths = self.marks.all_paths();
-        let workdir = self.repo.workdir().to_path_buf();
-        let (here, gone): (Vec<String>, Vec<String>) = paths
-            .into_iter()
-            .partition(|p| gitti_core::paths::join_repo_path(&workdir, p).exists());
+        let (here, gone): (Vec<String>, Vec<String>) =
+            paths.into_iter().partition(|p| self.repo.fs_path(p).exists());
         self.open_queue = here;
         self.open_next();
         if !gone.is_empty() {

@@ -693,8 +693,15 @@ impl Repo {
             if let Some(("160000", id)) = side {
                 // A submodule pointer: record that side's commit. `checkout` can't write a
                 // gitlink and `add` would record the submodule's checked-out commit.
-                let info = format!("160000,{id},{p}");
-                out += &self.out(&["update-index", "--cacheinfo", &info])?;
+                let raw = self.path_bytes(p)?;
+                if *raw == *p.as_bytes() {
+                    let info = format!("160000,{id},{p}");
+                    out += &self.out(&["update-index", "--cacheinfo", &info])?;
+                } else {
+                    // A name that is not UTF-8: by its bytes, on stdin.
+                    let info = [format!("160000 {id}\t").as_bytes(), &raw, b"\0"].concat();
+                    self.git().run_stdin(&["update-index", "-z", "--index-info"], Some(&info))?;
+                }
                 out += &format!(
                     "Recorded {} commit {} for the submodule {p}; its checkout is unchanged — \
                      update the submodule to check that commit out.\n",

@@ -107,9 +107,6 @@ pub fn restore_target(
     file: &FileDiff,
     before: bool,
 ) -> std::result::Result<RestoreTarget, String> {
-    if file.lossy_name {
-        return Err("the file name is not valid UTF-8: restore it with git itself".into());
-    }
     let (new, old) = sides;
     if new.is_some_and(|s| s.stash) {
         return Err("a stash: Apply Stash or Pop Stash restores its files".into());
@@ -237,29 +234,31 @@ fn pathspec(path: &str) -> &str {
     if path.is_empty() { "." } else { path }
 }
 
-/// The files (blobs and links) of `tree` below `prefix` into `files`; submodules counted.
+/// The files (blobs and links) of `tree` below `prefix` (its bytes) into `files`, shown
+/// by `repo` ([`Repo::show_path`]: a name that is not UTF-8 is learned); submodules
+/// counted.
 fn tree_files(
-    repo: &gix::Repository,
+    repo: &Repo,
+    gix_repo: &gix::Repository,
     tree: ObjectId,
-    prefix: &str,
+    prefix: &[u8],
     files: &mut Vec<(String, ObjectId)>,
     submodules: &mut usize,
 ) -> Result<()> {
-    let tree = repo.find_tree(tree).map_err(gx)?;
+    let tree = gix_repo.find_tree(tree).map_err(gx)?;
     let decoded = tree.decode().map_err(gx)?;
     for e in &decoded.entries {
-        let name = String::from_utf8_lossy(e.filename);
-        let path = if prefix.is_empty() {
-            name.into_owned()
+        let path: Vec<u8> = if prefix.is_empty() {
+            e.filename.to_vec()
         } else {
-            format!("{prefix}/{name}")
+            [prefix, b"/", e.filename.as_ref()].concat()
         };
         if e.mode.is_tree() {
-            tree_files(repo, e.oid.to_owned(), &path, files, submodules)?;
+            tree_files(repo, gix_repo, e.oid.to_owned(), &path, files, submodules)?;
         } else if e.mode.is_commit() {
             *submodules += 1;
         } else {
-            files.push((path, e.oid.to_owned()));
+            files.push((repo.show_path(&path), e.oid.to_owned()));
         }
     }
     Ok(())
@@ -287,16 +286,17 @@ impl Repo {
         for p in &paths {
             if p.is_empty() {
                 folder = true;
-                tree_files(&repo, tree.id, "", &mut files, &mut submodules)?;
+                tree_files(self, &repo, tree.id, b"", &mut files, &mut submodules)?;
                 continue;
             }
-            let Some(entry) = tree.lookup_entry_by_path(p).map_err(gx)? else {
+            let Some(entry) = self.tree_entry(&tree, p)? else {
                 continue;
             };
             let mode = entry.mode();
             if mode.is_tree() {
                 folder = true;
-                tree_files(&repo, entry.object_id(), p, &mut files, &mut submodules)?;
+                let prefix = self.path_bytes(p)?.into_owned();
+                tree_files(self, &repo, entry.object_id(), &prefix, &mut files, &mut submodules)?;
             } else if mode.is_commit() {
                 submodules += 1;
             } else {
@@ -319,7 +319,7 @@ impl Repo {
             if e.mode == gix::index::entry::Mode::COMMIT {
                 continue;
             }
-            let path = String::from_utf8_lossy(e.path(&index)).into_owned();
+            let path = self.show_path(e.path(&index));
             if paths.iter().any(|p| under(&path, p)) {
                 tracked.insert(path);
             }
@@ -347,7 +347,7 @@ impl Repo {
         args.extend(paths.iter().map(|p| pathspec(p)));
         let out = self.git_literal().run(&args)?;
         let touched = |p: &str| in_commit.contains(p) || deleted.binary_search_by(|d| d.as_str().cmp(p)).is_ok();
-        let mut changes: Vec<LocalChange> = crate::status::parse_porcelain_v2(&out.stdout)
+        let mut changes: Vec<LocalChange> = self.parse_status(&out.stdout)
             .entries
             .into_iter()
             .filter(|e| e.submodule.is_none() && touched(&e.path))
@@ -361,7 +361,7 @@ impl Repo {
             .collect();
         for f in &written {
             if !tracked.contains(f)
-                && std::fs::symlink_metadata(crate::paths::join_repo_path(&workdir, f)).is_ok()
+                && std::fs::symlink_metadata(self.fs_path(f)).is_ok()
             {
                 changes.push(LocalChange {
                     path: f.clone(),

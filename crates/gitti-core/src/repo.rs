@@ -702,6 +702,11 @@ impl Repo {
                     .unwrap_or_default()
             })
             .collect();
+        // Names that are not UTF-8: their bytes for the pathspecs below and whatever acts
+        // on the shown files later.
+        for c in &changed {
+            self.learn_changed(c);
+        }
         let mut loaded: HashMap<ObjectId, (Vec<FileDiff>, bool)> = HashMap::new();
         let plain: Vec<ObjectId> = ids
             .iter()
@@ -733,6 +738,7 @@ impl Repo {
             .zip(&changed)
             .filter_map(|(id, c)| {
                 let (files, guarded) = loaded.remove(id)?;
+                self.learn_names(&files);
                 if !guarded {
                     return Some((*id, files));
                 }
@@ -781,11 +787,7 @@ impl Repo {
                 raw.len() < crate::commit_files::OUTPUT_CAP
             },
         )?;
-        let mut diffs = crate::commit_files::split_show(
-            &String::from_utf8_lossy(&raw),
-            complete,
-            !pathspec.is_empty(),
-        );
+        let mut diffs = crate::commit_files::split_show(&raw, complete, !pathspec.is_empty());
         for (_, (files, _)) in &mut diffs {
             crate::submodule::fill_logs(&self.workdir, files);
             self.lfs_annotate(files, opts.context_lines, false);
@@ -821,6 +823,7 @@ impl Repo {
         args.push(&name);
         let out = self.git.run(&args)?;
         let mut files = parse_unified_bytes(&out.stdout);
+        self.learn_names(&files);
         crate::submodule::fill_logs(&self.workdir, &mut files);
         self.lfs_annotate(&mut files, opts.context_lines, false);
         Ok(files)
@@ -1150,7 +1153,7 @@ impl Repo {
         self.add_conflict_placeholders(&mut state.conflicted);
         // Untracked folders with a `.git`: one stat each (only folder entries).
         state.nested_repos = crate::discard::nested_repos(
-            &self.workdir,
+            self,
             status.entries.iter().filter(|e| e.untracked && e.path.ends_with('/')),
         );
         state.nested_repos.sort();
@@ -1356,11 +1359,7 @@ impl Repo {
     /// a value): git then diffs them differently from their raw bytes. One `git
     /// check-attr`; a failure counts as "none".
     fn encoding_attributes(&self, paths: &[&str]) -> HashSet<String> {
-        let mut input = Vec::new();
-        for p in paths {
-            input.extend_from_slice(p.as_bytes());
-            input.push(0);
-        }
+        let input = self.query_list(paths);
         let args = ["check-attr", "-z", "--stdin", "working-tree-encoding", "diff"];
         let Ok(out) = self.git.run_raw(&args, Some(&input)) else {
             return HashSet::new();
@@ -1433,6 +1432,55 @@ impl Repo {
     /// it.
     pub fn path_bytes<'a>(&self, path: &'a str) -> Result<std::borrow::Cow<'a, [u8]>> {
         self.git.raw_names().bytes(path).map_err(|e| anyhow!(e))
+    }
+
+    /// `raw` — a path a tree, the index or git's output holds — as shown (U+FFFD where it
+    /// is not UTF-8), learned so that acting on it reaches git by its bytes
+    /// ([`crate::raw_names`]).
+    pub fn show_path(&self, raw: &[u8]) -> String {
+        self.git.raw_names().show(raw)
+    }
+
+    /// `git status --porcelain=v2 -z` output parsed, its names that are not UTF-8 learned
+    /// ([`crate::raw_names`]).
+    pub fn parse_status(&self, out: &[u8]) -> crate::status::Status {
+        self.git.raw_names().learn_status(out);
+        crate::status::parse_porcelain_v2(out)
+    }
+
+    /// Learns the names of `files` that don't read as themselves ([`FileDiff::raw_paths`]:
+    /// a commit's, stash's or comparison's diff), so what acts on them — restore, open a
+    /// version, the diff tool, path search — reaches git by their bytes.
+    pub fn learn_names(&self, files: &[FileDiff]) {
+        for r in files.iter().flat_map(|f| &f.raw_paths) {
+            self.git.raw_names().learn(r);
+        }
+    }
+
+    /// `<rev>:<path>` (`git cat-file`, `git show`): the path by its bytes. Refused in plain
+    /// words when more than one name shows like it.
+    pub fn rev_path(&self, rev: &str, path: &str) -> Result<Vec<u8>> {
+        Ok([rev.as_bytes(), b":", &self.path_bytes(path)?].concat())
+    }
+
+    /// The entry of `tree` at the shown path `path` (`a/b`), looked up by its bytes.
+    pub fn tree_entry<'r>(&self, tree: &gix::Tree<'r>, path: &str) -> Result<Option<gix::object::tree::Entry<'r>>> {
+        let raw = self.path_bytes(path)?;
+        let parts = raw.split(|b| *b == b'/').filter(|c| !c.is_empty());
+        tree.lookup_entry(parts).map_err(gx)
+    }
+
+    /// `paths` NUL-separated for a read-only query on stdin (`git check-attr --stdin`),
+    /// each in its bytes ([`Self::path_bytes`]) — a name more than one file shows as goes
+    /// as shown (its attributes by pattern, never a refusal of the whole query).
+    pub fn query_list<S: AsRef<str>>(&self, paths: &[S]) -> Vec<u8> {
+        let mut list = Vec::new();
+        for p in paths {
+            let p = p.as_ref();
+            list.extend_from_slice(&self.git.raw_names().bytes(p).unwrap_or(std::borrow::Cow::Borrowed(p.as_bytes())));
+            list.push(0);
+        }
+        list
     }
 
     /// `paths` NUL-separated for `--pathspec-from-file=- --pathspec-file-nul`, each in its

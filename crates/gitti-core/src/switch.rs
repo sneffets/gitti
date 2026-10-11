@@ -463,7 +463,7 @@ impl Repo {
                 o.stdout
                     .split(|b| *b == 0)
                     .filter(|p| !p.is_empty())
-                    .map(|p| String::from_utf8_lossy(p).into_owned())
+                    .map(|p| self.show_path(p))
                     .collect()
             })
             .unwrap_or_default()
@@ -483,7 +483,7 @@ impl Repo {
             };
             for file in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
                 count += 1;
-                let file = String::from_utf8_lossy(file);
+                let file = self.show_path(file);
                 if examples.len() < 3
                     && let Some(p) = chunk.iter().find(|p| file.starts_with(p.as_str()))
                     && !examples.contains(p)
@@ -540,11 +540,7 @@ impl Repo {
             if let Some(k) = kinds.get(path) {
                 return *k;
             }
-            let k = there
-                .lookup_entry_by_path(path)
-                .ok()
-                .flatten()
-                .map(|e| e.mode().is_tree());
+            let k = self.tree_entry(&there, path).ok().flatten().map(|e| e.mode().is_tree());
             kinds.insert(path.to_string(), k);
             k
         };
@@ -553,7 +549,7 @@ impl Repo {
             .run(&["ls-files", "-z", "--others", "--exclude-standard"])?;
         let (mut untracked, mut dirs) = (Vec::new(), Vec::<String>::new());
         for file in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
-            let file = String::from_utf8_lossy(file).into_owned();
+            let file = self.show_path(file);
             if kind_at(&file).is_some() {
                 untracked.push(file);
                 continue;
@@ -574,10 +570,10 @@ impl Repo {
             .git()
             .run(&["status", "--porcelain=v2", "-z", "--untracked-files=no"])?;
         let entry_of = |tree: Option<&gix::Tree<'_>>, path: &str| {
-            tree.and_then(|t| t.lookup_entry_by_path(path).ok().flatten())
+            tree.and_then(|t| self.tree_entry(t, path).ok().flatten())
                 .map(|e| (e.mode(), e.object_id()))
         };
-        let local: Vec<String> = crate::status::parse_porcelain_v2(&status.stdout)
+        let local: Vec<String> = self.parse_status(&status.stdout)
             .entries
             .into_iter()
             .filter(|e| entry_of(head.as_ref(), &e.path) != entry_of(Some(&there), &e.path))
@@ -619,11 +615,7 @@ impl Repo {
                 if !block.local.is_empty() {
                     // Back to HEAD in the index and the working tree (a file HEAD
                     // doesn't have — a staged new file — goes from both).
-                    let mut list = Vec::new();
-                    for p in &block.local {
-                        list.extend_from_slice(p.as_bytes());
-                        list.push(0);
-                    }
+                    let list = self.pathspec_list(&block.local)?;
                     let args = [
                         "restore",
                         "--source=HEAD",
@@ -683,11 +675,7 @@ impl Repo {
         let untracked_stashed = !untracked.is_empty();
         if untracked_stashed {
             let msg = format!("gitti: untracked files replaced by switching to {name}");
-            let mut list = Vec::new();
-            for p in &untracked {
-                list.extend_from_slice(p.as_bytes());
-                list.push(0);
-            }
+            let list = self.pathspec_list(&untracked)?;
             let args = [
                 "stash",
                 "push",

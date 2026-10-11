@@ -2900,11 +2900,7 @@ fn draw_diff_row(
                 // A conflicted file the diff against HEAD shows nothing of.
                 (None, Some(w)) if src == Src::Conflicted => gitti_core::conflict::no_diff_note(
                     &app.conflict_sides_or_default(),
-                    std::fs::symlink_metadata(gitti_core::paths::join_repo_path(
-                        app.repo.workdir(),
-                        w.path(),
-                    ))
-                    .is_ok(),
+                    std::fs::symlink_metadata(app.repo.fs_path(w.path())).is_ok(),
                 ),
                 _ => "No diff preview".to_string(),
             };

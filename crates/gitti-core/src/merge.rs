@@ -531,7 +531,7 @@ impl Repo {
     /// Writes the merge result to the working tree file: its exact bytes, the whole file
     /// ([`crate::merge_session::MergeSession::file_bytes`] encodes the text).
     pub fn write_worktree_file(&self, path: &str, contents: impl AsRef<[u8]>) -> Result<()> {
-        std::fs::write(crate::paths::join_repo_path(self.workdir(), path), contents)?;
+        std::fs::write(self.fs_path(path), contents)?;
         Ok(())
     }
 

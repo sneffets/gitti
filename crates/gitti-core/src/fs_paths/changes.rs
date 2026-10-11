@@ -229,6 +229,7 @@ mod tests {
             too_large: None,
             encoding: Default::default(),
             lossy_name: false,
+            raw_paths: Vec::new(),
             lfs: None,
         }
     }

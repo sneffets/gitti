@@ -246,7 +246,7 @@ impl Repo {
     /// Tracked files with uncommitted changes, staged or not (`git status`).
     fn changed_tracked_files(&self) -> Result<Vec<String>> {
         let out = self.git().run(&["status", "--porcelain=v2", "-z", "--untracked-files=no"])?;
-        Ok(crate::status::parse_porcelain_v2(&out.stdout)
+        Ok(self.parse_status(&out.stdout)
             .entries
             .into_iter()
             .map(|e| e.path)
@@ -293,7 +293,7 @@ impl Repo {
                 "--pathspec-from-file=-",
                 "--pathspec-file-nul",
             ];
-            self.git_literal().run_stdin(&args, Some(&nul_list(&block.local)))?;
+            self.git_literal().run_stdin(&args, Some(&self.pathspec_list(&block.local)?))?;
         }
         Ok(())
     }
@@ -314,7 +314,7 @@ impl Repo {
             args.push("--include-untracked");
         }
         args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
-        self.git_literal().run_stdin(&args, Some(&nul_list(&paths)))?;
+        self.git_literal().run_stdin(&args, Some(&self.pathspec_list(&paths)?))?;
         let stash = self.stash_ids()?.first().copied();
         let pop = |repo: &Repo| -> Result<String> {
             let Some(id) = stash else {
@@ -353,15 +353,6 @@ impl Repo {
             },
         }
     }
-}
-
-fn nul_list(paths: &[String]) -> Vec<u8> {
-    let mut list = Vec::new();
-    for p in paths {
-        list.extend_from_slice(p.as_bytes());
-        list.push(0);
-    }
-    list
 }
 
 #[cfg(test)]

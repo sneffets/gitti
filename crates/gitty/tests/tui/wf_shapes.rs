@@ -456,6 +456,91 @@ fn nu04_a_name_that_is_not_utf8_on_disk() {
     wf::expect_discarded(d).unwrap();
 }
 
+/// NU-06 (unix): the commit that changed `caf\xe9.txt` — a name only commits have, its
+/// bytes learned from the commit view — shown (row 2, ⏎): the file listed with U+FFFD;
+/// V on its header opens a read-only copy of that version. Then `.` ▸ Restore This
+/// Version… names it: r restores it where the disk takes the name (Linux), Esc elsewhere.
+/// Workflow: NU-06
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu06_a_commits_file_whose_name_is_not_utf8() {
+    use gitti_workflow::nu::history_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = &tmp.path().join("work");
+    let s = wf::fixture(d);
+    let versions = tmp.path().join("versions");
+    let out = gitty_env(
+        d,
+        &tmp.path().join("config"),
+        "120x40",
+        &[("VISUAL", ""), ("EDITOR", ""), ("GITTI_VERSIONS_DIR", versions.to_str().unwrap())],
+        "key:j;key:j;key:enter;dump;key:];key:V;state",
+    );
+    assert!(screens(&out)[0].contains(wf::SHOWN), "{out}");
+    let st = states(&out);
+    assert!(st[0].contains(&format!("Opened a read-only copy of {} at {}", wf::SHOWN, &s.change[..7])), "{out}");
+    let copy = versions.join("work").join(&s.change[..10]).join(wf::SHOWN);
+    assert_eq!(std::fs::read_to_string(&copy).ok().as_deref(), Some(wf::CHANGED), "{out}");
+    let holds = wf::holds(d);
+    let then = if holds { "key:r;state" } else { "key:esc;state" };
+    let out = run(d, &format!("key:j;key:j;key:enter;key:];key:.;key:enter;dump;{then}"));
+    assert!(screens(&out)[0].contains(&format!("Restore {} from {}", wf::SHOWN, &s.change[..7])), "{out}");
+    no_error(states(&out)[0], &out);
+    if holds {
+        wf::expect_restored(d).unwrap();
+    } else {
+        wf::expect_unchanged(d).unwrap();
+    }
+}
+
+/// NU-07 (where the disk takes the name: Linux): the line `three` of the edited
+/// `caf\xe9.txt` picked (n to the hunk, j ×3, space) ▸ Stash Selected Lines (palette), ⏎.
+/// Workflow: NU-07
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu07_stash_lines_of_a_name_that_is_not_utf8() {
+    use gitti_workflow::nu::stash_lines_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    if !wf::fixture(d) {
+        return; // this file system refuses such names (macOS)
+    }
+    let out = run(
+        d,
+        &format!(
+            "key:enter;{}press:n;{}press:space;state;press:ctrl-p;type:stash selected lines;press:enter;dump;key:enter;state",
+            goto("caf"),
+            times("j", 3)
+        ),
+    );
+    let st = states(&out);
+    assert_eq!(num(st[0], "sel_lines"), 1, "{out}");
+    assert!(screens(&out)[0].contains(&format!("Stash 1 Line of {}", wf::SHOWN)), "{out}");
+    no_error(st[1], &out);
+    wf::expect_stashed(d).unwrap();
+}
+
+/// NU-08 (unix): on the tracked `caf\xe9.txt` (deleted on disk) the file menu (m) ▸ Add
+/// to .gitignore… (i) ▸ "This file" (1) `/caf�.txt`, Stop tracking ticked: the pattern
+/// written in the name's bytes, the file out of the index.
+/// Workflow: NU-08
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu08_ignore_a_name_that_is_not_utf8() {
+    use gitti_workflow::nu::ignore_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    wf::fixture(d);
+    let out = run(
+        d,
+        &format!("key:enter;{}press:m;press:i;dump;press:1;press:tab;press:tab;press:space;key:enter;state", goto("caf")),
+    );
+    let screen = screens(&out)[0];
+    assert!(screen.contains("Ignore (tracked file)") && screen.contains(&wf::pattern()), "{out}");
+    no_error(states(&out)[0], &out);
+    wf::expect_ignored(d).unwrap();
+}
+
 /// FS-03 (where the disk keeps the names apart): Readme.md → README.md — a deletion and
 /// an untracked file; both marked and staged (a rename), then unstaged (U).
 /// Workflow: FS-03

@@ -11,7 +11,7 @@ use anyhow::Result;
 use gix::ObjectId;
 
 use crate::commit_cache::CommitData;
-use crate::diff::{FileDiff, parse_unified};
+use crate::diff::FileDiff;
 use crate::{CommitDetails, DiffOptions, Repo};
 
 /// One side of a comparison.
@@ -273,6 +273,7 @@ impl Repo {
                     Some(changed) => self.guarded_tree_diff(a, b, changed, opts)?,
                     None => plain.next().unwrap_or_default(),
                 };
+                self.learn_names(&files);
                 crate::submodule::fill_logs(self.workdir(), &mut files);
                 self.lfs_annotate(&mut files, opts.context_lines, false);
                 let (old, new) = pairs[*i];
@@ -322,10 +323,10 @@ impl Repo {
         let mut args = self.diff_tree_args(opts);
         args.extend(["--always", "--stdin"].map(String::from));
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        let text = self.git().run_stdin(&args, Some(input.as_bytes()))?.stdout_str();
+        let out = self.git().run_stdin(&args, Some(input.as_bytes()))?.stdout;
         // `--always` prints every pair's header: a missing one is output that ended early,
         // never a comparison without changes (that would be cached as one).
-        split_pair_output(&text, pairs.len()).ok_or_else(|| {
+        split_pair_output(&out, pairs.len()).ok_or_else(|| {
             anyhow::anyhow!("git diff-tree reported fewer comparisons than the {} asked for", pairs.len())
         })
     }
@@ -356,6 +357,7 @@ impl Repo {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = self.git().run(&args)?;
         let mut parsed = crate::diff::parse_unified_bytes(&out.stdout);
+        self.learn_names(&parsed);
         crate::submodule::fill_logs(self.workdir(), &mut parsed);
         // Nothing to show (a mode change only): the entry without its mark.
         let loaded = parsed
@@ -427,14 +429,16 @@ impl Repo {
             .stdout
             .split(|&b| b == 0)
             .filter(|p| !p.is_empty())
-            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .map(|p| self.show_path(p))
             .collect())
     }
 
     fn run_compare(&self, args: &[String]) -> Result<Vec<FileDiff>> {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = self.git().run(&args)?;
-        Ok(crate::diff::parse_unified_bytes(&out.stdout))
+        let files = crate::diff::parse_unified_bytes(&out.stdout);
+        self.learn_names(&files);
+        Ok(files)
     }
 }
 
@@ -444,30 +448,35 @@ const UNTRACKED_LIMIT: usize = 200;
 /// Splits `diff-tree --stdin` output of `n` tree pairs at their `<old> <new>` header
 /// lines (diff lines never start with a hex digit: they carry a prefix); `None` when
 /// fewer than `n` headers came.
-fn split_pair_output(text: &str, n: usize) -> Option<Vec<Vec<FileDiff>>> {
-    let is_header = |l: &str| {
+fn split_pair_output(out: &[u8], n: usize) -> Option<Vec<Vec<FileDiff>>> {
+    let is_header = |l: &[u8]| {
+        let Ok(l) = std::str::from_utf8(l) else {
+            return false;
+        };
         let mut parts = l.split(' ');
         matches!((parts.next(), parts.next(), parts.next()), (Some(a), Some(b), None)
             if [a, b].iter().all(|h| crate::object_format::is_full_hex(h)))
     };
-    let mut chunks: Vec<String> = Vec::with_capacity(n);
-    for line in text.split_inclusive('\n') {
-        if is_header(line.trim_end_matches('\n')) {
-            chunks.push(String::new());
+    let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(n);
+    for line in out.split_inclusive(|b| *b == b'\n') {
+        if is_header(line.strip_suffix(b"\n").unwrap_or(line)) {
+            chunks.push(Vec::new());
         } else if let Some(c) = chunks.last_mut() {
-            c.push_str(line);
+            c.extend_from_slice(line);
         }
     }
     if chunks.len() < n {
         return None;
     }
     chunks.truncate(n);
-    Some(chunks.iter().map(|c| parse_unified(c)).collect())
+    // Byte-exact: lines and names that are not UTF-8 keep their bytes.
+    Some(chunks.iter().map(|c| crate::diff::parse_unified_bytes(c)).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::parse_unified;
 
     fn data(lines: usize) -> Arc<CompareData> {
         let mut text = format!("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -0,0 +1,{lines} @@\n");

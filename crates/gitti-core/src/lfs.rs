@@ -392,19 +392,16 @@ fn require_git_lfs() -> Result<()> {
     }
 }
 
-/// Whether a `.gitattributes` file — the top-level one, the repo-relative `nested` ones —
-/// or `info/attributes` assigns the LFS filter: small file reads, no git.
-pub fn uses_lfs(workdir: &Path, common_dir: &Path, nested: &[String]) -> bool {
+/// Whether a `.gitattributes` file — the top-level one, the `nested` ones (where they
+/// are on disk, [`Repo::fs_path`]) — or `info/attributes` assigns the LFS filter: small
+/// file reads, no git.
+pub fn uses_lfs(workdir: &Path, common_dir: &Path, nested: &[PathBuf]) -> bool {
     [
         workdir.join(".gitattributes"),
         common_dir.join("info").join("attributes"),
     ]
-    .into_iter()
-    .chain(
-        nested
-            .iter()
-            .map(|p| crate::paths::join_repo_path(workdir, p)),
-    )
+    .iter()
+    .chain(nested)
     .any(|p| std::fs::read(p).is_ok_and(|t| mentions_lfs_filter(&t)))
 }
 
@@ -443,11 +440,12 @@ impl Repo {
     /// the tracked nested files only when they don't decide (~4 ms per 16k entries, cached
     /// while the index file is unchanged).
     fn uses_lfs_with(&self, untracked: &[String]) -> bool {
-        uses_lfs(self.workdir(), &self.common_dir(), untracked)
+        let on_disk = |paths: &[String]| paths.iter().map(|p| self.fs_path(p)).collect::<Vec<_>>();
+        uses_lfs(self.workdir(), &self.common_dir(), &on_disk(untracked))
             || uses_lfs(
                 self.workdir(),
                 &self.common_dir(),
-                &self.tracked_nested_attributes(),
+                &on_disk(&self.tracked_nested_attributes()),
             )
     }
 
@@ -466,7 +464,7 @@ impl Repo {
                     .iter()
                     .map(|e| e.path(&index))
                     .filter(|p| is_nested_attributes(p))
-                    .map(|p| String::from_utf8_lossy(p).into_owned())
+                    .map(|p| self.show_path(p))
                     .collect())
             })
             .unwrap_or_default()
@@ -494,7 +492,7 @@ impl Repo {
         let Ok(repo) = self.gix() else { return };
         let store = self.lfs_store(&repo);
         for f in files.iter_mut().filter(|f| looks_like_pointer(f)) {
-            let wt = worktree_new.then(|| crate::paths::join_repo_path(self.workdir(), f.path()));
+            let wt = worktree_new.then(|| self.fs_path(f.path()));
             annotate(&repo, &store, wt.as_deref(), f, context);
         }
     }
@@ -516,11 +514,7 @@ impl Repo {
         }
         paths.sort_unstable();
         paths.dedup();
-        let mut input = Vec::new();
-        for p in &paths {
-            input.extend_from_slice(p.as_bytes());
-            input.push(0);
-        }
+        let input = self.query_list(&paths);
         let Ok(out) = self
             .git()
             .run_stdin(&["check-attr", "-z", "--stdin", "filter"], Some(&input))

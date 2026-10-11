@@ -202,6 +202,7 @@ impl Repo {
         args.extend([hex.as_str(), "--", spec.as_str()]);
         let out = self.git().run(&args)?.stdout;
         let mut parsed = crate::diff::parse_unified_bytes(&out);
+        self.learn_names(&parsed);
         crate::submodule::fill_logs(self.workdir(), &mut parsed);
         self.lfs_annotate(&mut parsed, opts.context_lines, false);
         // Nothing to show (a mode change only): the entry without its mark.
@@ -237,7 +238,7 @@ impl Repo {
         {
             return None;
         }
-        commit.tree().ok()?.lookup_entry_by_path(path).ok()??;
+        self.tree_entry(&commit.tree().ok()?, path).ok()??;
         Some(third)
     }
 

@@ -220,8 +220,9 @@ impl Repo {
             left_out += 1;
         }
         for path in leave_out {
-            if !skip.iter().any(|p| p == path.as_bytes()) {
-                exclude(&mut specs, path.as_bytes());
+            let path = self.path_bytes(path)?;
+            if !skip.iter().any(|p| *p == *path) {
+                exclude(&mut specs, &path);
                 left_out += 1;
             }
         }
@@ -235,7 +236,7 @@ impl Repo {
         let mut staged: Vec<String> = after
             .iter()
             .filter(|(path, content)| before.get(*path) != Some(content))
-            .map(|(path, _)| String::from_utf8_lossy(path).into_owned())
+            .map(|(path, _)| self.show_path(path))
             .collect();
         staged.sort();
         Ok(Report { staged, left_out })

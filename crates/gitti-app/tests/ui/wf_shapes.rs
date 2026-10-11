@@ -28,6 +28,10 @@ macro_rules! fail {
 thread_local! {
     /// What the last fixture could make (non-UTF-8 name, case twins, NFC / NFD twins).
     static MADE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// NU-06's commit that changed the file (its id).
+    static NU06_CHANGE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// Where Open This Version writes its copies (`GITTI_VERSIONS_DIR`).
+    static VERSIONS: std::cell::RefCell<PathBuf> = const { std::cell::RefCell::new(PathBuf::new()) };
 }
 
 pub fn main() {
@@ -41,7 +45,10 @@ pub fn main() {
     unsafe {
         std::env::set_var("GIT_CONFIG_GLOBAL", &global);
         std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        // Open This Version: copies under the test dir.
+        std::env::set_var("GITTI_VERSIONS_DIR", base.join("versions"));
     }
+    VERSIONS.with(|v| *v.borrow_mut() = base.join("versions"));
     let tests: &[(&str, Scenario)] = &[
         ("rn01_stage_and_unstage_both_halves_of_a_rename", rn01_stage_and_unstage_both_halves_of_a_rename),
         ("rn02_stage_lines_of_a_renamed_file_then_its_deletion", rn02_stage_lines_of_a_renamed_file_then_its_deletion),
@@ -54,6 +61,9 @@ pub fn main() {
         ("nu04_a_name_that_is_not_utf8_in_the_index", nu04_a_name_that_is_not_utf8_in_the_index),
         ("nu04_a_name_that_is_not_utf8_on_disk", nu04_a_name_that_is_not_utf8_on_disk),
         ("nu05_odd_names", nu05_odd_names),
+        ("nu06_a_commits_file_whose_name_is_not_utf8", nu06_a_commits_file_whose_name_is_not_utf8),
+        ("nu07_stash_lines_of_a_name_that_is_not_utf8", nu07_stash_lines_of_a_name_that_is_not_utf8),
+        ("nu08_ignore_a_name_that_is_not_utf8", nu08_ignore_a_name_that_is_not_utf8),
         ("fs03_rename_only_in_case", fs03_rename_only_in_case),
         ("fs04_nfc_and_nfd_names", fs04_nfc_and_nfd_names),
         ("fs05_fs06_symlinks", fs05_fs06_symlinks),
@@ -91,6 +101,12 @@ pub fn main() {
                 shapes::odd_names::fixture(&dir);
                 true
             }
+            "nu06" => unix_fixture(&dir, |d| {
+                let s = gitti_workflow::nu::history_name::fixture(d);
+                NU06_CHANGE.with(|c| *c.borrow_mut() = s.change);
+            }),
+            "nu07" => gitti_workflow::nu::stash_lines_name::fixture(&dir),
+            "nu08" => unix_fixture(&dir, gitti_workflow::nu::ignore_name::fixture),
             "fs03" => shapes::case_and_form::fixture(&dir).0,
             "fs04" => shapes::case_and_form::fixture(&dir).1,
             "fs05" => unix_fixture(&dir, |d| {
@@ -412,6 +428,99 @@ fn nu04_a_name_that_is_not_utf8_in_the_index(ui: &mut Ui) {
     ui.step(&format!("unstagefile:{}", wf::SHOWN));
     no_error(ui, "unstaging the file");
     expect(ui, wf::expect_deletion_unstaged(&dir));
+}
+
+/// NU-06 (unix): the commit that changed `caf\xe9.txt` — a name only commits have, its
+/// bytes learned from the commit view — selected: the file listed with U+FFFD; Open This
+/// Version writes a read-only copy of that version; the file's menu ▸ Restore This
+/// Version… names it — restored where the disk takes the name (Linux), cancelled
+/// elsewhere.
+/// Workflow: NU-06
+fn nu06_a_commits_file_whose_name_is_not_utf8(ui: &mut Ui) {
+    use gitti_workflow::nu::history_name as wf;
+    if !made() {
+        return; // Windows: names reach git as UTF-8
+    }
+    let dir = ui.workdir();
+    let change = NU06_CHANGE.with(|c| c.borrow().clone());
+    ui.step(&format!("select:{change}"));
+    has_row(ui, &format!("file Commit {}", wf::SHOWN));
+    ui.quick("action:gitti::OpenThisVersion");
+    match ui.status() {
+        Some((t, false)) if t.starts_with(&format!("Opened a read-only copy of {} at {}", wf::SHOWN, &change[..7])) => {}
+        other => fail!(ui, "Open This Version: {other:?}"),
+    }
+    let name = dir.file_name().unwrap_or_default().to_owned();
+    let copy = VERSIONS.with(|v| v.borrow().join(&name).join(&change[..10]).join(wf::SHOWN));
+    if std::fs::read_to_string(&copy).ok().as_deref() != Some(wf::CHANGED) {
+        fail!(ui, "the copy {} isn't this version", copy.display());
+    }
+    let rows = ui.ui_state().rows;
+    let Some(row) = rows.iter().position(|r| *r == format!("file Commit {}", wf::SHOWN)) else {
+        return fail!(ui, "no file row: {rows:#?}");
+    };
+    let this = gitti_core::restore::THIS_LABEL;
+    testing::menu_labels();
+    ui.click_on(&format!("diff-row:{row}:file"), MouseButton::Right);
+    if !testing::menu_labels().iter().any(|l| l == this) {
+        return fail!(ui, "the file's menu lacks {this}");
+    }
+    ui.step(&format!("menu:{this}"));
+    match ui.modal() {
+        Some((t, _)) if t == format!("Restore {} from {}", wf::SHOWN, &change[..7]) => {}
+        other => return fail!(ui, "restore dialog: {other:?}, status {:?}", ui.status()),
+    }
+    if wf::holds(&dir) {
+        ui.step("modalok");
+        no_error(ui, "restoring");
+        expect(ui, wf::expect_restored(&dir));
+    } else {
+        ui.quick("key:escape");
+        expect(ui, wf::expect_unchanged(&dir));
+    }
+}
+
+/// NU-07 (where the disk takes the name: Linux): the line `three` of the edited
+/// `caf\xe9.txt` selected ▸ Stash Selected Lines.
+/// Workflow: NU-07
+fn nu07_stash_lines_of_a_name_that_is_not_utf8(ui: &mut Ui) {
+    use gitti_workflow::nu::stash_lines_name as wf;
+    if !made() {
+        return; // this file system refuses such names (macOS)
+    }
+    let dir = ui.workdir();
+    if !select(ui, "Unstaged", wf::SHOWN, wf::LINE, wf::LINE, 1) {
+        return;
+    }
+    ui.quick("action:gitti::StashSelection");
+    match ui.modal() {
+        Some((t, _)) if t == format!("Stash 1 Line of {}", wf::SHOWN) => {}
+        other => return fail!(ui, "Stash Selected Lines: {other:?}"),
+    }
+    ui.step("modalok");
+    no_error(ui, "stashing the line");
+    expect(ui, wf::expect_stashed(&dir));
+}
+
+/// NU-08 (unix): Add to .gitignore on the tracked `caf\xe9.txt` (deleted on disk): "This
+/// file" offered as `/caf�.txt`; with Stop tracking ticked the pattern is written in the
+/// name's bytes and the file leaves the index.
+/// Workflow: NU-08
+fn nu08_ignore_a_name_that_is_not_utf8(ui: &mut Ui) {
+    use gitti_workflow::nu::ignore_name as wf;
+    if !made() {
+        return; // Windows: names reach git as UTF-8
+    }
+    let dir = ui.workdir();
+    ui.quick(&format!("ignore:{}", wf::SHOWN));
+    match ui.modal() {
+        Some((t, f)) if t == "Add to .gitignore" && f.first() == Some(&wf::pattern()) => {}
+        other => return fail!(ui, "ignore dialog: {other:?}"),
+    }
+    ui.quick("checkbox:0");
+    ui.step("modalok");
+    no_error(ui, "ignoring");
+    expect(ui, wf::expect_ignored(&dir));
 }
 
 /// NU-04 on disk (where the file system takes such a name: Linux): the untracked

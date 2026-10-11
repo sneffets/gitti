@@ -107,14 +107,37 @@ fn short_list(items: &[String], max: usize) -> String {
     s
 }
 
+/// Where a repository path is on disk: a work tree folder ([`crate::paths::join_repo_path`]),
+/// or a [`Repo`] — a name that is not UTF-8 by its bytes ([`Repo::fs_path`]).
+pub trait OnDisk {
+    fn on_disk(&self, path: &str) -> std::path::PathBuf;
+}
+
+impl OnDisk for Path {
+    fn on_disk(&self, path: &str) -> std::path::PathBuf {
+        crate::paths::join_repo_path(self, path)
+    }
+}
+
+impl OnDisk for std::path::PathBuf {
+    fn on_disk(&self, path: &str) -> std::path::PathBuf {
+        crate::paths::join_repo_path(self, path)
+    }
+}
+
+impl OnDisk for Repo {
+    fn on_disk(&self, path: &str) -> std::path::PathBuf {
+        self.fs_path(path)
+    }
+}
+
 /// Whether `entry` is an untracked folder that is a git repository of its own (a `.git`
 /// folder or file in it). `git status` lists such a folder as one entry (`x/`) even with
 /// `--untracked-files=all`.
-pub fn is_nested_repo(workdir: &Path, entry: &StatusEntry) -> bool {
+pub fn is_nested_repo(workdir: &(impl OnDisk + ?Sized), entry: &StatusEntry) -> bool {
     entry.untracked
         && entry.path.ends_with('/')
-        && std::fs::symlink_metadata(crate::paths::join_repo_path(workdir, &entry.path).join(".git"))
-            .is_ok()
+        && std::fs::symlink_metadata(workdir.on_disk(&entry.path).join(".git")).is_ok()
 }
 
 /// What a nested repository's entry shows instead of a diff, in a few words (one row,
@@ -146,7 +169,7 @@ pub fn no_preview_note(ws: &crate::WorkingState, wf: &crate::WorkFile) -> Option
 
 /// The entries of `entries` that [`is_nested_repo`].
 pub fn nested_repos<'a>(
-    workdir: &Path,
+    workdir: &(impl OnDisk + ?Sized),
     entries: impl IntoIterator<Item = &'a StatusEntry>,
 ) -> Vec<String> {
     entries
@@ -169,7 +192,7 @@ pub struct DiscardPlan {
 }
 
 impl DiscardPlan {
-    pub fn of<'a>(workdir: &Path, entries: impl IntoIterator<Item = &'a StatusEntry>) -> Self {
+    pub fn of<'a>(workdir: &(impl OnDisk + ?Sized), entries: impl IntoIterator<Item = &'a StatusEntry>) -> Self {
         let mut plan = Self::default();
         for e in entries {
             if is_nested_repo(workdir, e) {
@@ -298,7 +321,7 @@ impl Repo {
         // `status.showUntrackedFiles=normal` whole new folders (`dir/`).
         let (mut nested, mut folders) = (Vec::new(), Vec::new());
         for e in entries.iter().filter(|e| e.untracked && e.path.ends_with('/')) {
-            if is_nested_repo(self.workdir(), e) {
+            if is_nested_repo(self, e) {
                 nested.push(e.path.as_str());
             } else {
                 folders.push(e.path.as_str());
@@ -398,8 +421,8 @@ impl Repo {
         let Ok(out) = self.git().run(&args) else {
             return;
         };
-        let status = crate::status::parse_porcelain_v2(&out.stdout);
-        let nested = nested_repos(self.workdir(), &status.entries);
+        let status = self.parse_status(&out.stdout);
+        let nested = nested_repos(self, &status.entries);
         if opts.delete_nested_repos {
             let paths: Vec<&str> = nested.iter().map(String::as_str).collect();
             self.clean(&paths, true, report);

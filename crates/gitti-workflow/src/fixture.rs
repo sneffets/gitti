@@ -129,6 +129,8 @@ pub enum Change {
     /// of it fails where the file system refuses such names (macOS).
     PutRawName { path: Vec<u8>, data: Vec<u8> },
     Del(String),
+    /// The file named by these bytes deleted.
+    DelRawName(Vec<u8>),
 }
 
 /// `path` with `text`.
@@ -165,6 +167,11 @@ pub fn gitlink(path: &str, id: &str) -> Change {
 /// `path` deleted.
 pub fn del(path: &str) -> Change {
     Change::Del(path.into())
+}
+
+/// The file named by the bytes `path` (not UTF-8) deleted.
+pub fn del_raw_name(path: &[u8]) -> Change {
+    Change::DelRawName(path.to_vec())
 }
 
 /// Where HEAD points once the fixture is built.
@@ -660,6 +667,7 @@ fn write_changes(stream: &mut Vec<u8>, changes: &[Change]) {
                 stream.push(b'\n');
             }
             Change::Del(path) => stream.extend_from_slice(format!("D {}\n", quote(path)).as_bytes()),
+            Change::DelRawName(path) => stream.extend_from_slice(format!("D {}\n", quote_bytes(path)).as_bytes()),
         }
     }
 }
