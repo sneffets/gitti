@@ -341,11 +341,8 @@ impl Repo {
             }
             // One git for any number of paths: they come on stdin (a command line is
             // limited — Windows: 32k characters).
-            let mut list = Vec::new();
-            for p in &tracked {
-                list.extend_from_slice(p.as_bytes());
-                list.push(0);
-            }
+            // A name that is not UTF-8 by its bytes (`crate::raw_names`).
+            let list = self.pathspec_list(&tracked)?;
             let args = [
                 "restore",
                 "--worktree",
@@ -388,7 +385,7 @@ impl Repo {
     fn nested_left_in(&self, folders: &[&str], opts: DiscardOptions, report: &mut DiscardReport) {
         let left: Vec<String> = folders
             .iter()
-            .filter(|f| crate::paths::join_repo_path(self.workdir(), f).exists())
+            .filter(|f| self.fs_path(f).exists())
             .map(|f| format!(":(literal){f}"))
             .collect();
         if left.is_empty() {
@@ -437,7 +434,8 @@ impl Repo {
                 break;
             }
             meter.at(i);
-            let full = crate::paths::join_repo_path(self.workdir(), path);
+            // A name that is not UTF-8 by its bytes.
+            let full = self.fs_path(path);
             match remove_file(&full) {
                 Ok(()) => deleted.push(*path),
                 Err(err) => {

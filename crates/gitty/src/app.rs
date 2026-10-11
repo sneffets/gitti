@@ -3072,8 +3072,9 @@ impl App {
         let Some(shown) = self.file_diff(src, file) else {
             return;
         };
-        // A file name that is not UTF-8: the patch would name another file.
-        if let Err(e) = gitti_core::patch::check_utf8(shown, mode) {
+        // A file name that is not UTF-8 whose bytes aren't known for sure: the patch could
+        // name another file.
+        if let Err(e) = self.repo.check_names(shown, mode) {
             self.set_error(e.to_string());
             return;
         }

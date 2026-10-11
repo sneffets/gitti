@@ -1025,12 +1025,11 @@ fn non_utf8_name_is_listed() {
     fx.repo.snapshot(&DiffOptions::default()).unwrap();
 }
 
-/// A non-UTF-8 file name: stage, unstage, discard (git gets the name back as bytes).
+/// A non-UTF-8 file name: stage, unstage, discard (git gets the name back as bytes,
+/// `gitti_core::raw_names`).
+/// Workflow: NU-04
 #[cfg(target_os = "linux")]
 #[gitti_test::test]
-#[ignore = "paths are Strings (lossy UTF-8): a non-UTF-8 name becomes U+FFFD and \
-            git does not find it"]
-/// Workflow: NU-04
 fn non_utf8_name_stages() {
     use std::os::unix::ffi::OsStrExt;
     let fx = fixture(&[("keep.txt", "k\n")]);

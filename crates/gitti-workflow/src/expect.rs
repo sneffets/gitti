@@ -313,8 +313,18 @@ impl Expect {
     /// `:path` (the index, stage 0), `:2:path` (ours of a conflict), `HEAD:path`,
     /// `main~1:path`, an id. `None` = no such object (a conflicted path has no stage 0).
     pub fn blobs(&self, specs: &[&str]) -> Vec<Option<Vec<u8>>> {
-        let input: String = specs.iter().map(|s| format!("{s}\n")).collect();
-        let out = git::run(&self.dir, &["cat-file", "--batch"], Some(input.as_bytes()));
+        let specs: Vec<&[u8]> = specs.iter().map(|s| s.as_bytes()).collect();
+        self.blobs_bytes(&specs)
+    }
+
+    /// [`Self::blobs`] of object names in any bytes (a path that isn't UTF-8).
+    pub fn blobs_bytes(&self, specs: &[&[u8]]) -> Vec<Option<Vec<u8>>> {
+        let mut input = Vec::new();
+        for s in specs {
+            input.extend_from_slice(s);
+            input.push(b'\n');
+        }
+        let out = git::run(&self.dir, &["cat-file", "--batch"], Some(&input));
         assert!(
             out.status.success(),
             "cat-file --batch: {}",
@@ -345,6 +355,11 @@ impl Expect {
     /// [`Self::blobs`]).
     pub fn index(&self, path: &str) -> Option<Vec<u8>> {
         self.blobs(&[&format!(":{path}")]).pop().flatten()
+    }
+
+    /// [`Self::index`] of a path in any bytes (a name that isn't UTF-8).
+    pub fn index_bytes(&self, path: &[u8]) -> Option<Vec<u8>> {
+        self.blobs_bytes(&[&[b":", path].concat()]).pop().flatten()
     }
 
     /// `git status --porcelain=v1 -z --untracked-files=all` (one process): every path

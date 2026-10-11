@@ -2526,8 +2526,9 @@ impl GittiApp {
         });
     }
 
-    /// A file whose name is not UTF-8 has no hunk / line operations (the patch would name
-    /// another file): says so and returns true, before anything runs.
+    /// A file whose name is not UTF-8 and whose bytes aren't known for sure (two names
+    /// that show alike) has no hunk / line operations (the patch would name another
+    /// file): says so and returns true, before anything runs.
     fn refuse_not_utf8(
         &mut self,
         src: Src,
@@ -2535,10 +2536,10 @@ impl GittiApp {
         mode: PatchMode,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(diff) = self.file_diff(src, file) else {
+        let (Some(diff), Some(repo)) = (self.file_diff(src, file), self.repo.as_ref()) else {
             return false;
         };
-        match gitti_core::patch::check_utf8(diff, mode) {
+        match repo.check_names(diff, mode) {
             Ok(()) => false,
             Err(e) => {
                 self.set_error(e.to_string());

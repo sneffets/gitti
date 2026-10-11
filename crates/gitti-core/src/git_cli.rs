@@ -349,6 +349,9 @@ pub struct Git {
     workdir: PathBuf,
     env: Vec<(String, String)>,
     log: Option<CommandLog>,
+    /// File names that are not UTF-8, shared by every runner derived from this one
+    /// ([`crate::raw_names`]): arguments naming them get their bytes back.
+    raw_names: Arc<crate::raw_names::RawNames>,
 }
 
 impl Git {
@@ -357,7 +360,13 @@ impl Git {
             workdir: workdir.into(),
             env: Vec::new(),
             log: None,
+            raw_names: Arc::default(),
         }
+    }
+
+    /// The repository's names that are not UTF-8 ([`crate::raw_names`]).
+    pub fn raw_names(&self) -> &crate::raw_names::RawNames {
+        &self.raw_names
     }
 
     pub fn set_log(&mut self, log: CommandLog) {
@@ -395,6 +404,8 @@ impl Git {
     pub fn with_workdir(&self, dir: impl Into<PathBuf>) -> Git {
         let mut git = self.clone();
         git.workdir = dir.into();
+        // Another repository's names are its own.
+        git.raw_names = Arc::default();
         git
     }
 
@@ -418,7 +429,14 @@ impl Git {
             }
         }
         let with_flag = progress.then(|| progress_args(args)).flatten();
-        cmd.args(with_flag.as_deref().unwrap_or(args))
+        for a in with_flag.as_deref().unwrap_or(args) {
+            // A shown name that is not UTF-8: git gets its bytes.
+            match self.raw_names.arg(a) {
+                Some(raw) => cmd.arg(crate::raw_names::os_arg(raw)),
+                None => cmd.arg(a),
+            };
+        }
+        cmd
             .env("GIT_TERMINAL_PROMPT", "0")
             // Reads must not rewrite the index (would retrigger the fs watcher).
             .env("GIT_OPTIONAL_LOCKS", "0")
@@ -481,6 +499,14 @@ impl Git {
         user: bool,
         locale: &str,
     ) -> Result<GitOutput, GitError> {
+        // A shown name more than one file has: refused before git runs.
+        if let Some(path) = self.raw_names.ambiguous_arg(args) {
+            return Err(GitError::Failed {
+                args: args.join(" "),
+                code: 128,
+                stderr: crate::raw_names::ambiguous_text(path),
+            });
+        }
         self.retry_on_lock(args, || {
             let start = Instant::now();
             let mut log_stderr = None;

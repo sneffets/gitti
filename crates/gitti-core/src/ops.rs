@@ -791,7 +791,7 @@ impl Repo {
     /// Whether the worktree file still contains conflict markers (`<<<<<<<` / `>>>>>>>`
     /// lines of its `conflict-marker-size`).
     pub fn has_conflict_markers(&self, path: &str) -> bool {
-        let Ok(text) = std::fs::read(crate::paths::join_repo_path(self.workdir(), path)) else {
+        let Ok(text) = std::fs::read(self.fs_path(path)) else {
             return false;
         };
         let size = self.conflict_marker_size(path);

@@ -50,4 +50,4 @@ pub mod tg;
 pub mod wt;
 
 pub use expect::{Checks, Expect, OpState};
-pub use fixture::{Fixture, Ids, Mark, del, exec, gitlink, link, put, put_bytes};
+pub use fixture::{Fixture, Ids, Mark, del, exec, gitlink, link, put, put_bytes, put_raw_name};

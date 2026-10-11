@@ -152,7 +152,7 @@ impl Repo {
             return Ok(());
         }
         // The working-tree side of the unstaged diff.
-        let disk = crate::paths::join_repo_path(self.workdir(), &path);
+        let disk = self.fs_path(&path);
         let content = match std::fs::symlink_metadata(&disk) {
             Ok(m) if m.file_type().is_symlink() => std::fs::read_link(&disk)
                 .ok()
@@ -201,7 +201,7 @@ impl Repo {
         let repo = self.gix()?;
         let index = repo.index_or_empty().map_err(gx)?;
         Ok(index
-            .entry_by_path_and_stage(path.as_bytes().as_bstr(), gix::index::entry::Stage::Unconflicted)
+            .entry_by_path_and_stage(self.path_bytes(path)?.as_bstr(), gix::index::entry::Stage::Unconflicted)
             .map(|e| e.id.to_hex().to_string()))
     }
 }

@@ -216,8 +216,9 @@ fn ignore_whitespace_maps_lines_that_are_not_utf8() {
     assert_eq!(index_bytes(&p, "l.txt"), b"a\n\xe9 x\n\xe4\nz\n");
 }
 
-/// A file *name* that is not UTF-8 is still refused, before any git runs: the patch's
-/// header would name another file (paths are strings).
+/// A file *name* that is not UTF-8 whose bytes gitti doesn't know (no `git status` listed
+/// it, `gitti_core::raw_names`) is refused, before any git runs: the patch's header would
+/// name another file. Known ones go back to their bytes (`wf_shapes::nu04_*`).
 /// Workflow: NU-04
 #[gitti_test::test]
 fn names_that_are_not_utf8_are_refused() {
