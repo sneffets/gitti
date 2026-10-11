@@ -25,6 +25,7 @@ mod sha256;
 mod signing_keys;
 mod speed;
 mod staging;
+mod stash;
 mod submodules;
 mod subtrees;
 mod unicode;

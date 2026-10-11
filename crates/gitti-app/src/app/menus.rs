@@ -451,6 +451,7 @@ pub(super) fn diff_menu(
             .item(command_item("Stash…", "StashChanges", app, |this, w, cx| {
                 this.stash_dialog(w, cx)
             }));
+        menu = super::stash_ui::diff_menu_items(menu, app, cx);
     }
     menu
 }
@@ -1055,6 +1056,9 @@ pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, index: usize) -> Popu
     .item(item("Create Branch from Stash…", app, move |this, w, cx| {
         this.stash_branch_dialog(index, w, cx)
     }))
+    .item(item("Rename…", app, move |this, w, cx| {
+        this.rename_stash_dialog(index, w, cx)
+    }))
     .item(item("Copy Message", app, move |this, _, cx| {
         if let Some(s) = this.stashes.iter().find(|s| s.index == index) {
             cx.write_to_clipboard(ClipboardItem::new_string(s.message.clone()));
@@ -1386,29 +1390,9 @@ impl GittiApp {
         });
     }
 
+    /// "Stash Changes…": all changes ([`Self::stash_paths_dialog`]).
     pub(super) fn stash_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = ModalSpec::new("Stash")
-            .field("Message (optional)", "")
-            .spell(0)
-            .check(
-                "--include-untracked — include untracked files in the stash",
-                false,
-            )
-            .check(
-                "--keep-index — leave staged changes in the working directory",
-                false,
-            )
-            .check("--staged — stash staged changes only", false)
-            .ok("Stash");
-        self.open_modal(spec, window, cx, |this, res, w, cx| {
-            let msg = res.values[0].clone();
-            let flags = gitti_core::ops::StashFlags {
-                include_untracked: res.checks[0],
-                keep_index: res.checks[1],
-                staged_only: res.checks[2],
-            };
-            this.git_op("Stash", w, cx, move |r| r.stash_save_with(&msg, flags))
-        });
+        self.stash_paths_dialog(Vec::new(), window, cx);
     }
 
     /// "Create Branch from Stash…": `git stash branch` — a new branch at the commit the

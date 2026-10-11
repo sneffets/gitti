@@ -32,6 +32,7 @@ mod sha256;
 mod sidebar_ops;
 mod signature_keys;
 mod staging;
+mod stash;
 mod submodules;
 mod subtrees;
 mod switching;

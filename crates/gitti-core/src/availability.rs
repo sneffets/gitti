@@ -237,10 +237,10 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             check(!f.github_remote, NO_GITHUB_REMOTE).or(check(!f.signing_keys, NO_KEY_MISSING))
         }
         // Stash.
-        "StashChanges" | "StashIncludingUntracked" => {
+        "StashChanges" | "StashIncludingUntracked" | "StashSelection" => {
             check(f.unborn, UNBORN).or(check(changes == 0, NO_CHANGES))
         }
-        "ApplyStash" | "PopStash" | "DropLatestStash" | "DropStash" => {
+        "ApplyStash" | "PopStash" | "DropLatestStash" | "DropStash" | "RenameStash" => {
             check(f.stashes == 0, NO_STASHES)
         }
         // Remote.

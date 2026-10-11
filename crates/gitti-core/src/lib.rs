@@ -70,6 +70,7 @@ pub mod signing_keys;
 pub mod spell;
 mod stamp_cache;
 pub mod startup;
+pub mod stash;
 pub mod status;
 pub mod store;
 pub mod submodule;

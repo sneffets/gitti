@@ -602,6 +602,7 @@ pub(super) fn stash_items(n: usize) -> Vec<MenuItem> {
         })
         .key('p'),
         MenuItem::new("Create Branch from Stash…", move |app| app.stash_branch_dialog(n)).key('b'),
+        MenuItem::new("Rename…", move |app| app.rename_stash_dialog(n)).key('r'),
         MenuItem::new("Copy Message", move |app| {
             match app.stashes.iter().find(|s| s.index == n).map(|s| s.message.clone()) {
                 Some(m) => app.copy(m),

@@ -176,10 +176,12 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // Stash
     both("StashChanges", "Stash…"),
     both("StashIncludingUntracked", "Stash Including Untracked"),
+    both("StashSelection", crate::stash::SELECTION_LABEL),
     both("ApplyStash", "Apply Latest Stash"),
     both("PopStash", "Pop Latest Stash"),
     gitti("DropLatestStash", "gitty gap: the stash's menu (m) has it"),
     gitti("DropStash", "gitty gap: the stash's menu (m) has it"),
+    both("RenameStash", "Rename Stash…"),
     // Remote
     both("Fetch", "Fetch"),
     both("FetchFrom", "Fetch from…"),

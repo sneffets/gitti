@@ -58,6 +58,7 @@ pub fn main() {
         ("go_to_commit", go_to_commit),
         ("search_in_changes", search_in_changes),
         ("branch_commit_stash_menus", branch_commit_stash_menus),
+        ("stash_dialogs", stash_dialogs),
         ("open_recent", open_recent),
         ("open_this_version", open_this_version),
         ("restore_and_containing", restore_and_containing),
@@ -253,8 +254,9 @@ fn worktree_tab_menu(ui: &mut Ui) {
         return;
     };
     ui.click_on(&format!("file-tab:{ix}"), MouseButton::Right);
-    // Show Only, Open in Editor, Stage File, Discard Changes…, Add to .gitignore…
-    for _ in 0..5 {
+    // Show Only, Open in Editor, Stage File, Discard Changes…, Stash File…, Add to
+    // .gitignore…
+    for _ in 0..6 {
         ui.step("key:down");
     }
     ui.step("key:enter");
@@ -1228,6 +1230,76 @@ fn branch_commit_stash_menus(ui: &mut Ui) {
     ui.quick("action:gitti::ToggleSidebar");
     if find(&ui.frame(), "sidebar").is_none() {
         ui.fail("sidebar not back after the second Toggle Sidebar".into());
+    }
+}
+
+/// The stash dialogs: Stash Changes… says what it does and refuses `--staged` with `-u`;
+/// "Stash Selected Lines or File…" stashes two selected lines of big.txt (the rest of the
+/// file stays), then the file at the cursor; "Rename Stash…" renames the first one.
+fn stash_dialogs(ui: &mut Ui) {
+    let dir = base().join("stash_dialogs");
+    let ws = ui.ws.clone();
+    let live = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_live(&ws, cx)).unwrap_or_default();
+    ui.step("select:0");
+    ui.quick("action:gitti::StashChanges");
+    match live(ui) {
+        (text, Some(ok), None, _) if ok == "Stash" && text.contains("1 untracked file stays") => {}
+        other => fail!(ui, "Stash Changes… says: {other:?}"),
+    }
+    // -u with --staged: OK is off, with the reason.
+    ui.quick("check:0");
+    ui.quick("check:3");
+    match live(ui) {
+        (_, _, Some(why), _) if why.contains("--staged") => {}
+        other => fail!(ui, "--staged with -u: {other:?}"),
+    }
+    ui.quick("cancel");
+    let s = ui.ui_state();
+    let Some(line) = s.rows.iter().position(|r| r == "line Unstaged big.txt Removed") else {
+        fail!(ui, "no removed line in big.txt: {:?}", s.rows);
+        return;
+    };
+    ui.quick(&format!("lines:{line}-{}", line + 1));
+    ui.quick("action:gitti::StashSelection");
+    match modal(ui) {
+        Some((t, _)) if t == "Stash 2 Lines of big.txt" => {}
+        other => fail!(ui, "Stash Selected Lines: {other:?}"),
+    }
+    ui.quick("field:0=two lines");
+    ui.step("modalok");
+    let big = std::fs::read_to_string(dir.join("big.txt")).unwrap_or_default();
+    if big.contains("line 3 changed") || !big.contains("line 28 changed") {
+        fail!(ui, "big.txt after stashing its first change: {:?}, status {:?}", &big[..80.min(big.len())], status(ui));
+    }
+    if git_out(&dir, &["stash", "list", "--format=%gs"]) != "On main: two lines" {
+        fail!(ui, "stash list: {}", git_out(&dir, &["stash", "list"]));
+    }
+    // No lines selected: the file at the diff cursor.
+    ui.quick("action:gitti::StashSelection");
+    match modal(ui) {
+        Some((t, _)) if t.starts_with("Stash ") && !t.contains("Lines") => {}
+        other => fail!(ui, "Stash File: {other:?}"),
+    }
+    ui.step("modalok");
+    if state(ui).stashes != 2 {
+        fail!(ui, "second stash: {:?}", status(ui));
+    }
+    ui.quick("action:gitti::RenameStash");
+    match picker_labels(ui) {
+        Some(l) if l.len() == 2 => {}
+        other => fail!(ui, "Rename Stash picker: {other:?}"),
+    }
+    ui.step("pick:two lines");
+    ui.step("pickok");
+    match modal(ui) {
+        Some((t, f)) if t == "Rename stash@{1}" && f == ["two lines"] => {}
+        other => fail!(ui, "Rename dialog: {other:?}"),
+    }
+    ui.quick("field:0=renamed");
+    ui.step("modalok");
+    let list = git_out(&dir, &["stash", "list", "--format=%gs"]);
+    if list.lines().nth(1) != Some("On main: renamed") {
+        fail!(ui, "after the rename: {list}");
     }
 }
 
