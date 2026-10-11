@@ -1428,7 +1428,7 @@ impl GittiApp {
                         Some(_) if self.settings.ignore_whitespace => {
                             "Only whitespace changes (hidden: ignore whitespace is on)"
                         }
-                        Some(_) => "No content changes (mode change or empty file)",
+                        Some(d) => d.no_lines_note(),
                     }
                     .to_string(),
                 };
@@ -1720,12 +1720,7 @@ impl GittiApp {
             Src::Commit => {
                 let f = self.file_diff(src, file).expect("commit file");
                 let letter = f.change.letter();
-                let path = match (&f.old_path, &f.new_path, f.change) {
-                    (Some(o), Some(n), FileChange::Renamed | FileChange::Copied) => {
-                        format!("{o} → {n}")
-                    }
-                    _ => f.path().to_string(),
-                };
+                let path = commit_file_label(f);
                 // A placeholder (not loaded) has no lines counted: its size instead.
                 let counted = f.submodule.is_none() && f.too_large.is_none();
                 (path, letter, false, counted.then(|| f.added_removed()))
@@ -2544,5 +2539,14 @@ fn row_key(working: &WorkingState, row: &DiffRow) -> Option<RowKey> {
             Some((src, f.path().to_string(), Some((l.kind, l.text.clone()))))
         }
         _ => None,
+    }
+}
+
+/// How a commit's file is named in its header: `old → new` for a rename or copy, else its
+/// path.
+pub(crate) fn commit_file_label(f: &gitti_core::diff::FileDiff) -> String {
+    match (&f.old_path, &f.new_path, f.change) {
+        (Some(o), Some(n), FileChange::Renamed | FileChange::Copied) => format!("{o} → {n}"),
+        _ => f.path().to_string(),
     }
 }

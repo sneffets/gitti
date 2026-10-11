@@ -3360,6 +3360,12 @@ impl GittiApp {
         out
     }
 
+    /// The summary of the commit list's row `row` (as the list shows it, decoded).
+    pub fn script_commit_summary(&self, row: usize) -> Option<String> {
+        (row < self.history.commits.len() && !self.history.is_worktree_row(row))
+            .then(|| self.history.meta(row).summary.clone())
+    }
+
     /// Rows of the shown history and how it came about (`HistoryLoad`).
     pub fn script_history(&self) -> (usize, String) {
         (self.history.commits.len(), format!("{:?}", self.history.load))

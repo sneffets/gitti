@@ -503,8 +503,33 @@ fn core_filemode_false_ignores_the_exec_bit() {
 
 // ------------------------------------------------------------------------- symlinks
 
-/// A new symlink is an untracked entry (no preview: it is not a regular file); staging,
-/// unstaging and discarding it act on the link, never on its target.
+/// A new symlink is an untracked entry, previewed as what `git add` records: the link
+/// (mode 120000) with its target as its one line — also a dangling one or one to a
+/// folder. Staging its hunk puts the link into the index; staging, unstaging and
+/// discarding by path act on the link, never on its target.
+/// Workflow: FS-05
+#[cfg(unix)]
+#[gitti_test::test]
+fn untracked_symlink_preview_is_the_link() {
+    let fx = fixture(&[("a.txt", "target\n"), ("dir/x", "x\n")]);
+    symlink("a.txt", &fx.path("link"));
+    symlink("nowhere", &fx.path("dangling"));
+    symlink("dir", &fx.path("to_dir"));
+    for (name, target) in [("link", "a.txt"), ("dangling", "nowhere"), ("to_dir", "dir")] {
+        let d = fx.unstaged(name);
+        assert!(has_header(&d, "new file mode 120000"), "{name}: {d:#?}");
+        let added: Vec<&str> = d.hunks[0].lines.iter().filter(|l| l.is_change()).map(|l| l.text.as_str()).collect();
+        assert_eq!(added, [target], "{name}");
+    }
+    let d = fx.unstaged("link");
+    fx.apply(&d, &Selection::whole_hunk(0), PatchMode::Stage);
+    assert_eq!(fx.index_mode("link").as_deref(), Some("120000"));
+    assert_eq!(fx.index("link"), "a.txt");
+    assert_eq!(fx.read("a.txt"), "target\n");
+}
+
+/// A new symlink is an untracked entry; staging, unstaging and discarding it act on the
+/// link, never on its target.
 /// Workflow: FS-05
 #[cfg(unix)]
 #[gitti_test::test]

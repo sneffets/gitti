@@ -43,6 +43,7 @@ pub mod rm;
 pub mod rs;
 pub mod rv;
 pub mod sh;
+pub mod shapes;
 pub mod sm;
 pub mod st;
 pub mod tg;
