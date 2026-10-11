@@ -18,6 +18,8 @@ pub enum SideItem {
         name: String,
         current: bool,
         tracking: Option<Tracking>,
+        /// Pinned to the top of the list (`app/branch_cmds.rs`).
+        pinned: bool,
     },
     Remote {
         name: String,
@@ -27,6 +29,7 @@ pub enum SideItem {
         full: String,
         /// `main`
         short: String,
+        pinned: bool,
     },
     Tag {
         name: String,
@@ -105,16 +108,18 @@ pub fn build(app: &App) -> Vec<SideItem> {
         !collapsed(key)
     };
 
+    // In the chosen order, pinned ones first (`app/branch_cmds.rs`).
     let locals: Vec<_> = app
-        .refs
-        .iter()
-        .filter(|r| r.kind == RefKind::LocalBranch)
+        .ordered_branches(RefKind::LocalBranch)
+        .into_iter()
+        .map(|i| &app.refs[i])
         .collect();
     if section(&mut out, "branches", "BRANCHES", locals.len()) {
         for r in locals {
             out.push(SideItem::Branch {
                 current: app.current_branch() == Some(r.short_name.as_str()),
                 tracking: app.tracking_of(&r.short_name).cloned(),
+                pinned: app.is_pinned(&r.full_name),
                 name: r.short_name.clone(),
             });
         }
@@ -133,6 +138,7 @@ pub fn build(app: &App) -> Vec<SideItem> {
     }
 
     if section(&mut out, "remotes", "REMOTES", app.remotes.len()) {
+        let remote_branches = app.ordered_branches(RefKind::RemoteBranch);
         for remote in &app.remotes {
             out.push(SideItem::Remote {
                 name: remote.name.clone(),
@@ -141,14 +147,13 @@ pub fn build(app: &App) -> Vec<SideItem> {
                 continue;
             }
             let prefix = format!("{}/", remote.name);
-            for r in app.refs.iter().filter(|r| {
-                r.kind == RefKind::RemoteBranch
-                    && r.short_name.starts_with(&prefix)
-                    && !r.short_name.ends_with("/HEAD")
+            for r in remote_branches.iter().map(|&i| &app.refs[i]).filter(|r| {
+                r.short_name.starts_with(&prefix) && !r.short_name.ends_with("/HEAD")
             }) {
                 out.push(SideItem::RemoteBranch {
                     full: r.short_name.clone(),
                     short: r.short_name[prefix.len()..].to_string(),
+                    pinned: app.is_pinned(&r.full_name),
                 });
             }
         }

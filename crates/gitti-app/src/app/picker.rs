@@ -699,6 +699,7 @@ impl GittiApp {
         items.extend(self.prepared_palette_items(cx));
         items.extend(self.commit_box_palette_items());
         items.extend(self.list_layout_palette_items());
+        items.extend(self.branch_palette_items());
         items.extend(self.worktree_palette_items());
         items.extend(self.submodule_palette_items());
         items.extend(self.subtree_palette_items());

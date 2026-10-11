@@ -4,6 +4,7 @@
 //! `askpass_env` stays its own binary (own `main`, environment set before any thread).
 
 mod allowed_signers;
+mod branches;
 mod change_search;
 mod commit_box;
 mod config_safety;

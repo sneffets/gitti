@@ -1360,6 +1360,21 @@ actions!(gitti, [StashSelection, RenameStash]);
 // View ▸ Auto / One-Line / Two-Line Commit List; handlers in `app/commit_list.rs`.
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
+// View ▸ Sort (Remote) Branches by …, Branch ▸ Delete Branches… / Clean Up Merged
+// Branches…; handlers in `app/branch_list.rs`.
+actions!(
+    gitti,
+    [
+        SortBranchesByName,
+        SortBranchesByDate,
+        SortBranchesByRecent,
+        SortRemoteBranchesByName,
+        SortRemoteBranchesByDate,
+        DeleteBranches,
+        CleanUpMergedBranches,
+    ]
+);
+
 // Repository ▸ Run Custom Command… / Custom Commands…; handlers in `app/custom_commands.rs`.
 actions!(gitti, [RunCustomCommand, CustomCommands]);
 
@@ -1510,6 +1525,7 @@ fn menu(name: &str, items: Vec<MenuItem>) -> Menu {
 /// The menus after the app menu (macOS) — File … Help. On Windows /
 /// Linux `set_menus` adds Settings and Exit to File.
 fn menu_bar() -> Vec<Menu> {
+    use gitti_core::branch_order::BranchSort;
     use gitti_core::list_layout::CommitListLayout;
     let file_manager = gitti_core::desktop::file_manager_name();
     vec![
@@ -1558,6 +1574,13 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action(CommitListLayout::Auto.label(), CommitListAuto),
                 MenuItem::action(CommitListLayout::OneLine.label(), CommitListOneLine),
                 MenuItem::action(CommitListLayout::TwoLines.label(), CommitListTwoLines),
+                MenuItem::separator(),
+                // The sidebar's branch order (`gitti_core::branch_order`).
+                MenuItem::action(BranchSort::Name.label(false), SortBranchesByName),
+                MenuItem::action(BranchSort::Date.label(false), SortBranchesByDate),
+                MenuItem::action(BranchSort::Recent.label(false), SortBranchesByRecent),
+                MenuItem::action(BranchSort::Name.label(true), SortRemoteBranchesByName),
+                MenuItem::action(BranchSort::Date.label(true), SortRemoteBranchesByDate),
                 MenuItem::separator(),
                 MenuItem::action("Refresh", Refresh),
             ],
@@ -1624,6 +1647,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Rename Current Branch…", RenameCurrentBranch),
                 MenuItem::action("Set Upstream of Current Branch…", SetUpstreamMenu),
                 MenuItem::action("Delete Branch…", DeleteBranchMenu),
+                MenuItem::action("Delete Branches…", DeleteBranches),
+                MenuItem::action("Clean Up Merged Branches…", CleanUpMergedBranches),
             ],
         ),
         menu(

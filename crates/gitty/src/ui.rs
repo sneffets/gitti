@@ -823,6 +823,7 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                 name,
                 current,
                 tracking,
+                pinned,
             } => {
                 let style = if *current {
                     Style::new().fg(p.text_strong).add_modifier(Modifier::BOLD)
@@ -856,6 +857,10 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                             Style::new().fg(p.accent),
                         ),
                         Span::styled(name.clone(), style),
+                        Span::styled(
+                            if *pinned { format!(" {PIN_MARK}") } else { String::new() },
+                            Style::new().fg(p.text_faint),
+                        ),
                     ],
                 );
                 if rw > 0 {
@@ -874,13 +879,19 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                     ],
                 );
             }
-            SideItem::RemoteBranch { short, .. } => {
+            SideItem::RemoteBranch { short, pinned, .. } => {
                 put(
                     buf,
                     x + 6,
                     y,
                     w.saturating_sub(6),
-                    vec![Span::styled(short.clone(), Style::new().fg(p.text_muted))],
+                    vec![
+                        Span::styled(short.clone(), Style::new().fg(p.text_muted)),
+                        Span::styled(
+                            if *pinned { format!(" {PIN_MARK}") } else { String::new() },
+                            Style::new().fg(p.text_faint),
+                        ),
+                    ],
                 );
             }
             SideItem::Tag { name } => {
@@ -1312,6 +1323,8 @@ fn badge(text: &str, fg: Color, bg: Color) -> Span<'static> {
 /// Marks worktrees in the commit list (gitti draws a folder icon): `⌂ <folder>` for another
 /// worktree's detached HEAD at this commit, `⌂` before a branch checked out in another one.
 const WORKTREE_MARK: &str = "⌂";
+/// After a branch pinned to the top of its sidebar list (`app/branch_cmds.rs`).
+const PIN_MARK: &str = "▴";
 
 /// Labels of the other worktrees with a detached HEAD at `id`.
 fn worktree_badges(

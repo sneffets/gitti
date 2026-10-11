@@ -5,6 +5,7 @@
 mod common;
 mod support;
 
+mod branches;
 mod cancel;
 mod change_search;
 mod commit_box;

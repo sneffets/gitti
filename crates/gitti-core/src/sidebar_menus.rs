@@ -91,6 +91,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Rename…",
             "Delete…",
             "Force Delete…",
+            "Pin to Top",
             "Copy Name",
         ],
         SideMenu::CurrentBranch => &[
@@ -103,6 +104,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Create Tag…",
             "Mark for Comparison",
             "Rename…",
+            "Pin to Top",
             "Copy Name",
         ],
         SideMenu::RemoteBranch => &[
@@ -116,6 +118,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Reset {name} to Selected Commit…",
             "Add as Subtree…",
             "Delete {branch} on {remote}…",
+            "Pin to Top",
             "Copy Name",
         ],
         SideMenu::Tag => &[
@@ -173,8 +176,21 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Edit Source…",
             "Copy Path",
         ],
-        SideMenu::BranchesSection => &["Create Branch at HEAD…", "Switch Branch…"],
-        SideMenu::RemotesSection => &["Add Remote…", "Fetch All"],
+        SideMenu::BranchesSection => &[
+            "Create Branch at HEAD…",
+            "Switch Branch…",
+            "Delete Branches…",
+            "Clean Up Merged Branches…",
+            "Sort by Name",
+            "Sort by Last Commit Date",
+            "Sort by Recently Checked Out",
+        ],
+        SideMenu::RemotesSection => &[
+            "Add Remote…",
+            "Fetch All",
+            "Sort by Name",
+            "Sort by Last Commit Date",
+        ],
         SideMenu::TagsSection => &["Create Tag at HEAD…", "Push All Tags to {remote}"],
         SideMenu::StashesSection => &[
             "Stash Changes…",

@@ -3,6 +3,7 @@
 //! Split by area: `sidebar`, `commit_list`, `diff_view`, `modal` (dialogs + askpass),
 //! `menus` (context menus and the operations behind them).
 
+mod branch_list;
 mod change_search;
 mod commit_box;
 mod commit_list;
@@ -364,6 +365,8 @@ pub struct GittiApp {
     paths_queued: Option<Vec<String>>,
     /// Collapsed sidebar groups ("branches", "remotes", "remote:origin", "tags", "stashes").
     collapsed: HashSet<String>,
+    /// The sidebar's branch order, pins, recent checkouts (`branch_list.rs`).
+    branches: branch_list::BranchState,
     modal: Option<Modal>,
     ask_queue: std::collections::VecDeque<AskRequest>,
     /// The helper waiting for the shown credential dialog (it closes when that goes away).
@@ -692,6 +695,7 @@ impl GittiApp {
             paths_in_flight: false,
             paths_queued: None,
             collapsed: HashSet::new(),
+            branches: Default::default(),
             modal: None,
             ask_queue: Default::default(),
             ask_shown: None,
@@ -989,6 +993,8 @@ impl GittiApp {
         let prev_working = std::mem::replace(&mut self.working, Arc::new(s.working));
         self.head = s.head;
         self.refs = s.refs;
+        self.branches.recent = s.recent_checkouts;
+        self.update_branch_order();
         self.remotes = s.remotes;
         self.stashes = s.stashes;
         self.repo_state = s.state;
@@ -1091,6 +1097,8 @@ impl GittiApp {
             .filter(|_| !self.history.is_worktree_row(self.selected))
             .map(|c| c.id);
         self.history = Arc::new(hist);
+        // Sorting by date reads the new history's commit times.
+        self.update_branch_order();
         let new_sel = match selected_id {
             Some(id) => self.history.row_of(&id).unwrap_or(0),
             None => 0,
@@ -3588,6 +3596,7 @@ impl Render for GittiApp {
         let root = self.restore_contains_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
+        let root = self.branch_list_actions(root, cx);
         let root = self.worktree_actions(root, cx);
         let root = self.submodule_actions(root, cx);
         let root = self.subtree_actions(root, cx);
