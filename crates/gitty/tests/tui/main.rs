@@ -40,6 +40,7 @@ mod views;
 mod wf_branches;
 mod wf_commit;
 mod wf_eol;
+mod wf_history;
 mod wf_merge;
 mod wf_modules;
 mod wf_pick;

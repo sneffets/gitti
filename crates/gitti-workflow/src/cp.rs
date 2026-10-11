@@ -42,7 +42,7 @@ pub fn c(changed: bool) -> String {
 /// What [`FIX`] makes of line 2 of `a.txt`.
 pub const FIXED: &str = "a 2 fixed";
 
-/// The history both CP workflows start from: `init` (`a.txt`, `b.txt`, `c.txt`) on
+/// The history the CP-12..CP-15 workflows start from: `init` (`a.txt`, `b.txt`, `c.txt`) on
 /// `main`; `feat` from `init`: [`FIX`] then [`CHANGE_B`] by [`ADA`]; `main`:
 /// [`CHANGE_C`]. Returns the fixture (HEAD on `main`, clean) and the marks of `init`,
 /// [`FIX`], [`CHANGE_B`], [`CHANGE_C`].
@@ -220,6 +220,180 @@ pub mod pick_edit_then_merge {
         k.text("ours a.txt", blobs[1].as_deref(), Some(&a(Some(FIXED_BETTER))));
         k.text("theirs a.txt", blobs[2].as_deref(), Some(&a(Some(FIXED))));
         k.text("c.txt", e.file("c.txt").as_deref(), Some(&c(true)));
+        k.done()
+    }
+}
+
+/// **CP-14 — pick with a different resolution, merge the source.** `main` changed line 2
+/// of `a.txt` itself ([`MAIN_A`]: [`A2_MAIN`]); the pick of [`FIX`] conflicted there and
+/// was resolved to a third text ([`A2_RESOLVED`]) — both in the fixture, the pick written
+/// as the commit git makes of it (same message and author). The user merges `feat`.
+///
+/// Expected: git can't know the copy stands for [`FIX`] — the merge stops with a conflict
+/// on that line again (the resolution against `feat`'s line), [`CHANGE_B`] merged and
+/// staged ([`expect_stopped`]); keeping the resolution (Take Ours) and Continue make the
+/// merge commit with it ([`expect_merged`]).
+pub mod pick_resolved_then_merge {
+    use std::path::Path;
+
+    use super::*;
+    use crate::expect::{Checks, Expect, OpState, conflicted};
+
+    /// `main`'s own change of the picked line, before the pick.
+    pub const MAIN_A: &str = "Change a";
+    pub const A2_MAIN: &str = "a 2 main";
+    /// How the pick's conflict was resolved.
+    pub const A2_RESOLVED: &str = "a 2 fixed on main";
+
+    /// The ids the steps need.
+    pub struct Setup {
+        /// `feat`'s tip ([`CHANGE_B`]).
+        pub feat: String,
+        /// `main`'s tip: the resolved pick of [`FIX`].
+        pub main: String,
+    }
+
+    /// [`super::base`] plus, on `main`, [`MAIN_A`] and the resolved pick of [`FIX`]. HEAD
+    /// on `main`, clean. Three git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        build(dir, false, false)
+    }
+
+    /// [`fixture`] with `git merge feat` run last: stopped on `a.txt`. One more git
+    /// process.
+    pub fn fixture_stopped(dir: &Path) -> Setup {
+        build(dir, true, false)
+    }
+
+    /// [`fixture_stopped`] with the resolution kept (`checkout --ours`, `add`): where
+    /// Continue starts. Two more git processes.
+    pub fn fixture_resolved(dir: &Path) -> Setup {
+        build(dir, true, true)
+    }
+
+    fn build(dir: &Path, stopped: bool, resolved: bool) -> Setup {
+        let (mut fx, [_, _, change_b, _]) = base();
+        fx.commit("main", MAIN_A, &[put("a.txt", &a(Some(A2_MAIN)))]);
+        fx.author(ADA);
+        let pick = fx.commit("main", FIX, &[put("a.txt", &a(Some(A2_RESOLVED)))]);
+        fx.author(crate::fixture::TESTER);
+        if stopped {
+            fx.git_after_stops(&["merge", "feat"]);
+        }
+        if resolved {
+            fx.git_after(&["checkout", "--ours", "--", "a.txt"]);
+            fx.git_after(&["add", "a.txt"]);
+        }
+        let ids = fx.build(dir);
+        Setup { feat: ids[change_b].into(), main: ids[pick].into() }
+    }
+
+    /// `a.txt` as the stopped merge leaves it: the resolution against `feat`'s line.
+    pub fn conflicted_a() -> String {
+        let marked = format!("<<<<<<< HEAD\n{A2_RESOLVED}\n=======\n{FIXED}\n>>>>>>> feat");
+        lines("a", 10, 2, Some(&marked))
+    }
+
+    /// After the merge stopped: merging `feat`, HEAD unchanged; only `a.txt` conflicted,
+    /// exactly around line 2; `b.txt` merged and staged. Two git processes.
+    pub fn expect_stopped(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("CP-14 after the merge stopped");
+        k.eq("state", e.state(), OpState::Merging);
+        k.eq("MERGE_HEAD", e.ref_id("MERGE_HEAD"), Some(s.feat.clone()));
+        k.eq("HEAD", e.ref_id("HEAD"), Some(s.main.clone()));
+        let status = e.status();
+        k.eq("conflicted", conflicted(&status), vec!["a.txt".to_string()]);
+        let mut lines: Vec<String> = status.iter().map(|s| format!("{} {}", s.xy, s.path)).collect();
+        lines.sort();
+        k.eq("status", lines, vec!["M  b.txt".to_string(), "UU a.txt".to_string()]);
+        k.text("a.txt on disk", e.file("a.txt").as_deref(), Some(&conflicted_a()));
+        k.text("b.txt staged", e.index("b.txt").as_deref(), Some(&b(true)));
+        k.done()
+    }
+
+    /// After keeping the resolution and Continue: a merge commit ([`MERGE`]) of the pick
+    /// and `feat` with the resolved line, [`CHANGE_B`] and [`CHANGE_C`]; clean. Three git
+    /// processes.
+    pub fn expect_merged(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("CP-14 after the merge");
+        k.eq("state", e.state(), OpState::Clean);
+        k.eq("branch", e.branch().as_deref(), Some("main"));
+        match e.log("HEAD", 1).first() {
+            Some(head) => {
+                k.eq("merge message", head.message.as_str(), MERGE);
+                k.eq("parents", head.parents.clone(), vec![s.main.clone(), s.feat.clone()]);
+            }
+            None => k.fail("no HEAD commit".into()),
+        }
+        let blobs = e.blobs(&["HEAD:a.txt", "HEAD:b.txt", "HEAD:c.txt"]);
+        k.text("a.txt", blobs[0].as_deref(), Some(&a(Some(A2_RESOLVED))));
+        k.text("b.txt", blobs[1].as_deref(), Some(&b(true)));
+        k.text("c.txt", blobs[2].as_deref(), Some(&c(true)));
+        k.eq("status", e.status_lines(), Vec::<String>::new());
+        k.done()
+    }
+}
+
+/// **CP-15 — pick, revert the pick, merge the source.** [`FIX`] was picked onto `main`
+/// and the pick reverted there ([`REVERT`]) — both in the fixture as git writes them. The
+/// user merges `feat`.
+///
+/// Expected: git's three-way merge sees `main` back at the merge base's line 2 and
+/// `feat` with the fix — **the fix comes back** with the merge, without a conflict: a
+/// merge commit whose tree has [`FIXED`], [`CHANGE_B`] and [`CHANGE_C`]; its diff against
+/// `main` shows the fix ([`expect`]).
+pub mod pick_revert_then_merge {
+    use std::path::Path;
+
+    use super::*;
+    use crate::expect::{Checks, Expect, OpState};
+
+    /// The revert of the pick (git's message for it).
+    pub const REVERT: &str = "Revert \"Fix a\"";
+
+    /// The ids the steps need.
+    pub struct Setup {
+        pub feat: String,
+        /// `main`'s tip: [`REVERT`].
+        pub main: String,
+    }
+
+    /// [`super::base`] plus, on `main`, the pick of [`FIX`] and its revert. HEAD on
+    /// `main`, clean. Three git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let (mut fx, [_, _, change_b, _]) = base();
+        fx.author(ADA);
+        fx.commit("main", FIX, &[put("a.txt", &a(Some(FIXED)))]);
+        fx.author(crate::fixture::TESTER);
+        let revert = fx.commit("main", REVERT, &[put("a.txt", &a(None))]);
+        let ids = fx.build(dir);
+        Setup { feat: ids[change_b].into(), main: ids[revert].into() }
+    }
+
+    /// After the merge: no conflict, a merge commit ([`MERGE`]) of [`REVERT`] and `feat`;
+    /// its tree has the fix back, [`CHANGE_B`] and [`CHANGE_C`]; against `main` it
+    /// changes `a.txt` (the fix) and `b.txt`; clean. Four git processes.
+    pub fn expect(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("CP-15 after the merge");
+        k.eq("state", e.state(), OpState::Clean);
+        k.eq("branch", e.branch().as_deref(), Some("main"));
+        match e.log("HEAD", 1).first() {
+            Some(head) => {
+                k.eq("merge message", head.message.as_str(), MERGE);
+                k.eq("parents", head.parents.clone(), vec![s.main.clone(), s.feat.clone()]);
+            }
+            None => k.fail("no HEAD commit".into()),
+        }
+        let blobs = e.blobs(&["HEAD:a.txt", "HEAD:b.txt", "HEAD:c.txt"]);
+        k.text("a.txt: the fix is back", blobs[0].as_deref(), Some(&a(Some(FIXED))));
+        k.text("b.txt", blobs[1].as_deref(), Some(&b(true)));
+        k.text("c.txt", blobs[2].as_deref(), Some(&c(true)));
+        let changed = crate::git::git(dir, &["diff", "--name-only", &s.main, "HEAD"]);
+        k.eq("the merge's diff against main", changed.lines().collect::<Vec<_>>(), vec!["a.txt", "b.txt"]);
+        k.eq("status", e.status_lines(), Vec::<String>::new());
         k.done()
     }
 }
