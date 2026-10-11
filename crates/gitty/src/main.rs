@@ -142,6 +142,12 @@ fn run() -> Result<()> {
     app.watch_ready = _watcher.is_none();
     app.pal.depth = theme::ColorDepth::detect(script.is_some());
     if let Some(script) = script {
+        // A script's outside writes (`write:`) must not come before the watches are in
+        // place (macOS / Windows miss them then).
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while _watcher.as_ref().is_some_and(|w| !w.is_armed()) && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         return script::run(app, rx, &script);
     }
     run_terminal(app, tx, rx)

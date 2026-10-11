@@ -937,8 +937,20 @@ fn summarize(code: i32, stderr: &str) -> String {
         .or(lines.last())
         .copied()
     else {
-        return if code == -1 {
-            "git was stopped by a signal, without a message".to_string()
+        return if code < 0 {
+            // `process::execute`: minus the signal's number.
+            let name = match -code {
+                1 => " (SIGHUP)",
+                2 => " (SIGINT)",
+                6 => " (SIGABRT)",
+                9 => " (SIGKILL)",
+                11 => " (SIGSEGV)",
+                13 => " (SIGPIPE)",
+                14 => " (SIGALRM)",
+                15 => " (SIGTERM)",
+                _ => "",
+            };
+            format!("git was stopped by signal {}{name}, without a message", -code)
         } else {
             format!("git ended with exit code {code}, without a message")
         };
@@ -1026,7 +1038,7 @@ mod tests {
         };
         assert_eq!(err(128, "hint: x\nfatal: not a git repository\n"), "git status: fatal: not a git repository\n\nhint: x\nfatal: not a git repository\n");
         assert_eq!(err(1, "  \n"), "git status: git ended with exit code 1, without a message");
-        assert_eq!(err(-1, ""), "git status: git was stopped by a signal, without a message");
+        assert_eq!(err(-9, ""), "git status: git was stopped by signal 9 (SIGKILL), without a message");
     }
 
     #[gitti_test::test]

@@ -185,6 +185,7 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
             cancelled: true,
         });
     }
+    prepare_fork();
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if io.stdin.is_some() {
         Stdio::piped()
@@ -292,10 +293,49 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
     Ok(Output {
         stdout,
         stderr,
-        code: status.code().unwrap_or(-1),
+        code: exit_code(status),
         cancelled: cancelled_at.is_some(),
     })
 }
+
+/// The exit code, or minus the signal that ended the process (unix; `-1` when unknown).
+fn exit_code(status: ExitStatus) -> i32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        if let Some(signal) = status.signal() {
+            return -signal;
+        }
+    }
+    status.code().unwrap_or(-1)
+}
+
+/// macOS: libSystem's child-side fork handler (`_notify_fork_child`) reads libnotify's
+/// globals through an `os_once` gate. When another thread of ours was initialising them
+/// at the moment of a fork (the first time-zone lookup — chrono / CoreFoundation — or
+/// another first use of notify), the child found the gate held by a thread it doesn't
+/// have and aborted before exec ("BUG IN CLIENT OF LIBPLATFORM: os_once_t is corrupt",
+/// "crashed on child side of fork pre-exec"): a git command "stopped by signal 9" without
+/// a message — gitty's "Refresh failed" at start-up under load, where several reads are
+/// spawned at once. Every spawn first waits for the globals to be initialised once.
+#[cfg(target_os = "macos")]
+fn prepare_fork() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        unsafe extern "C" {
+            // libnotify (part of libSystem): looks the token up in the globals, which
+            // initialises them.
+            fn notify_is_valid_token(val: libc::c_int) -> bool;
+        }
+        // SAFETY: a plain lookup without preconditions.
+        unsafe {
+            notify_is_valid_token(0);
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn prepare_fork() {}
 
 /// Asks git and everything it started (hooks, helpers: its process group, as git runs
 /// under `setsid`) to stop; git removes its lock files on SIGTERM.

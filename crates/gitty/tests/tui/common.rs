@@ -22,10 +22,7 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
 pub fn repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    git(d, &["init", "-q", "-b", "main"]);
-    git(d, &["config", "user.name", "Tester"]);
-    git(d, &["config", "user.email", "t@example.com"]);
-    git(d, &["config", "core.autocrlf", "false"]);
+    crate::support::init(d);
     std::fs::write(d.join("a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\n").unwrap();
     git(d, &["add", "."]);
     git(d, &["commit", "-qm", "Initial commit"]);
@@ -38,7 +35,25 @@ pub fn gitty(dir: &Path, script: &str) -> String {
     gitty_with(dir, config.path(), "120x30", script)
 }
 
+/// Makes the files gitty's stamp caches watch (`.git/config` for `remote -v`, the stash
+/// ref and reflog for `stash list`) look ten seconds old: a fixture written a moment ago
+/// is "racily clean" for two seconds, and every refresh of a run ran those queries again
+/// (a user's repository has old ones). A later write gets a fresh mtime as usual.
+pub fn age_stamped_files(dir: &Path) {
+    let git = dir.join(".git");
+    if !git.is_dir() {
+        return;
+    }
+    let then = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+    for f in ["config", "refs/stash", "logs/refs/stash"] {
+        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(git.join(f)) {
+            let _ = file.set_modified(then);
+        }
+    }
+}
+
 pub fn gitty_with(dir: &Path, config: &Path, size: &str, script: &str) -> String {
+    age_stamped_files(dir);
     let out = Command::new(env!("CARGO_BIN_EXE_gitty"))
         .arg(dir)
         .env("GITTY_SCRIPT", script)
@@ -58,9 +73,10 @@ pub fn gitty_with(dir: &Path, config: &Path, size: &str, script: &str) -> String
     stdout
 }
 
-/// The `dump`s of a run, split at the toolbar line each one starts with.
+/// The `dump`s of a run, split at the marker line each one starts with (not at the
+/// toolbar: a wide dialog covers it).
 pub fn screens(out: &str) -> Vec<&str> {
-    out.split(" gitty  ").skip(1).collect()
+    out.split("=== dump ===\n").skip(1).collect()
 }
 
 /// A merge with one conflict (line 2) and one change only theirs made (line 4).
@@ -96,10 +112,7 @@ pub fn conflicted_repo() -> tempfile::TempDir {
 pub fn long_conflicted_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    git(d, &["init", "-q", "-b", "main"]);
-    git(d, &["config", "user.name", "Tester"]);
-    git(d, &["config", "user.email", "t@example.com"]);
-    git(d, &["config", "core.autocrlf", "false"]);
+    crate::support::init(d);
     let file = |swap: &dyn Fn(usize) -> Option<String>| -> String {
         (1..=120)
             .map(|i| swap(i).unwrap_or_else(|| format!("line {i}\n")))

@@ -28,7 +28,7 @@ fn slow_hook_output_shows_while_committing() {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let out = gitty(d, "press:c;press:x;press:ctrl-s;sleep:320;dump;wait;state");
+    let out = gitty(d, "press:c;press:x;press:ctrl-s;until:running lint;dump;wait;state");
     let line = busy_line(&out);
     assert!(line.contains("running lint"), "{line:?}\n{out}");
     let st = support::states(&out);
@@ -59,7 +59,7 @@ fn fetch_progress_shows_while_fetching() {
             support::config_path(&wrapper)
         ),
     );
-    let out = gitty(d, "press:f;sleep:320;dump;press:esc;wait;state");
+    let out = gitty(d, "press:f;until:%;dump;press:esc;wait;state");
     let line = busy_line(&out);
     assert!(
         line.contains("Fetch") && line.contains("objects") && line.contains('%'),
@@ -94,7 +94,7 @@ fn output_window_shows_the_whole_output() {
     );
     let out = gitty(
         d,
-        "press:f;sleep:320;dump;press:v;dump;press:esc;dump;pressclick:60,29;dump;press:esc;press:esc;wait;state",
+        "press:f;until:%;dump;press:v;dump;press:esc;dump;pressclick:60,29;dump;press:esc;press:esc;wait;state",
     );
     let screens = common::screens(&out);
     assert_eq!(screens.len(), 4, "{out}");
