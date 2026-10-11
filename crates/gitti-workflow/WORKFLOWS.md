@@ -467,7 +467,7 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| BG-01 | A commit with a huge diff | merge of 1 700 files | shows after one load | `wf_shapes::bg01_a_huge_merge_loads_once` | `speed::huge_commit_shows_after_one_load` | `wf_shapes::bg01_a_huge_merge_loads_once` |
+| BG-01 | A commit with a huge diff | merge of 1 700 files selected, then its neighbour (as big, prefetched) | each shows after one load; neither loaded again | `wf_shapes::bg01_a_huge_merge_loads_once` | `speed::huge_commit_shows_after_one_load` | `wf_shapes::bg01_a_huge_merge_loads_once` |
 | BG-02 | Very long lines | 200 KB lines | diff and stage byte-exact | `unix_fs::very_long_lines` | `wf_shapes::bg02_stage_and_discard_beside_very_long_lines` | `wf_shapes::bg02_stage_a_very_long_line`, `wf_shapes::bg02_discard_beside_very_long_lines` |
 | BG-03 | Long history | 5 000+ commits | compact rows, partial history first | `repo_shapes::very_long_linear_history`, `repo_shapes::history_rows_are_compact`, `repo_shapes::partial_history_is_the_newest_slice_of_the_full_one` | `wf_shapes::bg03_a_long_history` | `wf_shapes::bg03_a_long_history` |
 | BG-04 | Stage a group of > 200 paths | 250 untracked files; stage the group | all staged (chunked `git add`) | `wf_staging::bg04_stage_a_group_of_250_paths` | `wf_staging::bg04_stage_a_group_of_250_paths` | `wf_staging::bg04_stage_a_group_of_250_paths` |

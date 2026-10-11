@@ -84,9 +84,10 @@ fn rn02_stage_lines_of_a_renamed_file_then_its_deletion() {
     assert_eq!((f.entry.index, f.entry.orig_path.as_deref()), (Some('R'), Some(wf::DRAFT)));
 }
 
-/// BG-01: a merge of 1 700 files (over 100 000 diff lines) loads with one `git show`; it
-/// is too big for the commit cache, and a prefetch of its neighbours doesn't load it
-/// again.
+/// BG-01: a merge of 1 700 files (over 100 000 diff lines) loads with one `git show`;
+/// the prefetch of its neighbour `side` (as big) loads that once — selecting it next shows
+/// it without a second load (the last too-big commit is kept) — and the prefetch of
+/// `side`'s neighbours doesn't load the merge again.
 /// Workflow: BG-01
 #[gitti_test::test]
 fn bg01_a_huge_merge_loads_once() {
@@ -96,7 +97,7 @@ fn bg01_a_huge_merge_loads_once() {
     let s = wf::fixture(dir);
     let repo = Repo::open(dir).unwrap();
     let id = |m| ObjectId::from_hex(s.ids[m].as_bytes()).unwrap();
-    let (merge, init) = (id(s.merge), id(s.init));
+    let (merge, side, init) = (id(s.merge), id(s.side), id(s.init));
     let opts = DiffOptions::default();
     let shows = |repo: &Repo, n: usize| -> Vec<String> {
         repo.command_log().snapshot()[n..]
@@ -110,8 +111,14 @@ fn bg01_a_huge_merge_loads_once() {
     assert_eq!(data.files.len(), wf::FILES, "every file of the merge");
     assert_eq!(data.details.message.trim_end(), wf::MERGE_SUBJECT);
     assert_eq!(shows(&repo, n).len(), 1, "one load");
-    assert!(repo.cached_commit(merge, &opts).is_none(), "too big for the cache");
-    // The neighbours' prefetch (the merge is the selection's neighbour): only `init`.
+    // Its neighbour prefetched, then selected: loaded once.
+    let n = repo.command_log().snapshot().len();
+    repo.load_commits(&[side], &opts).unwrap();
+    let data = repo.load_commit(side, None, &opts).unwrap();
+    assert_eq!(data.files.len(), wf::FILES);
+    let loads = shows(&repo, n);
+    assert_eq!(loads.len(), 1, "side loaded once: {loads:#?}");
+    // `side`'s neighbours: only `init` (the merge is known to be too big).
     let n = repo.command_log().snapshot().len();
     repo.load_commits(&[merge, init], &opts).unwrap();
     let again = shows(&repo, n);

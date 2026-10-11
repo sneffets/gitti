@@ -50,10 +50,20 @@ pub(crate) struct CommitCache {
     /// prefetch of a neighbour would load one again for nothing — a merge of 1700 files
     /// took over a second each time.
     too_big: VecDeque<Key>,
+    /// The last commit that was too big to keep, kept anyway until the next one: a
+    /// prefetch loads the selection's neighbour, and when that was a huge commit, selecting
+    /// it next loaded it a second time (BG-01: the merge's neighbour `side`). One such
+    /// commit at most — it is what is about to be shown.
+    last_big: Option<(Key, Arc<CommitData>)>,
 }
 
 impl CommitCache {
     fn get(&mut self, key: &Key) -> Option<Arc<CommitData>> {
+        if let Some((k, data)) = &self.last_big
+            && k == key
+        {
+            return Some(data.clone());
+        }
         let i = self.entries.iter().position(|(k, _, _)| k == key)?;
         let entry = self.entries.remove(i)?;
         let data = entry.1.clone();
@@ -63,6 +73,9 @@ impl CommitCache {
 
     /// Drops the entry of `key` if it still is `data`.
     fn remove_if(&mut self, key: &Key, data: &Arc<CommitData>) {
+        if self.last_big.as_ref().is_some_and(|(k, d)| k == key && Arc::ptr_eq(d, data)) {
+            self.last_big = None;
+        }
         if let Some(i) = (self.entries.iter())
             .position(|(k, d, _)| k == key && Arc::ptr_eq(d, data))
             && let Some((_, _, n)) = self.entries.remove(i)
@@ -80,6 +93,7 @@ impl CommitCache {
                     self.too_big.pop_front();
                 }
             }
+            self.last_big = Some((key, data));
             return;
         }
         if let Some(i) = self.entries.iter().position(|(k, _, _)| *k == key)
@@ -116,8 +130,9 @@ impl Repo {
         Some(data)
     }
 
-    /// Details, signature kind and diff of a commit — from the cache or loaded (and cached,
-    /// unless it is too big: callers show the returned data, they don't look it up again).
+    /// Details, signature kind and diff of a commit — from the cache or loaded (and cached;
+    /// one too big for the cache is kept only until the next such one: callers show the
+    /// returned data, they don't look it up again).
     /// `stash: Some(n)` loads the diff of `stash@{n}` (incl. untracked files) instead.
     pub fn load_commit(
         &self,
@@ -288,9 +303,19 @@ mod tests {
         c.insert(key(203), data(MAX_LINES / 4));
         assert!(c.lines <= MAX_LINES);
         assert!(c.get(&key(2)).is_none());
-        // Too big to cache at all — remembered as such (prefetching skips it).
+        // Too big to cache — remembered as such (prefetching skips it), and kept as the
+        // last big one until the next: the prefetched neighbour shows without a reload.
+        let lines = c.lines;
         c.insert(key(204), data(MAX_LINES / 4 + 1));
-        assert!(c.get(&key(204)).is_none());
         assert!(c.too_big.contains(&key(204)) && !c.too_big.contains(&key(203)));
+        assert!(c.get(&key(204)).is_some());
+        assert_eq!(c.lines, lines, "not in the line budget");
+        c.insert(key(205), data(MAX_LINES / 4 + 1));
+        assert!(c.get(&key(204)).is_none() && c.get(&key(205)).is_some());
+        assert!(c.too_big.contains(&key(204)));
+        // A stale entry dropped (`remove_if`) goes from the slot too.
+        let d = c.get(&key(205)).unwrap();
+        c.remove_if(&key(205), &d);
+        assert!(c.get(&key(205)).is_none());
     }
 }

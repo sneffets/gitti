@@ -430,7 +430,9 @@ pub mod long_history {
 /// ([`MERGE_SUBJECT`], HEAD). The user selects the merge, then its neighbour.
 ///
 /// Expected: the merge shows after one load (one `git show` of it, every file listed) and
-/// is not loaded again for the neighbour's prefetch; nothing in the repository changes.
+/// is not loaded again for the neighbour's prefetch; the neighbour `side` (as big),
+/// prefetched while the merge is selected, shows without a second load; nothing in the
+/// repository changes.
 pub mod huge_merge {
     use std::path::Path;
 

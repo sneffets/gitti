@@ -202,7 +202,8 @@ fn bn02_unstage_a_line_of_the_text_again() {
 }
 
 /// BG-01: j selects the merge of 1 700 files: one `git show` of it, its files listed; j
-/// to its parent doesn't load it again.
+/// to its parent `side` (as big, prefetched as the merge's neighbour) doesn't load the
+/// merge again, and `side` once in all.
 /// Workflow: BG-01
 #[gitti_test::test]
 fn bg01_a_huge_merge_loads_once() {
@@ -210,12 +211,14 @@ fn bg01_a_huge_merge_loads_once() {
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     let s = wf::fixture(d);
-    let merge = &s.ids[s.merge];
+    let (merge, side) = (&s.ids[s.merge], &s.ids[s.side]);
     let out = run(d, "cmds;key:j;cmds;state;dump;key:j;cmds;state");
     let blocks = cmds(&out);
-    let loads = |b: &[String]| b.iter().filter(|c| c.starts_with("show") && c.contains(merge)).count();
+    let loads_of = |id: &str, b: &[String]| b.iter().filter(|c| c.starts_with("show") && c.contains(id)).count();
+    let loads = |b: &[String]| loads_of(merge, b);
     assert_eq!(loads(&blocks[0]) + loads(&blocks[1]), 1, "one load: {out}");
     assert_eq!(loads(&blocks[2]), 0, "not loaded again: {out}");
+    assert_eq!(blocks.iter().map(|b| loads_of(side, b)).sum::<usize>(), 1, "side once: {out}");
     let st = states(&out);
     assert!(st[0].contains(wf::MERGE_SUBJECT), "{out}");
     assert!(screens(&out)[0].contains(&wf::name(0)), "{out}");
