@@ -101,6 +101,35 @@ fn mg17_dirty_tree_survives_a_conflicting_merge_and_its_abort() {
     wf::expect_aborted(&dir, &s).unwrap();
 }
 
+/// MG-24: MG-07's merge: a.txt taken as ours, b.txt resolved in the external merge tool
+/// (a fake one taking theirs): git stages the tool's result, keeps the backup, and the
+/// outcome says no conflict is left; Continue concludes the merge. Unix only: `git
+/// mergetool` is a shell script of ~35 git processes, over the time limit on Windows.
+/// Workflow: MG-24
+#[cfg(unix)]
+#[gitti_test::test]
+fn mg24_external_merge_tool_resolves_the_last_conflict() {
+    use mg::sides as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    let mut config = std::fs::OpenOptions::new().append(true).open(dir.join(".git/config")).unwrap();
+    std::io::Write::write_all(
+        &mut config,
+        b"[merge]\n\ttool = fake\n[mergetool \"fake\"]\n\tcmd = cp \\\"$REMOTE\\\" \\\"$MERGED\\\"\n\ttrustExitCode = true\n\
+          [mergetool]\n\tkeepBackup = true\n",
+    )
+    .unwrap();
+    let repo = Repo::open(&dir).unwrap();
+    repo.resolve_conflict(&["a.txt".into()], ConflictAction::TakeOurs).unwrap();
+    let out = repo.resolve_conflict(&["b.txt".into()], ConflictAction::MergeTool).unwrap();
+    assert!(out.contains("fake resolved b.txt: git staged it") && out.contains("No conflicts left"), "{out}");
+    assert!(std::fs::read_to_string(dir.join("b.txt.orig")).unwrap().contains("<<<<<<<"), "git's backup");
+    std::fs::remove_file(dir.join("b.txt.orig")).unwrap();
+    wf::expect_resolved(&dir, &s).unwrap();
+    repo.continue_operation().unwrap();
+    wf::expect_concluded(&dir, &s).unwrap();
+}
+
 /// MG-21: both sides moved a submodule's pointer: the working state shows ours → theirs
 /// (with the commits between them, the submodule being checked out), no merge editor nor
 /// external merge tool; Take Theirs records feat's commit (git's checkout + add can't:

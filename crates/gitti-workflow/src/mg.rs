@@ -1,6 +1,7 @@
 //! MG — merge: a fast-forward, a merge commit always (with a message), squash then commit,
 //! fast-forward only on diverged branches, a clean three-way merge, conflicts resolved by
-//! taking a side / after both sides renamed a file / in a binary file / in a text file
+//! taking a side (also in a SHA-256 repository) / after both sides renamed a file / with
+//! long conflict markers / in a Latin-1 and a CRLF file / in a binary file / in a text file
 //! `.gitattributes` marks binary / in a submodule's pointer, abort, concluding with the
 //! commit box emptied or edited, unrelated histories, a merge into a dirty working tree
 //! (overlapping, not overlapping), a merge in a linked worktree; RN-05 (a merge across a
@@ -218,7 +219,8 @@ pub mod diverged {
     }
 }
 
-/// **MG-07 / MG-10 — a merge stopped on two conflicts.** `main` and `feat` both changed
+/// **MG-07 / MG-10 / MG-23 — a merge stopped on two conflicts** (MG-23: in a SHA-256
+/// repository, [`fixture_sha256`]). `main` and `feat` both changed
 /// `a.txt` and `b.txt` ([`MAIN_A`] / [`FEAT_A`], …); `feat` also changed `c.txt`. The merge
 /// stopped ([`expect_stopped`]):
 ///
@@ -246,7 +248,18 @@ pub mod sides {
 
     /// See the module docs; the merge stopped (one more git process). Four git processes.
     pub fn fixture(dir: &Path) -> Setup {
+        fixture_in(dir, Fixture::new())
+    }
+
+    /// **MG-23** — [`fixture`] in a SHA-256 repository: the same story, the same
+    /// expectations.
+    pub fn fixture_sha256(dir: &Path) -> Setup {
         let mut fx = Fixture::new();
+        fx.sha256();
+        fixture_in(dir, fx)
+    }
+
+    fn fixture_in(dir: &Path, mut fx: Fixture) -> Setup {
         let init = fx.commit("main", "init", &[put("a.txt", "a\n"), put("b.txt", "b\n"), put("c.txt", "c\n")]);
         let feat = fx.commit_from(
             TARGET,
@@ -264,7 +277,15 @@ pub mod sides {
     /// staged ([`expect_resolved`]) — for a driver that takes the rest of the story only.
     /// Five git processes.
     pub fn fixture_resolved(dir: &Path) -> Setup {
-        let s = fixture(dir);
+        resolve(dir, fixture(dir))
+    }
+
+    /// [`fixture_resolved`] in a SHA-256 repository (MG-23).
+    pub fn fixture_resolved_sha256(dir: &Path) -> Setup {
+        resolve(dir, fixture_sha256(dir))
+    }
+
+    fn resolve(dir: &Path, s: Setup) -> Setup {
         std::fs::write(dir.join("a.txt"), MAIN_A).unwrap();
         std::fs::write(dir.join("b.txt"), FEAT_B).unwrap();
         crate::git::git(dir, &["add", "--", "a.txt", "b.txt"]);
@@ -847,6 +868,163 @@ pub mod binary_attr {
         k.text("committed table", committed.as_deref(), Some(OURS));
         k.text("table on disk", e.file(FILE).as_deref(), Some(OURS));
         k.eq("status", e.status_lines(), Vec::<String>::new());
+        k.done()
+    }
+}
+
+/// **MG-14 — long conflict markers.** `.gitattributes` gives `*.rst`
+/// `conflict-marker-size=12`; [`FILE`] starts with a heading underlined by seven `=` (a
+/// line that looks like a default-size marker). `main` and `feat` both changed its last
+/// line; the merge stops with 12-character markers ([`fixture`], [`expect_stopped`]). Mark
+/// Resolved on git's file asks (markers are left); the merge editor shows one conflict (the
+/// heading is text), the user takes theirs and saves; Mark Resolved then doesn't ask (only
+/// the heading's lookalike is left) and Continue concludes the merge ([`expect_concluded`]).
+pub mod long_markers {
+    use std::path::Path;
+
+    use super::{MERGE, conflicted, merge_commit, on};
+    use crate::expect::{Checks, Expect, OpState};
+    use crate::fixture::{Fixture, put};
+
+    pub const TARGET: &str = "feat";
+    pub const FILE: &str = "doc.rst";
+    pub const HEADING: &str = "Title\n=======\n\n";
+    pub const SIZE: usize = 12;
+
+    /// The document with `last` as its last line.
+    pub fn doc(last: &str) -> String {
+        format!("{HEADING}{last}\n")
+    }
+
+    pub struct Setup {
+        pub main: String,
+        pub feat: String,
+    }
+
+    /// See the module docs; the merge stopped. Four git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        let attrs = format!("*.rst conflict-marker-size={SIZE}\n");
+        let init = fx.commit("main", "init", &[put(".gitattributes", &attrs), put(FILE, &doc("base"))]);
+        let feat = fx.commit_from(TARGET, init, "Feat doc", &[put(FILE, &doc("feat"))]);
+        let main = fx.commit("main", "Main doc", &[put(FILE, &doc("main"))]);
+        fx.git_after_stops(&["merge", TARGET]);
+        let ids = fx.build(dir);
+        Setup { main: ids[main].into(), feat: ids[feat].into() }
+    }
+
+    /// The merge stopped on the document, whose markers are 12 characters long. One git
+    /// process.
+    pub fn expect_stopped(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-14 the stopped merge");
+        k.eq("state", e.state(), OpState::Merging);
+        k.eq("MERGE_HEAD", e.ref_id("MERGE_HEAD"), Some(s.feat.clone()));
+        k.eq("conflicted", conflicted(&e.status()), vec![FILE.to_string()]);
+        let text = e.file(FILE).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        k.ok("12-character markers", text.contains(&format!("{} HEAD\n", "<".repeat(SIZE))), &text);
+        k.done()
+    }
+
+    /// After theirs saved, Mark Resolved and Continue: the merge commit has `feat`'s
+    /// document, heading and all; clean. Three git processes.
+    pub fn expect_concluded(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-14 after the merge editor, Mark Resolved and Continue");
+        on(&mut k, &e, "main");
+        merge_commit(&mut k, &e, &[&s.main, &s.feat], MERGE);
+        let committed = e.blobs(&[&format!("HEAD:{FILE}")]).pop().flatten();
+        k.text("committed document", committed.as_deref(), Some(&doc("feat")));
+        k.text("document on disk", e.file(FILE).as_deref(), Some(&doc("feat")));
+        k.eq("status", e.status_lines(), Vec::<String>::new());
+        k.done()
+    }
+}
+
+/// **MG-15 — conflicts in a Latin-1 and a CRLF file.** [`LATIN1`] is ISO-8859-1 in the
+/// working tree (`working-tree-encoding`, UTF-8 in the repository); `core.autocrlf=true`
+/// gives both CRLF line endings there; `main` and `feat` both changed line 2 of
+/// each. The merge stops on both ([`fixture`]); the user takes theirs in the merge editor
+/// and saves each: the files are written in their working-tree form, byte for byte
+/// ([`expect_saved`]); marked resolved and continued, the merge commits them as the
+/// repository keeps them — UTF-8, LF ([`expect_concluded`]).
+pub mod encodings {
+    use std::path::Path;
+
+    use super::{MERGE, conflicted, merge_commit, on};
+    use crate::expect::{Checks, Expect, OpState};
+    use crate::fixture::{Fixture, put};
+
+    pub const TARGET: &str = "feat";
+    pub const LATIN1: &str = "l.txt";
+    pub const CRLF: &str = "c.txt";
+
+    /// `l.txt` with line 2 `two`.
+    pub fn latin1(two: &str) -> String {
+        format!("one\n{two}\nthree\n")
+    }
+
+    /// `c.txt` with line 2 `b`.
+    pub fn crlf(b: &str) -> String {
+        format!("a\n{b}\nc\n")
+    }
+
+    pub struct Setup {
+        pub main: String,
+        pub feat: String,
+    }
+
+    /// See the module docs; the merge stopped on both files. Four git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        let attrs = format!("{LATIN1} working-tree-encoding=ISO-8859-1\n");
+        let init = fx.commit(
+            "main",
+            "init",
+            &[put(".gitattributes", &attrs), put(LATIN1, &latin1("two")), put(CRLF, &crlf("b"))],
+        );
+        let feat = fx.commit_from(TARGET, init, "Feat", &[put(LATIN1, &latin1("feät")), put(CRLF, &crlf("theirs"))]);
+        let main = fx.commit("main", "Main", &[put(LATIN1, &latin1("mäin")), put(CRLF, &crlf("ours"))]);
+        fx.config("[core]\n\tautocrlf = true\n");
+        fx.git_after_stops(&["merge", TARGET]);
+        let ids = fx.build(dir);
+        Setup { main: ids[main].into(), feat: ids[feat].into() }
+    }
+
+    /// The merge stopped on both files. One git process.
+    pub fn expect_stopped(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-15 the stopped merge");
+        k.eq("state", e.state(), OpState::Merging);
+        k.eq("MERGE_HEAD", e.ref_id("MERGE_HEAD"), Some(s.feat.clone()));
+        k.eq("conflicted", conflicted(&e.status()), vec![CRLF.to_string(), LATIN1.to_string()]);
+        k.done()
+    }
+
+    /// Theirs saved from the merge editor: Latin-1 (`l.txt`) and CRLF (both) on disk, byte for byte. No git
+    /// process.
+    pub fn expect_saved(dir: &Path) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-15 theirs saved from the merge editor");
+        k.bytes("l.txt on disk", e.file(LATIN1).as_deref(), Some(b"one\r\nfe\xe4t\r\nthree\r\n"));
+        k.bytes("c.txt on disk", e.file(CRLF).as_deref(), Some(b"a\r\ntheirs\r\nc\r\n"));
+        k.done()
+    }
+
+    /// After Mark Resolved and Continue: the merge commit has theirs as the repository
+    /// keeps it (UTF-8, LF); the files on disk as saved; clean. Three git processes.
+    pub fn expect_concluded(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-15 after Mark Resolved and Continue");
+        on(&mut k, &e, "main");
+        merge_commit(&mut k, &e, &[&s.main, &s.feat], MERGE);
+        let blobs = e.blobs(&[&format!("HEAD:{LATIN1}"), &format!("HEAD:{CRLF}")]);
+        k.text("committed l.txt", blobs[0].as_deref(), Some(&latin1("feät")));
+        k.text("committed c.txt", blobs[1].as_deref(), Some(&crlf("theirs")));
+        k.eq("status", e.status_lines(), Vec::<String>::new());
+        if let Err(saved) = expect_saved(dir) {
+            k.fail(saved);
+        }
         k.done()
     }
 }

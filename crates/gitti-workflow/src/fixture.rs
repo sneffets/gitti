@@ -190,6 +190,8 @@ pub struct Fixture {
     after: Vec<(Vec<String>, bool)>,
     /// The stash entries, oldest first: (stash commit, message, time).
     stashes: Vec<(Mark, String, u64)>,
+    /// A SHA-256 repository ([`Self::sha256`]).
+    sha256: bool,
 }
 
 impl Default for Fixture {
@@ -214,6 +216,7 @@ impl Fixture {
             hooks: Vec::new(),
             after: Vec::new(),
             stashes: Vec::new(),
+            sha256: false,
         }
     }
 
@@ -426,6 +429,11 @@ impl Fixture {
         self.work.push(Work::Remove(path.into()));
     }
 
+    /// The repository uses SHA-256 object ids (`git init --object-format=sha256`).
+    pub fn sha256(&mut self) {
+        self.sha256 = true;
+    }
+
     /// `text` appended to `.git/config` (after [`TEST_CONFIG`]).
     pub fn config(&mut self, text: &str) {
         self.config.push_str(text);
@@ -472,7 +480,11 @@ impl Fixture {
             Head::Branch(b) => b.as_str(),
             Head::Detached(_) => "main",
         };
-        git::git(dir, &["init", "-q", "-b", initial]);
+        let mut init = vec!["init", "-q", "-b", initial];
+        if self.sha256 {
+            init.push("--object-format=sha256");
+        }
+        git::git(dir, &init);
         let git_dir = dir.join(".git");
         append(&git_dir.join("config"), &format!("{TEST_CONFIG}{}", self.config));
         // The staged state: a commit on HEAD's tip that no ref keeps.

@@ -36,6 +36,8 @@ enum Setup {
     /// The main worktree's folder too.
     Worktree(mg::worktree::Setup, PathBuf),
     Binary(mg::binary::Setup),
+    Encodings(mg::encodings::Setup),
+    LongMarkers(mg::long_markers::Setup),
     Submodule(mg::submodule::Setup),
     BinaryAttr(mg::binary_attr::Setup),
     AcrossRename(mg::across_rename::Setup),
@@ -69,10 +71,13 @@ pub fn main() {
         ("mg10_abort_a_conflicting_merge", mg10_abort_a_conflicting_merge),
         ("mg11_conclude_with_the_box_emptied", mg11_conclude_with_the_box_emptied),
         ("mg11_conclude_with_an_edited_message", mg11_conclude_with_an_edited_message),
+        ("mg14_long_conflict_markers", mg14_long_conflict_markers),
+        ("mg15_latin1_and_crlf_conflicts_saved_exactly", mg15_latin1_and_crlf_conflicts_saved_exactly),
         ("mg17_dirty_tree_survives_merge_and_abort", mg17_dirty_tree_survives_merge_and_abort),
         ("mg20_merge_conflict_in_a_linked_worktree", mg20_merge_conflict_in_a_linked_worktree),
         ("mg21_submodule_pointer_conflict_take_theirs", mg21_submodule_pointer_conflict_take_theirs),
         ("mg22_binary_conflict_take_theirs", mg22_binary_conflict_take_theirs),
+        ("mg23_merge_conflict_in_a_sha256_repository", mg23_merge_conflict_in_a_sha256_repository),
         ("mg27_conflict_in_a_file_gitattributes_marks_binary", mg27_conflict_in_a_file_gitattributes_marks_binary),
         ("rn05_merge_across_a_rename", rn05_merge_across_a_rename),
     ];
@@ -90,6 +95,10 @@ pub fn main() {
             "mg11_conclude_with_the_box_emptied" | "mg11_conclude_with_an_edited_message" => {
                 (Setup::Conclude(mg::conclude::fixture(&dir)), None)
             }
+            "mg14_long_conflict_markers" => (Setup::LongMarkers(mg::long_markers::fixture(&dir)), None),
+            "mg15_latin1_and_crlf_conflicts_saved_exactly" => {
+                (Setup::Encodings(mg::encodings::fixture(&dir)), None)
+            }
             "mg17_dirty_tree_survives_merge_and_abort" => (Setup::DirtyApart(mg::dirty_apart::fixture(&dir)), None),
             "mg20_merge_conflict_in_a_linked_worktree" => {
                 let s = mg::worktree::fixture(&dir);
@@ -99,6 +108,7 @@ pub fn main() {
             "mg21_submodule_pointer_conflict_take_theirs" => {
                 (Setup::Submodule(mg::submodule::fixture(&dir)), None)
             }
+            "mg23_merge_conflict_in_a_sha256_repository" => (Setup::Sides(mg::sides::fixture_sha256(&dir)), None),
             "mg22_binary_conflict_take_theirs" => (Setup::Binary(mg::binary::fixture(&dir)), None),
             "mg27_conflict_in_a_file_gitattributes_marks_binary" => {
                 (Setup::BinaryAttr(mg::binary_attr::fixture(&dir)), None)
@@ -180,6 +190,29 @@ fn conflict_button(ui: &mut Ui, path: &str, action: &str) {
         return fail!(ui, "no conflicted {path} in the rows {:?}", ui.ui_state().rows);
     };
     ui.click_on(&format!("conflict-choice:{ix}:{action}"), MouseButton::Left);
+}
+
+/// Opens the merge editor of conflicted file `file`, gives ours | theirs the focus and
+/// presses `keys` there; its state before the keys (`None`: no editor opened, failed).
+fn merge_editor(ui: &mut Ui, file: usize, keys: &[&str]) -> Option<testing::MergeState> {
+    ui.step(&format!("mergeeditor:{file}"));
+    let Some(win) = testing::merge_window() else {
+        ui.fail(format!("no merge window for conflicted file {file}"));
+        return None;
+    };
+    ui.cx.update(testing::merge_focus_top);
+    ui.cx.run_until_parked();
+    let before = ui.cx.update(testing::merge_state);
+    for k in keys {
+        let ks = Keystroke::parse(k).unwrap();
+        ui.cx.update_window(win, |_, window, cx| window.dispatch_keystroke(ks, cx)).unwrap();
+        ui.cx.run_until_parked();
+    }
+    ui.settle();
+    if before.is_none() {
+        ui.fail(format!("no merge editor state for conflicted file {file}"));
+    }
+    before
 }
 
 /// MG-01: Merge… feat with the default options: main fast-forwards.
@@ -394,6 +427,73 @@ fn mg20_merge_conflict_in_a_linked_worktree(ui: &mut Ui) {
     expect(ui, wf::expect_concluded(&main, &s));
 }
 
+/// MG-14: `conflict-marker-size=12`: Mark Resolved on git's file asks (markers left); the
+/// merge editor finds one conflict (the heading's `=======` is text), takes theirs (2) and
+/// saves (⌘S); Mark Resolved then stages without asking; Continue.
+/// Workflow: MG-14
+fn mg14_long_conflict_markers(ui: &mut Ui) {
+    use mg::long_markers as wf;
+    let Setup::LongMarkers(s) = setup() else { unreachable!() };
+    let dir = ui.workdir();
+    expect(ui, wf::expect_stopped(&dir, &s));
+    const MARK: &str = "Mark Resolved (stage as is)";
+    resolve_menu(ui, wf::FILE, MARK);
+    if !ui.cx.has_pending_prompt() {
+        return ui.fail("Mark Resolved with git's 12-character markers did not ask".into());
+    }
+    ui.cx.simulate_prompt_answer("Cancel");
+    ui.settle();
+    conflicts(ui, "merging", &[wf::FILE], "after Mark Resolved was cancelled");
+    let Some(m) = merge_editor(ui, 0, &["2", "secondary-s"]) else { return };
+    if m.chunks.iter().filter(|c| c.0 == "Conflict").count() != 1 {
+        fail!(ui, "merge editor: chunks {:?}, want one conflict", m.chunks);
+    }
+    let on_disk = std::fs::read_to_string(dir.join(wf::FILE)).unwrap_or_default();
+    if on_disk != wf::doc("feat") {
+        fail!(ui, "merge editor: saved {on_disk:?}");
+    }
+    resolve_menu(ui, wf::FILE, MARK);
+    if ui.cx.has_pending_prompt() {
+        ui.cx.simulate_prompt_answer("Cancel");
+        return ui.fail("Mark Resolved with only the heading's lookalike left asked".into());
+    }
+    conflicts(ui, "merging", &[], "after Mark Resolved");
+    ui.click_on("op-continue", MouseButton::Left);
+    info(ui, "after Continue");
+    expect(ui, wf::expect_concluded(&dir, &s));
+}
+
+/// MG-15: a Latin-1 file (working-tree-encoding) and a CRLF one (autocrlf) conflicted: in
+/// the merge editor theirs (2) and ⌘S for each — written byte for byte in the working-tree
+/// form; Mark Resolved both, Continue: committed as the repository keeps them.
+/// Workflow: MG-15
+fn mg15_latin1_and_crlf_conflicts_saved_exactly(ui: &mut Ui) {
+    use mg::encodings as wf;
+    let Setup::Encodings(s) = setup() else { unreachable!() };
+    let dir = ui.workdir();
+    expect(ui, wf::expect_stopped(&dir, &s));
+    // Conflicted files in path order: c.txt, l.txt.
+    for (file, text) in [(0, "ours"), (1, "mäin")] {
+        if let Some(m) = merge_editor(ui, file, &["2", "secondary-s"])
+            && !m.text.contains(text)
+        {
+            fail!(ui, "merge editor of conflicted file {file}: text {:?}", m.text);
+        }
+    }
+    expect(ui, wf::expect_saved(&dir));
+    for path in [wf::CRLF, wf::LATIN1] {
+        resolve_menu(ui, path, "Mark Resolved (stage as is)");
+        if ui.cx.has_pending_prompt() {
+            ui.cx.simulate_prompt_answer("Cancel");
+            return fail!(ui, "Mark Resolved of the saved {path} asked");
+        }
+    }
+    conflicts(ui, "merging", &[], "after Mark Resolved");
+    ui.click_on("op-continue", MouseButton::Left);
+    info(ui, "after Continue");
+    expect(ui, wf::expect_concluded(&dir, &s));
+}
+
 /// MG-21: both sides moved a submodule's pointer: its rows ours → theirs with the commits
 /// between; no Resolve Conflicts (merge editor) split button
 /// but Take Ours / Take Theirs buttons; Take Theirs records feat's commit and says the
@@ -456,6 +556,37 @@ fn mg22_binary_conflict_take_theirs(ui: &mut Ui) {
     conflicts(ui, "merging", &[], "after Take Theirs");
     ui.click_on("op-continue", MouseButton::Left);
     info(ui, "after Continue");
+    expect(ui, wf::expect_concluded(&dir, &s));
+}
+
+/// MG-23: MG-07's merge in a SHA-256 repository: a.txt resolved in the merge editor (its
+/// stages read by 64-hex ids) with ours (1) and ⌘S, marked resolved; Take Theirs for b.txt;
+/// Continue.
+/// Workflow: MG-23
+fn mg23_merge_conflict_in_a_sha256_repository(ui: &mut Ui) {
+    use mg::sides as wf;
+    let Setup::Sides(s) = setup() else { unreachable!() };
+    let dir = ui.workdir();
+    expect(ui, wf::expect_stopped(&dir, &s));
+    if s.main.len() != 64 {
+        fail!(ui, "not a SHA-256 repository: {}", s.main);
+    }
+    conflicts(ui, "merging", &["a.txt", "b.txt"], "the stopped merge");
+    if let Some(m) = merge_editor(ui, 0, &["1", "secondary-s"])
+        && !(m.text.contains(wf::MAIN_A) && m.text.contains(wf::FEAT_A))
+    {
+        fail!(ui, "merge editor of a.txt: text {:?}", m.text);
+    }
+    resolve_menu(ui, "a.txt", "Mark Resolved (stage as is)");
+    if ui.cx.has_pending_prompt() {
+        ui.cx.simulate_prompt_answer("Cancel");
+        return ui.fail("Mark Resolved of the saved a.txt asked".into());
+    }
+    resolve_menu(ui, "b.txt", "Take Theirs — feat");
+    conflicts(ui, "merging", &[], "both resolved");
+    ui.click_on("op-continue", MouseButton::Left);
+    info(ui, "after Continue");
+    conflicts(ui, "clean", &[], "after Continue");
     expect(ui, wf::expect_concluded(&dir, &s));
 }
 
