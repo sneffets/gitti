@@ -7,7 +7,7 @@
 //! without waiting for the jobs it starts — e.g. Esc on a running operation), `type:TEXT`,
 //! `click:X,Y`, `rclick:X,Y`, `pressclick:X,Y` (a left click without waiting for the jobs
 //! — e.g. on a running operation's status line), `wheel:X,Y,DY`, `answer:TEXT` (askpass), `dump` (screen as
-//! text), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status),
+//! text, after a `=== dump ===` line), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status),
 //! `changes` (Search in Changes: query, toggles, scans, hits with why, note), `reflog`
 //! (the reflog view: title, note, selection, shown commit, entries),
 //! `write:PATH=TEXT` (writes a working-tree file as another program would; `\n` = newline),
@@ -197,7 +197,8 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
             }
             "dump" => {
                 term.draw(|f| crate::ui::draw(f, app))?;
-                println!("{}", screen_text(term.backend().buffer()));
+                // A line of its own to split at: a dialog can cover any of the screen's rows.
+                println!("=== dump ===\n{}", screen_text(term.backend().buffer()));
             }
             "cells" => {
                 term.draw(|f| crate::ui::draw(f, app))?;

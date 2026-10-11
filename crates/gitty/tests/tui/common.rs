@@ -58,9 +58,10 @@ pub fn gitty_with(dir: &Path, config: &Path, size: &str, script: &str) -> String
     stdout
 }
 
-/// The `dump`s of a run, split at the toolbar line each one starts with.
+/// The `dump`s of a run, split at the marker line each one starts with (not at the
+/// toolbar: a wide dialog covers it).
 pub fn screens(out: &str) -> Vec<&str> {
-    out.split(" gitty  ").skip(1).collect()
+    out.split("=== dump ===\n").skip(1).collect()
 }
 
 /// A merge with one conflict (line 2) and one change only theirs made (line 4).
