@@ -58,6 +58,7 @@ mod op_stops;
 mod overwrite;
 pub mod reflog;
 mod remote_cmds;
+mod renormalize;
 mod reset_cmds;
 mod repo_cmds;
 mod repo_stats;
@@ -4106,6 +4107,15 @@ impl App {
                         MenuItem::new("Track with Git LFS…", move |app| app.lfs_track(p))
                             .key('L'),
                     );
+                    // A `.gitattributes` file: its rules applied to the tracked files.
+                    if gitti_core::renormalize::is_attributes_file(&path) {
+                        items.push(
+                            MenuItem::new(gitti_core::renormalize::MENU_LABEL, |app| {
+                                app.renormalize_dialog()
+                            })
+                            .unless(self.why_not("RenormalizeLineEndings")),
+                        );
+                    }
                     // A path this file system can't hold: why, hide it.
                     items.extend(self.fs_path_menu_items(src, file));
                 }

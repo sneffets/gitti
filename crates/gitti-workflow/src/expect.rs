@@ -407,6 +407,15 @@ impl Checks {
         }
     }
 
+    /// Bytes equal `want` byte for byte (another code page, UTF-16, a CR); shown escaped
+    /// when they differ.
+    pub fn bytes(&mut self, name: &str, got: Option<&[u8]>, want: Option<&[u8]>) {
+        if got != want {
+            let show = |b: Option<&[u8]>| b.map(|b| b.escape_ascii().to_string());
+            self.fails.push(format!("{name}:\n    got  {:?}\n    want {:?}", show(got), show(want)));
+        }
+    }
+
     /// `ok` holds; `detail` says what was seen when it doesn't.
     pub fn ok(&mut self, name: &str, ok: bool, detail: impl Debug) {
         if !ok {

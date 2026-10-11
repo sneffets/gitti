@@ -145,16 +145,16 @@ working tree or the index while the app shows an older state.
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
 | EX-01 | A shown file is saved by an editor | app shows `a`'s diff; another program writes `a` | only `a` re-read; the diff shows the new content | `linux_env::watcher_reports_edits_but_not_our_own_reads`, `watch::worktree_changes_need_only_their_paths` (unit) | `speed::watcher_rereads_only_what_changed` | `speed::outside_changes_refresh_only_what_they_touched` |
-| EX-02 | Whole file LF → CRLF (no autocrlf) | an editor converts `a` to CRLF; stage one changed line; discard another | the diff says the line endings changed (visible); the staged line reaches the index with CRLF, others untouched; discard restores LF | ~`staging::non_utf8_lines_stage_unstage_discard_byte_exact`, ~`eol_note::line_endings_and_bom` (unit) | — | — |
-| EX-03 | Only some lines get CRLF | an editor rewrites 2 of 10 lines with CRLF | only those 2 lines show as changed (marked as line-ending change); staging one keeps the other unstaged | — | — | — |
-| EX-04 | CRLF file → LF | committed CRLF, editor saves LF | every line changed, marked; Stage All gives an LF index | ~`eol_note::line_endings_and_bom` (unit) | ~`op_safety::merge_stop_stash_and_stage_all` | ~`op_safety::line_ending_only_changes_are_said` |
-| EX-05 | `core.autocrlf=true` working tree | CRLF on disk, LF in the index; stage / unstage / discard lines | index stays LF; a discard writes CRLF back | `staging::line_staging_with_autocrlf_and_untracked_crlf_file` | — | — |
-| EX-06 | `eol=crlf` / `text` attribute | file converted by attributes; stage / discard / stash lines | index LF, working tree CRLF, both right | ~`stash::stash_lines_with_eol_conversion` | — | — |
-| EX-07 | `.gitattributes` added that renormalizes | commit has CRLF; add `* text=auto` | files show as modified (renormalization); Stage All gives what `git add --renormalize` gives; the app says why they changed | — | — | — |
-| EX-08 | BOM added / removed | an editor adds a UTF-8 byte order mark | line 1 shows as changed and the BOM is visible; stage / discard exact | ~`eol_note::line_endings_and_bom` (unit) | — | — |
-| EX-09 | Code page changed | a UTF-8 file re-saved as Windows-1252 | changed lines decoded, encoding named; a staged line moves its exact bytes | ~`non_utf8::eight_bit_lines_stage_unstage_discard_exactly` | ~`speed::non_utf8_line_stages_exactly` | ~`staging::latin1_line_stages_exactly` |
-| EX-10 | Re-saved as UTF-16 | a text file becomes UTF-16 (binary for git) | listed as binary, whole-file stage only; with a `diff` attribute lines stage exactly | ~`unix_fs::text_becomes_binary`, `non_utf8::utf16_lines_stage_unstage_discard_exactly` | — | — |
-| EX-11 | Trailing newline added / removed | an editor adds or drops the last newline | "no newline" handled on both sides; partial stage right | `unix_fs::no_eol_added_or_removed`, `staging::no_newline_at_eof`, `unix_fs::no_eol_both_sides_stage_and_unstage_one_side` | — | — |
+| EX-02 | Whole file LF → CRLF (no autocrlf) | an editor converts `a.txt` to CRLF; stage the last line's change (its `-` and `+` line); discard the first line's | the diff says the line endings changed (note row); the staged line reaches the index with CRLF, others untouched; discard restores LF | `wf_eol::ex02_whole_file_to_crlf_stage_one_line_discard_another`, ~`staging::non_utf8_lines_stage_unstage_discard_byte_exact`, ~`eol_note::line_endings_and_bom` (unit) | `wf_eol::ex02_whole_file_to_crlf` | `wf_eol::ex02_whole_file_to_crlf` |
+| EX-03 | Only some lines get CRLF | an editor rewrites 2 of 20 lines with CRLF; stage the first one's hunk | only those 2 lines show as changed (two hunks, a note says why); staging one keeps the other unstaged | `wf_eol::ex03_some_lines_get_crlf_stage_one` | `wf_eol::ex03_crlf_on_some_lines` | `wf_eol::ex03_crlf_on_some_lines` |
+| EX-04 | CRLF file → LF | committed CRLF, editor saves LF; Stage All | every line changed, marked; Stage All gives an LF index (the staged diff's note says why) | `wf_eol::ex04_crlf_file_saved_with_lf_stage_all`, ~`eol_note::line_endings_and_bom` (unit) | `wf_eol::ex04_crlf_file_saved_with_lf`, ~`op_safety::merge_stop_stash_and_stage_all` | `wf_eol::ex04_crlf_file_saved_with_lf`, ~`op_safety::line_ending_only_changes_are_said` |
+| EX-05 | `core.autocrlf=true` working tree | CRLF on disk, LF in the index; stage the file, unstage one hunk, discard it | only the edits show (no line-ending note); index stays LF; a discard writes CRLF back | `staging::line_staging_with_autocrlf_and_untracked_crlf_file` | `wf_eol::ex05_autocrlf_stage_unstage_discard` | `wf_eol::ex05_autocrlf_stage_unstage_discard` |
+| EX-06 | `eol=crlf` / `text` attribute | file converted by attributes; stage one line's change, discard another hunk (stash: lines too) | index LF, working tree CRLF, both right | `wf_eol::ex06_eol_attribute_stage_and_discard_lines`, ~`stash::stash_lines_with_eol_conversion` | `wf_eol::ex06_eol_attribute_stage_and_discard` | `wf_eol::ex06_eol_attribute_stage_and_discard` |
+| EX-07 | `.gitattributes` added that renormalizes | commit has CRLF; add `* text=auto` (untracked), an unfinished edit in another CRLF file; **Renormalize Line Endings…** (Repository menu, palette, the `.gitattributes` file's menu) | git shows no change of the CRLF file (with `text=auto` it keeps CRLF that is already stored); the dialog says what it does and what follows, leaves files with unstaged changes out unless ticked; afterwards the file is staged with LF as `git add --renormalize` gives it and the staged diff says why, its working-tree file is not rewritten; a deleted file is left out (git alone stops), conflicts refuse | `wf_eol::ex07_attributes_added_renormalize`, `wf_eol::ex07_renormalize_leaves_deleted_files_out_and_refuses_conflicts` | `wf_eol::ex07_renormalize_after_attributes` | `wf_eol::ex07_renormalize_after_attributes` |
+| EX-08 | BOM added / removed | an editor adds a UTF-8 byte order mark to one file, drops another's; stage the one, discard the other | line 1 shows as changed and a note names the BOM; stage / discard exact | `wf_eol::ex08_bom_added_and_removed_stage_and_discard`, ~`eol_note::line_endings_and_bom` (unit) | `wf_eol::ex08_bom_added_and_removed` | `wf_eol::ex08_bom_added_and_removed` |
+| EX-09 | Code page changed | a UTF-8 file re-saved as Windows-1252; stage one line's change | changed lines decoded, encoding named; a staged line moves its exact bytes | `wf_eol::ex09_saved_in_another_code_page_stage_one_line`, ~`non_utf8::eight_bit_lines_stage_unstage_discard_exactly` | `wf_eol::ex09_code_page_switch`, ~`speed::non_utf8_line_stages_exactly` | `wf_eol::ex09_code_page_switch`, ~`staging::latin1_line_stages_exactly` |
+| EX-10 | Re-saved as UTF-16 | a text file becomes UTF-16 (binary for git) | listed as binary, whole-file stage only (exact bytes); with a `diff` attribute lines stage exactly | `wf_eol::ex10_saved_as_utf16_is_binary_whole_file_stages`, ~`unix_fs::text_becomes_binary`, `non_utf8::utf16_lines_stage_unstage_discard_exactly` | — | — |
+| EX-11 | Trailing newline added / removed | an editor adds the last newline (and changes line 2) of one file, drops another's; stage the newline's hunk alone, discard the other | "no newline" handled on both sides; partial stage right | `unix_fs::no_eol_added_or_removed`, `staging::no_newline_at_eof`, `unix_fs::no_eol_both_sides_stage_and_unstage_one_side` | `wf_eol::ex11_trailing_newline` | `wf_eol::ex11_trailing_newline` |
 | EX-12 | Exec bit flipped | `chmod +x` / `-x` by another program | mode-only change; stage / unstage / discard; `core.fileMode=false` ignores it | `unix_fs::mode_only_change_stages_unstages_and_discards`, `unix_fs::removing_the_exec_bit_stages`, `unix_fs::core_filemode_false_ignores_the_exec_bit` | — | — |
 | EX-13 | File replaced by a symlink (and back) | a tool swaps a file for a link | type change listed once per side; operations act on the whole change | `unix_fs::file_to_symlink_type_change`, `unix_fs::symlink_to_file_type_change` | — | — |
 | EX-14 | File replaced by a folder (and back) | a build replaces `out` (file) by `out/` | deleted + untracked shown; stage / discard bring either state back | `unix_fs::file_replaced_by_directory`, `unix_fs::directory_replaced_by_file`, `unix_fs::directory_replaced_by_file_discard_in_steps` | — | — |
@@ -477,7 +477,7 @@ working tree or the index while the app shows an older state.
 |---|---|---|---|---|---|---|
 | NU-01 | Latin-1 / Windows-1252 lines | stage / unstage / discard lines | exact bytes; encoding named | `non_utf8::eight_bit_lines_stage_unstage_discard_exactly`, `unix_fs::latin1_content_stages_lines` | `speed::non_utf8_line_stages_exactly` | `staging::latin1_line_stages_exactly` |
 | NU-02 | UTF-16 with a `diff` attribute | lines | exact | `non_utf8::utf16_lines_stage_unstage_discard_exactly` | — | — |
-| NU-03 | `working-tree-encoding` | stage / discard; untracked file | in its encoding on disk | `non_utf8::working_tree_encoding_and_untracked_files` | — | — |
+| NU-03 | `working-tree-encoding` | discard a line; stage one line of an untracked file | in its encoding on disk, UTF-8 in the index | `non_utf8::working_tree_encoding_and_untracked_files` | `wf_eol::nu03_working_tree_encoding` | `wf_eol::nu03_working_tree_encoding` |
 | NU-04 | A file name that isn't UTF-8 | list, whole-file stage; line stage refused | refused before git, in plain words | `unix_fs::non_utf8_name_is_listed`, `unix_fs::non_utf8_name_stages`, `non_utf8::names_that_are_not_utf8_are_refused` | — | — |
 | NU-05 | Odd names everywhere | spaces, quotes, newlines, glob characters | hunks, lines, files right | `unix_fs::odd_names_tracked_hunks_and_lines`, `unix_fs::odd_names_tracked_discard_and_whole_files`, `unix_fs::odd_names_untracked_partial_stage_and_unstage`, `unix_fs::odd_names_untracked_discard_lines_and_files`, `unix_fs::odd_names_deleted_partial_stage_and_discard` | — | — |
 
@@ -504,7 +504,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
 | ST staging | 21 | 16 | 19 | 15 |
-| EX external changes | 24 | 14 | 3 | 5 |
+| EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 13 | 6 | 7 |
 | BR branches | 19 | 19 | 19 | 18 |
@@ -524,9 +524,9 @@ layer (partial `~` and `n/a` don't count as covered).
 | RN renames | 5 | 2 | 1 | 1 |
 | BN binary | 3 | 3 | 1 | 1 |
 | BG big / many | 5 | 4 | 2 | 1 |
-| NU non-UTF-8 | 5 | 5 | 1 | 1 |
+| NU non-UTF-8 | 5 | 5 | 2 | 2 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **265** | **211** | **154** | **156** |
+| **Total** | **265** | **218** | **164** | **166** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -539,3 +539,4 @@ at the step; once fixed, the assertion goes in and the entry goes.
 | Workflow | What | Where the test notes it |
 |---|---|---|
 | RM-14, RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21), and a credential prompt from a real git can't be answered while its fetch blocks that thread. The prompt dialog itself is covered with the `ask:` step (`layout::askpass_key_icon`); the round trip in gitty. | — |
+| EX-02 (all) | Line staging keeps the diff's order: the `-` / `+` pair of one line in the middle of a replaced block (all `-` lines, then all `+` lines — every line of a file whose endings changed) puts the `+` line after the block's last `-` line, so the line moves (staging line 2's pair of `a 1…a 6` gives `a 1, a 3 … a 6, a 2`); discarding a pair the same way. The tests pick the last / first line, where the order holds. Fix proposal: interleave a block's `-` / `+` pairs when every selected line's partner is selected too (needs the release fuzz model changed with it). | core `wf_eol::ex02_whole_file_to_crlf_stage_one_line_discard_another` |
