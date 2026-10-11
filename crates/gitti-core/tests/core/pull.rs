@@ -164,11 +164,11 @@ fn a_diverged_pull_asks_and_each_choice_does_what_it_says() {
     assert_eq!(d.parents(), vec![d.mine.clone(), d.theirs.clone()]);
 }
 
-/// The retry ends where `git pull` ends: the same merge commit (parents, tree, message
-/// "Merge branch 'main' of …"), the same rebase — after a force push upstream too, where
-/// the fork point leaves the rewritten commit out (`git rebase @{u}` would replay it).
+/// The retry ends where `git pull` ends: the same rebase — after a force push upstream
+/// too, where the fork point leaves the rewritten commit out (`git rebase @{u}` would
+/// replay it).
 #[gitti_test::test]
-fn the_retry_ends_where_git_pull_would() {
+fn the_rebase_retry_ends_where_git_pull_would() {
     let d = diverged_from(true);
     let ask = divergent(&d.repo.pull().unwrap_err()).clone();
     ask.retry(&d.repo, PullStrategy::Rebase).unwrap();
@@ -179,9 +179,13 @@ fn the_retry_ends_where_git_pull_would() {
     d.repo.pull_with(Some(PullStrategy::Rebase)).unwrap();
     assert_eq!(d.last_pull(), "pull --rebase");
     assert_eq!(d.chain(), ours, "git pull --rebase");
+}
 
-
-    // (Merging "x" and "x2" conflicts — for git pull as well.)
+/// The retry ends where `git pull` ends: the same merge commit (parents, tree, message
+/// "Merge branch 'main' of …"). (After the force push of the rebase case, merging "x" and
+/// "x2" conflicts — for git pull as well.)
+#[gitti_test::test]
+fn the_merge_retry_ends_where_git_pull_would() {
     let d = diverged();
     let ask = divergent(&d.repo.pull().unwrap_err()).clone();
     ask.retry(&d.repo, PullStrategy::Merge).unwrap();

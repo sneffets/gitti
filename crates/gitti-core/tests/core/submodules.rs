@@ -20,10 +20,13 @@ use crate::fixture_kit::{C, E, History, Ids, f, oid, slash};
 
 /// Local clones as submodules need `protocol.file.allow=always` (git ≥ 2.38.1); commits
 /// inside a cloned submodule need an identity even without a global git config (Linux CI).
-const FILE_PROTOCOL: [(&str, &str); 7] = [
-    ("GIT_CONFIG_COUNT", "1"),
+/// No `git maintenance run --auto` after each clone / fetch / commit (a process each).
+const FILE_PROTOCOL: [(&str, &str); 9] = [
+    ("GIT_CONFIG_COUNT", "2"),
     ("GIT_CONFIG_KEY_0", "protocol.file.allow"),
     ("GIT_CONFIG_VALUE_0", "always"),
+    ("GIT_CONFIG_KEY_1", "maintenance.auto"),
+    ("GIT_CONFIG_VALUE_1", "false"),
     ("GIT_AUTHOR_NAME", "T"),
     ("GIT_AUTHOR_EMAIL", "t@example.com"),
     ("GIT_COMMITTER_NAME", "T"),
@@ -236,6 +239,23 @@ fn list_matches_git_and_follows_the_states() {
         assert_eq!(s.recorded, s.checked_out);
     }
 
+    // Uncommitted changes inside: modified, and the nested one stays up to date.
+    let sub = fx.sub();
+    fs::write(sub.join("l.txt"), "dirty\n").unwrap();
+    fs::write(sub.join("new.txt"), "n\n").unwrap();
+    let subs = list(&repo);
+    assert_eq!(subs[0].state, SubmoduleState::Modified);
+    assert!(subs[0].flags.modified && subs[0].flags.untracked);
+    assert_eq!(subs[0].detail(), "modified");
+    assert_eq!(subs[1].state, SubmoduleState::UpToDate);
+}
+
+/// A new commit inside the submodule: "1 new commit"; checked out behind the recorded
+/// commit: "out of date", and an update fixes it.
+#[gitti_test::test]
+fn new_commits_and_out_of_date_submodules() {
+    let fx = setup();
+    let repo = open(&fx.sup);
     // New commit inside the submodule: "modified" (1 new commit), status says `C`.
     let sub = fx.sub();
     commit_tracked(&sub, "l.txt", "1\n2\n", "lib three");
@@ -255,22 +275,12 @@ fn list_matches_git_and_follows_the_states() {
     let subs = list(&repo);
     assert_eq!(subs[0].state, SubmoduleState::UpToDate);
     assert!(out_of_date(&subs).is_empty());
-
-    // Uncommitted changes inside: modified, and the nested one stays up to date.
-    fs::write(sub.join("l.txt"), "dirty\n").unwrap();
-    fs::write(sub.join("new.txt"), "n\n").unwrap();
-    let subs = list(&repo);
-    assert_eq!(subs[0].state, SubmoduleState::Modified);
-    assert!(subs[0].flags.modified && subs[0].flags.untracked);
-    assert_eq!(subs[0].detail(), "modified");
-    assert_eq!(subs[1].state, SubmoduleState::UpToDate);
 }
 
 #[gitti_test::test]
 fn pointer_change_is_a_commit_summary_staged_as_one_unit() {
     let fx = setup_with(true);
     let repo = open(&fx.sup);
-    let sub = fx.sub();
     let (old, new) = (fx.id(fx.c.lib_two), fx.id(fx.c.lib_four));
 
     let ws = repo.working_state().unwrap();
@@ -307,9 +317,15 @@ fn pointer_change_is_a_commit_summary_staged_as_one_unit() {
     let files = repo.commit_diff(oid(&head(&fx.sup))).unwrap();
     let d = files[0].submodule.as_ref().unwrap();
     assert_eq!(d.log.as_ref().unwrap().added.len(), 2);
+}
 
-    // Unstaging works the same way (after another move).
-    commit_tracked(&sub, "l.txt", "x\n", "lib five");
+/// A pointer change unstages and discards (back to the recorded commit) as one unit too.
+#[gitti_test::test]
+fn pointer_change_unstages_and_discards_as_one_unit() {
+    let fx = setup_with(true);
+    let repo = open(&fx.sup);
+    let sub = fx.sub();
+    let old = fx.id(fx.c.lib_two);
     repo.stage_paths(&["libs/lib"]).unwrap();
     repo.unstage_paths(&["libs/lib"]).unwrap();
     let ws = repo.working_state().unwrap();
@@ -320,7 +336,7 @@ fn pointer_change_is_a_commit_summary_staged_as_one_unit() {
     repo.discard_paths(&[&ws.unstaged[0].entry]).unwrap();
     let ws = repo.working_state().unwrap();
     assert!(ws.unstaged.is_empty(), "{:?}", ws.unstaged);
-    assert_eq!(head(&sub), new);
+    assert_eq!(head(&sub), old);
 }
 
 #[gitti_test::test]
@@ -341,7 +357,7 @@ fn dirty_submodule_diff_has_a_note() {
 }
 
 #[gitti_test::test]
-fn uninitialised_after_plain_clone_and_recursive_clone() {
+fn uninitialised_after_a_plain_clone() {
     let fx = setup();
     let git = open(&fx.sup).git().clone();
     let url = slash(&fx.sup);
@@ -356,7 +372,13 @@ fn uninitialised_after_plain_clone_and_recursive_clone() {
     assert_eq!(subs.len(), 2);
     assert!(subs.iter().all(|s| s.state == SubmoduleState::UpToDate), "{subs:#?}");
     repo.sync_submodules(&[]).unwrap();
+}
 
+#[gitti_test::test]
+fn a_recursive_clone_checks_out_the_nested_submodules() {
+    let fx = setup();
+    let git = open(&fx.sup).git().clone();
+    let url = slash(&fx.sup);
     let deep = gitti_core::create::clone_repo_with(&git, &url, &fx.base.join("deep"), true, &mut |_| {}).unwrap();
     let subs = list(&open(&deep));
     assert_eq!(subs.len(), 2);
@@ -366,26 +388,47 @@ fn uninitialised_after_plain_clone_and_recursive_clone() {
 #[gitti_test::test]
 fn pull_that_moves_the_pointer_makes_it_out_of_date() {
     let fx = setup();
-    let git = open(&fx.sup).git().clone();
-    let clone = fx.base.join("clone");
-    gitti_core::create::clone_repo_with(&git, &slash(&fx.sup), &clone, true, &mut |_| {}).unwrap();
-    // Upstream: lib gets a commit (only in lib's own objects), super records it.
+    // Upstream: lib gets a commit (only in lib's own objects), the superproject's remote
+    // `up` (a bare repository borrowing the store's objects) records it. One process each
+    // instead of a recursive clone (~40).
     let two = fx.id(fx.c.lib_two);
     let tree = format!("{two}^{{tree}}");
     let up = sh(&fx.lib, &["commit-tree", &tree, "-p", &two, "-m", "lib upstream"]);
-    fs::write(fx.lib.join(".git/refs/heads/main"), &up).unwrap();
-    let info = format!("160000,{},libs/lib", up.trim());
-    sh(&fx.sup, &["update-index", "--cacheinfo", &info]);
-    sh(&fx.sup, &["commit", "-qm", "bump lib"]);
-    // The clone pulls: its submodule is behind (the commit isn't even fetched there).
-    sh(&clone, &["pull", "-q", "--no-recurse-submodules"]);
-    let repo = open(&clone);
+    let up = up.trim();
+    fs::write(fx.lib.join(".git/refs/heads/main"), format!("{up}\n")).unwrap();
+    let remote = fx.base.join("up.git");
+    let tip = fs::read_to_string(fx.sup.join(".git/refs/heads/main")).unwrap();
+    fx.git_dir(&remote, "ref: refs/heads/main", "[core]\n\tbare = true\n", &[("refs/heads/main", tip.trim().to_string())]);
+    let stream = format!(
+        "commit refs/heads/main\ncommitter T <t@example.com> 1700000900 +0000\ndata 9\nbump lib\n\
+         from {}\nM 160000 {up} libs/lib\n\n",
+        tip.trim()
+    );
+    let mut import = crate::fixture_kit::git(&remote, &["fast-import", "--quiet"])
+        .env("GIT_DIR", &remote)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut import.stdin.take().unwrap(), stream.as_bytes()).unwrap();
+    assert!(import.wait().unwrap().success());
+    crate::fixture_kit::append_config(
+        &fx.sup,
+        &format!(
+            "[remote \"origin\"]\n\turl = {}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
+             [branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+            slash(&remote)
+        ),
+    );
+    // The superproject pulls: its submodule is behind (the commit isn't even fetched there).
+    let sup = &fx.sup;
+    sh(sup, &["pull", "-q", "--no-recurse-submodules"]);
+    let repo = open(sup);
     let subs = list(&repo);
     assert_eq!(subs[0].state, SubmoduleState::OutOfDate);
     assert!(subs[0].missing);
     assert_eq!(subs[0].detail(), "not fetched");
     // The pull's commit diff names the commits as not available yet.
-    let id = oid(&head(&clone));
+    let id = oid(&head(sup));
     let d = repo.commit_diff(id).unwrap()[0].submodule.clone().unwrap();
     assert!(d.log.unwrap().missing);
     repo.update_submodules(&[]).unwrap();
@@ -465,11 +508,18 @@ fn add_submodule_stages_it_with_its_default_path_and_branch() {
     assert_eq!(added.state, SubmoduleState::UpToDate, "{added:?}");
     assert_eq!(added.branch.as_deref(), Some("dev"));
     assert_eq!(added.checked_out, Some(fx.ids[fx.c.lib_four]));
+}
 
-    // An explicit path; a second add of the same path is git's error.
-    repo.add_submodule(&slash(&fx.lib), "vendor/lib2", "", false).unwrap();
+/// An explicit path; a second add of the same path is git's error.
+#[gitti_test::test]
+fn add_submodule_at_a_path_and_twice() {
+    let fx = setup();
+    let sup = &fx.sup;
+    let repo = open(sup);
+    let url = slash(&fx.lib);
+    repo.add_submodule(&url, "vendor/lib2", "", false).unwrap();
     assert!(sup.join("vendor/lib2/l.txt").is_file());
-    assert!(repo.add_submodule(&url, "other", "", false).is_err());
+    assert!(repo.add_submodule(&url, "vendor/lib2", "", false).is_err());
 }
 
 /// A local path where git refuses the `file` transport for submodules (here:
@@ -586,7 +636,7 @@ fn update_to_the_remote_branch() {
 /// A nested submodule's path runs in its parent submodule (git of the top level doesn't
 /// know it).
 #[gitti_test::test]
-fn update_and_sync_nested_paths() {
+fn update_nested_paths() {
     let fx = setup();
     let repo = open(&fx.sup);
     let inner = fx.inner();
@@ -594,6 +644,13 @@ fn update_and_sync_nested_paths() {
     assert_eq!(list(&repo)[1].state, SubmoduleState::Modified);
     repo.update_submodules(&["libs/lib/vendor/inner"]).unwrap();
     assert_eq!(head(&inner), fx.id(fx.c.inner_one));
+}
+
+/// Sync of a nested and a top-level path.
+#[gitti_test::test]
+fn sync_nested_paths() {
+    let fx = setup();
+    let repo = open(&fx.sup);
     repo.sync_submodules(&["libs/lib/vendor/inner", "libs/lib"]).unwrap();
 }
 
@@ -637,12 +694,12 @@ fn remove_submodule_warns_about_local_work_and_cleans_up() {
     assert!(!config.contains("[submodule"), "{config}");
 }
 
+/// Nested: removed from its parent submodule, which now has changes.
 #[gitti_test::test]
-fn remove_nested_and_uninitialised_submodules() {
+fn remove_a_nested_submodule() {
     let fx = setup();
     let sup = &fx.sup;
     let repo = open(sup);
-    // Nested: removed from its parent submodule, which now has changes.
     repo.remove_submodule("libs/lib/vendor/inner").unwrap();
     assert!(!fx.inner().exists());
     assert!(!sup.join(".git/modules/libs/lib/modules/vendor/inner").exists());
@@ -650,9 +707,15 @@ fn remove_nested_and_uninitialised_submodules() {
     let subs = list(&repo);
     assert_eq!(subs.len(), 1);
     assert_eq!(subs[0].state, SubmoduleState::Modified, "{subs:#?}");
+}
 
-    // A second submodule (not initialised here), then the first one uninitialised too:
-    // .gitmodules keeps the other.
+/// A second submodule (not initialised here), then the first one uninitialised too and
+/// removed: .gitmodules keeps the other.
+#[gitti_test::test]
+fn remove_an_uninitialised_submodule() {
+    let fx = setup();
+    let sup = &fx.sup;
+    let repo = open(sup);
     let modules = fs::read_to_string(sup.join(".gitmodules")).unwrap();
     let two = format!("{modules}[submodule \"two\"]\n\tpath = two\n\turl = {}\n", slash(&fx.lib));
     fs::write(sup.join(".gitmodules"), two).unwrap();
@@ -726,11 +789,9 @@ fn check_out_a_commit_in_the_submodule_records_it() {
 }
 
 /// The risks named before a submodule checkout (a commit only the detached HEAD has,
-/// uncommitted changes), git's refusal reaching the caller, nested submodules (checked
-/// out in their own repository, the pointer change shows in the parent submodule), and
-/// a clear error for an uninitialised one.
+/// uncommitted changes), git's refusal reaching the caller.
 #[gitti_test::test]
-fn submodule_checkout_risks_nested_and_uninitialised() {
+fn submodule_checkout_risks() {
     let fx = setup();
     let repo = open(&fx.sup);
     let sub = fx.sub();
@@ -747,9 +808,14 @@ fn submodule_checkout_risks_nested_and_uninitialised() {
     // git refuses when the commit changes the dirty file: the error reaches the caller.
     let err = repo.checkout_submodule_commit("libs/lib", lib_one).unwrap_err();
     assert!(format!("{err:#}").contains("l.txt"), "{err:#}");
-    sh(&sub, &["checkout", "-q", "--", "l.txt"]);
+}
 
-    // Nested: checked out in its own repository; the parent submodule has the change.
+/// Nested submodules: checked out in their own repository, the pointer change shows in the
+/// parent submodule.
+#[gitti_test::test]
+fn submodule_checkout_of_a_nested_one() {
+    let fx = setup();
+    let repo = open(&fx.sup);
     let inner = fx.inner();
     let inner_one = fx.ids[fx.c.inner_one];
     commit_tracked(&inner, "i.txt", "i\n2\n", "inner two");
@@ -764,8 +830,14 @@ fn submodule_checkout_risks_nested_and_uninitialised() {
     let nested = repo.submodules(&ws.status).into_iter().find(|s| s.depth == 1).unwrap();
     assert_eq!(nested.state, SubmoduleState::Modified);
     assert_eq!((nested.ahead, nested.behind), (1, 0));
+}
 
-    // Not initialised: a clear error instead of a git failure.
+/// Not initialised: a clear error instead of a git failure.
+#[gitti_test::test]
+fn submodule_checkout_of_an_uninitialised_one() {
+    let fx = setup();
+    let repo = open(&fx.sup);
+    let lib_one = oid(&sh(&fx.sub(), &["rev-parse", "HEAD~1"]));
     sh(&fx.sup, &["submodule", "deinit", "-q", "-f", "--", "libs/lib"]);
     let subs = list(&repo);
     assert!(gitti_core::submodule::history(&fx.sup, &subs[0], 10).is_err());

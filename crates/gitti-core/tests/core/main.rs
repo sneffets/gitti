@@ -43,8 +43,9 @@ mod unix_fs;
 mod worktrees;
 
 /// The test repositories' settings — identity, no signing, contents as written whatever
-/// the user's global config says — appended to `<dir>/.git/config` instead of four or five
-/// `git config` processes (~0.5 s on Windows).
+/// the user's global config says, no `git maintenance run --auto` after every commit /
+/// fetch / merge (a process each) — appended to `<dir>/.git/config` instead of four or
+/// five `git config` processes (~0.5 s on Windows).
 pub fn test_config(dir: &std::path::Path) {
     use std::io::Write as _;
     let mut f = std::fs::OpenOptions::new()
@@ -53,7 +54,7 @@ pub fn test_config(dir: &std::path::Path) {
         .unwrap();
     f.write_all(
         b"[user]\n\tname = T\n\temail = t@example.com\n[commit]\n\tgpgsign = false\n\
-          [tag]\n\tgpgsign = false\n[core]\n\tautocrlf = false\n",
+          [tag]\n\tgpgsign = false\n[core]\n\tautocrlf = false\n[maintenance]\n\tauto = false\n",
     )
     .unwrap();
 }

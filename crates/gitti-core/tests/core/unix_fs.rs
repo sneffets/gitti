@@ -1516,11 +1516,9 @@ fn all_are(got: Vec<Option<String>>, want: Option<&str>, names: &[&str], what: &
     }
 }
 
-/// Tracked files with odd names, all in one repository: one status, every diff parsed
-/// with its own path, hunk and line stage / unstage / discard (one patch for all files
-/// per step), the path-limited re-read, whole-file stage / unstage / discard.
-#[gitti_test::test]
-fn odd_names_tracked_hunks_lines_and_whole_files() {
+/// Tracked files with odd names, all in one repository, each changed in two hunks: the
+/// fixture, its working state and the content of the unchanged and the changed version.
+fn odd_names_changed() -> (Vec<&'static str>, Fx, WorkingState, String) {
     let names = odd_names();
     let base = numbered(30);
     let files: Vec<(&str, &str)> = names.iter().map(|n| (*n, base.as_str())).collect();
@@ -1530,6 +1528,15 @@ fn odd_names_tracked_hunks_lines_and_whole_files() {
         fx.write(n, &changed);
     }
     let state = fx.state();
+    (names, fx, state, base)
+}
+
+/// Tracked files with odd names, all in one repository: one status, every diff parsed
+/// with its own path, hunk and line stage / unstage (one patch for all files per step),
+/// the path-limited re-read.
+#[gitti_test::test]
+fn odd_names_tracked_hunks_and_lines() {
+    let (names, fx, state, base) = odd_names_changed();
     assert_eq!(state.unstaged.len(), names.len());
     for (n, d) in names.iter().zip(diffs(&state, false, &names)) {
         let e = &state.status.entries.iter().find(|e| e.path == *n).unwrap();
@@ -1561,8 +1568,13 @@ fn odd_names_tracked_hunks_lines_and_whole_files() {
     let sel = diffs(&state, true, &names).into_iter().map(|d| (d, Selection::whole_hunk(0)));
     apply_all(&fx, sel.collect(), PatchMode::Unstage);
     all_are(index_all(&fx, &names), Some(&base), &names, "hunk unstaged");
+}
 
-    let state = fx.state();
+/// Tracked files with odd names: line and hunk discard (one patch for all files), then
+/// whole-file stage / unstage / discard and the path-limited re-read.
+#[gitti_test::test]
+fn odd_names_tracked_discard_and_whole_files() {
+    let (names, fx, state, base) = odd_names_changed();
     let sel = diffs(&state, false, &names).into_iter().map(|d| {
         let s = lines(&d, &["line 2b"]);
         (d, s)
@@ -1591,9 +1603,9 @@ fn odd_names_tracked_hunks_lines_and_whole_files() {
 }
 
 /// Untracked files with odd names: preview, partial stage, partial unstage of the added
-/// file, unstage of the rest, discard of single lines, deletion.
+/// file, unstage of the rest.
 #[gitti_test::test]
-fn odd_names_untracked_partial_stage_and_discard() {
+fn odd_names_untracked_partial_stage_and_unstage() {
     let names = odd_names();
     let fx = fixture(&[("keep.txt", "k\n")]);
     for n in &names {
@@ -1621,7 +1633,16 @@ fn odd_names_untracked_partial_stage_and_discard() {
     let sel = diffs(&state, true, &names).into_iter().map(|d| (d, Selection::whole_hunk(0)));
     apply_all(&fx, sel.collect(), PatchMode::Unstage);
     all_are(index_all(&fx, &names), None, &names, "unstaged entirely");
-    // Discarding single lines of the untracked files.
+}
+
+/// Untracked files with odd names: discard of single lines, deletion.
+#[gitti_test::test]
+fn odd_names_untracked_discard_lines_and_files() {
+    let names = odd_names();
+    let fx = fixture(&[("keep.txt", "k\n")]);
+    for n in &names {
+        fx.write(n, "one\ntwo\nthree\n");
+    }
     let state = fx.state();
     let sel = diffs(&state, false, &names).into_iter().map(|d| {
         let s = lines(&d, &["two"]);
