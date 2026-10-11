@@ -1,5 +1,5 @@
 //! Workflow tests of file shapes (catalog: `crates/gitti-workflow/WORKFLOWS.md`, RN, BN,
-//! BG, NU, FS, IG), driven through gitty: one repository per shape group
+//! BG, NU, FS, IG, CM-20), driven through gitty: one repository per shape group
 //! (`gitti_workflow::shapes`), headless gitty runs with the user's keys — Go to File (t),
 //! space to pick lines or mark files, s / u / d on lines, hunks, files and groups —
 //! `state` / `dump` / `cmds` checks of what gitty shows and runs, then the repository with
@@ -582,5 +582,30 @@ fn ig06_negation_and_excludes_file() {
         assert!(!screen.contains(f), "{f}: {out}");
     }
     assert!(st[1].contains("unstaged=0 staged=2"), "{out}");
+    wf::expect(&d).unwrap();
+}
+
+/// CM-20: `i18n.commitEncoding = ISO-8859-1` — S stages, c and the typed message: the
+/// note row under the box says what Latin-1 lacks and what is written instead; ctrl-s
+/// commits it in Latin-1 (with its header), the status line says what was replaced.
+/// Workflow: CM-20
+#[gitti_test::test]
+fn cm20_legacy_encoding() {
+    use shapes::legacy_encoding as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("repo");
+    wf::fixture(&d);
+    let out = gitty_with(
+        &d,
+        tempfile::tempdir().unwrap().path(),
+        "200x45",
+        &format!("key:enter;key:S;press:c;type:{};dump;key:ctrl-s;state", wf::TYPED),
+    );
+    let screen = screens(&out)[0];
+    let note = screen.lines().find(|l| l.contains("Not in ISO-8859-1: – → -, „ → \"")).unwrap_or("");
+    assert!(!note.is_empty(), "{out}");
+    let st = states(&out);
+    no_error(st[0], &out);
+    assert!(st[0].contains("Message written in ISO-8859-1"), "{out}");
     wf::expect(&d).unwrap();
 }

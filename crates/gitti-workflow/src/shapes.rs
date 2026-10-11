@@ -1,6 +1,6 @@
 //! File shapes and encodings in the apps: renames (RN), binary files (BN), big and many
 //! (BG), names and content that aren't plain UTF-8 (NU), file-system paths and file types
-//! (FS), ignore rules (IG-06) and Unicode commit messages (CM-20). The core tests of
+//! (FS), ignore rules (IG-06) and Unicode / legacy-encoded commit messages (CM-20). The core tests of
 //! `unix_fs` / `non_utf8` / `repo_shapes` pin the git side of each shape; these workflows
 //! are the representative app runs — one repository per shape group, every file of it
 //! staged / unstaged / discarded once, the rows and the result checked
@@ -1078,6 +1078,53 @@ pub mod unicode_messages {
             MESSAGE.to_string(),
             LATIN1_SUBJECT.to_string(),
         ]);
+        c.eq("status", e.status_lines(), Vec::<String>::new());
+        c.done()
+    }
+}
+
+/// **CM-20 — a repository whose messages are in a legacy encoding.**
+/// `i18n.commitEncoding = ISO-8859-1` in `.git/config`, `a.txt` changed. The user stages
+/// it and types [`TYPED`]: before committing the box says what ISO-8859-1 lacks and what
+/// is written instead ([`NOTE`]); then commits.
+///
+/// Expected ([`expect`]): the commit records `encoding ISO-8859-1` and its message is
+/// [`WRITTEN`] in Latin-1 bytes (the umlauts as themselves, the dash, quotes and euro as
+/// their ASCII equivalents, the CJK character as `?`); the work tree is clean.
+pub mod legacy_encoding {
+    use std::path::Path;
+
+    use crate::expect::{Checks, Expect};
+    use crate::fixture::{Fixture, put};
+
+    /// What the user types.
+    pub const TYPED: &str = "Grüße – „Größe“ 5 € 漢";
+    /// What the commit holds (decoded).
+    pub const WRITTEN: &str = "Grüße - \"Größe\" 5 EUR ?";
+    /// What the box says before committing.
+    pub const NOTE: &str =
+        "Not in ISO-8859-1: – → -, „ → \", “ → \", € → EUR, 漢 → ? (i18n.commitEncoding in .git/config)";
+
+    /// Three git processes.
+    pub fn fixture(dir: &Path) {
+        let mut fx = Fixture::new();
+        fx.commit("main", "init", &[put("a.txt", "a\n")]);
+        fx.config("[i18n]\n\tcommitEncoding = ISO-8859-1\n");
+        fx.write("a.txt", "a\nb\n");
+        fx.build(dir);
+    }
+
+    /// After the commit. Two git processes.
+    pub fn expect(dir: &Path) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut c = Checks::new("CM-20 after committing in ISO-8859-1");
+        let raw = e.blobs(&["HEAD"]).pop().flatten().unwrap_or_default();
+        let at = raw.windows(2).position(|w| w == b"\n\n").unwrap_or(raw.len());
+        let header = String::from_utf8_lossy(&raw[..at]).into_owned();
+        let enc = header.lines().find_map(|l| l.strip_prefix("encoding ")).map(String::from);
+        c.eq("encoding header", enc.as_deref(), Some("ISO-8859-1"));
+        let latin1: Vec<u8> = WRITTEN.chars().map(|ch| ch as u8).chain(*b"\n").collect();
+        c.bytes("message bytes", raw.get(at + 2..), Some(&latin1[..]));
         c.eq("status", e.status_lines(), Vec::<String>::new());
         c.done()
     }
