@@ -43,6 +43,7 @@ pub fn main() {
         ("spell_marks", spell_marks),
         ("panes_restore_after_resize", panes_restore_after_resize),
         ("panes_first_frame_after_resize", panes_first_frame_after_resize),
+        ("panes_drag_edges", panes_drag_edges),
         ("worktree_sweep", worktree_sweep),
         ("file_tabs_sweep", file_tabs_sweep),
         ("repo_tabs_reorder_and_list", repo_tabs_reorder_and_list),
@@ -841,6 +842,110 @@ fn panes_first_frame_after_resize(ui: &mut Ui) {
         ui.step("action:gitti::ToggleSidebar");
     }
     ui.step("action:gitti::ToggleGitLog");
+}
+
+/// Dragging the sidebar's right edge moves the commit list: it keeps its width in every
+/// frame of the drag, the detail gives way (wider and narrower). Dragging the list's right
+/// edge resizes it. The stored fractions are those of the panes drawn (shared with gitty:
+/// the list's share of the whole row); Toggle Sidebar keeps working.
+fn panes_drag_edges(ui: &mut Ui) {
+    use gitti_core::store::{PaneLayout, load_settings};
+    let widths = |p: &[Probe]| -> Option<[f32; 3]> {
+        let w = |n: &str| find(p, n).map(|q| f32::from(q.bounds.size.width));
+        Some([w("sidebar")?, w("commit-list")?, w("detail")?])
+    };
+    let Some(start) = widths(&ui.check("before")) else {
+        ui.fail("panes missing".into());
+        return;
+    };
+    let total: f32 = start.iter().sum();
+    // (pane dragged: 0 = the sidebar's edge, 1 = the list's; by; widths expected after)
+    let [s0, l0, d0] = start;
+    let drags: [(usize, f32, [f32; 3]); 3] = [
+        (0, 90., [s0 + 90., l0, d0 - 90.]),
+        (0, -150., [s0 - 60., l0, d0 + 60.]),
+        (1, -100., [s0 - 60., l0 - 100., d0 + 160.]),
+    ];
+    for (edge, by, want) in drags {
+        let p = ui.check("before the drag");
+        let Some(now) = widths(&p) else { return };
+        let name = if edge == 0 { "sidebar" } else { "commit-list" };
+        let Some(b) = find(&p, name).map(|q| q.bounds) else { return };
+        let from = point(b.right(), b.center().y);
+        let ctx = format!("{name}'s edge by {by}");
+        testing::clear_probes();
+        let mut frames = Vec::new();
+        let steps = [(Some(true), 0.), (None, by / 3.), (None, by * 2. / 3.), (None, by), (Some(false), by)];
+        for (down, dx) in steps {
+            ui.cx
+                .update_window(ui.window, |_, window, cx| {
+                    let position = point(from.x + px(dx), from.y);
+                    let event = match down {
+                        Some(true) => PlatformInput::MouseDown(MouseDownEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                            first_mouse: false,
+                        }),
+                        Some(false) => PlatformInput::MouseUp(MouseUpEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                        }),
+                        None => PlatformInput::MouseMove(MouseMoveEvent {
+                            position,
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Modifiers::default(),
+                        }),
+                    };
+                    window.dispatch_event(event, cx);
+                })
+                .unwrap();
+            for _ in 0..2 {
+                ui.cx.executor().advance_clock(std::time::Duration::from_millis(20));
+                ui.cx.run_until_parked();
+                ui.render();
+            }
+            frames.extend(testing::take_frames());
+        }
+        ui.settle();
+        for (k, f) in frames.iter().enumerate() {
+            for e in testing::check(f) {
+                ui.fail(format!("{ctx}: frame {k}: {e}"));
+            }
+            // No frame draws the list at another width while the sidebar's edge moves.
+            match widths(f) {
+                Some(w) if edge == 1 || (w[1] - now[1]).abs() < 1. => {}
+                other => ui.fail(format!("{ctx}: frame {k} has panes {other:?}, list {}", now[1])),
+            }
+        }
+        let after = widths(&ui.check(&ctx));
+        match after {
+            Some(w) if w.iter().zip(&want).all(|(a, b)| (a - b).abs() < 1.5) => {}
+            other => ui.fail(format!("{ctx}: panes {other:?}, want {want:?}")),
+        }
+        let stored = load_settings::<PaneLayout>();
+        let got = [stored.pane_sidebar * total, stored.pane_list * total];
+        if (got[0] - want[0]).abs() > 1.5 || (got[1] - want[1]).abs() > 1.5 {
+            ui.fail(format!("{ctx}: stored sidebar / list {got:?}, want {want:?}"));
+        }
+    }
+    // Toggle Sidebar: the list keeps its share of the whole row.
+    ui.step("action:gitti::ToggleSidebar");
+    let hidden = widths(&ui.check("sidebar hidden"));
+    let list = find(&ui.frame(), "commit-list").map(|q| f32::from(q.bounds.size.width));
+    if hidden.is_some() || list.is_none_or(|l| (l - (l0 - 100.)).abs() > 1.5) {
+        ui.fail(format!("sidebar hidden: list {list:?}, want {}", l0 - 100.));
+    }
+    ui.step("action:gitti::ToggleSidebar");
+    match widths(&ui.check("sidebar shown")) {
+        Some(w) if (w[0] - (s0 - 60.)).abs() < 1.5 && (w[1] - (l0 - 100.)).abs() < 1.5 => {}
+        other => ui.fail(format!("sidebar shown again: {other:?}")),
+    }
+    let unset = PaneLayout::default();
+    gitti_core::store::save_changed_settings(&load_settings::<PaneLayout>(), &unset);
 }
 
 /// `make_repo` in `<dir>/repo` plus two linked worktrees next to it (one with long names,
