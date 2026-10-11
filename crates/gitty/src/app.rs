@@ -19,6 +19,7 @@ use gitti_core::store::{self, PaneLayout, SharedSettings};
 use gitti_core::syntax::LineCategories;
 use gitti_core::discard::{DiscardOptions, DiscardPlan};
 use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget, SwitchWay};
+use gitti_core::worktree::BranchDeletion;
 use gitti_core::pull::{DivergentPull, PullStrategy};
 use gitti_core::push::{PullBlock, PushBlock, pull_block, push_block};
 use gitti_core::watch::Change;
@@ -217,8 +218,13 @@ pub enum Divider {
 pub enum FollowUp {
     /// git refused to switch because of untracked files / local changes.
     Switch(SwitchTarget, SwitchBlock),
-    /// `branch -d` refused: not fully merged.
-    ForceDelete(String),
+    /// `branch -d` refused: not fully merged; `lost` = the commits only it has
+    /// (`<short> <subject>`, and `more` beyond those) — what Force Delete drops.
+    ForceDelete {
+        branch: String,
+        lost: Vec<String>,
+        more: usize,
+    },
     /// `worktree remove` refused (local changes / untracked files): Force Remove?
     WorktreeRefused {
         wt: gitti_core::worktree::Worktree,
@@ -252,7 +258,7 @@ impl std::fmt::Display for FollowUp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FollowUp::Switch(t, _) => write!(f, "switching to {} is blocked", t.name()),
-            FollowUp::ForceDelete(n) => write!(f, "{n} is not fully merged"),
+            FollowUp::ForceDelete { branch, .. } => write!(f, "{branch} is not fully merged"),
             FollowUp::WorktreeRefused { wt, .. } => write!(f, "{} has changes", wt.name()),
             FollowUp::UnmergedBranch { branch, .. } => write!(f, "{branch} is not fully merged"),
             FollowUp::SplitDone { message, .. } => write!(f, "{message}"),
@@ -3444,10 +3450,17 @@ impl App {
         ));
     }
 
+    /// `git branch -d`; when git refuses because the branch is not fully merged, Force
+    /// Delete is offered, naming the commits it would drop.
     pub fn delete_branch(&mut self, name: String) {
         self.run_op("Delete branch", true, After::Nothing, move |r| {
-            r.delete_branch_if_merged(&name)?
-                .ok_or_else(|| FollowUp::ForceDelete(name).into())
+            match r.delete_branch_checked(&name) {
+                BranchDeletion::Deleted(out) => Ok(out),
+                BranchDeletion::Failed(e) => Err(anyhow::anyhow!(e)),
+                BranchDeletion::NotMerged { branch, lost, more } => {
+                    Err(FollowUp::ForceDelete { branch, lost, more }.into())
+                }
+            }
         });
     }
 
@@ -3487,12 +3500,12 @@ impl App {
                 }
                 self.modal = Some(Modal::menu(format!("Switch to {name}?"), items));
             }
-            FollowUp::ForceDelete(name) => {
+            FollowUp::ForceDelete { branch: name, lost, more } => {
                 self.modal = Some(Modal::confirm(
-                    "Branch not fully merged",
+                    format!("{name} is not fully merged"),
                     format!(
-                        "{name} is not fully merged into its upstream or HEAD. Delete it \
-                         anyway? Its commits stay reachable via the reflog for a while."
+                        "git keeps the branch: it is not merged into its upstream or HEAD.\n\n{}",
+                        worktrees::lost_detail(lost, more)
                     ),
                     "Force Delete",
                     move |app| {
