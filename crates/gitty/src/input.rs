@@ -940,9 +940,9 @@ impl App {
                     filtered, offset, ..
                 } => scroll(offset, filtered.len()),
                 // Drawing clamps to the last line.
-                Modal::Text { scroll: s, .. } | Modal::Help { scroll: s } => {
-                    *s = s.saturating_add_signed(d)
-                }
+                Modal::Text { scroll: s, .. }
+                | Modal::Help { scroll: s }
+                | Modal::Input { offset: s, .. } => *s = s.saturating_add_signed(d),
                 _ => {}
             }
             return;

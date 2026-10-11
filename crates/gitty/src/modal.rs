@@ -317,6 +317,9 @@ pub enum Modal {
         pick: Option<Pick>,
         /// A further action beside Enter ([`Modal::with_extra`]), e.g. Delete….
         extra: Option<Extra>,
+        /// First body row shown when the body is taller than the terminal allows (the
+        /// focused field kept in view; the wheel scrolls it).
+        offset: usize,
     },
     Confirm {
         title: String,
@@ -422,6 +425,7 @@ impl Modal {
             live: None,
             pick: None,
             extra: None,
+            offset: 0,
         }
     }
 

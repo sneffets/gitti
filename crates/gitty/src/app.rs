@@ -1422,6 +1422,9 @@ impl App {
             Some(Modal::Text { scroll, .. } | Modal::Help { scroll }) => {
                 format!(" text_scroll={scroll}")
             }
+            Some(Modal::Input { focus, offset, .. }) => {
+                format!(" input_focus={focus} input_offset={offset}")
+            }
             _ => String::new(),
         };
         format!(
