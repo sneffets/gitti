@@ -264,7 +264,7 @@ fn conflicted(
     h.commit("main", &[root], "main", &pick(1));
     let (tmp, p) = repo_with_config(&h, config);
     let r = std::sync::Arc::new(Repo::open(&p).unwrap());
-    assert!(r.merge("side").is_err(), "a conflict");
+    assert!(r.merge("side").unwrap().starts_with("Merge stopped on "), "a conflict: a stop, not a failure");
     (tmp, p, r)
 }
 

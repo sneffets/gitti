@@ -382,3 +382,21 @@ fn a_rebase_blocked_by_local_changes() {
     assert_eq!(r.state(), RepoState::Clean);
     assert_eq!(fs::read_to_string(p.join("b.txt")).unwrap(), "b local\n");
 }
+
+/// A merge / cherry-pick that stops on conflicts is not a failure: one plain line says
+/// so and what to do next (git's CONFLICT lines are on stdout, the Git Log has them).
+#[gitti_test::test]
+fn a_stop_on_conflicts_is_said_plainly() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    diverged(p);
+    let r = Repo::open(p).unwrap();
+    let out = r.merge("feature").unwrap();
+    assert_eq!(out, "Merge stopped on 1 conflict — resolve it, then Continue (or Abort).");
+    assert_eq!(r.state(), RepoState::Merging);
+    r.abort_operation().unwrap();
+    let out = r.cherry_pick("feature", false).unwrap();
+    assert_eq!(out, "Cherry-pick stopped on 1 conflict — resolve it, then Continue (or Skip / Abort).");
+    // Conflicted already: another failure is not taken for a stop.
+    assert!(r.merge("feature").is_err());
+}

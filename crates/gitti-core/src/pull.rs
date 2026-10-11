@@ -185,28 +185,29 @@ impl DivergentPull {
         }
         let merge_head = single_merge_head(fetched)?;
         let git = repo.git();
-        let out = match strategy {
-            // `git pull` merges `FETCH_HEAD` itself: the same message ("Merge branch 'b'
-            // of <url>"); `--no-edit` as without a terminal.
-            PullStrategy::Merge => git.run(&["merge", "--no-edit", "FETCH_HEAD"]),
-            PullStrategy::FastForwardOnly => git.run(&["merge", "--ff-only", "FETCH_HEAD"]),
-            PullStrategy::Rebase => {
-                // `git pull --rebase`: onto the fetched commit, from the fork point of the
-                // remote-tracking branch (its reflog), else from the fetched commit.
-                let tracking = format!("refs/remotes/{}", self.upstream);
-                let fork = git
-                    .run_raw(&["merge-base", "--fork-point", &tracking, "HEAD"], None)
-                    .ok()
-                    .filter(|o| o.code == 0)
-                    .map(|o| o.stdout_str().trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| merge_head.clone());
-                git.run(&["rebase", "--onto", &merge_head, &fork])
-            }
-        };
-        let out = out
-            .map(|o| crate::progress::without_progress(&format!("{}{}", o.stdout_str(), o.stderr)))
-            .map_err(anyhow::Error::from);
+        let out = repo.stop_on_conflicts(|| {
+            let out = match strategy {
+                // `git pull` merges `FETCH_HEAD` itself: the same message ("Merge branch 'b'
+                // of <url>"); `--no-edit` as without a terminal.
+                PullStrategy::Merge => git.run(&["merge", "--no-edit", "FETCH_HEAD"]),
+                PullStrategy::FastForwardOnly => git.run(&["merge", "--ff-only", "FETCH_HEAD"]),
+                PullStrategy::Rebase => {
+                    // `git pull --rebase`: onto the fetched commit, from the fork point of the
+                    // remote-tracking branch (its reflog), else from the fetched commit.
+                    let tracking = format!("refs/remotes/{}", self.upstream);
+                    let fork = git
+                        .run_raw(&["merge-base", "--fork-point", &tracking, "HEAD"], None)
+                        .ok()
+                        .filter(|o| o.code == 0)
+                        .map(|o| o.stdout_str().trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| merge_head.clone());
+                    git.run(&["rebase", "--onto", &merge_head, &fork])
+                }
+            };
+            out.map(|o| crate::progress::without_progress(&format!("{}{}", o.stdout_str(), o.stderr)))
+                .map_err(anyhow::Error::from)
+        });
         let args = pull_args(Some(strategy), &self.target());
         Some(unrelated_as(out, || UnrelatedRetry::Pull { args }))
     }
@@ -380,7 +381,19 @@ impl Repo {
         o.code == 0 && configured_in(&o.stdout_str(), branch)
     }
 
+    /// [`Self::pull_run_git`]; a merge / rebase that stops on conflicts says so
+    /// ([`crate::stopped`]).
     fn pull_run(
+        &self,
+        branch: &str,
+        upstream: &str,
+        target: &Target,
+        flag: Option<Flag>,
+    ) -> Result<String> {
+        self.stop_on_conflicts(|| self.pull_run_git(branch, upstream, target, flag))
+    }
+
+    fn pull_run_git(
         &self,
         branch: &str,
         upstream: &str,

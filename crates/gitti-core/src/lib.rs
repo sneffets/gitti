@@ -83,6 +83,7 @@ pub mod stage_all;
 mod stamp_cache;
 pub mod startup;
 pub mod stash;
+pub mod stopped;
 pub mod status;
 pub mod store;
 pub mod submodule;

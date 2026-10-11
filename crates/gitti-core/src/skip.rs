@@ -128,8 +128,10 @@ impl Repo {
                 anyhow::bail!("There is no cherry-pick, revert or rebase to skip a commit of")
             }
         };
-        let out = self.git().run(&["-c", "core.editor=true", cmd, "--skip"])?;
-        Ok(format!("{}{}", out.stdout_str(), out.stderr).trim().to_string())
+        self.stop_on_conflicts(|| {
+            let out = self.git().run(&["-c", "core.editor=true", cmd, "--skip"])?;
+            Ok(format!("{}{}", out.stdout_str(), out.stderr).trim().to_string())
+        })
     }
 
     /// Commits the stopped, empty cherry-pick / revert as a commit without changes —

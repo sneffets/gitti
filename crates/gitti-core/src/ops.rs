@@ -525,19 +525,23 @@ impl Repo {
             a.push("--no-commit");
         }
         a.push(rev);
-        let out = self.empty_pick_as(self.noting_fs_paths(|| self.out(&a)));
-        self.local_changes_as(out, || BlockedOp::CherryPick { rev: rev.to_string(), is_merge, opts })
+        self.stop_on_conflicts(|| {
+            let out = self.empty_pick_as(self.noting_fs_paths(|| self.out(&a)));
+            self.local_changes_as(out, || BlockedOp::CherryPick { rev: rev.to_string(), is_merge, opts })
+        })
     }
 
     pub fn revert(&self, rev: &str, is_merge: bool) -> Result<String> {
-        let out = self.empty_pick_as(self.noting_fs_paths(|| {
-            if is_merge {
-                self.out(&["revert", "--no-edit", "-m", "1", rev])
-            } else {
-                self.out(&["revert", "--no-edit", rev])
-            }
-        }));
-        self.local_changes_as(out, || BlockedOp::Revert { rev: rev.to_string(), is_merge })
+        self.stop_on_conflicts(|| {
+            let out = self.empty_pick_as(self.noting_fs_paths(|| {
+                if is_merge {
+                    self.out(&["revert", "--no-edit", "-m", "1", rev])
+                } else {
+                    self.out(&["revert", "--no-edit", rev])
+                }
+            }));
+            self.local_changes_as(out, || BlockedOp::Revert { rev: rev.to_string(), is_merge })
+        })
     }
 
     pub fn reset(&self, rev: &str, mode: ResetMode) -> Result<String> {
@@ -558,16 +562,20 @@ impl Repo {
     pub fn merge_with(&self, rev: &str, opts: &MergeOptions) -> Result<String> {
         let args = opts.args(rev);
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        let out = unrelated_as(self.noting_fs_paths(|| self.out(&args)), || UnrelatedRetry::Merge {
-            rev: rev.to_string(),
-            opts: opts.clone(),
-        });
-        self.local_changes_as(out, || BlockedOp::Merge { rev: rev.to_string(), opts: opts.clone() })
+        self.stop_on_conflicts(|| {
+            let out = unrelated_as(self.noting_fs_paths(|| self.out(&args)), || UnrelatedRetry::Merge {
+                rev: rev.to_string(),
+                opts: opts.clone(),
+            });
+            self.local_changes_as(out, || BlockedOp::Merge { rev: rev.to_string(), opts: opts.clone() })
+        })
     }
 
     pub fn rebase(&self, onto: &str) -> Result<String> {
-        let out = self.out(&["rebase", onto]);
-        self.local_changes_as(out, || BlockedOp::Rebase { onto: onto.to_string() })
+        self.stop_on_conflicts(|| {
+            let out = self.out(&["rebase", onto]);
+            self.local_changes_as(out, || BlockedOp::Rebase { onto: onto.to_string() })
+        })
     }
 
     pub fn state(&self) -> RepoState {
@@ -779,7 +787,7 @@ impl Repo {
     /// [`Self::continue_operation`]; the merge commit with Sign Off when `opts` says so
     /// (git's own `--continue` of the others takes no `--signoff`).
     pub fn continue_operation_with(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
-        self.empty_pick_as(self.continue_operation_raw(opts))
+        self.stop_on_conflicts(|| self.empty_pick_as(self.continue_operation_raw(opts)))
     }
 
     fn continue_operation_raw(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
@@ -824,7 +832,7 @@ impl Repo {
         let Some(message) = message.filter(|m| !m.trim().is_empty()) else {
             return self.continue_operation_with(opts);
         };
-        self.empty_pick_as(self.continue_with_message(message, opts))
+        self.stop_on_conflicts(|| self.empty_pick_as(self.continue_with_message(message, opts)))
     }
 
     fn continue_with_message(
@@ -1024,7 +1032,7 @@ impl Repo {
 
     pub fn stash_apply(&self, stash: StashRef, pop: bool) -> Result<String> {
         let name = self.stash_name(stash)?;
-        self.out(&["stash", if pop { "pop" } else { "apply" }, &name])
+        self.stop_on_conflicts(|| self.out(&["stash", if pop { "pop" } else { "apply" }, &name]))
     }
 
     pub fn stash_drop(&self, stash: StashRef) -> Result<String> {

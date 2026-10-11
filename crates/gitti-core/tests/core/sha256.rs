@@ -230,7 +230,7 @@ fn merge_conflict_worktrees_and_branch_ops() {
     let r = Repo::open(&p).unwrap();
 
     // A conflicting merge: the pending merge row, the merge editor's stages.
-    assert!(r.merge("side").is_err());
+    assert!(r.merge("side").unwrap().starts_with("Merge stopped on "), "a conflict: a stop, not a failure");
     let hist = r.history(LogOrder::Topo).unwrap();
     assert_eq!(hist.commits.at(0).parents.len(), 2, "HEAD + MERGE_HEAD");
     assert_eq!(r.working_state().unwrap().conflicted.len(), 1);
