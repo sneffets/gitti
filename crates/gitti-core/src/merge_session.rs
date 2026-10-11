@@ -181,7 +181,7 @@ impl MergeSession {
     /// The file is read and written as exact bytes in one encoding chosen for all
     /// versions ([`Repo::merge_doc_with_disk`]): nothing changes that wasn't edited.
     pub fn open(repo: Arc<Repo>, path: &str, sides: ConflictSides) -> Result<Self> {
-        let on_disk = std::fs::read(crate::paths::join_repo_path(repo.workdir(), path)).ok();
+        let on_disk = std::fs::read(repo.fs_path(path)).ok();
         let doc = repo.merge_doc_with_disk(path, on_disk.as_deref())?;
         Ok(Self::new(repo, doc, sides, on_disk))
     }
@@ -475,7 +475,7 @@ impl MergeSession {
     // ------------------------------------------------------------------ disk
 
     fn full_path(&self) -> std::path::PathBuf {
-        crate::paths::join_repo_path(self.repo.workdir(), &self.doc.path)
+        self.repo.fs_path(&self.doc.path)
     }
 
     /// The bytes as they go to disk: the text with its line endings, encoded exactly

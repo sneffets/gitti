@@ -411,10 +411,11 @@ impl Drop for Scratch {
     }
 }
 
-/// `mode SP id TAB path NUL` for `git update-index -z --index-info`.
-fn index_info(mode: &str, id: &str, path: &str) -> Vec<u8> {
+/// `mode SP id TAB path NUL` for `git update-index -z --index-info` (`path`: its bytes,
+/// [`Repo::path_bytes`]).
+fn index_info(mode: &str, id: &str, path: &[u8]) -> Vec<u8> {
     let mut v = format!("{mode} {id}\t").into_bytes();
-    v.extend_from_slice(path.as_bytes());
+    v.extend_from_slice(path);
     v.push(0);
     v
 }
@@ -536,9 +537,15 @@ impl Repo {
         message: &str,
     ) -> Result<String> {
         let path = file.path().to_string();
-        if file.lossy_name {
-            bail!("The name of {path} is not UTF-8 — cannot stash its lines");
+        // A name that is not UTF-8 goes to git by its bytes (`crate::raw_names`) — unless
+        // another file's name shows the same.
+        if self.check_names(file, PatchMode::Stage).is_err() {
+            bail!(
+                "The name of {path} is not UTF-8 and another file's name shows the same — gitti \
+                 can't tell which file it is, so it cannot stash its lines"
+            );
         }
+        let raw = self.path_bytes(&path)?.into_owned();
         if file.lfs.is_some() {
             bail!("{path} is a Git LFS file: its index entry is a pointer — stash the whole file");
         }
@@ -568,15 +575,10 @@ impl Repo {
             .unwrap_or_else(|| "(no branch)".into());
         let index = repo.index_or_empty().map_err(gx)?;
         let in_index = index
-            .entry_by_path(path.as_bytes().as_bstr())
+            .entry_by_path(raw.as_bstr())
             .map(|e| (format!("{:o}", e.mode.bits()), e.id));
         drop(index);
-        let in_head = head
-            .tree()
-            .map_err(gx)?
-            .lookup_entry_by_path(&path)
-            .map_err(gx)?
-            .map(|e| e.object_id());
+        let in_head = self.tree_entry(&head.tree().map_err(gx)?, &path)?.map(|e| e.object_id());
 
         if !staged && in_index.is_none() {
             // An untracked file: a stash holds it whole (`-u`); a part of it could not be
@@ -595,7 +597,12 @@ impl Repo {
             );
         }
 
-        let forward = build_patch(file, sel, PatchMode::Stage).ok_or_else(|| anyhow!("nothing selected"))?;
+        // Each patch names the file by its bytes (`Repo::raw_patch_names`).
+        let patch = |mode| -> Result<Vec<u8>> {
+            let p = build_patch(file, sel, mode).ok_or_else(|| anyhow!("nothing selected"))?;
+            self.raw_patch_names(file, p, mode)
+        };
+        let forward = patch(PatchMode::Stage)?;
         let mut scratch = Scratch::new(self);
         let tmp = scratch.index(self.git());
         tmp.run(&["read-tree", &head_id.to_string()])?;
@@ -609,7 +616,7 @@ impl Repo {
             } else {
                 // The file has staged changes: the selected lines apply to the index's
                 // version; carry that change over onto HEAD's version.
-                let info = index_info(&mode, &index_id.to_string(), &path);
+                let info = index_info(&mode, &index_id.to_string(), &raw);
                 tmp.run_stdin(&["update-index", "-z", "--index-info"], Some(&info))?;
                 apply_cached(&tmp, &forward)?;
                 if let Some(head_blob) = in_head {
@@ -625,7 +632,7 @@ impl Repo {
                             )
                         })?;
                     let id = repo.write_blob(&merged).map_err(gx)?.detach();
-                    let info = index_info(&mode, &id.to_string(), &path);
+                    let info = index_info(&mode, &id.to_string(), &raw);
                     tmp.run_stdin(&["update-index", "-z", "--index-info"], Some(&info))?;
                 }
             }
@@ -635,7 +642,7 @@ impl Repo {
 
         // What takes the lines out, checked before anything is stored.
         let removal = if staged {
-            let reverse = build_patch(file, sel, PatchMode::Unstage).ok_or_else(|| anyhow!("nothing selected"))?;
+            let reverse = patch(PatchMode::Unstage)?;
             let check = self.git().run_raw(&["apply", "-R", "--check", "--recount", "-"], Some(&reverse))?;
             let worktree = if check.code == 0 {
                 None
@@ -644,7 +651,7 @@ impl Repo {
             };
             Removal::Staged { reverse, worktree }
         } else {
-            let discard = build_patch(file, sel, PatchMode::Discard).ok_or_else(|| anyhow!("nothing selected"))?;
+            let discard = patch(PatchMode::Discard)?;
             let check = self.git().run_raw(&["apply", "-R", "--check", "--recount", "-"], Some(&discard))?;
             if check.code != 0 {
                 bail!("{path} changed since it was shown — look again and choose the lines anew");
@@ -687,7 +694,7 @@ impl Repo {
                     None => self.git().run_stdin(&["apply", "-R", "--recount", "--whitespace=nowarn", "-"], Some(&reverse)).map(|_| ()).map_err(Into::into),
                     Some((mode, id)) => {
                         let one = scratch.index(self.git());
-                        one.run_stdin(&["update-index", "--add", "-z", "--index-info"], Some(&index_info(&mode, &id.to_string(), &path)))?;
+                        one.run_stdin(&["update-index", "--add", "-z", "--index-info"], Some(&index_info(&mode, &id.to_string(), &raw)))?;
                         one.run(&["checkout-index", "-f", "--", &path])?;
                         Ok(())
                     }
@@ -722,7 +729,7 @@ impl Repo {
         };
         let (mode, index_id) = in_index.cloned().ok_or_else(conflict)?;
         let tmp = scratch.index(self.git());
-        tmp.run_stdin(&["update-index", "--add", "-z", "--index-info"], Some(&index_info(&mode, &index_id.to_string(), path)))?;
+        tmp.run_stdin(&["update-index", "--add", "-z", "--index-info"], Some(&index_info(&mode, &index_id.to_string(), &self.path_bytes(path)?)))?;
         tmp.run_stdin(&["apply", "--cached", "-R", "--recount", "--whitespace=nowarn", "-"], Some(reverse))?;
         let without = match staged_entry(&tmp, path)? {
             Some((_, id)) => ObjectId::from_hex(id.as_bytes()).map_err(gx)?,
@@ -1024,7 +1031,7 @@ impl Repo {
             .stdout
             .split(|b| *b == 0)
             .filter(|p| !p.is_empty())
-            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .map(|p| self.show_path(p))
             .collect();
         staged.sort();
         if staged.is_empty() {
@@ -1068,20 +1075,20 @@ impl Repo {
         Ok(files
             .iter()
             .filter(|e| !e.mode.is_tree())
-            .map(|f| f.filepath.to_str_lossy().into_owned())
+            .map(|f| self.show_path(&f.filepath))
             .collect())
     }
 
     /// What in the working tree keeps git from writing the file `path`: the path itself
     /// when anything exists there, and every folder of it that is a file (or a symlink).
     fn existing_in_the_way(&self, path: &str) -> Vec<String> {
-        let workdir = self.workdir();
         let mut found = Vec::new();
-        if crate::paths::join_repo_path(workdir, path).symlink_metadata().is_ok() {
+        if self.fs_path(path).symlink_metadata().is_ok() {
             found.push(path.to_string());
         }
         for (at, _) in path.match_indices('/') {
-            if crate::paths::join_repo_path(workdir, &path[..at])
+            if self
+                .fs_path(&path[..at])
                 .symlink_metadata()
                 .is_ok_and(|m| !m.is_dir())
             {
@@ -1136,7 +1143,7 @@ impl Repo {
             .ok()
             .and_then(|c| c.tree().ok());
         let blob_in = |tree: Option<&gix::Tree<'_>>, path: &str| {
-            tree.and_then(|t| t.lookup_entry_by_path(path).ok().flatten())
+            tree.and_then(|t| self.tree_entry(t, path).ok().flatten())
                 .is_some_and(|e| !e.mode().is_tree())
         };
         // Tracked files with uncommitted changes (staged or not).
@@ -1144,7 +1151,7 @@ impl Repo {
             .git()
             .run(&["status", "--porcelain=v2", "-z", "--untracked-files=no"])?;
         let mut dirty: Vec<String> = Vec::new();
-        for e in crate::status::parse_porcelain_v2(&status.stdout).entries {
+        for e in self.parse_status(&status.stdout).entries {
             dirty.extend(e.orig_path);
             dirty.push(e.path);
         }
@@ -1183,7 +1190,7 @@ impl Repo {
             .stdout
             .split(|b| *b == 0)
             .filter(|p| !p.is_empty())
-            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .map(|p| self.show_path(p))
             .filter(|p| dirty.contains(p))
             .collect();
         local.sort();

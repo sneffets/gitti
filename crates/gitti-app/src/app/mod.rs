@@ -155,7 +155,8 @@ pub(crate) fn open_editor(
             argv[0]
         );
     }
-    gitti_core::editor::spawn_editor(&argv, workdir)
+    // A file name that is not UTF-8 reaches the editor as its bytes.
+    gitti_core::editor::spawn_editor(&gitti_core::editor::os_argv(&argv, file), workdir)
 }
 
 /// A shown commit: the (cached, shared) data plus how it was reached. Derefs to
@@ -1584,7 +1585,8 @@ impl GittiApp {
             cx.notify();
             return;
         };
-        let full = gitti_core::paths::join_repo_path(repo.workdir(), &path);
+        // A name that is not UTF-8 by its bytes.
+        let full = repo.fs_path(&path);
         if !full.exists() {
             self.set_error(format!("{path} does not exist in the working tree"));
             cx.notify();
@@ -2612,7 +2614,7 @@ impl GittiApp {
         let nested = self
             .repo
             .as_ref()
-            .is_some_and(|r| gitti_core::discard::is_nested_repo(r.workdir(), &wf.entry));
+            .is_some_and(|r| gitti_core::discard::is_nested_repo(&**r, &wf.entry));
         let (message, detail, button, opts) = if nested {
             (
                 format!("Delete the repository folder {}?", wf.path()),
@@ -2729,7 +2731,7 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) {
         let plan = match &self.repo {
-            Some(r) => DiscardPlan::of(r.workdir(), &entries),
+            Some(r) => DiscardPlan::of(&**r, &entries),
             None => return,
         };
         let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));

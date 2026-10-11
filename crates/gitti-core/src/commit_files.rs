@@ -104,6 +104,9 @@ pub fn size_text(bytes: u64) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Changed {
     pub path: String,
+    /// The path's bytes when it doesn't read as itself (not UTF-8: `path` shows U+FFFD,
+    /// [`crate::raw_names`]).
+    pub raw: Option<Vec<u8>>,
     pub change: FileChange,
     pub old_size: u64,
     pub new_size: u64,
@@ -132,7 +135,8 @@ impl Changed {
             submodule: None,
             too_large: Some(self.old_size.max(self.new_size)),
             encoding: Default::default(),
-            lossy_name: false,
+            lossy_name: self.raw.is_some(),
+            raw_paths: self.raw.iter().cloned().collect(),
             lfs: None,
         }
     }
@@ -196,21 +200,26 @@ pub(crate) type ShowDiffs = Vec<(ObjectId, (Vec<FileDiff>, bool))>;
 /// some may be missing — `filtered` (a pathspec left files out), or the output was cut
 /// (not `complete`): then the last commit's last file, maybe incomplete, is dropped (and
 /// commits after it are missing).
-pub(crate) fn split_show(out: &str, complete: bool, filtered: bool) -> ShowDiffs {
+pub(crate) fn split_show(out: &[u8], complete: bool, filtered: bool) -> ShowDiffs {
     // Marker positions: at a line start only (file content may contain \x01).
     let starts: Vec<usize> = out
-        .match_indices('\x01')
+        .iter()
+        .enumerate()
+        .filter(|&(i, b)| *b == 0x01 && (i == 0 || out[i - 1] == b'\n'))
         .map(|(i, _)| i)
-        .filter(|&i| i == 0 || out.as_bytes()[i - 1] == b'\n')
         .collect();
     let mut diffs = Vec::with_capacity(starts.len());
     for (k, &start) in starts.iter().enumerate() {
         let chunk = &out[start + 1..starts.get(k + 1).copied().unwrap_or(out.len())];
-        let (hex, body) = chunk.split_once('\n').unwrap_or((chunk, ""));
-        let Ok(id) = ObjectId::from_hex(hex.trim().as_bytes()) else {
+        let (hex, body) = match chunk.iter().position(|b| *b == b'\n') {
+            Some(nl) => (&chunk[..nl], &chunk[nl + 1..]),
+            None => (chunk, &[][..]),
+        };
+        let Ok(id) = ObjectId::from_hex(hex.trim_ascii()) else {
             continue;
         };
-        let mut files = crate::diff::parse_unified(body);
+        // Byte-exact: lines and names that are not UTF-8 keep their bytes.
+        let mut files = crate::diff::parse_unified_bytes(body);
         let cut = k + 1 == starts.len() && !complete;
         if cut {
             files.pop();
@@ -264,7 +273,7 @@ pub(crate) fn changed_between(
     new: Option<ObjectId>,
 ) -> Result<Vec<Changed>> {
     let mut out = Vec::new();
-    walk(repo, old, new, "", &mut out)?;
+    walk(repo, old, new, b"", &mut out)?;
     Ok(out)
 }
 
@@ -274,6 +283,14 @@ pub(crate) fn tree_of(repo: &gix::Repository, id: ObjectId) -> Result<ObjectId> 
 }
 
 impl Repo {
+    /// Learns the names of `changed` that don't read as themselves ([`crate::raw_names`]):
+    /// pathspecs naming them (huge files left out, "Load anyway") reach git by their bytes.
+    pub(crate) fn learn_changed(&self, changed: &[Changed]) {
+        for raw in changed.iter().filter_map(|c| c.raw.as_deref()) {
+            self.git().raw_names().learn(raw);
+        }
+    }
+
     /// `git diff-tree -p -M` with the display options; plumbing ignores `diff.algorithm`
     /// (`git show`, the commit view, honours it), so it is passed.
     pub(crate) fn diff_tree_args(&self, opts: &DiffOptions) -> Vec<String> {
@@ -319,6 +336,7 @@ impl Repo {
         changed: &[Changed],
         opts: &DiffOptions,
     ) -> Result<Vec<FileDiff>> {
+        self.learn_changed(changed);
         let Some(specs) = exclusions(changed) else {
             // More huge files than fit on a command line: the file list only.
             let mut files = with_placeholders(Vec::new(), changed);
@@ -341,6 +359,7 @@ impl Repo {
             .collect();
         let mut files = with_placeholders(files, &missing);
         self.mark_binary_placeholders(&mut files);
+        self.learn_names(&files);
         Ok(files)
     }
 
@@ -369,6 +388,7 @@ impl Repo {
             None => Vec::new(),
         };
         let all: Vec<Changed> = tracked_changed.iter().chain(&untracked_changed).cloned().collect();
+        self.learn_changed(&all);
         if !needs_guard(&all) {
             return Ok(None);
         }
@@ -401,7 +421,7 @@ impl Repo {
         }
         let mut input = Vec::new();
         for &i in &ask {
-            input.extend_from_slice(files[i].path().as_bytes());
+            input.extend_from_slice(files[i].bytes_of(files[i].path()));
             input.push(0);
         }
         let Ok(out) = self
@@ -423,7 +443,7 @@ fn walk(
     repo: &gix::Repository,
     old: Option<ObjectId>,
     new: Option<ObjectId>,
-    prefix: &str,
+    prefix: &[u8],
     out: &mut Vec<Changed>,
 ) -> Result<()> {
     let (a, b) = (entries(repo, old)?, entries(repo, new)?);
@@ -433,7 +453,10 @@ fn walk(
         }
         repo.find_header(e.id).map(|h| h.size()).unwrap_or(0)
     };
-    let path = |e: &Entry| format!("{prefix}{}", String::from_utf8_lossy(&e.name));
+    // The path's bytes (a name that is not UTF-8 keeps them).
+    let raw = |e: &Entry| [prefix, &e.name].concat();
+    let dir = |e: &Entry| [prefix, &e.name, b"/"].concat();
+    let path = |e: &Entry| crate::raw_names::shown(&raw(e));
     let (mut i, mut j) = (0, 0);
     while i < a.len() || j < b.len() {
         let order = match (a.get(i), b.get(j)) {
@@ -447,10 +470,12 @@ fn walk(
             Ordering::Less => {
                 let x = &a[i];
                 if x.mode.is_tree() {
-                    walk(repo, Some(x.id), None, &format!("{}/", path(x)), out)?;
+                    walk(repo, Some(x.id), None, &dir(x), out)?;
                 } else {
+                    let (path, raw) = path(x);
                     out.push(Changed {
-                        path: path(x),
+                        path,
+                        raw,
                         change: FileChange::Deleted,
                         old_size: size(x),
                         new_size: 0,
@@ -461,10 +486,12 @@ fn walk(
             Ordering::Greater => {
                 let y = &b[j];
                 if y.mode.is_tree() {
-                    walk(repo, None, Some(y.id), &format!("{}/", path(y)), out)?;
+                    walk(repo, None, Some(y.id), &dir(y), out)?;
                 } else {
+                    let (path, raw) = path(y);
                     out.push(Changed {
-                        path: path(y),
+                        path,
+                        raw,
                         change: FileChange::Added,
                         old_size: 0,
                         new_size: size(y),
@@ -476,11 +503,13 @@ fn walk(
                 let (x, y) = (&a[i], &b[j]);
                 if x.id != y.id || x.mode != y.mode {
                     if x.mode.is_tree() {
-                        walk(repo, Some(x.id), Some(y.id), &format!("{}/", path(x)), out)?;
+                        walk(repo, Some(x.id), Some(y.id), &dir(x), out)?;
                     } else {
                         let kind = |m: EntryMode| (m.is_link(), m.is_commit());
+                        let (path, raw) = path(y);
                         out.push(Changed {
-                            path: path(y),
+                            path,
+                            raw,
                             change: if kind(x.mode) == kind(y.mode) {
                                 FileChange::Modified
                             } else {
@@ -507,6 +536,7 @@ mod tests {
     fn changed(path: &str, change: FileChange, size: u64) -> Changed {
         Changed {
             path: path.into(),
+            raw: None,
             change,
             old_size: if change == FileChange::Added { 0 } else { size },
             new_size: if change == FileChange::Deleted { 0 } else { size },
@@ -570,15 +600,15 @@ mod tests {
     fn split_and_placeholders() {
         let (a, b) = ("1".repeat(40), "2".repeat(40));
         let out = format!("\x01{a}\n\n{}{}\x01{b}\n\n{}", file("b.txt"), file("d.txt"), file("x.txt"));
-        let all = split_show(&out, true, false);
+        let all = split_show(out.as_bytes(), true, false);
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].1.0.len(), 2);
         assert!(!all[0].1.1 && !all[1].1.1);
         // Cut inside the second commit: its (only) file goes, it is marked.
-        let cut = split_show(&out[..out.len() - 3], false, false);
+        let cut = split_show(&out.as_bytes()[..out.len() - 3], false, false);
         assert_eq!((cut[1].1.0.len(), cut[1].1.1), (0, true));
         // Cut inside the first one: the second is missing.
-        let first = split_show(&out[..50], false, false);
+        let first = split_show(&out.as_bytes()[..50], false, false);
         assert_eq!(first.len(), 1);
         assert!(first[0].1.1);
         let list = [

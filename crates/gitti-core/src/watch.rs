@@ -904,7 +904,12 @@ impl Tree {
             if i > 0 {
                 s.push('/');
             }
-            s.push_str(part.to_str()?);
+            // A name that is not UTF-8 (`crate::raw_names`): no path to limit a re-read
+            // to — the whole working state is read (never a change left unseen).
+            let Some(part) = part.to_str() else {
+                return Some(None);
+            };
+            s.push_str(part);
         }
         Some(Some(s))
     }

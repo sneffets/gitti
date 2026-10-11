@@ -231,6 +231,109 @@ fn nu04_a_name_that_is_not_utf8_on_disk() {
     wf::expect_discarded(dir).unwrap();
 }
 
+/// NU-06: a commit's file whose name isn't UTF-8 (only in commits, any unix disk): the
+/// commit's diff lists it with U+FFFD and teaches its bytes; Open This / Old Version give
+/// the right copies; Show Whole File reads it; its file history finds all three commits;
+/// the restore plan writes it — and where the disk takes the name (Linux) the restore
+/// does.
+/// Workflow: NU-06
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu06_a_commits_file_whose_name_is_not_utf8() {
+    use gitti_core::version_file::{DiffSource, version_sides, version_target};
+    use gitti_workflow::nu::history_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = &tmp.path().join("repo");
+    let s = wf::fixture(dir);
+    let repo = Repo::open(dir).unwrap();
+    let change = ObjectId::from_hex(s.change.as_bytes()).unwrap();
+    let add = ObjectId::from_hex(s.add.as_bytes()).unwrap();
+    let files = repo.commit_diff(change).unwrap();
+    let f = files.iter().find(|f| f.path() == wf::SHOWN).unwrap_or_else(|| panic!("{files:#?}"));
+    assert!(f.lossy_name && f.raw_paths == [wf::RAW.to_vec()], "{f:#?}");
+    // Open This / Old Version.
+    let sides = version_sides(DiffSource::Commit { id: change, parents: &[add], stash: false });
+    let root = tmp.path().join("versions");
+    for (old, want) in [(false, wf::CHANGED), (true, wf::ADDED)] {
+        let side = if old { sides.1 } else { sides.0 };
+        let t = version_target(side, f, old).unwrap();
+        let copy = repo.export_version_in(&root, t.commit, &t.path, false).unwrap();
+        assert_eq!(std::fs::read_to_string(&copy.path).unwrap(), want, "{}", copy.path.display());
+    }
+    // Show Whole File (syntax highlighting, context): the version by its bytes.
+    let read = repo
+        .read_versions(&[(gitti_core::blobs::Version::Rev(s.change.clone()), wf::SHOWN.to_string())])
+        .unwrap();
+    assert_eq!(read[0].as_deref(), Some(wf::CHANGED));
+    // Its file history: `git log --follow` of the shown name reaches the file.
+    let mut found = Vec::new();
+    gitti_core::search_paths::touching_commits(
+        repo.git(),
+        &gitti_core::search_paths::PathLog::Follow(wf::SHOWN.to_string()),
+        &std::sync::atomic::AtomicBool::new(false),
+        &mut |id, _| {
+            found.push(id.to_string());
+            true
+        },
+    );
+    assert_eq!(found, [s.remove.clone(), s.change.clone(), s.add.clone()]);
+    // Restore This Version: the plan, then (where the disk takes the name) the restore.
+    let target = gitti_core::restore::restore_target(sides, f, false).unwrap();
+    let plan = repo.restore_plan(&target).unwrap();
+    assert_eq!((plan.written.as_slice(), plan.deleted.len()), ([wf::SHOWN.to_string()].as_slice(), 0));
+    wf::expect_unchanged(dir).unwrap();
+    if wf::holds(dir) {
+        repo.restore(&plan, false).unwrap();
+        wf::expect_restored(dir).unwrap();
+    }
+}
+
+/// NU-07 (where the disk takes the name: Linux): the line `three` of the edited
+/// `caf\xe9.txt` stashed by Stash Selected Lines.
+/// Workflow: NU-07
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu07_stash_lines_of_a_name_that_is_not_utf8() {
+    use gitti_workflow::nu::stash_lines_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    if !wf::fixture(dir) {
+        return; // this file system refuses such names (macOS)
+    }
+    let repo = Repo::open(dir).unwrap();
+    let ws = state(&repo);
+    let d = shown(file(&ws.unstaged, wf::SHOWN));
+    let msg = repo.stash_lines(d, &line_named(d, wf::LINE), false, "").unwrap();
+    assert!(msg.starts_with(&format!("Stashed 1 line of {}", wf::SHOWN)), "{msg}");
+    wf::expect_stashed(dir).unwrap();
+}
+
+/// NU-08: the tracked `caf\xe9.txt` (in the index, not on disk) added to `.gitignore` as
+/// "This file" and untracked: the pattern written in the name's bytes, the file out of
+/// the index.
+/// Workflow: NU-08
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu08_ignore_a_name_that_is_not_utf8() {
+    use gitti_core::ignore::{IgnoreFile, suggestions};
+    use gitti_workflow::nu::ignore_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    wf::fixture(dir);
+    let repo = Repo::open(dir).unwrap();
+    let ws = state(&repo);
+    assert_eq!(file(&ws.unstaged, wf::SHOWN).entry.worktree, Some('D'));
+    let this = suggestions(wf::SHOWN).remove(0).pattern;
+    assert_eq!(this, wf::pattern());
+    assert_eq!(repo.tracked_matching(&this, "").unwrap(), [wf::SHOWN]);
+    let out = repo.add_ignore_pattern(&this, IgnoreFile::Gitignore, true).unwrap();
+    assert_eq!((out.added, out.untracked.as_slice()), (true, [wf::SHOWN.to_string()].as_slice()));
+    wf::expect_ignored(dir).unwrap();
+    // The same pattern again: no second line.
+    assert!(!repo.add_ignore_pattern(&this, IgnoreFile::Gitignore, false).unwrap().added);
+    wf::expect_ignored(dir).unwrap();
+}
+
 /// CM-20: a repository with `i18n.commitEncoding = ISO-8859-1` — the box's note says
 /// what the encoding lacks of the typed message before committing; the commit is in
 /// Latin-1 with its header, and shows decoded.

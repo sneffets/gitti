@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use gitti_core::create::{Cloned, expand_home, name_from_url};
 use gitti_core::git_cli::Git;
-use gitti_core::ignore::{IgnoreChoice, IgnoreFile, rule_dirs, suggestions_in};
+use gitti_core::ignore::{IgnoreChoice, IgnoreFile, suggestions_in};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -579,7 +579,7 @@ impl GittiApp {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let mut files: Vec<IgnoreFile> = rule_dirs(repo.workdir(), path, ".gitignore")
+        let mut files: Vec<IgnoreFile> = repo.rule_dirs(path, ".gitignore")
             .iter()
             .map(|d| IgnoreFile::in_dir(d))
             .collect();
@@ -657,7 +657,14 @@ impl GittiApp {
             return;
         };
         let path = repo.workdir().join(name);
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let text = match gitti_core::ignore::read_rules_file(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.set_error(format!("{e:#}"));
+                cx.notify();
+                return;
+            }
+        };
         let message = if name == ".gitattributes" {
             format!("{} — one pattern and its attributes per line", path.display())
         } else {

@@ -146,12 +146,13 @@ pub fn sandbox() {
 /// Starts `argv[0]` with the other arguments in `dir` without waiting for it; a thread
 /// reaps it when it exits — otherwise every opener that returns at once (`xdg-open`,
 /// `open`, `code`) stayed a zombie process until the app quit.
-pub(crate) fn spawn_detached(argv: &[String], dir: &Path) -> std::io::Result<()> {
+pub(crate) fn spawn_detached<S: AsRef<std::ffi::OsStr>>(argv: &[S], dir: &Path) -> std::io::Result<()> {
     let Some((program, args)) = argv.split_first() else {
         return Err(std::io::ErrorKind::InvalidInput.into());
     };
     if SANDBOX.load(Ordering::Relaxed) && !Path::new(program).is_absolute() {
-        eprintln!("(sandbox: not started: {})", argv.join(" "));
+        let line: Vec<String> = argv.iter().map(|a| a.as_ref().to_string_lossy().into_owned()).collect();
+        eprintln!("(sandbox: not started: {})", line.join(" "));
         return Ok(());
     }
     let mut child = Command::new(program)

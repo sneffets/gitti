@@ -28,6 +28,9 @@ pub const MAX_DIRS: usize = 8;
 pub struct PathIndex {
     paths: Vec<String>,
     lower: Vec<String>,
+    /// The bytes of the paths that don't read as themselves (not UTF-8): learned by the
+    /// runner that searches them ([`Self::learn_into`]).
+    raw: Vec<Vec<u8>>,
 }
 
 /// How a term was found among the paths.
@@ -111,7 +114,19 @@ impl PathIndex {
         paths.sort();
         paths.dedup();
         let lower = paths.iter().map(|p| p.to_lowercase()).collect();
-        Self { paths, lower }
+        Self {
+            paths,
+            lower,
+            raw: Vec::new(),
+        }
+    }
+
+    /// Lets `git` hand the paths that are not UTF-8 to git by their bytes
+    /// ([`crate::raw_names`]): a file history of one reaches the right file.
+    pub fn learn_into(&self, git: &Git) {
+        for r in &self.raw {
+            git.raw_names().learn(r);
+        }
     }
 
     /// The files of `commit`'s tree (empty when it cannot be read).
@@ -124,9 +139,13 @@ impl PathIndex {
             .unwrap_or_default()
             .into_iter()
             .filter(|e| !e.mode.is_tree())
-            .map(|e| e.filepath.to_string())
-            .collect();
-        Self::from_paths(paths)
+            .map(|e| crate::raw_names::shown(&e.filepath))
+            .collect::<Vec<_>>();
+        let raw = paths.iter().filter_map(|(_, r)| r.clone()).collect();
+        Self {
+            raw,
+            ..Self::from_paths(paths.into_iter().map(|(p, _)| p).collect())
+        }
     }
 
     pub fn len(&self) -> usize {

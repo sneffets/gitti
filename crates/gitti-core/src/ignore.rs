@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 
 use crate::Repo;
 
@@ -204,12 +204,17 @@ pub fn rule_suggestions(kind: RuleKind, path: &str, dir: &str) -> Vec<IgnoreChoi
 /// for `path`, from the top: `""` (the top level), every folder above `path` that already
 /// has one, and the folder `path` is in.
 pub fn rule_dirs(workdir: &Path, path: &str, name: &str) -> Vec<String> {
+    rule_dirs_on(path, name, |dir| crate::paths::join_repo_path(workdir, dir))
+}
+
+/// [`rule_dirs`] with `on_disk` giving where a folder is.
+fn rule_dirs_on(path: &str, name: &str, on_disk: impl Fn(&str) -> PathBuf) -> Vec<String> {
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     let mut out = vec![String::new()];
     let parents = parts.len().saturating_sub(1);
     for depth in 1..=parents {
         let dir = parts[..depth].join("/");
-        if depth == parents || crate::paths::join_repo_path(workdir, &dir).join(name).is_file() {
+        if depth == parents || on_disk(&dir).join(name).is_file() {
             out.push(dir);
         }
     }
@@ -240,6 +245,26 @@ pub fn rooted(pattern: &str, dir: &str) -> String {
     }
 }
 
+/// The text of rule file `path` (`.gitignore`, `.gitattributes`) for editing it as a
+/// whole: `""` when it doesn't exist yet. Refused — never an empty text that saving would
+/// write over the file — when it can't be read, or isn't UTF-8 (a pattern for a name in
+/// another encoding: the editor would change those bytes).
+pub fn read_rules_file(path: &Path) -> Result<String> {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    String::from_utf8(bytes).map_err(|_| {
+        anyhow!(
+            "{} is not UTF-8 text — a pattern in it names a file whose name is in another \
+             encoding. gitti can't edit it without changing those bytes: edit it in an \
+             editor that keeps them.",
+            path.display()
+        )
+    })
+}
+
 /// A pattern as typed: one line, not empty, no trailing `\r`.
 pub fn check_pattern(pattern: &str) -> Result<&str> {
     let p = pattern.trim_start().trim_end_matches(['\r', '\n']);
@@ -256,22 +281,33 @@ pub fn check_pattern(pattern: &str) -> Result<&str> {
 /// missing final newline is added first; CRLF files get CRLF). `false` when the file
 /// already has exactly this line.
 pub fn append_pattern(file: &Path, pattern: &str) -> Result<bool> {
-    let pattern = check_pattern(pattern)?;
+    append_pattern_bytes(file, check_pattern(pattern)?.as_bytes())
+}
+
+/// [`append_pattern`] of a pattern in bytes (a name that is not UTF-8 keeps them,
+/// [`crate::raw_names::Marked`]), checked as one line.
+pub fn append_pattern_bytes(file: &Path, pattern: &[u8]) -> Result<bool> {
+    if pattern.contains(&b'\n') || pattern.contains(&b'\r') {
+        bail!("a pattern is a single line");
+    }
     let text = match std::fs::read(file) {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(e).with_context(|| format!("reading {}", file.display())),
     };
-    if text.lines().any(|l| l.trim_end_matches('\r') == pattern) {
+    if text
+        .split(|b| *b == b'\n')
+        .any(|l| l.strip_suffix(b"\r").unwrap_or(l) == pattern)
+    {
         return Ok(false);
     }
-    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut add = String::new();
-    if !text.is_empty() && !text.ends_with('\n') {
-        add.push_str(eol);
+    let eol: &[u8] = if text.windows(2).any(|w| w == b"\r\n") { b"\r\n" } else { b"\n" };
+    let mut add = Vec::new();
+    if !text.is_empty() && !text.ends_with(b"\n") {
+        add.extend_from_slice(eol);
     }
-    add.push_str(pattern);
-    add.push_str(eol);
+    add.extend_from_slice(pattern);
+    add.extend_from_slice(eol);
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
@@ -280,7 +316,7 @@ pub fn append_pattern(file: &Path, pattern: &str) -> Result<bool> {
         .create(true)
         .append(true)
         .open(file)
-        .and_then(|mut f| f.write_all(add.as_bytes()))
+        .and_then(|mut f| f.write_all(&add))
         .with_context(|| format!("writing {}", file.display()))?;
     Ok(true)
 }
@@ -291,9 +327,8 @@ impl Repo {
     pub fn ignore_file_path(&self, which: &IgnoreFile) -> Result<PathBuf> {
         Ok(match which {
             IgnoreFile::Gitignore => self.workdir().join(".gitignore"),
-            IgnoreFile::Folder(dir) => {
-                crate::paths::join_repo_path(self.workdir(), dir).join(".gitignore")
-            }
+            // A folder that is not UTF-8 by its bytes.
+            IgnoreFile::Folder(dir) => self.fs_path(dir).join(".gitignore"),
             IgnoreFile::InfoExclude => {
                 let repo = self.gix()?;
                 crate::paths::canonical(repo.common_dir())
@@ -306,19 +341,61 @@ impl Repo {
     /// Tracked files `pattern` matches as a line of the `.gitignore` of folder `dir`
     /// (`""`: the top level).
     pub fn tracked_matching(&self, pattern: &str, dir: &str) -> Result<Vec<String>> {
-        let pattern = rooted(check_pattern(pattern)?, dir);
-        let exclude = format!("--exclude={pattern}");
-        let out = self
-            .git()
-            .run(&["ls-files", "-z", "--cached", "--ignored", &exclude])?;
+        let pattern = check_pattern(pattern)?;
+        match self.raw_ignore_pattern(pattern, dir)? {
+            None => {
+                let exclude = format!("--exclude={}", rooted(pattern, dir));
+                self.ignored_tracked(&["ls-files", "-z", "--cached", "--ignored", &exclude])
+            }
+            Some((m, c)) => self.tracked_matching_bytes(&m.bytes(&rooted(&c, &m.prefix(dir).unwrap_or_default()))),
+        }
+    }
+
+    /// The bytes of `pattern` for the `.gitignore` of folder `dir` when it has U+FFFD in
+    /// it — made from a name that is not UTF-8 ([`crate::raw_names::RawNames::rule_pattern`]),
+    /// with that name marked (for the rooted form); `None`: its own bytes.
+    fn raw_ignore_pattern(&self, pattern: &str, dir: &str) -> Result<Option<(crate::raw_names::Marked, String)>> {
+        self.git()
+            .raw_names()
+            .rule_pattern(pattern, |m| {
+                m.prefix(dir)
+                    .map(|d| rule_suggestions(RuleKind::Ignore, &m.text, &d).into_iter().map(|c| c.pattern).collect())
+                    .unwrap_or_default()
+            })
+            .map_err(|e| anyhow!(e))
+    }
+
+    /// [`Self::tracked_matching`] of a top-level pattern in bytes: it can't be an argument
+    /// (they are text), so it goes through a scratch exclude file.
+    fn tracked_matching_bytes(&self, rooted: &[u8]) -> Result<Vec<String>> {
+        let dir = self
+            .git_dir()
+            .filter(|d| d.to_str().is_some())
+            .unwrap_or_else(std::env::temp_dir);
+        let file = dir.join(format!("gitti-exclude-{}", std::process::id()));
+        std::fs::write(&file, [rooted, b"\n"].concat()).with_context(|| format!("writing {}", file.display()))?;
+        let from = format!("--exclude-from={}", file.display());
+        let files = self.ignored_tracked(&["ls-files", "-z", "--cached", "--ignored", &from]);
+        let _ = std::fs::remove_file(&file);
+        files
+    }
+
+    /// The paths `git ls-files -z` `args` lists (learned when not UTF-8).
+    fn ignored_tracked(&self, args: &[&str]) -> Result<Vec<String>> {
+        let out = self.git().run(args)?;
         let mut files: Vec<String> = out
-            .stdout_str()
-            .split('\0')
+            .stdout
+            .split(|b| *b == 0)
             .filter(|s| !s.is_empty())
-            .map(str::to_string)
+            .map(|p| self.show_path(p))
             .collect();
         files.dedup(); // one line per stage for conflicted files
         Ok(files)
+    }
+
+    /// [`rule_dirs`] of the work tree (folders that are not UTF-8 by their bytes).
+    pub fn rule_dirs(&self, path: &str, name: &str) -> Vec<String> {
+        rule_dirs_on(path, name, |dir| self.fs_path(dir))
     }
 
     /// Adds `pattern` to `which` (no duplicate line); with `untrack`, the tracked files it
@@ -331,7 +408,11 @@ impl Repo {
     ) -> Result<IgnoreOutcome> {
         let pattern = check_pattern(pattern)?.to_string();
         let file = self.ignore_file_path(&which)?;
-        let added = append_pattern(&file, &pattern)?;
+        // A pattern made from a name that is not UTF-8 is written in its bytes.
+        let added = match self.raw_ignore_pattern(&pattern, which.dir())? {
+            Some((m, c)) => append_pattern_bytes(&file, &m.bytes(&c))?,
+            None => append_pattern(&file, &pattern)?,
+        };
         let tracked = self.tracked_matching(&pattern, which.dir())?;
         let (untracked, still_tracked) = if untrack {
             // Chunked: command lines are limited (Windows: 32k characters).

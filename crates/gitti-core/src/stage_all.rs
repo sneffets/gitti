@@ -49,7 +49,7 @@ impl Repo {
         if paths.is_empty() {
             return Vec::new();
         }
-        let input = self.pathspec_list(paths).unwrap_or_default();
+        let input = self.query_list(paths);
         let sizes = self
             .git()
             .run_stdin(&["check-attr", "-z", "--stdin", "conflict-marker-size"], Some(&input))

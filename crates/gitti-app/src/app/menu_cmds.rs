@@ -523,7 +523,8 @@ impl GittiApp {
                 self.work_files(src)?[i].diff.as_ref()?.hunks.first().map(|h| h.new_start)
             })
             .unwrap_or(1);
-        let full = gitti_core::paths::join_repo_path(repo.workdir(), path);
+        // A name that is not UTF-8 by its bytes.
+        let full = repo.fs_path(path);
         if !full.exists() {
             self.set_error(format!("{path} does not exist in the working tree"));
         } else {

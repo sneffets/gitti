@@ -673,7 +673,7 @@ impl Repo {
             DiffSides::Commit { id, parent, stash } => {
                 let old = parent.unwrap_or_else(|| ObjectId::empty_tree(self.object_hash()));
                 // A stash's untracked file is only in its third parent.
-                let new = if *stash && !self.has_path(&hex(id), &t.path) {
+                let new = if *stash && !self.has_path(*id, &t.path) {
                     format!("{id}^3")
                 } else {
                     hex(id)
@@ -724,12 +724,15 @@ impl Repo {
         })
     }
 
-    /// `path` is in `rev`'s tree.
-    fn has_path(&self, rev: &str, path: &str) -> bool {
-        let spec = format!("{rev}:{path}");
-        self.git()
-            .run_raw(&["cat-file", "-e", &spec], None)
-            .is_ok_and(|o| o.code == 0)
+    /// `path` is in commit `id`'s tree (in-process; the path by its bytes).
+    fn has_path(&self, id: ObjectId, path: &str) -> bool {
+        let Ok(repo) = self.gix() else {
+            return false;
+        };
+        repo.find_commit(id)
+            .ok()
+            .and_then(|c| c.tree().ok())
+            .is_some_and(|t| self.tree_entry(&t, path).ok().flatten().is_some())
     }
 
     /// `path` is in the index.
@@ -782,8 +785,11 @@ impl Repo {
                  check out the commit you want inside the submodule and mark it resolved."
             );
         }
-        let file = crate::paths::join_repo_path(self.workdir(), path);
-        let orig = PathBuf::from(format!("{}.orig", file.display()));
+        // A name that is not UTF-8 by its bytes.
+        let file = self.fs_path(path);
+        let mut orig = file.clone().into_os_string();
+        orig.push(".orig");
+        let orig = PathBuf::from(orig);
         Ok(MergeWatch {
             path: path.to_string(),
             had_orig: orig.symlink_metadata().is_ok(),

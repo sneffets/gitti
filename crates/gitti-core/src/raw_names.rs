@@ -54,6 +54,15 @@ pub enum Resolved {
     Unknown,
 }
 
+/// How a path git printed (or a tree holds) shows, and its bytes when that is not the
+/// same name (not UTF-8, or UTF-8 with U+FFFD in it): what [`RawNames::learn`] keeps.
+pub fn shown(raw: &[u8]) -> (String, Option<Vec<u8>>) {
+    match std::str::from_utf8(raw) {
+        Ok(s) if !s.contains(REPLACEMENT) => (s.to_string(), None),
+        _ => (String::from_utf8_lossy(raw).into_owned(), Some(raw.to_vec())),
+    }
+}
+
 /// The refusal for a name more than one file shows as.
 pub fn ambiguous_text(path: &str) -> String {
     format!(
@@ -90,6 +99,27 @@ impl RawNames {
             None => {
                 map.insert(shown.into_owned(), Raw::One(raw.to_vec()));
             }
+        }
+    }
+
+    /// `raw` (a path git printed, or a tree / index holds) as shown, learned when it
+    /// doesn't read as itself ([`shown`]).
+    pub fn show(&self, raw: &[u8]) -> String {
+        let (text, bytes) = shown(raw);
+        if bytes.is_some() {
+            self.learn(raw);
+        }
+        text
+    }
+
+    /// Learns the NUL-separated paths of `out` (`git ls-files -z`, `diff --name-only -z`,
+    /// …; cheap when there is nothing to learn).
+    pub fn learn_list(&self, out: &[u8]) {
+        if !needs_learning(out) {
+            return;
+        }
+        for p in out.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+            self.learn(p);
         }
     }
 
@@ -161,7 +191,35 @@ impl RawNames {
                 }
                 Resolved::Bytes(raw)
             }
-            None => Resolved::Unknown,
+            None => {
+                drop(map);
+                self.resolve_below(dir, path.ends_with('/'))
+            }
+        }
+    }
+
+    /// A path no learned name shows like, inside a folder one does (`d�/new.txt`,
+    /// `d�/.gitattributes`): the folder's bytes and the rest, when the rest is UTF-8.
+    fn resolve_below(&self, dir: &str, slash: bool) -> Resolved {
+        // The last folder boundary: the rest must read as itself.
+        let Some(i) = dir.rfind('/') else {
+            return Resolved::Unknown;
+        };
+        let (head, rest) = (&dir[..i], &dir[i..]);
+        if rest.contains(REPLACEMENT) {
+            return Resolved::Unknown;
+        }
+        // The folder resolves like any path (learned, or inside a learned folder itself).
+        match self.resolve(&format!("{head}/")) {
+            Resolved::Bytes(mut raw) => {
+                raw.pop(); // its `/`
+                raw.extend_from_slice(rest.as_bytes());
+                if slash {
+                    raw.push(b'/');
+                }
+                Resolved::Bytes(raw)
+            }
+            other => other,
         }
     }
 
@@ -182,7 +240,7 @@ impl RawNames {
         if !arg.contains(REPLACEMENT) {
             return None;
         }
-        let (magic, path) = split_magic(arg);
+        let (magic, path) = split_arg(arg);
         match self.resolve(path) {
             Resolved::Bytes(raw) => Some([magic.as_bytes(), &raw].concat()),
             _ => None,
@@ -194,8 +252,143 @@ impl RawNames {
         args.iter()
             .copied()
             .filter(|a| a.contains(REPLACEMENT))
-            .find(|a| self.resolve(split_magic(a).1) == Resolved::Ambiguous)
-            .map(|a| split_magic(a).1)
+            .find(|a| self.resolve(split_arg(a).1) == Resolved::Ambiguous)
+            .map(|a| split_arg(a).1)
+    }
+}
+
+/// A name that is not UTF-8 with each invalid sequence (what shows as one U+FFFD) replaced
+/// by a marker character of its own (private use, U+F0000 + n): text that string code can
+/// work on — escape it for a rule file, cut folders off — and still turn back into the
+/// exact bytes ([`Self::bytes`]) or into the shown text ([`Self::shown`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marked {
+    /// The name with markers.
+    pub text: String,
+    parts: Vec<Vec<u8>>,
+}
+
+const MARK: u32 = 0xF_0000;
+
+impl Marked {
+    pub fn of(raw: &[u8]) -> Marked {
+        let mut text = String::with_capacity(raw.len());
+        let mut parts = Vec::new();
+        for chunk in raw.utf8_chunks() {
+            text.push_str(chunk.valid());
+            if !chunk.invalid().is_empty() {
+                text.extend(char::from_u32(MARK + parts.len() as u32));
+                parts.push(chunk.invalid().to_vec());
+            }
+        }
+        Marked { text, parts }
+    }
+
+    fn part(&self, c: char) -> Option<&[u8]> {
+        let i = (c as u32).checked_sub(MARK)?;
+        self.parts.get(i as usize).map(Vec::as_slice)
+    }
+
+    /// `s` (made from [`Self::text`]) as shown: each marker as U+FFFD.
+    pub fn shown(&self, s: &str) -> String {
+        s.chars().map(|c| if self.part(c).is_some() { REPLACEMENT } else { c }).collect()
+    }
+
+    /// `s` (made from [`Self::text`]) in bytes: each marker as the bytes it stands for.
+    pub fn bytes(&self, s: &str) -> Vec<u8> {
+        let mut out = Vec::with_capacity(s.len());
+        let mut buf = [0; 4];
+        for c in s.chars() {
+            match self.part(c) {
+                Some(b) => out.extend_from_slice(b),
+                None => out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes()),
+            }
+        }
+        out
+    }
+
+    /// `shown` — the start of the name as shown (a folder above it) — marked like the
+    /// name; `None` when the name doesn't start like that.
+    pub fn prefix(&self, shown: &str) -> Option<String> {
+        let text: String = self.text.chars().take(shown.chars().count()).collect();
+        (self.shown(&text) == shown).then_some(text)
+    }
+}
+
+/// The refusal for a rule-file pattern with U+FFFD whose bytes aren't known.
+pub fn unknown_pattern_text(pattern: &str) -> String {
+    format!(
+        "“{pattern}” is made from a file name that is not UTF-8, and gitti can't tell which \
+         bytes the � stand for. Choose one of the suggested patterns, write the pattern \
+         without � (a ? or * in its place), or add it to the file outside gitti."
+    )
+}
+
+impl RawNames {
+    /// The bytes of `pattern`, a pattern for a rule file (`.gitignore`, `.gitattributes`)
+    /// made from a shown name, with U+FFFD where the name is not UTF-8: `make` gives the
+    /// patterns made from a name ([`Marked`]); every learned name is tried, and the one
+    /// candidate that shows as `pattern` gives its bytes — with the marked name, for more
+    /// patterns made from it. `Ok(None)`: no U+FFFD in `pattern` (its own bytes). `Err`
+    /// in plain words: no learned name makes it (an edited pattern), or names that show
+    /// alike make it with different bytes.
+    pub fn rule_pattern(
+        &self,
+        pattern: &str,
+        make: impl Fn(&Marked) -> Vec<String>,
+    ) -> Result<Option<(Marked, String)>, String> {
+        if !pattern.contains(REPLACEMENT) {
+            return Ok(None);
+        }
+        let names: Vec<Vec<u8>> = self
+            .lock()
+            .values()
+            .filter_map(|r| match r {
+                Raw::One(b) => Some(b.clone()),
+                Raw::Ambiguous => None,
+            })
+            .collect();
+        let mut found: Option<(Marked, String, Vec<u8>)> = None;
+        for raw in names {
+            let m = Marked::of(&raw);
+            for c in make(&m) {
+                if m.shown(&c) != pattern {
+                    continue;
+                }
+                let bytes = m.bytes(&c);
+                match &found {
+                    Some((.., b)) if *b != bytes => return Err(ambiguous_text(pattern)),
+                    Some(_) => {}
+                    None => found = Some((m.clone(), c, bytes)),
+                }
+            }
+        }
+        // A name more than one file shows as may make it too: then its bytes aren't
+        // known (each U+FFFD stands for some invalid sequence: marked as one).
+        let ambiguous: Vec<String> = self
+            .lock()
+            .iter()
+            .filter(|(_, r)| **r == Raw::Ambiguous)
+            .map(|(shown, _)| shown.clone())
+            .collect();
+        for shown in ambiguous {
+            let mut raw = Vec::with_capacity(shown.len());
+            let mut buf = [0; 4];
+            for c in shown.chars() {
+                match c {
+                    REPLACEMENT => raw.push(0xFF),
+                    c => raw.extend_from_slice(c.encode_utf8(&mut buf).as_bytes()),
+                }
+            }
+            let m = Marked::of(&raw);
+            if make(&m).iter().any(|c| m.shown(c) == pattern) {
+                return Err(ambiguous_text(pattern));
+            }
+        }
+        match found {
+            Some((m, c, _)) => Ok(Some((m, c))),
+            None => Err(unknown_pattern_text(pattern)),
+        }
     }
 }
 
@@ -211,6 +404,22 @@ fn after_fields(rec: &[u8], n: usize) -> Option<&[u8]> {
         at += rec[at..].iter().position(|b| *b == b' ')? + 1;
     }
     Some(&rec[at..])
+}
+
+/// What comes before the path in a git argument naming one, and the path: pathspec magic
+/// ([`split_magic`]), `./` (a path written so it doesn't read as an option), `--prefix=`
+/// (`git subtree`'s folder).
+fn split_arg(arg: &str) -> (&str, &str) {
+    let (magic, path) = split_magic(arg);
+    if !magic.is_empty() {
+        return (magic, path);
+    }
+    for prefix in ["./", "--prefix="] {
+        if let Some(rest) = arg.strip_prefix(prefix) {
+            return (prefix, rest);
+        }
+    }
+    ("", arg)
 }
 
 /// A pathspec's magic prefix (`:(literal)`, `:(top,exclude,literal)`) and the path.
@@ -276,6 +485,61 @@ mod tests {
         assert_eq!(names.arg("other\u{fffd}"), None);
         assert_eq!(names.bytes("a.txt").unwrap().as_ref(), b"a.txt");
         assert_eq!(names.bytes(SHOWN).unwrap().as_ref(), RAW);
+    }
+
+    /// A path inside a learned folder (`d�/new.txt`), `./` and `--prefix=` in front of a
+    /// path, NUL-separated lists, a tree name shown and learned.
+    #[gitti_test::test]
+    fn paths_below_learned_folders_and_argument_forms() {
+        let names = RawNames::default();
+        names.learn_list(b"d\xe9/x.txt\0plain\0");
+        assert_eq!(names.resolve("d\u{fffd}/.gitattributes"), Resolved::Bytes(b"d\xe9/.gitattributes".to_vec()));
+        assert_eq!(names.resolve("d\u{fffd}/a/b/"), Resolved::Bytes(b"d\xe9/a/b/".to_vec()));
+        assert_eq!(names.resolve("d\u{fffd}/caf\u{fffd}"), Resolved::Unknown);
+        assert_eq!(names.resolve("e\u{fffd}/x"), Resolved::Unknown);
+        assert_eq!(names.arg("./d\u{fffd}/x.txt"), Some(b"./d\xe9/x.txt".to_vec()));
+        assert_eq!(names.arg("--prefix=d\u{fffd}"), Some(b"--prefix=d\xe9".to_vec()));
+        assert_eq!(names.show(b"n\xfc.txt"), "n\u{fffd}.txt");
+        assert_eq!(names.resolve("n\u{fffd}.txt"), Resolved::Bytes(b"n\xfc.txt".to_vec()));
+        assert_eq!(shown(b"plain"), ("plain".to_string(), None));
+    }
+
+    /// Marked names: string work on the text, the bytes and the shown text back.
+    #[gitti_test::test]
+    fn marked_names_keep_their_bytes() {
+        let m = Marked::of(b"d\xe9/caf\xe8 \xff\xfe.txt");
+        assert_eq!(m.shown(&m.text), "d\u{fffd}/caf\u{fffd} \u{fffd}\u{fffd}.txt");
+        assert_eq!(m.bytes(&m.text), b"d\xe9/caf\xe8 \xff\xfe.txt");
+        let escaped = format!("/{}", m.text.replace(' ', "\\ "));
+        assert_eq!(m.bytes(&escaped), b"/d\xe9/caf\xe8\\ \xff\xfe.txt");
+        let dir = m.prefix("d\u{fffd}").unwrap();
+        assert_eq!(m.bytes(&dir), b"d\xe9");
+        assert_eq!(m.prefix("x"), None);
+    }
+
+    /// A rule-file pattern made from a shown name gets the name's bytes; an edited one or
+    /// one names that show alike make is refused in plain words.
+    #[gitti_test::test]
+    fn rule_patterns_get_the_bytes_of_the_name_they_were_made_from() {
+        let names = RawNames::default();
+        names.learn_list(b"d\xe9/caf\xe9.txt\0x\xe8.bin\0");
+        // Candidates: the name itself and its last part (as the suggestions do).
+        let make = |m: &Marked| vec![format!("/{}", m.text), m.text.rsplit('/').next().unwrap().to_string()];
+        assert_eq!(names.rule_pattern("*.txt", make).unwrap(), None);
+        let (m, c) = names.rule_pattern("/d\u{fffd}/caf\u{fffd}.txt", make).unwrap().unwrap();
+        assert_eq!(m.bytes(&c), b"/d\xe9/caf\xe9.txt");
+        let (m, c) = names.rule_pattern("caf\u{fffd}.txt", make).unwrap().unwrap();
+        assert_eq!(m.bytes(&c), b"caf\xe9.txt");
+        let err = names.rule_pattern("/caf\u{fffd}.md", make).unwrap_err();
+        assert!(err.contains("can't tell which"), "{err}");
+        // Another name whose last part shows the same: `caf�.txt` alone is ambiguous.
+        names.learn(b"e/caf\xe8.txt");
+        let err = names.rule_pattern("caf\u{fffd}.txt", make).unwrap_err();
+        assert!(err.contains("More than one file name"), "{err}");
+        assert!(names.rule_pattern("/e/caf\u{fffd}.txt", make).is_ok());
+        // A name that is ambiguous itself.
+        names.learn(b"d\xe8/caf\xe9.txt");
+        assert!(names.rule_pattern("/d\u{fffd}/caf\u{fffd}.txt", make).is_err());
     }
 
     #[gitti_test::test]

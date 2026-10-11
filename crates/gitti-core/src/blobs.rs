@@ -41,12 +41,18 @@ impl Repo {
     pub fn read_version_bytes(&self, requests: &[(Version, String)]) -> Result<Vec<Option<Vec<u8>>>> {
         let mut out: Vec<Option<Vec<u8>>> = vec![None; requests.len()];
         let nul = crate::caps::GitCaps::get().cat_file_nul();
-        let end = if nul { '\0' } else { '\n' };
-        let mut batch = String::new();
+        let end = if nul { b'\0' } else { b'\n' };
+        let mut batch: Vec<u8> = Vec::new();
         let mut batch_idx = Vec::new();
-        let mut push = |spec: String, i: usize| {
-            if nul || !spec.contains('\n') {
-                batch.push_str(&spec);
+        let mut push = |rev: String, path: &str, i: usize| {
+            // The path by its bytes (`crate::raw_names`); one more than one file's name
+            // shows like is not read (`None`).
+            let Ok(path) = self.path_bytes(path) else {
+                return;
+            };
+            if nul || !path.contains(&b'\n') {
+                batch.extend_from_slice(rev.as_bytes());
+                batch.extend_from_slice(&path);
                 batch.push(end);
                 batch_idx.push(i);
             }
@@ -54,7 +60,7 @@ impl Repo {
         for (i, (v, path)) in requests.iter().enumerate() {
             match v {
                 Version::Worktree => {
-                    let full = crate::paths::join_repo_path(self.workdir(), path);
+                    let full = self.fs_path(path);
                     // A symlink's version is its target (what git stores and diffs), not
                     // the content of the file it points to.
                     if let Ok(meta) = std::fs::symlink_metadata(&full)
@@ -70,9 +76,9 @@ impl Repo {
                         out[i] = text(bytes);
                     }
                 }
-                Version::Index => push(format!(":{path}"), i),
-                Version::Rev(rev) => push(format!("{rev}:{path}"), i),
-                Version::Stage(n) => push(format!(":{n}:{path}"), i),
+                Version::Index => push(":".into(), path, i),
+                Version::Rev(rev) => push(format!("{rev}:"), path, i),
+                Version::Stage(n) => push(format!(":{n}:"), path, i),
             }
         }
         if batch_idx.is_empty() {
@@ -83,8 +89,8 @@ impl Repo {
         } else {
             &["cat-file", "--batch"]
         };
-        let res = self.git().run_raw(args, Some(batch.as_bytes()))?;
-        let parsed = parse_batch(&res.stdout, end as u8);
+        let res = self.git().run_raw(args, Some(&batch))?;
+        let parsed = parse_batch(&res.stdout, end);
         // git answers every request (a missing object too): fewer answers, or a git that
         // failed, is output that ended early — an error, not files that don't exist.
         if res.code != 0 || parsed.len() < batch_idx.len() {

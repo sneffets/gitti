@@ -522,6 +522,46 @@ pub fn shell_line(template: &str, values: &Values, shell: Shell) -> Result<Strin
     Ok(line)
 }
 
+/// [`shell_line`] in bytes: a value `raw` gives bytes for (a file name that is not UTF-8,
+/// shown with U+FFFD) is quoted as its bytes ([`crate::raw_names::Marked`]: the quoting
+/// works on the text, the marks become the bytes). `Err` from `raw` stops it.
+pub fn shell_line_bytes(
+    template: &str,
+    values: &Values,
+    shell: Shell,
+    raw: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
+) -> Result<Vec<u8>, String> {
+    // Checks quoting and emptiness the same way.
+    shell_line(template, values, shell)?;
+    let pieces = parse(template)?;
+    let mut state = QuoteState::new(shell);
+    let mut line = Vec::new();
+    for p in &pieces {
+        match p {
+            Piece::Text(t) => {
+                state.feed(t);
+                line.extend_from_slice(t.as_bytes());
+            }
+            Piece::Value(v) => {
+                let vals = values.get(*v).unwrap_or_default();
+                for (i, x) in vals.iter().enumerate() {
+                    if i > 0 {
+                        line.push(b' ');
+                    }
+                    match raw(x)? {
+                        Some(bytes) => {
+                            let m = crate::raw_names::Marked::of(&bytes);
+                            line.extend_from_slice(&m.bytes(&quote(shell, state.at, &m.text)));
+                        }
+                        None => line.extend_from_slice(quote(shell, state.at, x).as_bytes()),
+                    }
+                }
+            }
+        }
+    }
+    Ok(line)
+}
+
 /// The working folder from its template: empty = the repository's folder; `~/…` in the
 /// home folder; relative paths inside the repository. Placeholders are filled as plain
 /// text (no shell reads it).
@@ -557,6 +597,28 @@ pub fn workdir(template: &str, values: &Values, repo: &Path) -> Result<std::path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file name that is not UTF-8 goes into a shell line as its bytes, quoted where it
+    /// stands; the other values as text; ambiguity stops it.
+    #[gitti_test::test]
+    fn shell_lines_in_bytes() {
+        let v = Values {
+            file: Some("it's caf\u{fffd}".into()),
+            files: vec!["a".into(), "-x\u{fffd}".into()],
+            ..Default::default()
+        };
+        let raw = |x: &str| -> Result<Option<Vec<u8>>, String> {
+            Ok(match x {
+                "it's caf\u{fffd}" => Some(b"it's caf\xe9".to_vec()),
+                "./-x\u{fffd}" => Some(b"./-x\xe8".to_vec()),
+                _ => None,
+            })
+        };
+        let line = shell_line_bytes("cat {file} \"{file}\" {files}", &v, Shell::Posix, raw).unwrap();
+        assert_eq!(line, b"cat 'it'\\''s caf\xe9' \"it's caf\xe9\" 'a' './-x\xe8'");
+        let err = shell_line_bytes("cat {file}", &v, Shell::Posix, |_| Err("two".into())).unwrap_err();
+        assert_eq!(err, "two");
+    }
 
     fn vals() -> Values {
         Values {

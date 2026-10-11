@@ -678,7 +678,7 @@ impl MergeEditor {
         }
         let line = self.session.line_of(self.current) + 1;
         let repo = self.session.repo.clone();
-        let full = gitti_core::paths::join_repo_path(repo.workdir(), &self.session.doc.path);
+        let full = repo.fs_path(&self.session.doc.path);
         let opened = crate::app::open_editor(
             &self.settings.editor_command,
             &full,

@@ -1104,13 +1104,13 @@ impl crate::Repo {
         let index = repo.index_or_empty().map_err(crate::repo::gx)?;
         let mut paths: Vec<(String, bool, bool)> = Vec::with_capacity(index.entries().len());
         for e in index.entries() {
-            let path = String::from_utf8_lossy(e.path(&index));
+            let path = self.show_path(e.path(&index));
             // Conflicted paths come once per stage.
-            if paths.last().is_some_and(|(p, ..)| *p == *path) {
+            if paths.last().is_some_and(|(p, ..)| *p == path) {
                 continue;
             }
             paths.push((
-                path.into_owned(),
+                path,
                 e.mode == Mode::SYMLINK,
                 e.flags.contains(Flags::SKIP_WORKTREE),
             ));
@@ -1207,11 +1207,7 @@ impl crate::Repo {
     }
 
     fn update_index_flag(&self, flag: &str, paths: &[String]) -> anyhow::Result<()> {
-        let mut input = Vec::new();
-        for p in paths {
-            input.extend_from_slice(p.as_bytes());
-            input.push(0);
-        }
+        let input = self.pathspec_list(paths)?;
         self.git()
             .run_stdin(&["update-index", flag, "-z", "--stdin"], Some(&input))?;
         Ok(())

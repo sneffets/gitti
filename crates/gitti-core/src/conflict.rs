@@ -416,8 +416,7 @@ impl Repo {
                 let missing: Vec<&str> = paths
                     .iter()
                     .filter(|p| {
-                        let full = crate::paths::join_repo_path(self.workdir(), p);
-                        std::fs::symlink_metadata(full).is_err()
+                        std::fs::symlink_metadata(self.fs_path(p)).is_err()
                     })
                     .map(String::as_str)
                     .collect();
@@ -474,7 +473,9 @@ impl Repo {
             return none();
         };
         let stages = |path: &str| {
-            let entry = |stage| index.entry_by_path_and_stage(path.as_bytes().as_bstr(), stage);
+            // A name that is not UTF-8 by its bytes.
+            let raw = self.git().raw_names().bytes(path).unwrap_or(std::borrow::Cow::Borrowed(path.as_bytes()));
+            let entry = |stage| index.entry_by_path_and_stage(raw.as_bstr(), stage);
             let gitlink = |stage| entry(stage).filter(|e| e.mode == Mode::COMMIT).map(|e| e.id);
             if let (Some(ours), Some(theirs)) = (gitlink(Stage::Ours), gitlink(Stage::Theirs)) {
                 return Stages::Gitlinks { ours, theirs };
@@ -495,11 +496,7 @@ impl Repo {
     /// `core.attributesFile` and macros exactly as git's merge reads them — the config
     /// (`merge.default`, `merge.<driver>.*`) in-process. A failure counts as "none".
     fn merged_as_binary(&self, paths: &[&str]) -> std::collections::HashSet<String> {
-        let mut input = Vec::new();
-        for p in paths {
-            input.extend_from_slice(p.as_bytes());
-            input.push(0);
-        }
+        let input = self.query_list(paths);
         let Ok(out) = self.git().run_stdin(&["check-attr", "-z", "--stdin", "merge"], Some(&input))
         else {
             return Default::default();
@@ -576,6 +573,7 @@ impl Repo {
                 too_large: None,
                 encoding: Default::default(),
                 lossy_name: false,
+                raw_paths: Vec::new(),
                 lfs: None,
             });
             if gitlinks {

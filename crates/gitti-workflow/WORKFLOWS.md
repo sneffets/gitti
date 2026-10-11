@@ -483,6 +483,9 @@ working tree or the index while the app shows an older state.
 | NU-03 | `working-tree-encoding` | discard a line; stage one line of an untracked file | in its encoding on disk, UTF-8 in the index | `non_utf8::working_tree_encoding_and_untracked_files` | `wf_eol::nu03_working_tree_encoding` | `wf_eol::nu03_working_tree_encoding` |
 | NU-04 | A file name that isn't UTF-8 | in the index only (any unix disk): unstage a line, stage / unstage the whole file; on disk (Linux): stage a line, stage / unstage / discard the whole file | listed with U+FFFD; git gets the name's bytes (arguments, pathspec lists, patch headers, the disk); a name two files show alike refused in plain words | `wf_shapes::nu04_a_name_that_is_not_utf8_in_the_index`, `wf_shapes::nu04_a_name_that_is_not_utf8_on_disk`, `unix_fs::non_utf8_name_is_listed`, `unix_fs::non_utf8_name_stages`, `non_utf8::names_that_are_not_utf8_are_refused` | `wf_shapes::nu04_a_name_that_is_not_utf8_in_the_index`, `wf_shapes::nu04_a_name_that_is_not_utf8_on_disk` | `wf_shapes::nu04_unstage_a_line_of_a_name_that_is_not_utf8`, `wf_shapes::nu04_stage_and_unstage_a_name_that_is_not_utf8`, `wf_shapes::nu04_a_name_that_is_not_utf8_on_disk` |
 | NU-05 | Odd names everywhere | spaces, quotes, newlines, glob characters | hunks, lines, files right | `unix_fs::odd_names_tracked_hunks_and_lines`, `unix_fs::odd_names_tracked_discard_and_whole_files`, `unix_fs::odd_names_untracked_partial_stage_and_unstage`, `unix_fs::odd_names_untracked_discard_lines_and_files`, `unix_fs::odd_names_deleted_partial_stage_and_discard` | `wf_shapes::nu05_odd_names` | `wf_shapes::nu05_hunks_of_odd_names`, `wf_shapes::nu05_stage_odd_names_by_group`, `wf_shapes::nu05_unstage_odd_names`, `wf_shapes::nu05_discard_odd_names_by_group` |
+| NU-06 | A commit's file whose name isn't UTF-8 | a name only commits have (added, changed, removed again; any unix disk): show the commit; Open This / Old Version; its file history; Restore This Version… (restored on Linux) | listed with U+FFFD; its bytes learned from the commit view (trees, git's diff) — the copies, the history, the restore plan and the restore reach the file | `wf_shapes::nu06_a_commits_file_whose_name_is_not_utf8` | `wf_shapes::nu06_a_commits_file_whose_name_is_not_utf8` | `wf_shapes::nu06_a_commits_file_whose_name_is_not_utf8` |
+| NU-07 | Stash Selected Lines of a name that isn't UTF-8 | on disk (Linux): an edited `caf\xe9.txt`; select a line; Stash Selected Lines | the stash holds the line, the working tree loses it | `wf_shapes::nu07_stash_lines_of_a_name_that_is_not_utf8` | `wf_shapes::nu07_stash_lines_of_a_name_that_is_not_utf8` | `wf_shapes::nu07_stash_lines_of_a_name_that_is_not_utf8` |
+| NU-08 | Ignore a tracked name that isn't UTF-8 | in the index only (any unix disk): Add to .gitignore… "This file", Stop tracking | `.gitignore` gets the name's bytes (git matches by bytes); the file leaves the index | `wf_shapes::nu08_ignore_a_name_that_is_not_utf8` | `wf_shapes::nu08_ignore_a_name_that_is_not_utf8` | `wf_shapes::nu08_ignore_a_name_that_is_not_utf8` |
 
 ## FS — File-system paths and file types
 
@@ -527,9 +530,9 @@ layer (partial `~` and `n/a` don't count as covered).
 | RN renames | 5 | 5 | 5 | 5 |
 | BN binary | 3 | 3 | 3 | 3 |
 | BG big / many | 5 | 5 | 4 | 4 |
-| NU non-UTF-8 | 5 | 5 | 5 | 5 |
+| NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **268** | **258** | **248** | **249** |
+| **Total** | **271** | **261** | **251** | **252** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

@@ -669,14 +669,21 @@ pub mod non_utf8_name {
     pub const STAGED_LINE: &str = "one";
 
     /// Whether `dir`'s file system takes a name that isn't UTF-8 (writes and removes a
-    /// probe file).
-    #[cfg(unix)]
+    /// probe file; never on Windows, whose names are UTF-16).
     pub fn holds(dir: &Path) -> bool {
-        use std::os::unix::ffi::OsStrExt as _;
-        let p = dir.join(std::ffi::OsStr::from_bytes(b"probe-\xe9"));
-        let ok = std::fs::write(&p, "").is_ok();
-        let _ = std::fs::remove_file(&p);
-        ok
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt as _;
+            let p = dir.join(std::ffi::OsStr::from_bytes(b"probe-\xe9"));
+            let ok = std::fs::write(&p, "").is_ok();
+            let _ = std::fs::remove_file(&p);
+            ok
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = dir;
+            false
+        }
     }
 
     /// The name in HEAD (`one / two`) and the index (`one / TWO / three`), not on disk —

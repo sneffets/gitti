@@ -41,8 +41,7 @@ impl GittiApp {
     pub(super) fn conflict_no_diff_note(&self, file: usize) -> String {
         let exists = self.file_path(Src::Conflicted, file).is_some_and(|p| {
             self.repo.as_ref().is_some_and(|r| {
-                std::fs::symlink_metadata(gitti_core::paths::join_repo_path(r.workdir(), &p))
-                    .is_ok()
+                std::fs::symlink_metadata(r.fs_path(&p)).is_ok()
             })
         });
         gitti_core::conflict::no_diff_note(&self.conflict_sides_or_default(), exists)

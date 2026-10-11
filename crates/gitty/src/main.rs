@@ -246,13 +246,13 @@ fn run_terminal_editor(
     app: &mut App,
     paused: &AtomicBool,
     enhanced: bool,
-    argv: &[String],
+    argv: &[std::ffi::OsString],
     dir: &std::path::Path,
 ) -> Result<()> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(dir);
     let status = with_terminal(terminal, paused, enhanced, &mut cmd)?;
-    app.terminal_editor_done(&argv[0], status);
+    app.terminal_editor_done(&argv[0].to_string_lossy(), status);
     Ok(())
 }
 

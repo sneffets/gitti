@@ -19,7 +19,7 @@
 //! `info/attributes` is not offered: the attribute must be shared through the commit, or
 //! other clones would check out the pointers instead of the files.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 
 use crate::Repo;
 use crate::ignore::{IgnoreChoice, RuleKind, check_pattern, rule_suggestions};
@@ -221,11 +221,12 @@ pub fn attributes_line(pattern: &str, lockable: bool) -> String {
     format!("{pattern} {LFS_ATTRIBUTES}{lock}")
 }
 
-/// Whether `text` has a line assigning the LFS filter to exactly `pattern`.
-fn tracks(text: &str, pattern: &str) -> bool {
-    text.lines().any(|l| {
-        let mut words = l.split_ascii_whitespace();
-        words.next() == Some(pattern) && words.any(|w| w == "filter=lfs")
+/// Whether `text` has a line assigning the LFS filter to exactly `pattern` (bytes: a
+/// pattern for a name that is not UTF-8 keeps them).
+fn tracks(text: &[u8], pattern: &[u8]) -> bool {
+    text.split(|b| *b == b'\n').any(|l| {
+        let mut words = l.split(u8::is_ascii_whitespace).filter(|w| !w.is_empty());
+        words.next() == Some(pattern) && words.any(|w| w == b"filter=lfs")
     })
 }
 
@@ -259,6 +260,27 @@ impl Repo {
             bail!(NOT_INSTALLED);
         }
         let pattern = attributes_pattern(pattern)?;
+        let dir = dir.trim_matches('/');
+        // A pattern made from a name that is not UTF-8 is written in its bytes: the one
+        // suggestion for a learned name that shows like it (`crate::raw_names`).
+        let raw = match self
+            .git()
+            .raw_names()
+            .rule_pattern(&pattern, |m| {
+                m.prefix(dir)
+                    .map(|d| {
+                        track_suggestions(&m.text, &d)
+                            .into_iter()
+                            .filter_map(|c| attributes_pattern(&c.pattern).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .map_err(|e| anyhow!(e))?
+        {
+            Some((m, c)) => m.bytes(&c),
+            None => pattern.clone().into_bytes(),
+        };
         let installed = !setup.filters;
         if installed {
             if !opts.install {
@@ -266,22 +288,21 @@ impl Repo {
             }
             self.git().run(&["lfs", "install"])?;
         }
-        let dir = dir.trim_matches('/');
         let rel = if dir.is_empty() {
             ".gitattributes".to_string()
         } else {
             format!("{dir}/.gitattributes")
         };
-        let file = crate::paths::join_repo_path(self.workdir(), &rel);
-        let text = std::fs::read(&file)
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default();
-        let added = !tracks(&text, &pattern);
+        // A folder that is not UTF-8 by its bytes.
+        let file = self.fs_path(&rel);
+        let text = std::fs::read(&file).unwrap_or_default();
+        let added = !tracks(&text, &raw);
         let mut matching = Vec::new();
         let mut kept_plain = Vec::new();
         if added {
             let before = self.lfs_tracked_files()?;
-            crate::ignore::append_pattern(&file, &attributes_line(&pattern, opts.lockable))?;
+            let line = [&raw[..], attributes_line("", opts.lockable).as_bytes()].concat();
+            crate::ignore::append_pattern_bytes(&file, &line)?;
             let after = self.lfs_tracked_files()?;
             // Files git reads itself stay plain: the tracked ones the pattern now matches
             // and the attributes file itself (maybe new), each with a line after it.
@@ -295,10 +316,12 @@ impl Repo {
             }
             git_files.sort();
             for p in &git_files {
-                let local = p.strip_prefix(&format!("{dir}/")).unwrap_or(p);
-                let local: Vec<String> = local.split('/').map(crate::ignore::escape).collect();
+                // Its bytes, marked (`raw_names::Marked`) for the string work.
+                let m = crate::raw_names::Marked::of(&self.path_bytes(p)?);
+                let base = dir.split('/').filter(|d| !d.is_empty()).count();
+                let local: Vec<String> = m.text.split('/').skip(base).map(crate::ignore::escape).collect();
                 let plain = attributes_pattern(&format!("/{}", local.join("/")))?;
-                crate::ignore::append_pattern(&file, &format!("{plain} {UNSET_ATTRIBUTES}"))?;
+                crate::ignore::append_pattern_bytes(&file, &m.bytes(&format!("{plain} {UNSET_ATTRIBUTES}")))?;
             }
             kept_plain = git_files;
             matching = after
@@ -310,8 +333,7 @@ impl Repo {
             // No write handle needed: read-only (lockable) files are touched too.
             let now = filetime::FileTime::now();
             for p in &matching {
-                let path = crate::paths::join_repo_path(self.workdir(), p);
-                let _ = filetime::set_file_mtime(&path, now);
+                let _ = filetime::set_file_mtime(self.fs_path(p), now);
             }
         }
         // `git lfs install` installs the hooks itself.
@@ -360,10 +382,10 @@ impl Repo {
             .git()
             .run(&["ls-files", "-z", "--", ":(attr:filter=lfs)"])?;
         Ok(out
-            .stdout_str()
-            .split('\0')
+            .stdout
+            .split(|b| *b == 0)
             .filter(|s| !s.is_empty())
-            .map(str::to_string)
+            .map(|p| self.show_path(p))
             .collect())
     }
 }
@@ -392,9 +414,9 @@ mod tests {
     #[gitti_test::test]
     fn existing_lines() {
         let text = "# c\n*.psd filter=lfs diff=lfs merge=lfs -text\n*.txt text\n";
-        assert!(tracks(text, "*.psd"));
-        assert!(!tracks(text, "*.txt"));
-        assert!(!tracks(text, "*.ps"));
+        assert!(tracks(text.as_bytes(), b"*.psd"));
+        assert!(!tracks(text.as_bytes(), b"*.txt"));
+        assert!(!tracks(text.as_bytes(), b"*.ps"));
     }
 
     #[gitti_test::test]

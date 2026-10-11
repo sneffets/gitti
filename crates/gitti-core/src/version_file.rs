@@ -307,14 +307,13 @@ impl Repo {
 
     /// The content of `path` in `commit` (any size, binary too).
     pub fn blob_at(&self, commit: ObjectId, path: &str, stash: bool) -> Result<Vec<u8>> {
-        let mut specs = vec![format!("{commit}:{path}")];
+        // The path by its bytes (a name that is not UTF-8, `crate::raw_names`).
+        let mut specs = vec![self.rev_path(&commit.to_string(), path)?];
         if stash {
-            specs.push(format!("{commit}^3:{path}"));
+            specs.push(self.rev_path(&format!("{commit}^3"), path)?);
         }
-        let input: String = specs.iter().map(|s| format!("{s}\n")).collect();
-        let out = self
-            .git()
-            .run_raw(&["cat-file", "--batch"], Some(input.as_bytes()))?;
+        let input: Vec<u8> = specs.iter().flat_map(|s| [&s[..], b"\n"].concat()).collect();
+        let out = self.git().run_raw(&["cat-file", "--batch"], Some(&input))?;
         let data = out.stdout;
         let mut pos = 0;
         for _ in &specs {

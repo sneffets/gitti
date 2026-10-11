@@ -739,12 +739,9 @@ impl Repo {
         }
         let added = self.add_worktree_inner(path, mode, true)?;
         let wt = self.git().with_workdir(path);
-        let list = format!("{}\n", folders.join("\n"));
+        let list = self.folder_lines(folders)?;
         let sparse = wt
-            .run_stdin(
-                &["sparse-checkout", "set", "--cone", "--stdin"],
-                Some(list.as_bytes()),
-            )
+            .run_stdin(&["sparse-checkout", "set", "--cone", "--stdin"], Some(&list))
             .and_then(|_| wt.run(&["read-tree", "-mu", "HEAD"]));
         if let Err(e) = sparse {
             let p = path.to_string_lossy().into_owned();
@@ -752,6 +749,17 @@ impl Repo {
             return Err(anyhow::Error::from(e).context("sparse checkout of the new worktree"));
         }
         Ok(format!("{added}\nSparse: only {}", folders.join(", ")))
+    }
+
+    /// `folders` one per line for `git sparse-checkout set --stdin`, each in its bytes (a
+    /// folder name that is not UTF-8, as the folder picker learned it: `crate::raw_names`).
+    fn folder_lines(&self, folders: &[String]) -> Result<Vec<u8>> {
+        let mut list = Vec::new();
+        for f in folders {
+            list.extend_from_slice(&self.path_bytes(f)?);
+            list.push(b'\n');
+        }
+        Ok(list)
     }
 
     /// Changes which folders the worktree at `path` has (cone mode); empty `folders` makes
@@ -762,11 +770,8 @@ impl Repo {
         let out = if folders.is_empty() {
             wt.run(&["sparse-checkout", "disable"])?
         } else {
-            let list = format!("{}\n", folders.join("\n"));
-            wt.run_stdin(
-                &["sparse-checkout", "set", "--cone", "--stdin"],
-                Some(list.as_bytes()),
-            )?
+            let list = self.folder_lines(folders)?;
+            wt.run_stdin(&["sparse-checkout", "set", "--cone", "--stdin"], Some(&list))?
         };
         Ok(format!("{}{}", out.stdout_str(), out.stderr)
             .trim()

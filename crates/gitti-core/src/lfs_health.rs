@@ -774,7 +774,7 @@ impl Repo {
         .chain(
             self.tracked_nested_attributes()
                 .iter()
-                .map(|p| crate::paths::join_repo_path(self.workdir(), p)),
+                .map(|p| self.fs_path(p)),
         )
         .any(|p| std::fs::read(p).is_ok_and(|t| lockable(&t)))
     }
@@ -815,12 +815,11 @@ impl Repo {
             if !pointer_blob(e.id) {
                 continue;
             }
-            let Ok(rel) = std::str::from_utf8(path) else {
-                continue;
-            };
-            let file = crate::paths::join_repo_path(workdir, rel);
+            // A name that is not UTF-8 is learned: its bytes reach git and the disk.
+            let rel = self.show_path(path);
+            let file = self.fs_path(&rel);
             if read_small(&file).is_some_and(|b| parse_pointer(&b).is_some()) {
-                candidates.push(rel.to_string());
+                candidates.push(rel);
             }
         }
         let config_bytes = std::fs::read(workdir.join(".lfsconfig"))
@@ -832,11 +831,7 @@ impl Repo {
         if candidates.is_empty() {
             return Ok((candidates, filters));
         }
-        let mut input = Vec::new();
-        for p in &candidates {
-            input.extend_from_slice(p.as_bytes());
-            input.push(0);
-        }
+        let input = self.query_list(&candidates);
         let out = self
             .git()
             .run_stdin(&["check-attr", "-z", "--stdin", "filter"], Some(&input))?;

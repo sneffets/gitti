@@ -289,7 +289,7 @@ impl GittiApp {
         let mut opened = 0;
         let mut gone = Vec::new();
         for path in self.file_marks.all_paths() {
-            let full = gitti_core::paths::join_repo_path(repo.workdir(), &path);
+            let full = repo.fs_path(&path);
             if !full.exists() {
                 gone.push(path);
                 continue;

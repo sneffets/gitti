@@ -764,9 +764,14 @@ impl Git {
     /// with the terminal handed over, then log it with [`Git::log_terminal_run`].
     pub fn terminal_command(&self, args: &[String]) -> Command {
         let mut cmd = Command::new("git");
-        cmd.current_dir(&self.workdir)
-            .args(["-c", "core.quotepath=false"])
-            .args(args);
+        cmd.current_dir(&self.workdir).args(["-c", "core.quotepath=false"]);
+        for a in args {
+            // A shown name that is not UTF-8: git gets its bytes.
+            match self.raw_names.arg(a) {
+                Some(raw) => cmd.arg(crate::raw_names::os_arg(raw)),
+                None => cmd.arg(a),
+            };
+        }
         for var in LOCAL_REPO_ENV {
             cmd.env_remove(var);
         }
@@ -806,7 +811,7 @@ impl Git {
     pub fn run_shell(
         &self,
         program: &str,
-        args: &[String],
+        args: &[std::ffi::OsString],
         dir: &Path,
         shell: &str,
         line: &str,
