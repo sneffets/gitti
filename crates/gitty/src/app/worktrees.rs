@@ -384,21 +384,7 @@ impl App {
                 removed,
                 reopen,
             } => {
-                let detail = if lost.is_empty() {
-                    "Every commit of it is also on another branch, tag or remote branch: \
-                     deleting it loses no commit."
-                        .to_string()
-                } else {
-                    let mut lines = lost;
-                    if more > 0 {
-                        lines.push(format!("… and {more} more"));
-                    }
-                    format!(
-                        "Force Delete (git branch -D) drops these commits — no other branch, \
-                         tag or remote branch has them (the reflog keeps them for a while):\n{}",
-                        clip_lines(&lines, LOST_COMMITS_SHOWN + 1)
-                    )
-                };
+                let detail = lost_detail(lost, more);
                 let mut body = format!(
                     "The worktree is removed. git keeps the branch: it is not merged into its \
                      upstream or HEAD.\n\n{detail}"
@@ -509,4 +495,23 @@ impl App {
             },
         ));
     }
+}
+
+/// What Force Delete of a branch git calls not fully merged drops: the commits only it
+/// has (`lost`, `<short> <subject>`, and `more` beyond those), or that it drops none.
+pub(super) fn lost_detail(lost: Vec<String>, more: usize) -> String {
+    if lost.is_empty() {
+        return "Every commit of it is also on another branch, tag or remote branch: deleting \
+                it loses no commit."
+            .to_string();
+    }
+    let mut lines = lost;
+    if more > 0 {
+        lines.push(format!("… and {more} more"));
+    }
+    format!(
+        "Force Delete (git branch -D) drops these commits — no other branch, tag or remote \
+         branch has them (the reflog keeps them for a while):\n{}",
+        clip_lines(&lines, LOST_COMMITS_SHOWN + 1)
+    )
 }

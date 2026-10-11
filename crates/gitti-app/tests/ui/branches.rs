@@ -135,6 +135,7 @@ fn sort_and_pin(ui: &mut Ui) {
 
 /// Clean Up Merged Branches… offers and deletes `done`; Delete Branches… blocks `side`
 /// (not merged) until its Force box is ticked.
+/// Workflow: BR-19
 fn clean_up_and_delete(ui: &mut Ui) {
     ui.step("action:gitti::CleanUpMergedBranches");
     match modal_title(ui) {

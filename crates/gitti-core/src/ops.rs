@@ -273,16 +273,6 @@ impl Repo {
         self.out(&["branch", if force { "-D" } else { "-d" }, name])
     }
 
-    /// `git branch -d`; `Ok(None)` when git refuses because the branch is not fully merged
-    /// (the UI then offers a force delete — the user knows best).
-    pub fn delete_branch_if_merged(&self, name: &str) -> Result<Option<String>> {
-        match self.delete_branch(name, false) {
-            Ok(out) => Ok(Some(out)),
-            Err(e) if format!("{e:#}").contains("not fully merged") => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
     pub fn set_upstream(&self, branch: &str, upstream: &str) -> Result<String> {
         self.out(&["branch", &format!("--set-upstream-to={upstream}"), branch])
     }

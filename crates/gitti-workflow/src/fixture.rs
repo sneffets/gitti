@@ -293,6 +293,16 @@ impl Fixture {
         self.tips.insert(r, at);
     }
 
+    /// Drops `branch` (or a full ref name) written earlier in this fixture: its commits
+    /// stay in the object store, no ref keeps them — the work of a detached HEAD
+    /// ([`Self::detach`] to one of them).
+    pub fn forget(&mut self, branch: &str) {
+        let r = full_ref(branch);
+        // `reset` without `from`: fast-import doesn't write the ref.
+        self.stream.extend_from_slice(format!("reset {r}\n\n").as_bytes());
+        self.tips.remove(&r);
+    }
+
     /// A lightweight tag `name` on `at`.
     pub fn tag(&mut self, name: &str, at: Mark) {
         self.stream
