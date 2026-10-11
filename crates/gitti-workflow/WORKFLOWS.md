@@ -353,21 +353,21 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| RM-01 | Add / rename / re-URL / remove a remote | sidebar and dialogs | config as said | `repo_ops::branch_tag_stash_remote_ops` | ~`menus::menu_entries` | ~`keybar::the_keys_shown_run_their_entries` |
-| RM-02 | Fetch | f / Fetch | remote-tracking branches updated; progress shown | ~`runner::fetch_streams_progress_meters` | `keys::remote_keys` | `remote::fetch_and_pull_with_a_local_remote`, `progress::fetch_progress_shows_while_fetching` |
-| RM-03 | Pull fast-forward | behind only | fast-forwarded | — | `keys::remote_keys` | `remote::fetch_and_pull_with_a_local_remote` |
+| RM-01 | Add / rename / re-URL / remove a remote | sidebar and dialogs | config as said | `repo_ops::branch_tag_stash_remote_ops`, `wf_remotes::rm01_add_change_url_rename_and_remove_a_remote` | ~`menus::menu_entries`, `wf_remotes::rm01_add_change_url_rename_and_remove_a_remote` | ~`keybar::the_keys_shown_run_their_entries`, `wf_remotes::rm01_add_a_remote`, `wf_remotes::rm01_change_the_url_and_rename_a_remote`, `wf_remotes::rm01_remove_a_remote` |
+| RM-02 | Fetch | f / Fetch | remote-tracking branches updated; progress shown | ~`runner::fetch_streams_progress_meters`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `keys::remote_keys`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `remote::fetch_and_pull_with_a_local_remote`, `progress::fetch_progress_shows_while_fetching`, `wf_remotes::rm02_fetch_then_pull_fast_forwards`, `wf_remotes::rm02_fetch_shows_what_someone_pushed` |
+| RM-03 | Pull fast-forward | behind only | fast-forwarded | `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `keys::remote_keys`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `remote::fetch_and_pull_with_a_local_remote`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` |
 | RM-04 | Pull diverged | no strategy configured | asks merge / rebase / ff-only; remembers on request; config wins | `pull::a_diverged_pull_asks_and_each_choice_does_what_it_says`, `pull::a_remembered_strategy_is_used_without_asking`, `pull::git_config_decides_over_the_remembered_strategy`, `pull::branch_rebase_config_decides_and_no_upstream_runs_no_pull`, `pull::pull_from_asks_and_takes_the_remembered_strategy` | `menus::pull_diverged` | `remote::diverged_pull_asks_for_a_strategy_and_remembers_it` |
-| RM-05 | Pull that conflicts (merge) | diverged on the same line; Pull with Merge | conflict state, banner, resolve, commit concludes | — | — | — |
-| RM-06 | Pull that conflicts (rebase) | — | rebase stopped; Continue / Abort | — | — | — |
-| RM-07 | Pull into a dirty tree | local change in a file the pull changes | refused in plain words; nothing changed | — | — | — |
+| RM-05 | Pull that conflicts (merge) | diverged on the same line; Pull with Merge | conflict state, banner, resolve, commit concludes | `wf_remotes::rm05_pull_merge_conflict_resolved_and_committed` | `wf_remotes::rm05_pull_merge_stops_on_the_conflict`, `wf_remotes::rm05_resolve_and_commit_the_stopped_pull` | `wf_remotes::rm05_pull_merge_stops_on_the_conflict`, `wf_remotes::rm05_resolve_and_commit_the_stopped_pull` |
+| RM-06 | Pull that conflicts (rebase) | diverged on the same line; Pull with Rebase | rebase stopped (said, not an error); Continue / Abort | `wf_remotes::rm06_pull_rebase_conflict_resolved_and_continued`, `wf_remotes::rm06_pull_rebase_conflict_aborted` | `wf_remotes::rm06_pull_rebase_stops_on_the_conflict`, `wf_remotes::rm06_resolve_and_continue_the_stopped_pull` | `wf_remotes::rm06_pull_rebase_stops_on_the_conflict`, `wf_remotes::rm06_resolve_and_continue_the_stopped_pull` |
+| RM-07 | Pull into a dirty tree | local change in a file the pull changes; Stash and Pull | refused in plain words naming the file; nothing changed; Stash and Pull pulls and puts the change back | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` |
 | RM-08 | Push a new branch | no upstream; Push | asks for the remote; pushes with `-u`; then plain Push | `push::main_push_and_pull_without_upstream_never_reach_the_remote`, `push::the_chosen_remote_becomes_the_upstream_of_push_and_pull` | `toolbar::push_steps_and_dialog`, `toolbar::pull_and_push_without_upstream` | `remote::pull_and_push_without_upstream_run_no_git` |
 | RM-09 | Push rejected: someone pushed | Push | plain words; Pull or Fetch, Then Decide; lease pinned to what was fetched | `push::refused_push_after_someone_pushed` | `menus::push_refused_ways_out` | `remote::refused_push_fetch_then_push_with_lease` |
-| RM-10 | Force with lease | rewritten history; Push… force with lease | lists what the remote loses; refused if moved since | `push::force_push_pins_the_lease_the_user_saw`, `push::force_push_options_list_what_each_remote_loses`, `push::force_with_lease_and_no_verify` | — | `remote::push_options_force_with_lease_lists_what_the_remote_loses` |
+| RM-10 | Force with lease | rewritten history; Push… force with lease | lists what the remote loses; refused if moved since | `push::force_push_pins_the_lease_the_user_saw`, `push::force_push_options_list_what_each_remote_loses`, `push::force_with_lease_and_no_verify` | `wf_remotes::rm10_force_with_lease_after_someone_pushed` | `remote::push_options_force_with_lease_lists_what_the_remote_loses` |
 | RM-11 | Push to several remotes | Push… two remotes, new name | each result; a failing one doesn't stop others | `push::push_to_several_remotes_with_a_new_name_tags_and_a_failing_one` | `toolbar::push_steps_and_dialog` | `remote::push_dialog_to_two_remotes_under_a_new_name_with_tags` |
-| RM-12 | Pull from another remote; prune | Pull from…; Prune | other remote's branch; gone branches pruned | `push::pull_from_one_remote_and_prune_another` | — | — |
-| RM-13 | Delete a remote branch | sidebar Delete on `origin/feat` | gone on origin and locally | — | — | — |
+| RM-12 | Pull from another remote; prune | Pull from…; Prune | other remote's branch; gone branches pruned | `push::pull_from_one_remote_and_prune_another` | `wf_remotes::rm12_pull_from_another_remote_and_prune` | `wf_remotes::rm12_pull_from_another_remote`, `wf_remotes::rm12_prune_stale_branches` |
+| RM-13 | Delete a remote branch | sidebar Delete on `origin/feat` | gone on origin and locally | `wf_remotes::rm13_delete_a_remote_branch` | `wf_remotes::rm13_delete_a_remote_branch` | `wf_remotes::rm13_delete_a_remote_branch` |
 | RM-14 | Credentials asked | an HTTP remote wanting a password | prompt names the command; secret hidden; Esc stops | `askpass_env` (binary) | ~`layout::askpass_key_icon` | `remote::askpass_prompt_takes_typing_enter_and_esc`, `cancel::esc_in_a_repeating_prompt_stops_the_operation`, `cancel::prompt_of_a_gone_helper_closes` |
-| RM-15 | Cancel a hanging fetch | Esc on the busy label | stopped; idle again | ~`runner::cancel_stops_a_hanging_hook` | — | `cancel::esc_cancels_a_hanging_fetch` |
+| RM-15 | Cancel a hanging fetch | Esc on the busy label | stopped; idle again | ~`runner::cancel_stops_a_hanging_hook`, `wf_remotes::rm15_cancel_a_hanging_fetch` | — | `cancel::esc_cancels_a_hanging_fetch` |
 | RM-16 | Failed pull's warning | a pull fails; next operation | warning stays until the next user operation | n/a | `toolbar::error_mark`, `toolbar::warnings_go_with_every_remote_op`, `toolbar::a_fetch_waits_for_the_pull`, `keys::warnings_clear` | `remote::error_mark_until_the_next_operation` |
 | RM-17 | Clone from a local bare repository | Clone… | opened; branch of the source; refused into a non-empty folder | `repo_setup::clone_from_local_bare_repo` | `menus::clone_and_init` | `repo_cmds::clone_from_the_palette` |
 | RM-18 | Unpushed / gone upstream marks | commits not pushed; upstream deleted | marks say so | `tab_marks::commits_not_pushed_with_and_without_an_upstream`, `tab_marks::a_local_upstream_compares_with_that_branch` | `layout::repo_tab_marks_follow` | `views::repo_marks_after_the_name` |
@@ -378,11 +378,11 @@ working tree or the index while the app shows an older state.
 |---|---|---|---|---|---|---|
 | WT-01 | Add, list, lock, remove, prune | Add Worktree… (new / existing / detached) | as git lists; opened in a tab | `worktrees::add_list_lock_remove_prune` | `worktrees::add_open_remove`, `worktrees::live_plan` | `repo_cmds::add_worktree_says_what_happens` |
 | WT-02 | Remove a dirty worktree / with its branch | Remove… also delete branch | Force Remove asked; unmerged branch kept until Force Delete | `worktrees::remove_with_branch` | `worktrees::detached_and_dirty_remove`, `worktrees::remove_with_branch` | `repo_cmds::remove_a_worktree_with_its_branch` |
-| WT-03 | Stage and commit in a linked worktree | tab on the linked worktree | works; refs shared with main | `worktrees::repo_opened_in_a_linked_worktree` | `worktrees::linked_tab_works` | — |
+| WT-03 | Stage and commit in a linked worktree | tab on the linked worktree | works; refs shared with main | `worktrees::repo_opened_in_a_linked_worktree`, `wf_modules::wt03_stage_and_commit_in_a_linked_worktree` | `worktrees::linked_tab_works` | `wf_modules::wt03_stage_and_commit_in_a_linked_worktree` |
 | WT-04 | Sparse worktree | Add with folders | only those folders; clean status | `worktrees::sparse_worktree` | `worktrees::log_marks_and_sparse`, `worktrees::folder_picker` | `repo_cmds::add_a_sparse_worktree` |
 | WT-05 | Move / repair / remove own | move; repair after a manual move; remove from its own tab | tab follows / main tab takes over | `worktrees::move_worktree`, `worktrees::repair_worktrees_moved_by_hand` | `worktrees::move_and_repair`, `worktrees::remove_from_own_tab` | `repo_cmds::remove_or_move_the_worktree_gitty_runs_in` |
 | WT-06 | Worktree marks | dirty / unpushed worktrees | marks per entry | `tab_marks::other_worktrees_get_their_own_marks` | `worktrees::sidebar_marks` | `views::worktree_entries_carry_the_marks` |
-| WT-07 | Track a remote branch in a new worktree | type `origin/feat` | local branch tracking it | `worktrees::plan_add_tracks_a_remote_branch` | — | — |
+| WT-07 | Track a remote branch in a new worktree | type `origin/feat` | local branch tracking it | `worktrees::plan_add_tracks_a_remote_branch`, `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` | `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` | `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` |
 | WT-08 | Stash made in one worktree, popped in another | stash in A; pop in B | the shared stash list; applied in B | — | — | — |
 
 ## SM — Submodules
@@ -393,21 +393,21 @@ working tree or the index while the app shows an older state.
 | SM-02 | Pointer change staged as one unit | new commits in the submodule; stage | the pointer, shown as commit summaries | `submodules::pointer_change_is_a_commit_summary_staged_as_one_unit`, `submodules::pointer_change_unstages_and_discards_as_one_unit` | `submodules::pointer_diff_rows` | `submodules::submodule_pointer_change_shows_commits_and_stages_as_one_unit` |
 | SM-03 | Pull moves the pointer → Update | pull; Update Submodules | checked out at the recorded commit | `submodules::pull_that_moves_the_pointer_makes_it_out_of_date`, `submodules::update_nested_paths`, `submodules::sync_nested_paths`, `submodules::update_to_the_remote_branch` | `submodules::sidebar_banner_update` | `submodules::submodule_out_of_date_badge_and_update_from_the_palette` |
 | SM-04 | Add a submodule | Add Submodule… (URL, local path) | staged with `.gitmodules`; file transport asked | `submodules::add_submodule_stages_it_with_its_default_path_and_branch`, `submodules::add_submodule_at_a_path_and_twice`, `submodules::add_submodule_from_a_local_path_asks_for_the_file_transport` | `submodules::add_local_path_asks` | `submodules::add_a_submodule_from_the_palette`, `submodules::add_a_submodule_from_a_local_path_asks_first` |
-| SM-05 | Remove a submodule | Remove… with local work | warned; cleaned up | `submodules::remove_submodule_warns_about_local_work_and_cleans_up`, `submodules::remove_a_nested_submodule`, `submodules::remove_an_uninitialised_submodule` | `submodules::stage2_nested_remote_remove` | — |
-| SM-06 | Check out a commit in a submodule | Check Out Commit in Submodule… | detached there; pointer change in the parent | `submodules::check_out_a_commit_in_the_submodule_records_it`, `submodules::submodule_checkout_risks`, `submodules::submodule_checkout_of_a_nested_one`, `submodules::submodule_checkout_of_an_uninitialised_one` | `submodules::checkout_commit` | — |
-| SM-07 | Commit inside a submodule | commit in its own repository | the parent sees the new pointer | — | `submodules::own_commit_is_seen` | — |
-| SM-08 | Clone: uninitialised vs recursive | plain / recursive clone | states right | `submodules::uninitialised_after_a_plain_clone`, `submodules::a_recursive_clone_checks_out_the_nested_submodules` | — | `submodules::uninitialised_submodule_copies_the_recorded_sha` |
+| SM-05 | Remove a submodule | Remove… with local work | warned; cleaned up | `submodules::remove_submodule_warns_about_local_work_and_cleans_up`, `submodules::remove_a_nested_submodule`, `submodules::remove_an_uninitialised_submodule`, `wf_modules::sm05_remove_a_submodule_with_local_work` | `submodules::stage2_nested_remote_remove` | `wf_modules::sm05_remove_a_submodule_with_local_work` |
+| SM-06 | Check out a commit in a submodule | Check Out Commit in Submodule… | detached there; pointer change in the parent | `submodules::check_out_a_commit_in_the_submodule_records_it`, `submodules::submodule_checkout_risks`, `submodules::submodule_checkout_of_a_nested_one`, `submodules::submodule_checkout_of_an_uninitialised_one`, `wf_modules::sm06_check_out_a_commit_in_a_submodule` | `submodules::checkout_commit` | `wf_modules::sm06_check_out_a_commit_in_a_submodule` |
+| SM-07 | Commit inside a submodule | commit in its own repository | the parent sees the new pointer | `wf_modules::sm07_commit_inside_a_submodule` | `submodules::own_commit_is_seen` | `wf_modules::sm07_commit_inside_a_submodule`, `wf_modules::sm07_record_the_submodule_commit_in_the_superproject` |
+| SM-08 | Clone: uninitialised vs recursive | plain / recursive clone | states right | `submodules::uninitialised_after_a_plain_clone`, `submodules::a_recursive_clone_checks_out_the_nested_submodules` | `wf_modules::sm08_plain_clone_leaves_the_submodule_uninitialised`, `wf_modules::sm08_recursive_clone_asks_then_checks_it_out` | `submodules::uninitialised_submodule_copies_the_recorded_sha` |
 
 ## LF — Git LFS
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| LF-01 | LFS file changed | edit a tracked LFS file | content diff; whole-file stage only, partial refused | `lfs::working_lfs_files_stage_only_whole`, `lfs::whole_file_stage_runs_the_clean_filter` | — | `lfs::lfs_rows_whole_file_staging_and_the_notice` |
+| LF-01 | LFS file changed | edit a tracked LFS file | content diff; whole-file stage only, partial refused | `lfs::working_lfs_files_stage_only_whole`, `lfs::whole_file_stage_runs_the_clean_filter`, `wf_modules::lf01_an_lfs_file_stages_only_whole` | `wf_modules::lf01_an_lfs_file_stages_only_whole` | `lfs::lfs_rows_whole_file_staging_and_the_notice` |
 | LF-02 | Track with Git LFS | Track… in a folder | line in that `.gitattributes`; file stored as a pointer | `lfs::track_in_a_folder`, `lfs::track_a_folder_keeps_its_attributes_plain`, `lfs::track_sets_up_git_lfs_only_when_asked` | `lfs::track_without_git_lfs` | `lfs::track_with_git_lfs_from_the_diff_menu`, `lfs::track_without_git_lfs_says_how_to_install` |
 | LF-03 | Push uploads the object | commit and push | object on the remote | `lfs::push_uploads_to_a_local_remote` | `lfs::push_without_the_lfs_hook_asks` | `lfs::push_without_the_lfs_hook_asks` |
 | LF-04 | Missing objects downloaded | a commit whose object isn't local | Download fetches it; diff shows content | `lfs::download_fetches_missing_objects_from_the_remote`, `lfs::cached_diffs_reannotate_when_objects_arrive` | `lfs::download_missing_objects` | `lfs::download_missing_objects_from_the_diff_menu` |
 | LF-05 | Pointers left / not set up / hooks | clone without git-lfs; Set Up | health explained and fixed | `lfs_health::not_set_up_then_set_up`, `lfs_health::pointer_files_in_the_working_tree`, `lfs_health::download_replaces_the_pointers` | `lfs::missing_git_lfs_banner`, `lfs::hooks_without_lfs_offer_removal` | `lfs::missing_git_lfs_badge_explained_and_hidden`, `lfs::hooks_without_lfs_removed` |
-| LF-06 | Clone checks out content | clone a repo with LFS | content, nothing to commit | `lfs::clone_checks_out_the_content` | — | — |
+| LF-06 | Clone checks out content | clone a repo with LFS | content, nothing to commit | `lfs::clone_checks_out_the_content`, `wf_modules::lf06_clone_checks_out_the_content` | `wf_modules::lf06_clone_checks_out_the_content` | `wf_modules::lf06_clone_checks_out_the_content` |
 
 ## DC — Discard
 
@@ -514,10 +514,10 @@ layer (partial `~` and `n/a` don't count as covered).
 | RB rebase | 9 | 4 | 1 | 1 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
-| RM remotes | 18 | 10 | 9 | 12 |
-| WT worktrees | 8 | 7 | 6 | 5 |
-| SM submodules | 8 | 7 | 7 | 5 |
-| LF LFS | 6 | 6 | 4 | 5 |
+| RM remotes | 18 | 17 | 16 | 18 |
+| WT worktrees | 8 | 7 | 7 | 7 |
+| SM submodules | 8 | 8 | 8 | 8 |
+| LF LFS | 6 | 6 | 6 | 6 |
 | DC discard | 9 | 6 | 3 | 4 |
 | RL recovery | 4 | 2 | 2 | 2 |
 | IG ignore | 6 | 5 | 5 | 5 |
@@ -526,7 +526,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **265** | **197** | **131** | **135** |
+| **Total** | **265** | **205** | **142** | **147** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -536,4 +536,6 @@ and the randomized `staging_fuzz`; it is not counted here.
 Product issues a workflow test ran into. The test checks what works and leaves a `TODO`
 at the step; once fixed, the assertion goes in and the entry goes.
 
-None at the moment.
+| Workflow | What | Where the test notes it |
+|---|---|---|
+| RM-14, RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21), and a credential prompt from a real git can't be answered while its fetch blocks that thread. The prompt dialog itself is covered with the `ask:` step (`layout::askpass_key_icon`); the round trip in gitty. | — |

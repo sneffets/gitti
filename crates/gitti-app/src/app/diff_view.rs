@@ -1976,6 +1976,7 @@ impl GittiApp {
                     )
                     .child(
                         Button::new(("mark-resolved", ix))
+                            .probe(format!("mark-resolved:{ix}"))
                             .label("Mark Resolved")
                             .xsmall()
                             .tooltip("Stage the file as it is now in the working directory")

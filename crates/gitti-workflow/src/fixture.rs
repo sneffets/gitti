@@ -105,6 +105,8 @@ pub enum Mode {
     File,
     Exec,
     Link,
+    /// A submodule's commit (the data is its id).
+    Gitlink,
 }
 
 impl Mode {
@@ -113,6 +115,7 @@ impl Mode {
             Mode::File => "100644",
             Mode::Exec => "100755",
             Mode::Link => "120000",
+            Mode::Gitlink => "160000",
         }
     }
 }
@@ -143,6 +146,12 @@ pub fn exec(path: &str, text: &str) -> Change {
 /// A symlink `path` → `target`.
 pub fn link(path: &str, target: &str) -> Change {
     Change::Put { path: path.into(), data: target.as_bytes().to_vec(), mode: Mode::Link }
+}
+
+/// A submodule at `path` recorded at commit `id` (a gitlink; the submodule's own
+/// repository and `.gitmodules` are the fixture's to write).
+pub fn gitlink(path: &str, id: &str) -> Change {
+    Change::Put { path: path.into(), data: id.as_bytes().to_vec(), mode: Mode::Gitlink }
 }
 
 /// `path` deleted.
@@ -565,6 +574,10 @@ fn append(path: &Path, text: &str) {
 fn write_changes(stream: &mut Vec<u8>, changes: &[Change]) {
     for c in changes {
         match c {
+            Change::Put { path, data, mode: Mode::Gitlink } => {
+                let id = String::from_utf8_lossy(data);
+                stream.extend_from_slice(format!("M 160000 {id} {}\n", quote(path)).as_bytes());
+            }
             Change::Put { path, data, mode } => {
                 stream.extend_from_slice(
                     format!("M {} inline {}\ndata {}\n", mode.octal(), quote(path), data.len()).as_bytes(),
