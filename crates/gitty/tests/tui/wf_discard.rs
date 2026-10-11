@@ -11,8 +11,8 @@ use crate::support::*;
 use gitti_workflow::dc;
 
 /// DC-04: D with 1 000 untracked files in a build folder: the menu counts them and says
-/// ignored files stay; Y discards in one go (no `git clean`); nothing left listed, the
-/// ignored file stays.
+/// ignored files stay; Y discards in one go (no `git clean`), the file watcher's echo of
+/// it re-reads nothing; nothing left listed, the ignored file stays.
 /// Workflow: DC-04
 #[gitti_test::test]
 fn dc04_discard_thousands_of_untracked_files() {
@@ -20,7 +20,9 @@ fn dc04_discard_thousands_of_untracked_files() {
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     wf::fixture(d);
-    let out = gitty(d, "state;cmds;press:D;dump;key:Y;state;cmds");
+    // The file watcher's echo of the deletions (the emptied folders last, then the
+    // restored a.txt) has come before the commands are counted.
+    let out = gitty(d, "state;cmds;press:D;dump;key:Y;seen:target/debug;seen:a.txt;state;cmds");
     let st = states(&out);
     assert_eq!(num(st[0], "unstaged"), wf::UNTRACKED + 1, "{out}");
     let screen = screens(&out)[0];
@@ -29,9 +31,12 @@ fn dc04_discard_thousands_of_untracked_files() {
     assert!(!st[1].contains("status=\"ERROR"), "{out}");
     let ran = &cmds(&out)[1];
     // One go: one `git restore` for the tracked file, the untracked files deleted
-    // in-process (no `git clean`, nothing per file), then the re-read.
-    assert_eq!(ran.iter().filter(|c| c.starts_with("restore")).count(), 1, "{ran:?}");
-    assert!(!ran.iter().any(|c| c.starts_with("clean")) && ran.len() < 10, "{ran:?}");
+    // in-process (no `git clean`, nothing per file), then the re-read (status and both
+    // diffs) — and nothing for the watcher's echo of the deletions: the re-read covers
+    // them (the same four as gitti).
+    let mut kinds: Vec<&str> = ran.iter().map(|c| c.split(' ').next().unwrap_or_default()).collect();
+    kinds.sort();
+    assert_eq!(kinds, ["diff", "diff", "restore", "status"], "{ran:?}");
     wf::expect(d).unwrap();
 }
 

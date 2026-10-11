@@ -103,6 +103,36 @@ fn discard_all_deletes_thousands_of_untracked_files_in_one_go() {
     assert_eq!(writes, ["restore --worktree --pathspec-from-file=- --pathspec-file-nul"]);
 }
 
+/// The re-read after a discard (`working_state_reread`) also reads the folders the discard
+/// left empty and deleted — the file watcher reports them after the files, and the apps'
+/// filter must find them read — and says what it read: those paths, or the whole working
+/// state above the pathspec limit (the `target/` case).
+/// Workflow: DC-04
+#[gitti_test::test]
+fn the_reread_after_a_discard_covers_the_deleted_folders() {
+    use gitti_core::ReadScope;
+    let (_tmp, p, repo) = fixture();
+    let opts = gitti_core::DiffOptions::default();
+    let reread = |dirs: usize, per: usize| {
+        build_output(&p, dirs, per);
+        let prev = repo.working_state_with(&opts).unwrap();
+        let entries = unstaged(&repo);
+        let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+        discard(&repo, &entries, DiscardOptions::default()).unwrap();
+        assert!(!p.join("target").exists());
+        let (after, scope) = repo.working_state_reread(&opts, &prev, &paths).unwrap();
+        assert!(after.unstaged.is_empty() && after.staged.is_empty());
+        (paths, scope)
+    };
+    let (mut paths, scope) = reread(2, 2);
+    paths.extend(
+        ["target/debug/deps/d0", "target/debug/deps", "target/debug", "target", "target/debug/deps/d1"]
+            .map(String::from),
+    );
+    assert_eq!(scope, ReadScope::Paths(paths));
+    assert_eq!(reread(1, 70).1, ReadScope::Whole, "above the pathspec limit");
+}
+
 /// A folder that is a repository of its own (`git status` lists it as `nested/`): kept and
 /// named, unless deleting it is asked for. Before, `git clean -f` skipped it without a
 /// word and it stayed in the list as if Discard had worked only partly.

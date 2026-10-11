@@ -353,6 +353,8 @@ pub struct GittiApp {
     watch_pending: Option<gitti_core::watch::Change>,
     /// Which watcher changes are already covered by what we read (see `WatchFilter`).
     watch_filter: gitti_core::watch::WatchFilter,
+    /// Tests (probes on): the paths the file watcher reported (bounded).
+    watch_seen: Vec<std::path::PathBuf>,
     deferred: std::collections::VecDeque<Deferred>,
     /// Cancels the running operation's git (`op_cancel.rs`; `None`: not cancellable).
     op_cancel: Option<gitti_core::process::CancelToken>,
@@ -724,6 +726,7 @@ impl GittiApp {
             working_generation: 0,
             watch_pending: None,
             watch_filter: Default::default(),
+            watch_seen: Vec::new(),
             deferred: Default::default(),
             op_cancel: None,
             op_progress: Default::default(),
@@ -2150,10 +2153,13 @@ impl GittiApp {
             let stale = (done.as_ref().err())
                 .and_then(|e| gitti_core::lock::stale_lock(e, repo.workdir()));
             let index = repo.index_stamp();
-            let read_at = std::time::SystemTime::now();
-            let working = match &paths {
-                Some(p) => repo.working_state_after(&opts, &prev, p),
-                None => repo.working_state_with(&opts),
+            let read_at = (std::time::Instant::now(), std::time::SystemTime::now());
+            let (working, scope) = match &paths {
+                Some(p) => match repo.working_state_reread(&opts, &prev, p) {
+                    Ok((w, scope)) => (Ok(w), scope),
+                    Err(e) => (Err(e), gitti_core::ReadScope::Whole),
+                },
+                None => (repo.working_state_with(&opts), gitti_core::ReadScope::Whole),
             };
             // A folder stands for the files below it (a restored folder): those are
             // highlighted again.
@@ -2173,19 +2179,20 @@ impl GittiApp {
                 .as_ref()
                 .ok()
                 .map(|w| repo.submodules_after(&w.status, &prev_subs));
-            let read = (paths, touched, read_at);
+            let read = (scope, touched, read_at);
             (done, working.map(|w| (w, styles)), read, index, subs, stale)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (done, working, (paths, touched, read_at), index, subs, stale) = task.await;
+            let (done, working, (scope, touched, read_at), index, subs, stale) = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.working_generation += 1;
                 // Only the touched paths were re-read: an index write of anyone else
                 // since needs a refresh, ours (this stamp) doesn't — nor our own writes
-                // to those files (discard).
+                // to those files (discard), the folders a discard left empty and deleted,
+                // or anything where the re-read took the whole working state.
                 this.watch_filter.own_index(index);
-                if let (Some(p), Ok(_)) = (&paths, &working) {
-                    this.watch_filter.paths_read(p, read_at);
+                if working.is_ok() {
+                    this.watch_filter.reread(&scope, read_at);
                 }
                 this.pending = None;
                 if let Some(subs) = subs {
@@ -3374,6 +3381,12 @@ impl GittiApp {
     /// The file watcher's watches are in place (tests).
     pub fn script_watcher_armed(&self) -> bool {
         self._watcher.as_ref().is_some_and(|w| w.is_armed())
+    }
+
+    /// The file watcher has reported `path` (relative to the work tree) — at any time
+    /// while the probes were on (tests).
+    pub fn script_watch_seen(&self, path: &str) -> bool {
+        self.watch_seen.iter().any(|p| p.ends_with(path))
     }
 
     pub fn script_idle(&self) -> bool {

@@ -4,12 +4,12 @@
 //! (`gitti_core::watch::WatchFilter::needs`).
 
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use anyhow::Result;
 use gitti_core::rows::Src;
 use gitti_core::watch::{Change, Refresh};
-use gitti_core::{DiffOptions, WorkingState};
+use gitti_core::{DiffOptions, ReadScope, WorkingState};
 
 use super::{App, FileHighlight, Msg, compute_highlights, spawn, worktree_jobs};
 
@@ -21,9 +21,8 @@ pub struct PathsRead {
     /// The working-state generation it started from.
     generation: u64,
     opts: DiffOptions,
-    started: SystemTime,
-    paths: Vec<String>,
-    working: Result<WorkingState>,
+    started: (Instant, SystemTime),
+    working: Result<(WorkingState, ReadScope)>,
     /// The files the paths cover (a directory: those below it) and their highlights.
     touched: Option<Vec<String>>,
     highlights: Option<HashMap<(Src, String), FileHighlight>>,
@@ -104,15 +103,15 @@ impl App {
         spawn(
             &self.tx,
             move || {
-                let started = SystemTime::now();
-                let working = repo.working_state_after(&opts, &prev, &paths);
+                let started = (Instant::now(), SystemTime::now());
+                let working = repo.working_state_reread(&opts, &prev, &paths);
                 // A directory stands for the files below it: those are highlighted again.
                 let touched = working
                     .as_ref()
                     .ok()
-                    .map(|w| gitti_core::touched_files(&prev, w, &paths));
+                    .map(|(w, _)| gitti_core::touched_files(&prev, w, &paths));
                 let highlights = match (&working, &touched, cache) {
-                    (Ok(w), Some(t), Some(cache)) => {
+                    (Ok((w, _)), Some(t), Some(cache)) => {
                         let only: HashSet<&str> = t.iter().map(String::as_str).collect();
                         Some(compute_highlights(&repo, worktree_jobs(w, Some(&only)), &cache))
                     }
@@ -122,7 +121,6 @@ impl App {
                     generation,
                     opts,
                     started,
-                    paths,
                     working,
                     touched,
                     highlights,
@@ -136,9 +134,9 @@ impl App {
         self.paths_in_flight = false;
         let current = r.generation == self.working_gen && r.opts == self.opts.diff_options();
         match r.working {
-            Ok(w) if current => {
+            Ok((w, scope)) if current => {
                 self.working_gen += 1;
-                self.watch_filter.paths_read(&r.paths, r.started);
+                self.watch_filter.reread(&scope, r.started);
                 self.apply_working(w, r.highlights, r.touched);
                 self.refresh_submodule_states();
             }
