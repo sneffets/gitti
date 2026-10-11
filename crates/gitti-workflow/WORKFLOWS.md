@@ -1,0 +1,535 @@
+# Workflow tests
+
+A **workflow test** is a short, realistic sequence of user actions — stage two hunks and
+commit them, cherry-pick a commit and later merge its branch, stash and pop, edit a file in
+another program while gitti shows it — checked by its result in the repository and in the
+app. Unit and feature tests check one function or one dialog; a workflow test checks that
+the steps fit together the way a user chains them.
+
+This file is the catalog: every workflow we want covered — its story, its steps, the
+expected result — and which tests cover it today, on each of the three layers. A `—` is a
+gap we know of; the totals at the end say where coverage stands. Tests carry the IDs of
+the workflows they cover (`/// Workflow: ST-13`), and a test checks that this file and the
+code agree (see [Keeping it in sync](#keeping-it-in-sync)).
+
+## Layers
+
+Each workflow can be checked on three layers. They share the story, the starting
+repository and the expected repository state; each layer adds what only it can see.
+
+| Layer | Binary | Drives the workflow through | Checks |
+|---|---|---|---|
+| **core** | `cargo test --workspace --test core` (`crates/gitti-core/tests/core`) | the `gitti_core::Repo` API, as the apps call it | the repository afterwards, read with plain git (log, index, files, state files) |
+| **gitti** | `cargo test --workspace --test ui` (`crates/gitti-app/tests/ui`) | script steps (`GITTI_SCRIPT` syntax via `Ui::step` / `Ui::quick`: `select:`, `lines:`, `stagehunk:`, `menu:`, `palette:`, `action:`, `modalok`, …) in the real views, headless | the UI state (`testing::state`: lists, `repo_state`, `conflicted`, status, dialogs, git calls) **and** the repository |
+| **gitty** | `cargo test --workspace --test tui` (`crates/gitty/tests/tui`) | the real `gitty` binary with `GITTY_SCRIPT` (keys, palette, menus) | `state` (incl. `repo_state=`, `conflicted=`) / `dump` / `cmds` output **and** the repository |
+
+Core is the basis: it proves the git side is right. The gitti and gitty tests prove that
+the app offers the step, asks what it should ask, runs the core call and shows the result —
+they don't re-test every git corner case the core test already pins.
+
+## The harness: `crates/gitti-workflow`
+
+One workflow, three drivers. The shared part lives in the dev-only crate
+`gitti-workflow` (std only; a dev-dependency of the three crates):
+
+- **`Fixture`** — the starting state in three git processes: `git init`, one
+  `git fast-import` for the whole history (branches, merges, tags, authors, fixed times so
+  ids are the same in every run), one `git read-tree` for index and working tree; a staged
+  state (`stage`), working-tree edits (`write`), config, remotes, hooks written as files.
+  An operation state whose index stages matter (a merge that stopped) comes from the one
+  real git command that makes it (`git_after_stops`), never from hand-written state files.
+- **`ext`** — "another program": line endings for the whole file or some lines, a byte
+  order mark, another code page (Latin-1, Windows-1252, UTF-16), the exec bit, a file
+  swapped for a symlink or a folder, an old modification time, a git command in a terminal.
+- **`Expect`** — the repository afterwards with few git processes: HEAD, refs and the
+  operation state from the files; one `git log`; one `git cat-file --batch` for any number
+  of index / commit contents; one `git status`. **`Checks`** collects every mismatch.
+- **The workflows** — one module each in its area's module (`gitti_workflow::st`,
+  `gitti_workflow::cp`, …): `fixture(dir)`, the constants the steps need, and
+  `expect…(dir) -> Result<(), String>` for the state after a step. The drivers —
+  `wf_*.rs` in the three test binaries — only take the steps and check what their app
+  shows; the repository check is the same function on every layer.
+
+Fixtures and checks run git without the user's global config. The apps under test read
+it, so the fixture's own `.git/config` pins what it could change (identity, signing,
+`autocrlf`, the conflict marker style).
+
+## Time rule
+
+Every test (and every gitti scenario, window included) takes **at most 2 s**, or it fails;
+after 10 s the process is killed. git processes are the cost (~35 ms each on Windows):
+
+- Build the starting state with `Fixture` (three git processes) — never one `git add` +
+  `git commit` per commit.
+- Start each test at the interesting state. A long story (branch, pick, edit, merge,
+  resolve, commit) is split into steps whose starting states the fixture builds; the app
+  drives only the steps under test (a gitti scenario two or three operations).
+- Read the result with few git processes (`Expect`).
+- Long or randomized variants (fuzzing, every combination) go to `release-tests/`, never
+  into the daily suite.
+
+## Legend
+
+- `staging::stage_one_of_two_hunks` — a test that covers the workflow: `module::test` in
+  the layer's binary (gitti: `suite::scenario`).
+- `~name` — partial: the test covers part of the workflow (e.g. the dialog, not the
+  result; or the command line instead of the app).
+- `(unit)` — a unit test in `src/` of that crate.
+- `—` — missing. `n/a` — the layer has nothing of its own to check.
+- **Bold** stories are the everyday ones.
+
+## Adding a workflow
+
+1. Give it the next ID of its area and a row here: a one-line story, the steps, the
+   expected result.
+2. **The shared part**: a module in `crates/gitti-workflow/src/<area>.rs` with
+   `fixture(dir)` (a `Fixture`), the names the steps need (messages, lines, commit ids in a
+   `Setup`) and `expect…(dir)` per checked step (`Expect` + `Checks`).
+3. **core first**: a `#[gitti_test::test]` in `crates/gitti-core/tests/core/wf_<area>.rs`
+   — the fixture, the steps through `Repo`, the workflow's `expect`.
+4. **gitti**: a scenario in `crates/gitti-app/tests/ui/wf_<area>.rs` (a suite registered in
+   `main.rs`'s `SUITES`): the fixture in `repo_for`, script steps, asserts on what the user
+   sees (`ui.ui_state()`, status, dialogs), then the same `expect` into `ui.fail`.
+5. **gitty**: a `#[gitti_test::test]` in `crates/gitty/tests/tui/wf_<area>.rs`: the
+   fixture, one gitty run (`common::gitty`), `state` / `dump` asserts, then the `expect`.
+6. Mark each test with the workflow's ID: a doc-comment line `/// Workflow: CP-12` (several:
+   `/// Workflow: ST-03, CP-07`) on the test function or scenario function, and name the
+   tests in the row's columns. A layer that can't do the step yet (the app lacks the
+   command) stays `—` and gets an open point; a missing product feature is never papered
+   over by doing the step with plain git in an app test.
+7. A step that runs into a product bug: the test checks what works, leaves a `TODO` comment
+   naming the bug instead of asserting the broken behaviour, and the bug goes under
+   [Open points](#open-points-found-by-workflow-tests).
+
+## Keeping it in sync
+
+`wf_catalog::catalog_and_tests_agree` (in the core test binary; reads files, no git)
+checks both ways: every test named in a row exists and carries that row's ID in its
+`/// Workflow:` line, and every ID a test carries is in this catalog with that test in its
+row. Rename a test → change its row; add a test to a workflow → add it to the row and tag
+it.
+
+---
+
+## ST — Staging hunks, lines and files
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| ST-01 | Stage one of two hunks | a file changed in two places; stage hunk 1 | index has hunk 1 only; working tree unchanged; hunk 2 still unstaged | `staging::stage_one_of_two_hunks` | `speed::stage_hunk_is_quick` | `staging::stage_a_hunk_and_unstage_a_file_with_path_limited_git` |
+| ST-02 | Stage single lines | select one `+` and one `-` line of a hunk; stage | unselected `+` dropped, unselected `-` kept as context; exact index content | `staging::stage_single_lines_and_unstage_again`, `patch::stage_only_added_line` (unit) | `speed::stage_lines_is_quick` | `staging::stage_a_single_line_and_discard_lines_after_asking` |
+| ST-03 | Unstage lines while another hunk stays staged | hunk 1 staged, part of hunk 2 staged; unstage lines of hunk 2 | hunk 1 stays staged, only the selected lines leave the index | `staging::unstage_lines_in_second_hunk_with_first_hunk_staged` | ~`speed::staging_keys` | — |
+| ST-04 | Partial stage of a new file | untracked file; stage some lines | index has a new file with only those lines; rest untracked-side | `staging::partial_stage_of_untracked_file` | — | — |
+| ST-05 | Partial unstage of an added file | new file staged; unstage some lines | added file stays in the index without those lines | `staging::partial_unstage_of_added_file` | — | — |
+| ST-06 | Partial stage of a deletion | tracked file deleted; stage some removed lines | index keeps the file minus those lines (not deleted) | `staging::partial_stage_of_deleted_file` | — | — |
+| ST-07 | Stage / unstage whole files | modified, untracked, deleted, a name with glob characters | each moves as a whole, literal paths only | `staging::working_state_after_whole_files_match_a_full_read`, `unix_fs::whole_file_operations_take_paths_literally` | `speed::stage_and_unstage_files_are_quick` | ~`staging::stage_a_hunk_and_unstage_a_file_with_path_limited_git` |
+| ST-08 | Stage All / Unstage All | keys and section headers | everything moves; confirmations where they apply | ~`staging::discard_all_keeps_staged_changes` | `speed::staging_keys` | `staging::stage_all_unstage_all_discard_all_with_confirmations`, `staging::section_headers_stage_unstage_and_discard_all` |
+| ST-09 | Stage a group | unstaged section grouped (tracked / untracked); stage one group | one `git add` of the group's paths, the other group stays | — | `speed::unstaged_groups_fold_and_stage_cheaply` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
+| ST-10 | Stage with ignore-whitespace | `-w` view on; stage a hunk with whitespace-only neighbours | only the visible change staged (selection mapped onto the exact diff) | `staging::stage_hunk_while_ignoring_whitespace`, `non_utf8::ignore_whitespace_maps_lines_that_are_not_utf8` | — | — |
+| ST-11 | Stage with expanded context | reveal hidden lines / whole file; select and stage | patch still exact | `staging::stage_and_unstage_lines_with_expanded_context` | — | ~`scroll::expanders_whole_file_and_changes_only_without_git` |
+| ST-12 | Stage with minimal context | context lines set to 0 | hunks still apply | `staging::staging_works_with_minimal_context` | ~`keys::view_keys` | ~`menus::view_toggles_context_lines_and_history_order` |
+| ST-13 | **Split a change into two commits** | two files changed; stage a hunk of `a` and a line of `b`; commit "first"; stage the rest; commit "second" | two commits holding exactly those changes; tree clean | `wf_pilot::st13_split_a_change_into_two_commits`, ~`staging::commit_via_cli` | `wf_pilot::st13_split_a_change_into_two_commits` | `wf_pilot::st13_split_a_change_into_two_commits`, `wf_pilot::st13_split_a_change_second_commit` |
+| ST-14 | Stage inside a file tab | file tab of the working directory active; stage hunk / lines / file | tab stays and its mark follows; empty tab falls back | n/a | `speed::staging_in_a_file_tab_updates_the_tabs` | n/a |
+| ST-15 | Keys during a running stage | press stage-all while a stage runs | runs after it, not refused | n/a | `speed::key_during_an_operation_waits_for_it` | `staging::keys_pressed_during_a_stage_run_after_it` |
+| ST-16 | Refresh racing a stage | a full refresh starts before a stage ends | never shows the older state, not even one frame | n/a | `speed::refresh_racing_a_stage_shows_no_old_state` | — |
+| ST-17 | View kept across staging | scrolled into a file; stage a hunk / the whole file | rows above stay; whole file → next file on top | n/a | `scroll::diff_stays_on_refresh_and_stage`, `scroll::diff_stage_whole_file_shows_the_next` | `scroll::scroll_position_is_kept_across_staging_and_refresh`, `scroll::staging_a_whole_file_moves_to_the_next_file` |
+| ST-18 | Path-limited re-read equals a full read | after hunk / line / file operations | the cheap re-read gives what a full read gives | `staging::working_state_after_hunks_and_lines_match_a_full_read`, `staging::working_state_after_takes_directories` | ~`speed::staging_keys` | `speed::staging_runs_path_limited_git_and_its_own_writes_refresh_nothing` |
+| ST-19 | Staging under a hostile global config | noprefix, mnemonicprefix, colour, textconv, external diff, … | stage / unstage / discard unaffected | `hostile_config::stage_hunk_lines_unstage_and_discard`, `hostile_config::untracked_deleted_and_trailing_whitespace` | — | — |
+| ST-20 | Random line selections | random files and selections (fixed seeds) | byte-exact against a model | `non_utf8::random_byte_lines_stage_exactly` | n/a | n/a |
+| ST-21 | Stage a line in a Unicode / wrapped line | wrapped CJK / RTL line; select one row; stage | the whole line staged exactly | — | `render_linux::unicode_staging` | `unicode::staging_copying_and_committing_unicode` |
+
+## EX — Changes behind the app's back
+
+Another program (editor, formatter, build, sync client, a terminal `git`) changes the
+working tree or the index while the app shows an older state.
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| EX-01 | A shown file is saved by an editor | app shows `a`'s diff; another program writes `a` | only `a` re-read; the diff shows the new content | `linux_env::watcher_reports_edits_but_not_our_own_reads`, `watch::worktree_changes_need_only_their_paths` (unit) | `speed::watcher_rereads_only_what_changed` | `speed::outside_changes_refresh_only_what_they_touched` |
+| EX-02 | Whole file LF → CRLF (no autocrlf) | an editor converts `a` to CRLF; stage one changed line; discard another | the diff says the line endings changed (visible); the staged line reaches the index with CRLF, others untouched; discard restores LF | ~`staging::non_utf8_lines_stage_unstage_discard_byte_exact` | — | — |
+| EX-03 | Only some lines get CRLF | an editor rewrites 2 of 10 lines with CRLF | only those 2 lines show as changed (marked as line-ending change); staging one keeps the other unstaged | — | — | — |
+| EX-04 | CRLF file → LF | committed CRLF, editor saves LF | every line changed, marked; Stage All gives an LF index | — | — | — |
+| EX-05 | `core.autocrlf=true` working tree | CRLF on disk, LF in the index; stage / unstage / discard lines | index stays LF; a discard writes CRLF back | `staging::line_staging_with_autocrlf_and_untracked_crlf_file` | — | — |
+| EX-06 | `eol=crlf` / `text` attribute | file converted by attributes; stage / discard / stash lines | index LF, working tree CRLF, both right | ~`stash::stash_lines_with_eol_conversion` | — | — |
+| EX-07 | `.gitattributes` added that renormalizes | commit has CRLF; add `* text=auto` | files show as modified (renormalization); Stage All gives what `git add --renormalize` gives; the app says why they changed | — | — | — |
+| EX-08 | BOM added / removed | an editor adds a UTF-8 byte order mark | line 1 shows as changed and the BOM is visible; stage / discard exact | — | — | — |
+| EX-09 | Code page changed | a UTF-8 file re-saved as Windows-1252 | changed lines decoded, encoding named; a staged line moves its exact bytes | ~`non_utf8::eight_bit_lines_stage_unstage_discard_exactly` | ~`speed::non_utf8_line_stages_exactly` | ~`staging::latin1_line_stages_exactly` |
+| EX-10 | Re-saved as UTF-16 | a text file becomes UTF-16 (binary for git) | listed as binary, whole-file stage only; with a `diff` attribute lines stage exactly | ~`unix_fs::text_becomes_binary`, `non_utf8::utf16_lines_stage_unstage_discard_exactly` | — | — |
+| EX-11 | Trailing newline added / removed | an editor adds or drops the last newline | "no newline" handled on both sides; partial stage right | `unix_fs::no_eol_added_or_removed`, `staging::no_newline_at_eof`, `unix_fs::no_eol_both_sides_stage_and_unstage_one_side` | — | — |
+| EX-12 | Exec bit flipped | `chmod +x` / `-x` by another program | mode-only change; stage / unstage / discard; `core.fileMode=false` ignores it | `unix_fs::mode_only_change_stages_unstages_and_discards`, `unix_fs::removing_the_exec_bit_stages`, `unix_fs::core_filemode_false_ignores_the_exec_bit` | — | — |
+| EX-13 | File replaced by a symlink (and back) | a tool swaps a file for a link | type change listed once per side; operations act on the whole change | `unix_fs::file_to_symlink_type_change`, `unix_fs::symlink_to_file_type_change` | — | — |
+| EX-14 | File replaced by a folder (and back) | a build replaces `out` (file) by `out/` | deleted + untracked shown; stage / discard bring either state back | `unix_fs::file_replaced_by_directory`, `unix_fs::directory_replaced_by_file`, `unix_fs::directory_replaced_by_file_discard_in_steps` | — | — |
+| EX-15 | File deleted while shown | the diff of `a` is shown; `a` is deleted; user stages a line of the old view | refused in plain words (or the view updated first); index unchanged | — | — | — |
+| EX-16 | Discard from a stale view | `a` edited after it was shown; user discards a hunk of the old view | refused in plain words ("changed since it was shown"); nothing lost; view re-read | — | — | — |
+| EX-17 | Stage from a stale view | `a` edited after it was shown; user stages lines of the old view | stages exactly what was shown (or refuses, as stash does); view re-read and consistent | — | — | — |
+| EX-18 | Index changed by a terminal `git add` | user stages the same hunk from the old view | no double change; plain-words error or no-op; view re-read | — | — | — |
+| EX-19 | Edit lands while a stage runs | a write to the staged file during the operation | the final view equals the disk (no lost update) | — | ~`speed::refresh_racing_a_stage_shows_no_old_state` | — |
+| EX-20 | File replaced with an older mtime | `cp -p` / sync client / unzip writes `a` with an old timestamp | the change still shows without a manual refresh | — | — | — |
+| EX-21 | Another git holds `index.lock` | briefly (an editor's git) / left by a crash | our write waits; a stale lock is offered for removal | `runner::write_waits_for_a_lock_released_meanwhile`, `runner::lasting_lock_fails_then_old_one_is_stale_and_removable` | — | `cancel::stale_index_lock_is_offered_for_removal` |
+| EX-22 | Commit / branch made outside | a terminal commit or branch | history updated in place, selection kept | `repo_shapes::history_updates_reuse_what_did_not_change` | `scroll::commit_list_reload`, `speed::working_state_does_not_wait_for_the_history` | `speed::outside_ref_changes_update_the_history_in_place` |
+| EX-23 | Tracked file made unreadable | `chmod 000` on a modified file | refresh works; the file listed without a diff | `unix_fs::unreadable_tracked_file_does_not_break_the_refresh`, `unix_fs::unreadable_directory_with_tracked_files` | — | — |
+| EX-24 | Conflict resolved elsewhere while the merge editor is open | another program writes the resolution | taken in on focus; undo brings the conflict back | ~`merge_session::starts_from_an_edited_file_on_disk` (unit) | — | `merge_editor::merge_editor_takes_in_outside_edits` |
+
+## CM — Commit, amend, reword
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| CM-01 | Commit staged changes | stage, type message, commit | one commit with exactly the staged changes; unstaged stay; box empties | `staging::commit_via_cli` | `keys::message_keys` | `staging::commit_message_keys_commit_and_amend` |
+| CM-02 | **Amend: add a forgotten file** | stage `b`; amend with HEAD's message | HEAD replaced: same parent, tree now has `b`, message unchanged | — | ~`keys::message_keys` | ~`staging::commit_message_keys_commit_and_amend` |
+| CM-03 | Amend the message only | nothing staged; amend with a new message | tree unchanged, message replaced | ~`hostile_config::typed_messages_keep_hash_lines` | — | `staging::commit_message_keys_commit_and_amend` |
+| CM-04 | Amend with unstaged work around | staged and unstaged changes; amend | only the staged part goes in; unstaged stays | — | — | — |
+| CM-05 | Amend draft per commit | edit the amend message; reopen | the edit comes back for that commit; gone once HEAD moved | `store::amend_drafts_are_kept_per_worktree_for_their_commit` (unit) | `commit::amend_draft_for_its_commit` | `staging::amend_draft_comes_back_for_its_commit` |
+| CM-06 | Amend a pushed commit, then push | amend HEAD that origin has; push | refused in plain words; Push with Lease offered and works | `push::refused_push_of_an_amended_branch_offers_push_with_lease` | — | `remote::push_after_an_amend_offers_push_with_lease` |
+| CM-07 | Amend while a merge / cherry-pick is in progress | conflicts resolved; amend on | refused with the reason before git runs | — | — | — |
+| CM-08 | Nothing staged | Commit with nothing staged | asks: Stage All and Commit / Stage Tracked and Commit / Create Empty Commit — each does what it says | `repo_ops::nothing_staged_stage_all_or_empty_commit` | `commit::nothing_staged_choices` | `staging::nothing_staged_offers_stage_all_or_an_empty_commit` |
+| CM-09 | Empty message | Commit with an empty box | refused, focus stays, no git | — | — | `staging::commit_message_keys_commit_and_amend` |
+| CM-10 | Failing pre-commit hook | hook exits 1; fix; commit again | no commit, message kept as draft; then committed, draft gone | — | `commit::draft_survives_a_restart` | `staging::commit_message_draft_survives_a_restart_until_committed` |
+| CM-11 | commit-msg hook rewrites the message | hook appends a trailer | the commit has the hook's message; hook output shown while it runs | — | ~`commit::hook_output_shows_while_committing` | ~`progress::slow_hook_output_shows_while_committing` |
+| CM-12 | Commit template | `commit.template` set; commit unedited, then edited | unedited refused before git; comment lines stripped | `commit_box::the_template_is_found_as_git_finds_it`, `commit_box::the_template_is_committed_only_edited_without_its_comments` | `commit::template_sign_off_and_earlier_messages` | `commit_box::template_fills_the_box_and_is_refused_unedited` |
+| CM-13 | Sign off | Sign Off on; commit; amend | one trailer, never twice | `commit_box::sign_off_adds_the_trailer_once` | `commit::template_sign_off_and_earlier_messages` | `commit_box::sign_off_adds_the_trailer_and_is_remembered` |
+| CM-14 | `#123` lines in a message | `commit.cleanup=strip` globally; message with `#` lines | kept as typed (commit, amend, tag, merge) | `hostile_config::typed_messages_keep_hash_lines` | — | — |
+| CM-15 | Reword HEAD | staged file present; Edit Commit Message on HEAD | message replaced; the staged file not committed | `repo_ops::reword_head_and_older_commit_keeps_staged_and_unstaged_changes` | ~`menus::branch_commit_stash_menus` | `menus::commit_menu_rewords_head` |
+| CM-16 | Reword an older commit | staged and unstaged work; reword commit 2 of 3 | history above rewritten, work kept, no rebase left | `repo_ops::reword_head_and_older_commit_keeps_staged_and_unstaged_changes`, `repo_ops::reword_needs_no_tools_but_git`, `hostile_config::reworded_messages_keep_hash_lines` | — | `menus::commit_menu_rewords_an_older_commit` |
+| CM-17 | Reword root / pushed / below a merge | reword the root; a pushed commit; one under a merge | root works; pushed and below-merge refused with the reason | ~`repo_ops::reword_the_root_commit_and_not_pushed_ones` | — | — |
+| CM-18 | Earlier messages | ↑ in the empty box; Recent Commit Messages… | newest first, own only | `commit_box::own_messages_are_the_users_newest` | `commit::template_sign_off_and_earlier_messages` | `commit_box::earlier_messages_by_up_and_the_picker` |
+| CM-19 | First commit in a fresh repository | `git init`; stage; commit | root commit; history shows it; commands needing a commit come alive | ~`staging::history_of_repo_without_commits_has_worktree_row` | ~`menus::fresh_repository_greys_what_needs_a_commit` | — |
+| CM-20 | Unicode / i18n messages | message with CJK, emoji; `i18n.commitEncoding` | committed intact, shown decoded | `repo_shapes::commit_made_with_i18n_commit_encoding`, `repo_shapes::latin1_commit_message_is_decoded` | ~`render_linux::unicode_message` | `unicode::staging_copying_and_committing_unicode` |
+| CM-21 | Quit while a commit runs | ⌘Q / `q` while a hook holds the commit | asks; Quit When Done waits; Stop and Quit stops, draft kept | ~`runner::cancel_stops_a_hanging_hook` | `commit::quit_while_git_runs_asks`, `commit::close_tab_while_git_runs_asks` | `cancel::quit_while_an_operation_runs_asks_first`, `cancel::quit_when_done_waits_for_the_operation`, `cancel::stop_and_quit_stops_the_operation` |
+
+## SH — Stash
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| SH-01 | **Stash and pop** | modified file; Stash Changes…; pop | tree clean after stash; pop restores; list empty | `repo_ops::branch_tag_stash_remote_ops` | ~`keys::overlay_keys` (stash only) | ~`menus::stash_dialog_fields_checkboxes_and_cancel` (stash only) |
+| SH-02 | Stash including untracked | a new file; "Include untracked" | the file goes into the stash and comes back on pop | ~`stash::stash_paths_literal_and_all` | `menus::branch_commit_stash_menus` | ~`menus::stash_dialog_fields_checkboxes_and_cancel` |
+| SH-03 | Stash `--all` | an ignored file too | ignored file stashed | `stash::stash_paths_literal_and_all` | — | — |
+| SH-04 | Stash keeping the index | staged + unstaged; keep index | staged part stays staged, the rest stashed | — | — | — |
+| SH-05 | Stash only staged | staged part only | refused when git couldn't finish; else only staged stashed | `stash::stash_staged_only_refuses_what_git_cannot_finish` | ~`menus::stash_dialogs` | — |
+| SH-06 | Stash selected lines | select lines of one hunk; Stash Selected Lines | only those lines leave; other hunk, other file and index stay | `stash::stash_unstaged_hunk_keeps_everything_else`, `stash::stash_unstaged_lines_over_staged_changes`, `stash::stash_staged_lines_keeps_unstaged_changes` | `menus::stash_dialogs` | `stash::stash_selected_lines` |
+| SH-07 | Stash one file | cursor on a file; stash it | that file only; literal path | `stash::stash_paths_literal_and_all`, `stash::stash_lines_of_an_untracked_file` | `menus::stash_dialogs` | `stash::stash_file_and_rename` |
+| SH-08 | Stash lines with odd bytes / EOL | Latin-1 + CRLF + no final newline; `eol=crlf` | exact bytes in the stash and in what stays | `stash::stash_lines_keeps_exact_bytes`, `stash::stash_lines_with_eol_conversion` | — | — |
+| SH-09 | Stash lines from a stale view | file edited after it was shown; stash lines | refused: "changed since it was shown" | — | — | — |
+| SH-10 | Rename a stash | Rename Stash… | message changed, order kept (also the only stash, reftable) | `stash::stash_rename_keeps_order`, `stash::stash_rename_the_only_stash`, `stash::stash_rename_in_a_reftable_repository` | — | `stash::stash_file_and_rename` |
+| SH-11 | Drop a stash | sidebar menu Drop (asks) | that stash gone, others kept | — | ~`menus::branch_commit_stash_menus` | `menus::sidebar_menus_rename_drop_stash_and_delete_a_tag` |
+| SH-12 | Pop that conflicts, abort | pop over a conflicting commit; Abort | files back to HEAD; the stash entry stays | `conflicts::stash_pop_conflict_abort_keeps_the_stash` | `layout::stash_conflict_abort` | `merge_editor::stash_pop_conflict_aborts_from_the_palette_and_keeps_the_stash` |
+| SH-13 | Apply that conflicts, resolve | apply conflicts; take the stash's side | resolved, no operation state left | `repo_ops::conflict_from_stash_apply` | — | — |
+| SH-14 | Branch from a stash | Create Branch from Stash… | branch at the stash's base, stash applied and dropped | `sidebar_ops::stash_branch_checks_out_a_branch_with_the_stash` | `menus::sidebar_menus` | `menus::sidebar_menus_rename_drop_stash_and_delete_a_tag` |
+| SH-15 | Look into a stash | select the stash row | its diff incl. untracked files; open a version | `history_diffs::stash_rows_in_history_and_stash_diff`, `navigate::stash_versions_include_untracked_files` | — | — |
+| SH-16 | Stash while a merge is in progress | merge with conflicts resolved; Stash Changes | refused with the reason (a stash would end the merge) | — | — | — |
+| SH-17 | Pop with the index restored | staged + unstaged stashed; pop restoring the index | staged part staged again (`--index`) | — | — | — |
+| SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | — | — | — |
+| SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | — | — | — |
+
+## BR — Branches
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| BR-01 | Create a branch and switch to it | Create Branch… on HEAD | branch exists, checked out | ~`repo_ops::branch_tag_stash_remote_ops` | ~`keys::shortcut_list` | `repo_cmds::commit_list_marks_worktrees_and_branches_from_the_commit_menu` |
+| BR-02 | Create a branch at an older commit | commit menu Create Branch Here… | branch at that commit, not checked out | ~`repo_ops::branch_tag_stash_remote_ops` | — | `menus::commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch` |
+| BR-03 | Switch (clean) | branch switcher / sidebar ⏎ | HEAD moves; working tree matches | ~`switching::same_ignore_rules_cost_no_extra_git` | `keys::overlay_keys` | `navigation::sidebar_keys_move_fold_jump_and_checkout`, `palette::branch_switcher_picker_keys` |
+| BR-04 | Switch with an unrelated local change | change in a file both branches have equal | switched; change carried over | ~`switching::discard_and_force_switch_drop_local_changes` | — | — |
+| BR-05 | **Switch blocked by a local change → Stash & Switch** | change in a file the target changes | stashed, switched, re-applied | `repo_ops::switch_moves_local_changes_aside` | — | — |
+| BR-06 | Stash & Switch whose re-apply conflicts | overlapping change | switched, file conflicted, stash kept, said so | `repo_ops::switch_moves_local_changes_aside` | — | — |
+| BR-07 | Switch blocked by an untracked file | untracked `x` the target tracks | Stash & Switch keeps `x` in a stash; other untracked files stay | `repo_ops::switch_moves_blocking_untracked_files_aside` | `menus::switch_blocked_ways` | `repo_cmds::switch_blocked_by_an_untracked_file_stashes_it` |
+| BR-08 | Delete & Switch / Discard & Switch / Force | the other ways out | each drops only what it says | `switching::folder_with_untracked_files_where_the_target_has_a_file`, `switching::discard_and_force_switch_drop_local_changes`, `switching::untracked_file_where_the_target_has_a_folder_is_listed_once` | `menus::switch_blocked_ways` | `repo_cmds::switch_blocked_offers_delete_and_force` |
+| BR-09 | Many blocking files | ~200 blocking untracked files | all stashed in one go | `switching::many_blocking_untracked_files_are_stashed_in_one_go` | — | — |
+| BR-10 | Switch to fewer ignore rules | target doesn't ignore `target/` | build output shows untracked; the app says why | `switching::switching_to_fewer_ignore_rules_shows_ignored_files_as_untracked` | — | `repo_cmds::switch_to_fewer_ignore_rules_says_why_files_are_untracked` |
+| BR-11 | Rename the current branch | Rename… | renamed; upstream config follows | ~`repo_ops::branch_tag_stash_remote_ops` | `menus::branch_commit_stash_menus` | `menus::sidebar_menus_rename_drop_stash_and_delete_a_tag` |
+| BR-12 | Delete a merged branch | Delete… | gone | ~`repo_ops::branch_tag_stash_remote_ops` | ~`menus::branch_commit_stash_menus` | ~`keybar::the_keys_shown_run_their_entries` |
+| BR-13 | Delete an unmerged branch | Delete… | refused, Force Delete offered and naming the lost commits | — | — | `repo_cmds::deleting_an_unmerged_branch_offers_force` |
+| BR-14 | Switch to a remote branch | `origin/feat` without a local branch | local `feat` tracking it, checked out | ~`worktrees::plan_add_tracks_a_remote_branch` | — | — |
+| BR-15 | Switch to a branch checked out in another worktree | ⏎ on it | offers that worktree instead of git's error | `worktrees::switching_to_a_branch_of_another_worktree` | `worktrees::add_open_remove` | — |
+| BR-16 | Detached HEAD, then keep the work | check out a commit; commit; create a branch there | branch holds the commit; branch commands greyed while detached | ~`repo_shapes::detached_and_unborn_head` | ~`menus::detached_head_greys_branch_commands` | ~`palette::palette_branch_commands_on_a_detached_head` |
+| BR-17 | Set / unset upstream | Set as Upstream | ahead / behind follow | `repo_ops::config_upstream_and_blobs` | ~`menus::branch_commit_stash_menus` | `keybar::the_keys_shown_run_their_entries` |
+
+## MG — Merge
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| MG-01 | Fast-forward merge | `main` behind `feat`; merge `feat` | `main` at `feat`, no merge commit | — | — | `palette::palette_merge_picker_and_synonyms` |
+| MG-02 | No-ff merge with a message | Merge… with "always create a merge commit" | two parents, the message | `repo_ops::merge_and_cherry_pick_options` | — | — |
+| MG-03 | Squash merge | Merge… squash; commit | changes staged, no `MERGE_HEAD`; one-parent commit with `SQUASH_MSG` | ~`repo_ops::merge_and_cherry_pick_options`, ~`conflicts::squash_merge_message_in_a_linked_worktree` | — | — |
+| MG-04 | Fast-forward only on diverged history | ff-only | refused in plain words, nothing changed | `repo_ops::merge_and_cherry_pick_options` | — | — |
+| MG-05 | Clean three-way merge | diverged, different files | merge commit, both changes | `repo_ops::merge_and_cherry_pick_options` | — | — |
+| MG-06 | **Content conflict → merge editor → commit** | same line changed; resolve in the editor; commit | box has git's message; Commit off while conflicted; merge concluded with two parents | `conflicts::committing_a_resolved_merge_concludes_it`, `repo_ops::merge_doc_from_conflict_stages` | `layout::merge_commit_flow` | `merge_editor::merge_message_prefilled_commit_blocked_then_concludes_the_merge` |
+| MG-07 | Resolve by taking a side | ours for one file, theirs for another; Continue | each file as that side; merge concluded | `repo_ops::conflicts_from_a_merge_resolved_per_side` | — | ~`merge_editor::merge_editor_save_single_view_questions_editor_and_resolve` |
+| MG-08 | Modify / delete conflict | one side deleted, other changed; keep / delete | header says so; keep stages it, delete removes it | `conflicts::delete_and_rename_conflicts_resolve_by_keeping_or_deleting` | `layout::delete_conflict_choices` | `merge_editor::deleted_file_conflict_offers_keep_and_delete` |
+| MG-09 | Rename / rename conflict | both renamed `r.txt` differently | both names listed; resolving keeps the chosen one | `conflicts::delete_and_rename_conflicts_resolve_by_keeping_or_deleting` | — | — |
+| MG-10 | Abort a conflicting merge | Abort in the banner | back to the pre-merge commit and files | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | ~`layout::merge_commit_flow` | — |
+| MG-11 | Conclude with the box emptied / edited | empty box, or an edited message | git's message without `# Conflicts:` lines / the edited one | `conflicts::continue_concludes_a_merge_without_conflict_comments_or_with_the_edited_message` | — | `merge_editor::merge_concluded_with_the_box_emptied` |
+| MG-12 | Unrelated histories | merge a branch with its own root | refused, "Merge anyway" offered and works | `conflicts::unrelated_histories_merge_and_pull` | `menus::merge_unrelated_histories` | ~`repo_cmds::pull_with_unrelated_histories_offers_merge_anyway` |
+| MG-13 | Merge preview in the graph | during a merge | working row is the pending merge, dashed edge to `MERGE_HEAD` | `merge_preview::merge_head_makes_the_worktree_row_the_pending_merge`, `merge_preview::unreachable_merge_head_and_octopus` | `layout::merge_preview_graph` | `views::merge_preview_dashes_the_pending_merge` |
+| MG-14 | Long conflict markers | `conflict-marker-size=10` | the editor and the "still has markers" check use the size | `conflicts::conflict_marker_size_attribute`, `merge_session::marker_size_attribute` (unit) | — | — |
+| MG-15 | Conflict in a non-UTF-8 / CRLF file | Latin-1 conflict; autocrlf CRLF conflict | written back byte for byte in the working-tree form | `non_utf8::merge_editor_writes_non_utf8_files_exactly`, `non_utf8::merge_editor_writes_the_working_tree_form` | — | `merge_editor::merge_editor_saves_a_latin1_file_exactly` |
+| MG-16 | Merge into a dirty tree (overlapping) | local change in a file the merge changes | git refuses; the app says what blocks and offers a way out (stash first); nothing changed | — | — | — |
+| MG-17 | Merge into a dirty tree (not overlapping) | local change elsewhere; conflicting merge; abort | the local change survives merge and abort | — | — | — |
+| MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | — | — | — |
+| MG-19 | Stage All with markers left | a conflicted file still has `<<<<<<<`; Stage All | asks first like Mark Resolved does | — | — | — |
+| MG-20 | Merge in a linked worktree | conflict in a linked worktree | state from its own git dir; main worktree clean | `conflicts::merge_conflict_in_a_linked_worktree` | — | — |
+| MG-21 | Submodule pointer conflict | both sides moved the pointer | listed as a conflict; resolving picks a commit | `submodules::conflicting_pointers` | — | — |
+| MG-22 | Binary conflict | both sides changed a binary | no merge editor; take ours / theirs | — | — | — |
+| MG-23 | Merge conflict in a SHA-256 repository | — | as in SHA-1 | `sha256::merge_conflict_worktrees_and_branch_ops` | — | — |
+| MG-24 | Resolve with an external merge tool | conflicted file → Open in External Merge Tool | the tool's result staged; status says no conflict is left | ~`ext_tool::describes_the_merge_outcome` (unit) | `ext_tools::merge_tool` | `ext_tools::merge_tool_from_the_resolve_menu` |
+
+## CP — Cherry-pick
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| CP-01 | **Cherry-pick one commit** | select a commit of `feat`; Cherry-pick | new commit on `main` with its change, author and message | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | — | — |
+| CP-02 | Cherry-pick with `-x` | Cherry-pick with Options…, record origin | message ends with "(cherry picked from commit …)" | `repo_ops::merge_and_cherry_pick_options` | — | ~`merge_editor::prepared_message_next_to_the_users_text` |
+| CP-03 | Cherry-pick without committing | `-n` (and `-x`); then Commit | change staged; box gets git's prepared message; commit drops `MERGE_MSG` | `conflicts::cherry_pick_no_commit_record_origin_prepares_the_message` | `commit::prepared_message_after_cherry_pick` | `merge_editor::prepared_message_after_cherry_pick_no_commit`, `merge_editor::prepared_message_next_to_the_users_text`, `merge_editor::keep_mine_survives_a_restart` |
+| CP-04 | Conflicting pick → resolve → Continue | conflict; resolve; Continue | commit with the picked author; box message used when edited | ~`conflicts::continue_a_cherry_pick_sequence_with_the_edited_message` | ~`commit::continue_with_the_edited_message` | ~`merge_editor::continue_with_the_edited_message` |
+| CP-05 | Conflicting pick → Abort | conflict; Abort | HEAD and files as before | — | — | — |
+| CP-06 | Pick a merge commit | Cherry-pick on a merge | picks against the first parent (`-m 1`) | — | — | — |
+| CP-07 | Several commits in sequence | pick A..C; second conflicts; resolve; Continue | the rest picked; state clean | `conflicts::continue_a_cherry_pick_sequence_with_the_edited_message`, `conflicts::a_sequence_committed_by_hand_still_continues` | ~`commit::continue_with_the_edited_message` (sequence started on the command line) | ~`merge_editor::continue_with_the_edited_message` (same) |
+| CP-08 | Pick several selected commits from the app | select three commits; Cherry-pick | picked oldest first | — | — | — |
+| CP-09 | **Pick a commit that is already applied** | pick `A` twice | the app says it is empty and offers Skip / Commit Empty / Abort | — | — | — |
+| CP-10 | Conflict resolved to the HEAD side | resolution equals HEAD; Continue | "nothing left of this commit": Skip offered; never stuck | — | — | — |
+| CP-11 | Conflicting `-x` with a custom comment char | `core.commentChar=;` | `; Conflicts:` lines dropped, origin line kept | `conflicts::conflicting_cherry_pick_strips_the_configured_comment_char` | — | — |
+| CP-12 | **Pick, then merge the source branch** | pick `A` from `feat` onto `main`; later merge `feat` | merges cleanly; both `A` and its copy in history | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` |
+| CP-13 | Pick, change the same lines on main, merge the source | pick `A`; edit A's lines on `main`; merge `feat` | conflict exactly on those lines (expected); other files merged | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` |
+| CP-14 | Pick with a different resolution, merge the source | pick `A` with a conflict resolved differently; merge `feat` | conflict again on those lines (git can't know); resolvable | — | — | — |
+| CP-15 | Pick, revert the pick, merge the source | pick `A`; revert it; merge `feat` | `A`'s change is back after the merge (git's three-way result) and the diff shows it | — | — | — |
+| CP-16 | Pick into a dirty tree | local change in a file the pick changes | refused in plain words; nothing changed | — | — | — |
+| CP-17 | Pick HEAD | Cherry-pick on HEAD | greyed with the reason; no git | `availability::changes_stashes_and_selection_turn_them_on` (unit) | ~`menus::unavailable_commands` | ~`palette::palette_and_menu_grey_what_cannot_act_with_the_reason` |
+| CP-18 | Pick a lost commit from the reflog | reflog entry → Cherry-pick | its change on HEAD | — | — | — |
+
+## RV — Revert
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| RV-01 | **Revert a commit** | Revert on a commit | a new commit undoing it ("Revert …") | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | — | — |
+| RV-02 | Revert a merge commit | Revert on a merge | reverted against the first parent | — | — | — |
+| RV-03 | Revert conflict → Continue with an edited message | conflict; resolve; edit box; Continue | the edited message | `conflicts::continue_a_revert_with_the_edited_message` | — | — |
+| RV-04 | Revert conflict → Abort | conflict; Abort | back to before | — | — | — |
+| RV-05 | Revert the revert | revert `A`, then revert that | `A`'s change back | — | — | — |
+| RV-06 | Revert a change already undone | revert gives nothing | empty: Skip / Abort offered, never stuck | — | — | — |
+
+## RB — Rebase
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| RB-01 | **Rebase the current branch onto another** | `feat` 2 commits, `main` 1 newer; Rebase onto `main` | `feat` linear on top of `main`, same messages / authors | — | ~`menus::branch_commit_stash_menus` (picker) | — |
+| RB-02 | Rebase conflict → Continue with the edited message | conflict on commit 1; resolve; Continue | rebased commit has the message; author kept | `conflicts::continue_a_rebase_with_the_edited_message` | — | — |
+| RB-03 | Rebase conflict → Abort | Abort | branch exactly as before | — | — | — |
+| RB-04 | The next commit conflicts too | resolve, Continue, stops again | error says the message was used; second resolve finishes | `conflicts::continue_a_rebase_with_the_edited_message` | — | — |
+| RB-05 | A step becomes empty | resolution equals upstream | git drops it; state clean; the app says it was dropped | — | — | — |
+| RB-06 | Rebase drops commits already upstream | `A` cherry-picked to `main` before | `A` not replayed | — | — | — |
+| RB-07 | Rebase with a dirty tree | local change | refused (or autostash per config) in plain words | — | — | — |
+| RB-08 | The apply backend refuses the box message | `rebase --apply` stopped | box text not silently dropped | `conflicts::continue_a_rebase_with_the_edited_message` | — | — |
+| RB-09 | Pull with rebase | diverged; Pull with… Rebase | local commits on top of the upstream's; strategy remembered on request | `pull::a_diverged_pull_asks_and_each_choice_does_what_it_says`, `pull::the_retry_ends_where_git_pull_would`, `pull::pull_with_passes_the_choice_over_the_configuration` | `menus::pull_diverged` | `remote::pull_with_chooses_remembers_and_forgets_the_strategy` |
+
+## RS — Reset and restore
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| RS-01 | Reset soft | reset `main` to HEAD~1 (soft) | HEAD moved; the undone commit's changes staged | — | — | — |
+| RS-02 | Reset mixed | mixed | changes unstaged | — | — | — |
+| RS-03 | **Reset hard (asks)** | hard; confirm | HEAD, index and files at the target; untracked kept | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | — | — |
+| RS-04 | Reset hard, recover from the reflog | reset hard; Show Reflog; Create Branch Here on the lost commit | the lost commit back on a branch | `reflog::heads_reflog_keeps_the_commit_a_reset_dropped` | `reflog::create_branch_keeps_a_lost_commit`, `reflog::lists_shows_and_navigates` | `reflog::reflog_lists_shows_navigates_and_recovers` |
+| RS-05 | Reset to colliding paths | target has `X.h` and `x.h` (case-insensitive disk) | the app says which paths can't be checked out | `fs_paths::switching_and_resetting_to_colliding_paths_say_so` | — | — |
+| RS-06 | Restore a file / folder from a commit | Restore from Selected Commit… | working tree (and index with `--staged`) as the commit; local change named first | `restore::restore_file_and_folder_from_a_commit` | `menus::restore_and_containing` | `menus::restore_from_a_commit_and_branches_containing_it` |
+| RS-07 | Restore the version before a commit | renamed / added file | old name back, new removed; added file deleted | `restore::restore_the_version_before_a_commit` | — | — |
+| RS-08 | Reset the remote branch | Reset origin/main to Here… | origin moves back (lease), local untouched | `push::reset_the_remote_branch_to_a_commit` | — | `remote::reset_remote_branch_from_the_palette` |
+| RS-09 | Move another branch to a reflog commit | reflog of `feat`; move it | `feat` at that commit | `reflog::another_branch_moves_to_a_reflog_commit` | — | — |
+
+## TG — Tags
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| TG-01 | Lightweight and annotated tags | Create Tag… with / without a message; delete | as typed, multi-line, `#` lines kept | `repo_ops::branch_tag_stash_remote_ops`, `repo_ops::tag_details_lightweight_annotated_signed` | `menus::tag_message_and_show_tag` | `menus::commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch` |
+| TG-02 | Show a tag | Show Tag | lightweight says so; annotated: tagger, message; signed verified | `repo_ops::tag_details_lightweight_annotated_signed` | `menus::tag_message_and_show_tag` | `menus::show_tag_lightweight_and_annotated` |
+| TG-03 | Push tags | push one / all / follow-tags | on the remote | `push::push_to_several_remotes_with_a_new_name_tags_and_a_failing_one` | ~`toolbar::push_steps_and_dialog` | `remote::push_dialog_to_two_remotes_under_a_new_name_with_tags` |
+| TG-04 | Delete a tag locally and on the remote | Delete Tag…, also on origin | gone in both | ~`repo_ops::branch_tag_stash_remote_ops` | — | `menus::sidebar_menus_rename_drop_stash_and_delete_a_tag` |
+| TG-05 | Tag name already exists | Create Tag… `v1` again | refused in plain words before git | — | — | — |
+| TG-06 | Tags on tags / non-commits | — | listed and shown | `repo_shapes::tags_on_tags_and_on_non_commits` | — | — |
+
+## RM — Remotes (local bare remote)
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| RM-01 | Add / rename / re-URL / remove a remote | sidebar and dialogs | config as said | `repo_ops::branch_tag_stash_remote_ops` | ~`menus::menu_entries` | ~`keybar::the_keys_shown_run_their_entries` |
+| RM-02 | Fetch | f / Fetch | remote-tracking branches updated; progress shown | ~`runner::fetch_streams_progress_meters` | `keys::remote_keys` | `remote::fetch_and_pull_with_a_local_remote`, `progress::fetch_progress_shows_while_fetching` |
+| RM-03 | Pull fast-forward | behind only | fast-forwarded | — | `keys::remote_keys` | `remote::fetch_and_pull_with_a_local_remote` |
+| RM-04 | Pull diverged | no strategy configured | asks merge / rebase / ff-only; remembers on request; config wins | `pull::a_diverged_pull_asks_and_each_choice_does_what_it_says`, `pull::a_remembered_strategy_is_used_without_asking`, `pull::git_config_decides_over_the_remembered_strategy`, `pull::branch_rebase_config_decides_and_no_upstream_runs_no_pull`, `pull::pull_from_asks_and_takes_the_remembered_strategy` | `menus::pull_diverged` | `remote::diverged_pull_asks_for_a_strategy_and_remembers_it` |
+| RM-05 | Pull that conflicts (merge) | diverged on the same line; Pull with Merge | conflict state, banner, resolve, commit concludes | — | — | — |
+| RM-06 | Pull that conflicts (rebase) | — | rebase stopped; Continue / Abort | — | — | — |
+| RM-07 | Pull into a dirty tree | local change in a file the pull changes | refused in plain words; nothing changed | — | — | — |
+| RM-08 | Push a new branch | no upstream; Push | asks for the remote; pushes with `-u`; then plain Push | `push::main_push_and_pull_without_upstream_never_reach_the_remote`, `push::the_chosen_remote_becomes_the_upstream_of_push_and_pull` | `toolbar::push_steps_and_dialog`, `toolbar::pull_and_push_without_upstream` | `remote::pull_and_push_without_upstream_run_no_git` |
+| RM-09 | Push rejected: someone pushed | Push | plain words; Pull or Fetch, Then Decide; lease pinned to what was fetched | `push::refused_push_after_someone_pushed` | `menus::push_refused_ways_out` | `remote::refused_push_fetch_then_push_with_lease` |
+| RM-10 | Force with lease | rewritten history; Push… force with lease | lists what the remote loses; refused if moved since | `push::force_push_pins_the_lease_the_user_saw`, `push::force_push_options_list_what_each_remote_loses`, `push::force_with_lease_and_no_verify` | — | `remote::push_options_force_with_lease_lists_what_the_remote_loses` |
+| RM-11 | Push to several remotes | Push… two remotes, new name | each result; a failing one doesn't stop others | `push::push_to_several_remotes_with_a_new_name_tags_and_a_failing_one` | `toolbar::push_steps_and_dialog` | `remote::push_dialog_to_two_remotes_under_a_new_name_with_tags` |
+| RM-12 | Pull from another remote; prune | Pull from…; Prune | other remote's branch; gone branches pruned | `push::pull_from_one_remote_and_prune_another` | — | — |
+| RM-13 | Delete a remote branch | sidebar Delete on `origin/feat` | gone on origin and locally | — | — | — |
+| RM-14 | Credentials asked | an HTTP remote wanting a password | prompt names the command; secret hidden; Esc stops | `askpass_env` (binary) | ~`layout::askpass_key_icon` | `remote::askpass_prompt_takes_typing_enter_and_esc`, `cancel::esc_in_a_repeating_prompt_stops_the_operation`, `cancel::prompt_of_a_gone_helper_closes` |
+| RM-15 | Cancel a hanging fetch | Esc on the busy label | stopped; idle again | ~`runner::cancel_stops_a_hanging_hook` | — | `cancel::esc_cancels_a_hanging_fetch` |
+| RM-16 | Failed pull's warning | a pull fails; next operation | warning stays until the next user operation | n/a | `toolbar::error_mark`, `toolbar::warnings_go_with_every_remote_op`, `toolbar::a_fetch_waits_for_the_pull`, `keys::warnings_clear` | `remote::error_mark_until_the_next_operation` |
+| RM-17 | Clone from a local bare repository | Clone… | opened; branch of the source; refused into a non-empty folder | `repo_setup::clone_from_local_bare_repo` | `menus::clone_and_init` | `repo_cmds::clone_from_the_palette` |
+| RM-18 | Unpushed / gone upstream marks | commits not pushed; upstream deleted | marks say so | `tab_marks::commits_not_pushed_with_and_without_an_upstream`, `tab_marks::a_local_upstream_compares_with_that_branch` | `layout::repo_tab_marks_follow` | `views::repo_marks_after_the_name` |
+
+## WT — Worktrees
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| WT-01 | Add, list, lock, remove, prune | Add Worktree… (new / existing / detached) | as git lists; opened in a tab | `worktrees::add_list_lock_remove_prune` | `worktrees::add_open_remove`, `worktrees::live_plan` | `repo_cmds::add_worktree_says_what_happens` |
+| WT-02 | Remove a dirty worktree / with its branch | Remove… also delete branch | Force Remove asked; unmerged branch kept until Force Delete | `worktrees::remove_with_branch` | `worktrees::detached_and_dirty_remove`, `worktrees::remove_with_branch` | `repo_cmds::remove_a_worktree_with_its_branch` |
+| WT-03 | Stage and commit in a linked worktree | tab on the linked worktree | works; refs shared with main | `worktrees::repo_opened_in_a_linked_worktree` | `worktrees::linked_tab_works` | — |
+| WT-04 | Sparse worktree | Add with folders | only those folders; clean status | `worktrees::sparse_worktree` | `worktrees::log_marks_and_sparse`, `worktrees::folder_picker` | `repo_cmds::add_a_sparse_worktree` |
+| WT-05 | Move / repair / remove own | move; repair after a manual move; remove from its own tab | tab follows / main tab takes over | `worktrees::move_worktree`, `worktrees::repair_worktrees_moved_by_hand` | `worktrees::move_and_repair`, `worktrees::remove_from_own_tab` | `repo_cmds::remove_or_move_the_worktree_gitty_runs_in` |
+| WT-06 | Worktree marks | dirty / unpushed worktrees | marks per entry | `tab_marks::other_worktrees_get_their_own_marks` | `worktrees::sidebar_marks` | `views::worktree_entries_carry_the_marks` |
+| WT-07 | Track a remote branch in a new worktree | type `origin/feat` | local branch tracking it | `worktrees::plan_add_tracks_a_remote_branch` | — | — |
+| WT-08 | Stash made in one worktree, popped in another | stash in A; pop in B | the shared stash list; applied in B | — | — | — |
+
+## SM — Submodules
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| SM-01 | List and states | up to date / new commits / out of date / dirty / uninitialised / nested | as `git submodule status --recursive` | `submodules::list_matches_git_and_follows_the_states`, `submodules::nested_dirty_state_comes_from_a_status_in_its_dirty_parent` | `submodules::sidebar_banner_update`, `submodules::stage2_nested_remote_remove` | `submodules::submodule_out_of_date_badge_and_update_from_the_palette` |
+| SM-02 | Pointer change staged as one unit | new commits in the submodule; stage | the pointer, shown as commit summaries | `submodules::pointer_change_is_a_commit_summary_staged_as_one_unit` | `submodules::pointer_diff_rows` | `submodules::submodule_pointer_change_shows_commits_and_stages_as_one_unit` |
+| SM-03 | Pull moves the pointer → Update | pull; Update Submodules | checked out at the recorded commit | `submodules::pull_that_moves_the_pointer_makes_it_out_of_date`, `submodules::update_and_sync_nested_paths`, `submodules::update_to_the_remote_branch` | `submodules::sidebar_banner_update` | `submodules::submodule_out_of_date_badge_and_update_from_the_palette` |
+| SM-04 | Add a submodule | Add Submodule… (URL, local path) | staged with `.gitmodules`; file transport asked | `submodules::add_submodule_stages_it_with_its_default_path_and_branch`, `submodules::add_submodule_from_a_local_path_asks_for_the_file_transport` | `submodules::add_local_path_asks` | `submodules::add_a_submodule_from_the_palette`, `submodules::add_a_submodule_from_a_local_path_asks_first` |
+| SM-05 | Remove a submodule | Remove… with local work | warned; cleaned up | `submodules::remove_submodule_warns_about_local_work_and_cleans_up`, `submodules::remove_nested_and_uninitialised_submodules` | `submodules::stage2_nested_remote_remove` | — |
+| SM-06 | Check out a commit in a submodule | Check Out Commit in Submodule… | detached there; pointer change in the parent | `submodules::check_out_a_commit_in_the_submodule_records_it`, `submodules::submodule_checkout_risks_nested_and_uninitialised` | `submodules::checkout_commit` | — |
+| SM-07 | Commit inside a submodule | commit in its own repository | the parent sees the new pointer | — | `submodules::own_commit_is_seen` | — |
+| SM-08 | Clone: uninitialised vs recursive | plain / recursive clone | states right | `submodules::uninitialised_after_plain_clone_and_recursive_clone` | — | `submodules::uninitialised_submodule_copies_the_recorded_sha` |
+
+## LF — Git LFS
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| LF-01 | LFS file changed | edit a tracked LFS file | content diff; whole-file stage only, partial refused | `lfs::working_lfs_files_stage_only_whole`, `lfs::whole_file_stage_runs_the_clean_filter` | — | `lfs::lfs_rows_whole_file_staging_and_the_notice` |
+| LF-02 | Track with Git LFS | Track… in a folder | line in that `.gitattributes`; file stored as a pointer | `lfs::track_in_a_folder`, `lfs::track_sets_up_git_lfs_only_when_asked` | `lfs::track_without_git_lfs` | `lfs::track_with_git_lfs_from_the_diff_menu`, `lfs::track_without_git_lfs_says_how_to_install` |
+| LF-03 | Push uploads the object | commit and push | object on the remote | `lfs::push_uploads_to_a_local_remote` | `lfs::push_without_the_lfs_hook_asks` | `lfs::push_without_the_lfs_hook_asks` |
+| LF-04 | Missing objects downloaded | a commit whose object isn't local | Download fetches it; diff shows content | `lfs::download_fetches_missing_objects_from_the_remote`, `lfs::cached_diffs_reannotate_when_objects_arrive` | `lfs::download_missing_objects` | `lfs::download_missing_objects_from_the_diff_menu` |
+| LF-05 | Pointers left / not set up / hooks | clone without git-lfs; Set Up | health explained and fixed | `lfs_health::not_set_up_then_set_up`, `lfs_health::pointer_files_in_the_working_tree`, `lfs_health::download_replaces_the_pointers` | `lfs::missing_git_lfs_banner`, `lfs::hooks_without_lfs_offer_removal` | `lfs::missing_git_lfs_badge_explained_and_hidden`, `lfs::hooks_without_lfs_removed` |
+| LF-06 | Clone checks out content | clone a repo with LFS | content, nothing to commit | `lfs::clone_checks_out_the_content` | — | — |
+
+## DC — Discard
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| DC-01 | Discard one line | select a line; discard (asks) | only that line goes back | `staging::discard_single_line` | `speed::staging_keys` | `staging::stage_a_single_line_and_discard_lines_after_asking` |
+| DC-02 | Discard a hunk | discard the hunk (asks) | the hunk restored, others stay | ~`hostile_config::stage_hunk_lines_unstage_and_discard` | — | — |
+| DC-03 | Discard All keeps staged work | staged + unstaged; Discard All | unstaged gone (untracked too), staged stays | `staging::discard_all_keeps_staged_changes` | `speed::staging_keys` | `staging::stage_all_unstage_all_discard_all_with_confirmations` |
+| DC-04 | Discard thousands of untracked files | `target/` with 1 000 files | one go; ignored file stays | `discard::discard_all_deletes_thousands_of_untracked_files_in_one_go` | — | — |
+| DC-05 | Discard with a nested repository | untracked folder that is a repository | kept and named unless asked | `discard::nested_repository_is_kept_and_named_unless_asked`, `discard::untracked_folder_entry_keeps_a_repository_inside` | `menus::discard_all_nested_repository` | `staging::discard_all_keeps_a_nested_repository_unless_asked` |
+| DC-06 | A file can't be deleted | read-only folder | the others go; error names the file | `discard::a_file_that_cannot_be_deleted_does_not_stop_the_others`, `unix_fs::read_only_directory` | — | — |
+| DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | — | — | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
+| DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | ~`staging::working_state_after_whole_files_match_a_full_read` | — | — |
+| DC-09 | Discard lines of a read-only file | 0444 file | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | — | — |
+
+## RL — Undo and recovery
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| RL-01 | Find a commit a reset dropped | Show Reflog | "lost" entry marked; its commit shown | `reflog::heads_reflog_keeps_the_commit_a_reset_dropped` | `reflog::lists_shows_and_navigates`, `reflog::menu_bar_and_branch_menu_open_it` | `reflog::reflog_lists_shows_navigates_and_recovers` |
+| RL-02 | Recover a deleted branch | delete `feat`; its reflog commit → Create Branch | `feat` back | — | — | — |
+| RL-03 | Undo an amend | amend; reflog → reset to the pre-amend commit | old HEAD back | — | — | — |
+| RL-04 | Undo a bad rebase | rebase; reflog → reset to before | branch as before | — | — | — |
+
+## IG — Ignore rules and untracked files
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| IG-01 | Ignore a file | Add to .gitignore… | line written once; file gone from the list | `repo_setup::ignored_file_disappears_and_line_is_not_duplicated`, `repo_setup::folder_pattern_hides_everything_below` | `menus::gitignore_dialog` | `repo_cmds::ignore_from_the_diff_menu` |
+| IG-02 | Ignore a tracked file | Stop tracking (`rm --cached`) | file kept on disk, untracked then ignored | `repo_setup::tracked_files_stay_tracked_unless_untracked` | `menus::gitignore_dialog` | `repo_cmds::ignore_a_tracked_file_and_info_exclude` |
+| IG-03 | Folder `.gitignore` / `info/exclude` | target a folder's file | pattern relative to that folder | `repo_setup::folder_gitignore_patterns_apply_inside_the_folder`, `repo_setup::info_exclude_target` | `menus::folder_rule_files` | `repo_cmds::ignore_into_a_folder_gitignore` |
+| IG-04 | `status.showUntrackedFiles` | `no` / `normal` | hidden said so; folder entry stages / discards whole | `config_safety::show_untracked_files_config_is_honoured`, `config_safety::untracked_folder_entry_stages_and_discards_as_a_whole` | `config_safety::hidden_untracked_note` | `config_safety::hidden_untracked_files_are_said_to_be_hidden` |
+| IG-05 | Stage All with hidden untracked files | `showUntrackedFiles=no`, a hidden new file; Stage All | the hidden file is not staged without saying so | — | — | — |
+| IG-06 | Negation and global excludes | `!keep.log` in a nested `.gitignore`; `core.excludesFile` | as git decides | — | — | — |
+
+## RN — Renames
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| RN-01 | Rename a file and stage both sides | `mv a b`; stage deletion and new file | one rename staged; unstage brings both back | ~`unix_fs::rename_only_in_case` | — | — |
+| RN-02 | Rename with edits, stage some lines | `mv a b` + edit | lines of `b` stage; rename detected once both staged | — | — | — |
+| RN-03 | File history across a rename | Go to Commit with the file | commits through the rename | `search::file_history_follows_renames_and_deleted_files` | `menus::go_to_commit` | `views::go_to_commit_finds_file_history_and_messages` |
+| RN-04 | Commit diff of a rename | select the commit | old → new name | `history_diffs::batched_commit_diffs_match_single_ones` | — | — |
+| RN-05 | Merge across a rename | `feat` renames `a`, `main` edits `a` | clean merge, edit in the new name | — | — | — |
+
+## BN — Binary files
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| BN-01 | Binary next to text | change both | binary stages whole; a binary patch is an error, not a broken index | `unix_fs::binary_next_to_text` | — | — |
+| BN-02 | Text becomes binary and back | — | listed right each time | `unix_fs::text_becomes_binary` | — | — |
+| BN-03 | Huge / binary file in a commit | select the commit | listed, not diffed; Load anyway for text | `history_diffs::huge_files_are_listed_but_not_diffed`, `history_diffs::stash_and_compare_guard_huge_files` | `speed::huge_file_in_a_commit_loads_on_demand` | `speed::huge_file_in_a_commit_loads_on_demand` |
+
+## BG — Big and many
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| BG-01 | A commit with a huge diff | merge of 1 700 files | shows after one load | — | `speed::huge_commit_shows_after_one_load` | — |
+| BG-02 | Very long lines | 200 KB lines | diff and stage byte-exact | `unix_fs::very_long_lines` | — | — |
+| BG-03 | Long history | 5 000+ commits | compact rows, partial history first | `repo_shapes::very_long_linear_history`, `repo_shapes::history_rows_are_compact`, `repo_shapes::partial_history_is_the_newest_slice_of_the_full_one` | — | — |
+| BG-04 | Stage a group of > 200 paths | 250 untracked files; stage the group | all staged (chunked `git add`) | — | — | — |
+| BG-05 | Watcher with thousands of folders | — | no loop, ignored trees unwatched | `linux_env::watcher_handles_thousands_of_directories`, `linux_env::watcher_leaves_ignored_trees_unwatched` | n/a | n/a |
+
+## NU — Non-UTF-8 names and content
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| NU-01 | Latin-1 / Windows-1252 lines | stage / unstage / discard lines | exact bytes; encoding named | `non_utf8::eight_bit_lines_stage_unstage_discard_exactly`, `unix_fs::latin1_content_stages_lines` | `speed::non_utf8_line_stages_exactly` | `staging::latin1_line_stages_exactly` |
+| NU-02 | UTF-16 with a `diff` attribute | lines | exact | `non_utf8::utf16_lines_stage_unstage_discard_exactly` | — | — |
+| NU-03 | `working-tree-encoding` | stage / discard; untracked file | in its encoding on disk | `non_utf8::working_tree_encoding_and_untracked_files` | — | — |
+| NU-04 | A file name that isn't UTF-8 | list, whole-file stage; line stage refused | refused before git, in plain words | `unix_fs::non_utf8_name_is_listed`, `unix_fs::non_utf8_name_stages`, `non_utf8::names_that_are_not_utf8_are_refused` | — | — |
+| NU-05 | Odd names everywhere | spaces, quotes, newlines, glob characters | hunks, lines, files right | `unix_fs::odd_names_tracked_hunks_lines_and_whole_files`, `unix_fs::odd_names_untracked_partial_stage_and_discard`, `unix_fs::odd_names_deleted_partial_stage_and_discard` | — | — |
+
+## FS — File-system paths and file types
+
+| ID | Story | Steps | Expected | core | gitti | gitty |
+|---|---|---|---|---|---|---|
+| FS-01 | Case collision in the index | `X.h` and `x.h` on a case-insensitive disk | marked, explained; staging asks; hide and show again | `fs_paths::index_paths_the_file_system_cant_hold_are_reported`, `fs_paths::hiding_with_skip_worktree_and_showing_again` | `fs_paths::marked_explained_and_noted`, `fs_paths::stage_asks_first`, `fs_paths::hide_and_show_again` | `fs_paths::colliding_paths_marked_staging_asks_hiding_settles` |
+| FS-02 | A commit adds the other spelling | history commit adds `A.TXT` | marked before checkout | `fs_paths::a_commit_that_adds_the_other_spelling_is_marked_before_it_is_checked_out` | `fs_paths::history_commit_marked` | `fs_paths::history_commit_marked_before_checkout` |
+| FS-03 | Rename only in case | `foo` → `Foo` | delete + untracked, a rename once staged | `unix_fs::rename_only_in_case`, `unix_fs::case_sensitive_names_are_separate_files` | — | — |
+| FS-04 | NFC / NFD names | "café" both ways | two files where the disk keeps both | `unix_fs::unicode_nfc_and_nfd_names_are_separate_files` | — | — |
+| FS-05 | Symlinks | new / changed / dangling / to a folder / deleted | the link, never its target | `unix_fs::new_symlink_stage_unstage_discard`, `unix_fs::changed_symlink_target_hunk_and_lines`, `unix_fs::dangling_symlink`, `unix_fs::symlink_to_directory`, `unix_fs::deleted_symlink_hunks` | — | — |
+| FS-06 | Path beyond a symlink | file under a tracked symlink | staging fails cleanly | `unix_fs::path_beyond_a_symlink_is_refused` | — | — |
+| FS-07 | Special files | FIFO, hard links, empty files | refresh works; each operable | `unix_fs::fifo_in_worktree_does_not_block`, `unix_fs::hard_linked_files_stage_independently`, `unix_fs::empty_files` | — | — |
+| FS-08 | git refuses a `.git` alias / clone collisions | — | explained in plain words | `fs_paths::gits_refusal_of_a_dot_git_alias_in_plain_words`, `fs_paths::a_clone_explains_gits_collided_warning` | — | — |
+
+---
+
+## Totals
+
+Counted per workflow: covered = at least one test that covers the whole workflow on that
+layer (partial `~` and `n/a` don't count as covered).
+
+| Area | Workflows | core | gitti | gitty |
+|---|---|---|---|---|
+| ST staging | 21 | 14 | 11 | 9 |
+| EX external changes | 24 | 9 | 2 | 4 |
+| CM commit / amend / reword | 21 | 11 | 8 | 14 |
+| SH stash | 19 | 11 | 5 | 6 |
+| BR branches | 17 | 8 | 5 | 9 |
+| MG merge | 24 | 16 | 5 | 7 |
+| CP cherry-pick | 18 | 8 | 3 | 3 |
+| RV revert | 6 | 2 | 0 | 0 |
+| RB rebase | 9 | 4 | 1 | 1 |
+| RS reset / restore | 9 | 7 | 2 | 3 |
+| TG tags | 6 | 4 | 2 | 4 |
+| RM remotes | 18 | 10 | 9 | 12 |
+| WT worktrees | 8 | 7 | 6 | 5 |
+| SM submodules | 8 | 7 | 7 | 5 |
+| LF LFS | 6 | 6 | 4 | 5 |
+| DC discard | 9 | 6 | 3 | 4 |
+| RL recovery | 4 | 1 | 1 | 1 |
+| IG ignore | 6 | 4 | 4 | 4 |
+| RN renames | 5 | 2 | 1 | 1 |
+| BN binary | 3 | 3 | 1 | 1 |
+| BG big / many | 5 | 3 | 1 | 0 |
+| NU non-UTF-8 | 5 | 5 | 1 | 1 |
+| FS paths | 8 | 8 | 2 | 2 |
+| **Total** | **259** | **156** | **84** | **101** |
+
+The release suite (`release-tests/`) holds older, slower duplicates of several of these
+and the randomized `staging_fuzz`; it is not counted here.
+
+## Open points found by workflow tests
+
+Product issues a workflow test ran into. The test checks what works and leaves a `TODO`
+at the step; once fixed, the assertion goes in and the entry goes.
+
+| Workflow | What | Where the test notes it |
+|---|---|---|
+| CP-13 (gitti, gitty) | A merge that stops on a conflict is reported as "git merge --no-edit feat: git ended with exit code 1, without a message" (gitty: "Merge failed: …" with the error mark): git prints its `CONFLICT (content): Merge conflict in a.txt` lines on stdout, and the error is built from stderr only. The conflict itself is shown right (banner, conflicted list). | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` (gitti and gitty) |
