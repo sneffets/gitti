@@ -133,6 +133,9 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_stash_now("Stash Changes", cx) {
+            return;
+        }
         let scope = Scope::of(&self.working, &paths);
         let title = match paths.as_slice() {
             [] => "Stash Changes".to_string(),
@@ -160,6 +163,18 @@ impl GittiApp {
             let flags = StashFlags::from_checks(&res.checks);
             this.git_op("Stash", w, cx, move |r| r.stash_push(&msg, flags, &paths))
         });
+    }
+
+    /// While a merge / rebase / cherry-pick / revert is in progress a stash would end it
+    /// half-done: says so (`true`) instead of opening a stash dialog — the toolbar button
+    /// and the file menus reach here past the greyed menu commands.
+    fn refuse_stash_now(&mut self, label: &str, cx: &mut Context<Self>) -> bool {
+        let Some(why) = gitti_core::availability::in_progress(self.repo_state) else {
+            return false;
+        };
+        self.set_info(gitti_core::availability::refusal(label, why));
+        cx.notify();
+        true
     }
 
     /// "Stash Selected Lines or File…": the selected lines of the working-directory diff,
@@ -195,6 +210,9 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_stash_now(stash::SELECTION_LABEL, cx) {
+            return;
+        }
         let Some(shown) = self.file_diff(src, file) else {
             return;
         };

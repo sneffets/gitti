@@ -74,6 +74,9 @@ impl App {
     /// The stash dialog for `paths` (all changes when empty): message, the four check
     /// boxes, and a sentence saying what Enter does (or why it can't).
     pub fn stash_paths_dialog(&mut self, paths: Vec<String>) {
+        if self.refuse_stash_now("Stash Changes") {
+            return;
+        }
         let scope = Scope::of(&self.working, &paths);
         let title = match paths.as_slice() {
             [] => "Stash Changes".to_string(),
@@ -132,7 +135,21 @@ impl App {
     }
 
     /// The partial-stash dialog: `sel` of file `file` of `src` (unstaged or staged).
+    /// While a merge / rebase / cherry-pick / revert is in progress a stash would end it
+    /// half-done: says so (`true`) instead of opening a stash dialog (the file menus
+    /// reach here past the greyed menu commands).
+    fn refuse_stash_now(&mut self, label: &str) -> bool {
+        let Some(why) = gitti_core::availability::in_progress(self.repo_state) else {
+            return false;
+        };
+        self.set_info(gitti_core::availability::refusal(label, why));
+        true
+    }
+
     pub fn stash_lines_dialog(&mut self, src: Src, file: usize, sel: Selection) {
+        if self.refuse_stash_now(stash::SELECTION_LABEL) {
+            return;
+        }
         let Some(shown) = self.file_diff(src, file) else {
             return;
         };
