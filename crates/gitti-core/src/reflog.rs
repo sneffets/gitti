@@ -234,7 +234,7 @@ impl Repo {
                             .and_then(|r| r.find_commit(new).ok())
                             .map_or((None, 0), |c| {
                                 (
-                                    Some(subject_of(c.message_raw_sloppy())),
+                                    Some(subject_of(crate::commit_encoding::message_of(&c).as_bytes())),
                                     c.parent_ids().count(),
                                 )
                             })

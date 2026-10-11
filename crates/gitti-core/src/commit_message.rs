@@ -373,7 +373,7 @@ impl Repo {
             if !mine(n, e) {
                 continue;
             }
-            let msg = crate::git_cli::decode_native(commit.message_raw_sloppy());
+            let msg = crate::commit_encoding::message_of(&commit);
             let msg = msg.trim_end().to_string();
             if !msg.is_empty() && !out.contains(&msg) {
                 out.push(msg);

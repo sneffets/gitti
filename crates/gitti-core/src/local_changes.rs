@@ -309,7 +309,10 @@ impl Repo {
         if paths.is_empty() {
             bail!("Nothing to stash: the {op} was refused for another reason — try it again");
         }
-        let mut args = vec!["stash", "push", "-m", &msg];
+        // Stashes are written in UTF-8 (`CommitEncoding::stash_config`).
+        let encoding = self.commit_encoding();
+        let mut args = encoding.stash_config().to_vec();
+        args.extend(["stash", "push", "-m", &msg]);
         if !block.untracked.is_empty() {
             args.push("--include-untracked");
         }

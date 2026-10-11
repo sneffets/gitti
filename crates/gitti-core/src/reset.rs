@@ -93,7 +93,7 @@ impl Repo {
             .map_err(gx)?
             .peel_to_commit()
             .map_err(gx)?;
-        let subject = crate::reflog::subject_of(target.message_raw_sloppy());
+        let subject = crate::reflog::subject_of(crate::commit_encoding::message_of(&target).as_bytes());
         let tree = target.tree().map_err(gx)?;
         let target = target.id;
         let head = self.head()?;

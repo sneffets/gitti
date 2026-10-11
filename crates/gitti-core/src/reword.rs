@@ -53,6 +53,10 @@ impl Repo {
         if let Some(why) = self.reword_blocker(id)? {
             bail!("cannot edit the message: {why}");
         }
+        // In `i18n.commitEncoding`; a name gitti can't write is refused before git runs.
+        let encoding = self.commit_encoding();
+        let encoded = encoding.encode(message)?;
+        let note = encoding.written_note(&encoded);
         let hex = id.to_string();
         let git = self.git();
         let ids = git.run(&["rev-parse", "HEAD", "HEAD^{tree}"])?.stdout_str();
@@ -61,9 +65,10 @@ impl Repo {
         if hex == head {
             let out = git.run_stdin(
                 &["commit", "--amend", "--only", "--allow-empty", "--cleanup=whitespace", "-F", "-"],
-                Some(message.as_bytes()),
+                Some(&encoded.bytes),
             )?;
-            return Ok(format!("{}{}", out.stdout_str(), out.stderr).trim().to_string());
+            let out = format!("{}{}", out.stdout_str(), out.stderr).trim().to_string();
+            return Ok(crate::repo::noted_first(out, &note));
         }
         // The message goes through a file in the git dir; git calls `$GIT_EDITOR <file>` via
         // its shell (also on Windows: Git for Windows' sh). Both editors are shell
@@ -75,7 +80,7 @@ impl Repo {
             .trim()
             .to_string();
         let msg_file = std::path::Path::new(&git_dir).join("GITTI_REWORD_MSG");
-        std::fs::write(&msg_file, message).context("writing the new message")?;
+        std::fs::write(&msg_file, &encoded.bytes).context("writing the new message")?;
         let msg_path = msg_file.to_string_lossy().replace('\\', "/");
         let editor = copy_editor(&msg_path);
         let sequence_editor = REWORD_FIRST_PICK;
@@ -121,7 +126,8 @@ impl Repo {
             }
         };
         restore_index().context("putting the staged changes back after the reword")?;
-        Ok(format!("{}{}", out.stdout_str(), out.stderr).trim().to_string())
+        let out = format!("{}{}", out.stdout_str(), out.stderr).trim().to_string();
+        Ok(crate::repo::noted_first(out, &note))
     }
 }
 

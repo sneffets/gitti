@@ -624,7 +624,35 @@ impl Repo {
     /// `git merge` with options; when git refuses because the histories are unrelated (and
     /// `opts.allow_unrelated` is off) the error is an [`UnrelatedHistories`].
     pub fn merge_with(&self, rev: &str, opts: &MergeOptions) -> Result<String> {
-        let args = opts.args(rev);
+        let mut args = opts.args(rev);
+        // A typed message in `i18n.commitEncoding` (refused before git runs for a name
+        // gitti can't write); a legacy one through a file — a command line carries no
+        // legacy bytes on Windows.
+        let mut note = String::new();
+        let mut msg_file = None;
+        if let Some(m) = opts.message.as_deref().filter(|m| !m.trim().is_empty()) {
+            let encoding = self.commit_encoding();
+            let encoded = encoding.encode(m)?;
+            note = encoding.written_note(&encoded);
+            if encoding.target() != crate::commit_encoding::Target::Utf8
+                && let Some(i) = args.iter().position(|a| a == "-m")
+            {
+                let dir = self.git_dir().ok_or_else(|| anyhow::anyhow!("no git directory"))?;
+                let file = dir.join("GITTI_MERGE_MSG");
+                std::fs::write(&file, &encoded.bytes).context("writing the merge message")?;
+                args[i] = "-F".into();
+                args[i + 1] = file.to_string_lossy().into_owned();
+                msg_file = Some(file);
+            }
+        }
+        let result = self.merge_args(rev, opts, &args);
+        if let Some(f) = msg_file {
+            let _ = std::fs::remove_file(f);
+        }
+        result.map(|out| crate::repo::noted_first(out, &note))
+    }
+
+    fn merge_args(&self, rev: &str, opts: &MergeOptions, args: &[String]) -> Result<String> {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         self.stop_on_conflicts(|| {
             let out = unrelated_as(self.noting_fs_paths(|| self.out(&args)), || UnrelatedRetry::Merge {
@@ -845,7 +873,11 @@ impl Repo {
         }
         let mut raw = squash.unwrap_or_default();
         raw.extend(merge.unwrap_or_default());
-        let text = crate::git_cli::decode_native(&raw);
+        // git writes these in the commit encoding (a picked message re-encoded to it).
+        let text = match std::str::from_utf8(&raw) {
+            Ok(s) => s.to_string(),
+            Err(_) => self.commit_encoding().decode_file(&raw),
+        };
         Some(cleanup_message(&text, &self.comment_string())).filter(|m| !m.is_empty())
     }
 
@@ -976,8 +1008,12 @@ impl Repo {
     /// `rebase --continue` with `message` put in by the commit editor, once.
     fn continue_rebase_with(&self, message: &str, dir: Option<&std::path::Path>) -> Result<String> {
         let dir = dir.ok_or_else(|| anyhow::anyhow!("no git directory"))?;
+        // In `i18n.commitEncoding`; a name gitti can't write is refused before git runs.
+        let encoding = self.commit_encoding();
+        let encoded = encoding.encode(message)?;
+        let note = encoding.written_note(&encoded);
         let msg_file = dir.join("GITTI_CONTINUE_MSG");
-        std::fs::write(&msg_file, message).context("writing the commit message")?;
+        std::fs::write(&msg_file, &encoded.bytes).context("writing the commit message")?;
         let editor = crate::reword::copy_editor_once(&msg_file.to_string_lossy().replace('\\', "/"));
         let head = || {
             let repo = self.gix().ok()?;
@@ -995,7 +1031,7 @@ impl Repo {
             Ok(o) => {
                 let out = format!("{}{}", o.stdout_str(), o.stderr).trim().to_string();
                 Ok(if used {
-                    out
+                    crate::repo::noted_first(out, &note)
                 } else {
                     format!("{out}\ngit asked for no commit message: the text in the box was not used")
                 })
