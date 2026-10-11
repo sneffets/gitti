@@ -28,6 +28,7 @@ pub mod expect;
 pub mod ext;
 pub mod fixture;
 pub mod git;
+pub mod rm;
 pub mod st;
 
 pub use expect::{Checks, Expect, OpState};

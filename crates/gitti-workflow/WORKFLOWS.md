@@ -348,20 +348,20 @@ working tree or the index while the app shows an older state.
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
 | RM-01 | Add / rename / re-URL / remove a remote | sidebar and dialogs | config as said | `repo_ops::branch_tag_stash_remote_ops` | ~`menus::menu_entries` | ~`keybar::the_keys_shown_run_their_entries` |
-| RM-02 | Fetch | f / Fetch | remote-tracking branches updated; progress shown | ~`runner::fetch_streams_progress_meters` | `keys::remote_keys` | `remote::fetch_and_pull_with_a_local_remote`, `progress::fetch_progress_shows_while_fetching` |
-| RM-03 | Pull fast-forward | behind only | fast-forwarded | — | `keys::remote_keys` | `remote::fetch_and_pull_with_a_local_remote` |
+| RM-02 | Fetch | f / Fetch | remote-tracking branches updated; progress shown | ~`runner::fetch_streams_progress_meters`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `keys::remote_keys`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `remote::fetch_and_pull_with_a_local_remote`, `progress::fetch_progress_shows_while_fetching`, `wf_remotes::rm02_fetch_then_pull_fast_forwards`, `wf_remotes::rm02_fetch_shows_what_someone_pushed` |
+| RM-03 | Pull fast-forward | behind only | fast-forwarded | `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `keys::remote_keys`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `remote::fetch_and_pull_with_a_local_remote`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` |
 | RM-04 | Pull diverged | no strategy configured | asks merge / rebase / ff-only; remembers on request; config wins | `pull::a_diverged_pull_asks_and_each_choice_does_what_it_says`, `pull::a_remembered_strategy_is_used_without_asking`, `pull::git_config_decides_over_the_remembered_strategy`, `pull::branch_rebase_config_decides_and_no_upstream_runs_no_pull`, `pull::pull_from_asks_and_takes_the_remembered_strategy` | `menus::pull_diverged` | `remote::diverged_pull_asks_for_a_strategy_and_remembers_it` |
-| RM-05 | Pull that conflicts (merge) | diverged on the same line; Pull with Merge | conflict state, banner, resolve, commit concludes | — | — | — |
-| RM-06 | Pull that conflicts (rebase) | — | rebase stopped; Continue / Abort | — | — | — |
-| RM-07 | Pull into a dirty tree | local change in a file the pull changes | refused in plain words; nothing changed | — | — | — |
+| RM-05 | Pull that conflicts (merge) | diverged on the same line; Pull with Merge | conflict state, banner, resolve, commit concludes | `wf_remotes::rm05_pull_merge_conflict_resolved_and_committed` | `wf_remotes::rm05_pull_merge_stops_on_the_conflict`, `wf_remotes::rm05_resolve_and_commit_the_stopped_pull` | `wf_remotes::rm05_pull_merge_stops_on_the_conflict`, `wf_remotes::rm05_resolve_and_commit_the_stopped_pull` |
+| RM-06 | Pull that conflicts (rebase) | — | rebase stopped; Continue / Abort | `wf_remotes::rm06_pull_rebase_conflict_resolved_and_continued`, `wf_remotes::rm06_pull_rebase_conflict_aborted` | `wf_remotes::rm06_pull_rebase_stops_on_the_conflict`, `wf_remotes::rm06_resolve_and_continue_the_stopped_pull` | `wf_remotes::rm06_pull_rebase_stops_on_the_conflict`, `wf_remotes::rm06_resolve_and_continue_the_stopped_pull` |
+| RM-07 | Pull into a dirty tree | local change in a file the pull changes | refused in plain words; nothing changed | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` |
 | RM-08 | Push a new branch | no upstream; Push | asks for the remote; pushes with `-u`; then plain Push | `push::main_push_and_pull_without_upstream_never_reach_the_remote`, `push::the_chosen_remote_becomes_the_upstream_of_push_and_pull` | `toolbar::push_steps_and_dialog`, `toolbar::pull_and_push_without_upstream` | `remote::pull_and_push_without_upstream_run_no_git` |
 | RM-09 | Push rejected: someone pushed | Push | plain words; Pull or Fetch, Then Decide; lease pinned to what was fetched | `push::refused_push_after_someone_pushed` | `menus::push_refused_ways_out` | `remote::refused_push_fetch_then_push_with_lease` |
-| RM-10 | Force with lease | rewritten history; Push… force with lease | lists what the remote loses; refused if moved since | `push::force_push_pins_the_lease_the_user_saw`, `push::force_push_options_list_what_each_remote_loses`, `push::force_with_lease_and_no_verify` | — | `remote::push_options_force_with_lease_lists_what_the_remote_loses` |
+| RM-10 | Force with lease | rewritten history; Push… force with lease | lists what the remote loses; refused if moved since | `push::force_push_pins_the_lease_the_user_saw`, `push::force_push_options_list_what_each_remote_loses`, `push::force_with_lease_and_no_verify` | `wf_remotes::rm10_force_with_lease_after_someone_pushed` | `remote::push_options_force_with_lease_lists_what_the_remote_loses` |
 | RM-11 | Push to several remotes | Push… two remotes, new name | each result; a failing one doesn't stop others | `push::push_to_several_remotes_with_a_new_name_tags_and_a_failing_one` | `toolbar::push_steps_and_dialog` | `remote::push_dialog_to_two_remotes_under_a_new_name_with_tags` |
-| RM-12 | Pull from another remote; prune | Pull from…; Prune | other remote's branch; gone branches pruned | `push::pull_from_one_remote_and_prune_another` | — | — |
-| RM-13 | Delete a remote branch | sidebar Delete on `origin/feat` | gone on origin and locally | — | — | — |
+| RM-12 | Pull from another remote; prune | Pull from…; Prune | other remote's branch; gone branches pruned | `push::pull_from_one_remote_and_prune_another` | `wf_remotes::rm12_pull_from_another_remote_and_prune` | `wf_remotes::rm12_pull_from_another_remote`, `wf_remotes::rm12_prune_stale_branches` |
+| RM-13 | Delete a remote branch | sidebar Delete on `origin/feat` | gone on origin and locally | `wf_remotes::rm13_delete_a_remote_branch` | `wf_remotes::rm13_delete_a_remote_branch` | `wf_remotes::rm13_delete_a_remote_branch` |
 | RM-14 | Credentials asked | an HTTP remote wanting a password | prompt names the command; secret hidden; Esc stops | `askpass_env` (binary) | ~`layout::askpass_key_icon` | `remote::askpass_prompt_takes_typing_enter_and_esc`, `cancel::esc_in_a_repeating_prompt_stops_the_operation`, `cancel::prompt_of_a_gone_helper_closes` |
-| RM-15 | Cancel a hanging fetch | Esc on the busy label | stopped; idle again | ~`runner::cancel_stops_a_hanging_hook` | — | `cancel::esc_cancels_a_hanging_fetch` |
+| RM-15 | Cancel a hanging fetch | Esc on the busy label | stopped; idle again | ~`runner::cancel_stops_a_hanging_hook`, `wf_remotes::rm15_cancel_a_hanging_fetch` | — | `cancel::esc_cancels_a_hanging_fetch` |
 | RM-16 | Failed pull's warning | a pull fails; next operation | warning stays until the next user operation | n/a | `toolbar::error_mark`, `toolbar::warnings_go_with_every_remote_op`, `toolbar::a_fetch_waits_for_the_pull`, `keys::warnings_clear` | `remote::error_mark_until_the_next_operation` |
 | RM-17 | Clone from a local bare repository | Clone… | opened; branch of the source; refused into a non-empty folder | `repo_setup::clone_from_local_bare_repo` | `menus::clone_and_init` | `repo_cmds::clone_from_the_palette` |
 | RM-18 | Unpushed / gone upstream marks | commits not pushed; upstream deleted | marks say so | `tab_marks::commits_not_pushed_with_and_without_an_upstream`, `tab_marks::a_local_upstream_compares_with_that_branch` | `layout::repo_tab_marks_follow` | `views::repo_marks_after_the_name` |
@@ -508,7 +508,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | RB rebase | 9 | 4 | 1 | 1 |
 | RS reset / restore | 9 | 7 | 2 | 3 |
 | TG tags | 6 | 4 | 2 | 4 |
-| RM remotes | 18 | 10 | 9 | 12 |
+| RM remotes | 18 | 17 | 15 | 17 |
 | WT worktrees | 8 | 7 | 6 | 5 |
 | SM submodules | 8 | 7 | 7 | 5 |
 | LF LFS | 6 | 6 | 4 | 5 |
@@ -520,7 +520,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **259** | **156** | **84** | **101** |
+| **Total** | **259** | **163** | **90** | **106** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -532,4 +532,6 @@ at the step; once fixed, the assertion goes in and the entry goes.
 
 | Workflow | What | Where the test notes it |
 |---|---|---|
-| CP-13 (gitti, gitty) | A merge that stops on a conflict is reported as "git merge --no-edit feat: git ended with exit code 1, without a message" (gitty: "Merge failed: …" with the error mark): git prints its `CONFLICT (content): Merge conflict in a.txt` lines on stdout, and the error is built from stderr only. The conflict itself is shown right (banner, conflicted list). | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` (gitti and gitty) |
+| CP-13, RM-05, RM-06 (gitti, gitty) | A merge (also a pull: RM-05 / RM-06, whose first line is then the fetch's ref update, e.g. "git pull --no-rebase: 6bbdb2d..275804e main -> origin/main") that stops on a conflict is reported as "git merge --no-edit feat: git ended with exit code 1, without a message" (gitty: "Merge failed: …" with the error mark): git prints its `CONFLICT (content): Merge conflict in a.txt` lines on stdout, and the error is built from stderr only. The conflict itself is shown right (banner, conflicted list). | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there`, `wf_remotes::rm05_pull_merge_stops_on_the_conflict` (gitti and gitty) |
+| RM-07 (gitti, gitty) | A pull refused because of a local change shows git's raw message (B11 of the gaps list); the tests assert git's words (`rm::pull_dirty::REASON`). | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` (gitty) |
+| RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21). | — |
