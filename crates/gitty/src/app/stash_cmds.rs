@@ -103,6 +103,7 @@ impl App {
                     ok_label: e.ok_label,
                     blocked: e.blocked,
                     matches: Vec::new(),
+                    ..Default::default()
                 }
             }),
         );
@@ -217,6 +218,7 @@ impl App {
                     ok_label: "Rename".into(),
                     blocked: t.is_empty().then(|| "Type the new message".to_string()),
                     matches: Vec::new(),
+                    ..Default::default()
                 }
             }),
         );
