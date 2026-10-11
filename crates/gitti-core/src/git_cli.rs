@@ -265,6 +265,14 @@ pub fn is_read_only(args: &[&str]) -> bool {
         Some("remote") => a.get(1) == Some(&"-v"),
         Some("stash") => matches!(a.get(1).copied(), Some("list" | "show")),
         Some("worktree") => a.get(1) == Some(&"list"),
+        // Reading HEAD's target; with a second name (or -d) it writes.
+        Some("symbolic-ref") => {
+            let rest = &a[1..];
+            !rest.iter().any(|x| matches!(*x, "-d" | "--delete" | "-m"))
+                && rest.iter().filter(|x| !x.starts_with('-')).count() <= 1
+        }
+        // Listing the server's locks (`lfs lock` / `lfs unlock` take and release them).
+        Some("lfs") => a.get(1) == Some(&"locks"),
         Some("config") => a.iter().any(|x| {
             matches!(
                 *x,
@@ -1187,6 +1195,13 @@ mod tests {
         assert!(is_read_only(&["-c", "core.bigFileThreshold=1m", "diff-tree", "--stdin"]));
         assert!(is_read_only(&["config", "--get-regexp", r"^user\.(name|email)$"]));
         assert!(!is_read_only(&["stash", "push"]));
+        assert!(is_read_only(&["symbolic-ref", "--short", "-q", "HEAD"]));
+        assert!(!is_read_only(&["symbolic-ref", "HEAD", "refs/heads/main"]));
+        assert!(!is_read_only(&["symbolic-ref", "-m", "why", "HEAD", "refs/heads/x"]));
+        assert!(!is_read_only(&["symbolic-ref", "-d", "HEAD"]));
+        assert!(is_read_only(&["lfs", "locks", "--json"]));
+        assert!(!is_read_only(&["lfs", "lock", "a.bin"]));
+        assert!(!is_read_only(&["lfs", "unlock", "a.bin"]));
         assert!(!is_read_only(&[
             "-c",
             "core.editor=true",
