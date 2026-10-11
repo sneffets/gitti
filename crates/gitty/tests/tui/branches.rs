@@ -56,7 +56,13 @@ fn sort_choices_and_pins_run_no_git_and_are_remembered() {
     assert_eq!(sidebar_order(&s[3]), ["side", "main", "done"], "side pinned: {out}");
     assert!(s[3].contains("side ▴"), "the pin mark: {out}");
     assert!(states(&out)[0].contains("is pinned"), "{out}");
-    assert_no_git(&cmds(&out)[1..], "sorting and pinning", &out);
+    // The sidebar cursor selects each branch's tip commit: loading one that wasn't
+    // prefetched yet is a `git show` (timing-dependent) — that's moving, not sorting.
+    let blocks: Vec<Vec<String>> = cmds(&out)[1..]
+        .iter()
+        .map(|b| b.iter().filter(|c| !c.starts_with("show ")).cloned().collect())
+        .collect();
+    assert_no_git(&blocks, "sorting and pinning", &out);
     // The next run: the same choice and pin.
     let out = gitty_with(dir.path(), config.path(), "120x30", "press:backtab;dump");
     assert_eq!(sidebar_order(&dumps(&out, 30)[0]), ["side", "main", "done"], "remembered: {out}");
