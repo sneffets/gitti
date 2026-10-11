@@ -223,25 +223,25 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| BR-01 | Create a branch and switch to it | Create Branch… on HEAD | branch exists, checked out | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br01_create_a_branch_here_and_at_an_older_commit` | ~`keys::shortcut_list` | `repo_cmds::commit_list_marks_worktrees_and_branches_from_the_commit_menu` |
-| BR-02 | Create a branch at an older commit | commit menu Create Branch Here… | branch at that commit, not checked out | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br01_create_a_branch_here_and_at_an_older_commit` | — | `menus::commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch` |
+| BR-01 | Create a branch and switch to it | Create Branch… on HEAD | branch exists, checked out | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br01_create_a_branch_here_and_at_an_older_commit` | ~`keys::shortcut_list`, `wf_branches::br01_create_a_branch_at_head` | `repo_cmds::commit_list_marks_worktrees_and_branches_from_the_commit_menu` |
+| BR-02 | Create a branch at an older commit | commit menu Create Branch Here… | branch at that commit, not checked out | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br01_create_a_branch_here_and_at_an_older_commit` | `wf_branches::br02_create_a_branch_at_an_older_commit` | `menus::commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch` |
 | BR-03 | Switch (clean) | branch switcher / sidebar ⏎ | HEAD moves; working tree matches | ~`switching::same_ignore_rules_cost_no_extra_git`, `wf_branches::br03_switch_clean_and_with_an_unrelated_change` | `keys::overlay_keys` | `navigation::sidebar_keys_move_fold_jump_and_checkout`, `palette::branch_switcher_picker_keys` |
-| BR-04 | Switch with an unrelated local change | change in a file both branches have equal | switched; change carried over | ~`switching::discard_and_force_switch_drop_local_changes`, `wf_branches::br03_switch_clean_and_with_an_unrelated_change` | — | `wf_branches::br04_switch_carries_an_unrelated_change` |
-| BR-05 | **Switch blocked by a local change → Stash & Switch** | change in a file the target changes | stashed, switched, re-applied | `repo_ops::switch_moves_local_changes_aside`, `wf_branches::br05_stash_and_switch_carries_the_change_or_keeps_the_stash` | — | `wf_branches::br05_switch_blocked_by_a_local_change_stash_and_switch` |
-| BR-06 | Stash & Switch whose re-apply conflicts | overlapping change | switched, file conflicted, stash kept, said so | `repo_ops::switch_moves_local_changes_aside`, `wf_branches::br05_stash_and_switch_carries_the_change_or_keeps_the_stash` | — | `wf_branches::br06_stash_and_switch_whose_reapply_conflicts` |
+| BR-04 | Switch with an unrelated local change | change in a file both branches have equal | switched; change carried over | ~`switching::discard_and_force_switch_drop_local_changes`, `wf_branches::br03_switch_clean_and_with_an_unrelated_change` | `wf_branches::br04_switch_carries_an_unrelated_change` | `wf_branches::br04_switch_carries_an_unrelated_change` |
+| BR-05 | **Switch blocked by a local change → Stash & Switch** | change in a file the target changes | stashed, switched, re-applied | `repo_ops::switch_moves_local_changes_aside`, `wf_branches::br05_stash_and_switch_carries_the_change_or_keeps_the_stash` | `wf_branches::br05_switch_blocked_by_a_local_change_stash_and_switch` | `wf_branches::br05_switch_blocked_by_a_local_change_stash_and_switch` |
+| BR-06 | Stash & Switch whose re-apply conflicts | overlapping change | switched, file conflicted, stash kept, said so | `repo_ops::switch_moves_local_changes_aside`, `wf_branches::br05_stash_and_switch_carries_the_change_or_keeps_the_stash` | `wf_branches::br06_stash_and_switch_whose_reapply_conflicts` | `wf_branches::br06_stash_and_switch_whose_reapply_conflicts` |
 | BR-07 | Switch blocked by an untracked file | untracked `x` the target tracks | Stash & Switch keeps `x` in a stash; other untracked files stay | `repo_ops::switch_moves_blocking_untracked_files_aside` | `menus::switch_blocked_ways` | `repo_cmds::switch_blocked_by_an_untracked_file_stashes_it` |
 | BR-08 | Delete & Switch / Discard & Switch / Force | the other ways out | each drops only what it says | `switching::folder_with_untracked_files_where_the_target_has_a_file`, `switching::discard_and_force_switch_drop_local_changes`, `switching::untracked_file_where_the_target_has_a_folder_is_listed_once` | `menus::switch_blocked_ways` | `repo_cmds::switch_blocked_offers_delete_and_force` |
-| BR-09 | Many blocking files | ~200 blocking untracked files | all stashed in one go | `switching::many_blocking_untracked_files_are_stashed_in_one_go` | — | `wf_branches::br09_many_blocking_untracked_files_go_into_one_stash` |
-| BR-10 | Switch to fewer ignore rules | target doesn't ignore `target/` | build output shows untracked; the app says why | `switching::switching_to_fewer_ignore_rules_shows_ignored_files_as_untracked` | — | `repo_cmds::switch_to_fewer_ignore_rules_says_why_files_are_untracked` |
+| BR-09 | Many blocking files | ~200 blocking untracked files | all stashed in one go | `switching::many_blocking_untracked_files_are_stashed_in_one_go` | `wf_branches::br09_many_blocking_untracked_files_go_into_one_stash` | `wf_branches::br09_many_blocking_untracked_files_go_into_one_stash` |
+| BR-10 | Switch to fewer ignore rules | target doesn't ignore `target/` | build output shows untracked; the app says why | `switching::switching_to_fewer_ignore_rules_shows_ignored_files_as_untracked` | `wf_branches::br10_switch_to_fewer_ignore_rules_says_why` | `repo_cmds::switch_to_fewer_ignore_rules_says_why_files_are_untracked` |
 | BR-11 | Rename the current branch | Rename… | renamed; upstream config follows | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br11_rename_the_current_branch_keeps_its_upstream` | `menus::branch_commit_stash_menus` | `menus::sidebar_menus_rename_drop_stash_and_delete_a_tag` |
-| BR-12 | Delete a merged branch | Delete… | gone | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | ~`menus::branch_commit_stash_menus` | ~`keybar::the_keys_shown_run_their_entries`, `wf_branches::br12_delete_a_merged_branch` |
-| BR-13 | Delete an unmerged branch | Delete… | refused, Force Delete offered and naming the lost commits | `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | — | `repo_cmds::deleting_an_unmerged_branch_offers_force`, `wf_branches::br13_force_delete_names_the_commit_it_drops` |
-| BR-14 | Switch to a remote branch | `origin/feat` without a local branch | local `feat` tracking it, checked out | ~`worktrees::plan_add_tracks_a_remote_branch`, `wf_branches::br14_switch_to_a_remote_branch_creates_a_tracking_branch` | — | `wf_branches::br14_switch_to_a_remote_branch` |
+| BR-12 | Delete a merged branch | Delete… | gone | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | ~`menus::branch_commit_stash_menus`, `wf_branches::br12_delete_a_merged_branch` | ~`keybar::the_keys_shown_run_their_entries`, `wf_branches::br12_delete_a_merged_branch` |
+| BR-13 | Delete an unmerged branch | Delete… | refused, Force Delete offered and naming the lost commits | `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | `wf_branches::br13_force_delete_names_the_commit_it_drops` | `repo_cmds::deleting_an_unmerged_branch_offers_force`, `wf_branches::br13_force_delete_names_the_commit_it_drops` |
+| BR-14 | Switch to a remote branch | `origin/feat` without a local branch | local `feat` tracking it, checked out | ~`worktrees::plan_add_tracks_a_remote_branch`, `wf_branches::br14_switch_to_a_remote_branch_creates_a_tracking_branch` | `wf_branches::br14_switch_to_a_remote_branch` | `wf_branches::br14_switch_to_a_remote_branch` |
 | BR-15 | Switch to a branch checked out in another worktree | ⏎ on it | offers that worktree instead of git's error | `worktrees::switching_to_a_branch_of_another_worktree` | `worktrees::add_open_remove` | — |
-| BR-16 | Detached HEAD, then keep the work | check out a commit; commit; create a branch there | branch holds the commit; branch commands greyed while detached | ~`repo_shapes::detached_and_unborn_head`, `wf_branches::br16_commit_on_a_detached_head_and_keep_it` | ~`menus::detached_head_greys_branch_commands` | ~`palette::palette_branch_commands_on_a_detached_head`, `wf_branches::br16_checkout_a_commit_and_commit_there`, `wf_branches::br16_keep_the_detached_work_in_a_branch` |
-| BR-17 | Set / unset upstream | Set as Upstream | ahead / behind follow | `repo_ops::config_upstream_and_blobs` | ~`menus::branch_commit_stash_menus` | `keybar::the_keys_shown_run_their_entries` |
-| BR-18 | Leave a detached HEAD with work on it | detached at a commit no branch has; switch to `main` | switched; the status line names the commit left on no branch and how to keep it (reflog → Create Branch Here…); HEAD's reflog has it | `wf_branches::br18_leaving_a_detached_commit_warns` | — | `wf_branches::br18_leaving_a_detached_commit_warns` |
-| BR-19 | Clean up branches | Clean Up Merged Branches…; Delete Branches… with Force | merged branch deleted, unmerged one only with its Force box | `wf_branches::br19_clean_up_merged_then_delete_with_force` | — | — |
+| BR-16 | Detached HEAD, then keep the work | check out a commit; commit; create a branch there | branch holds the commit; branch commands greyed while detached | ~`repo_shapes::detached_and_unborn_head`, `wf_branches::br16_commit_on_a_detached_head_and_keep_it` | ~`menus::detached_head_greys_branch_commands`, `wf_branches::br16_checkout_a_commit_and_commit_there`, `wf_branches::br16_keep_the_detached_work_in_a_branch` | ~`palette::palette_branch_commands_on_a_detached_head`, `wf_branches::br16_checkout_a_commit_and_commit_there`, `wf_branches::br16_keep_the_detached_work_in_a_branch` |
+| BR-17 | Set / unset upstream | Set as Upstream | ahead / behind follow | `repo_ops::config_upstream_and_blobs` | ~`menus::branch_commit_stash_menus`, `wf_branches::br17_set_the_upstream` | `keybar::the_keys_shown_run_their_entries` |
+| BR-18 | Leave a detached HEAD with work on it | detached at a commit no branch has; switch to `main` | switched; the status line names the commit left on no branch and how to keep it (reflog → Create Branch Here…); HEAD's reflog has it | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` |
+| BR-19 | Clean up branches | Clean Up Merged Branches…; Delete Branches… with Force | merged branch deleted, unmerged one only with its Force box | `wf_branches::br19_clean_up_merged_then_delete_with_force` | `branches::clean_up_and_delete` | `branches::clean_up_merged_deletes_the_merged_branch`, `branches::delete_branches_needs_force_for_an_unmerged_one` |
 
 ## MG — Merge
 
@@ -424,7 +424,7 @@ working tree or the index while the app shows an older state.
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
 | RL-01 | Find a commit a reset dropped | Show Reflog | "lost" entry marked; its commit shown | `reflog::heads_reflog_keeps_the_commit_a_reset_dropped` | `reflog::lists_shows_and_navigates`, `reflog::menu_bar_and_branch_menu_open_it` | `reflog::reflog_lists_shows_navigates_and_recovers` |
-| RL-02 | Recover a deleted branch | delete `feat`; its reflog commit → Create Branch | `feat` back | `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | — | `wf_branches::rl02_recover_a_deleted_branch_from_the_reflog` |
+| RL-02 | Recover a deleted branch | delete `feat`; its reflog commit → Create Branch | `feat` back | `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | `wf_branches::rl02_recover_a_deleted_branch_from_the_reflog` | `wf_branches::rl02_recover_a_deleted_branch_from_the_reflog` |
 | RL-03 | Undo an amend | amend; reflog → reset to the pre-amend commit | old HEAD back | — | — | — |
 | RL-04 | Undo a bad rebase | rebase; reflog → reset to before | branch as before | — | — | — |
 
@@ -503,7 +503,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | EX external changes | 24 | 9 | 2 | 4 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 11 | 5 | 6 |
-| BR branches | 19 | 19 | 5 | 17 |
+| BR branches | 19 | 19 | 19 | 18 |
 | MG merge | 24 | 16 | 5 | 7 |
 | CP cherry-pick | 18 | 8 | 3 | 3 |
 | RV revert | 6 | 2 | 0 | 0 |
@@ -515,14 +515,14 @@ layer (partial `~` and `n/a` don't count as covered).
 | SM submodules | 8 | 7 | 7 | 5 |
 | LF LFS | 6 | 6 | 4 | 5 |
 | DC discard | 9 | 6 | 3 | 4 |
-| RL recovery | 4 | 2 | 1 | 2 |
+| RL recovery | 4 | 2 | 2 | 2 |
 | IG ignore | 6 | 4 | 4 | 4 |
 | RN renames | 5 | 2 | 1 | 1 |
 | BN binary | 3 | 3 | 1 | 1 |
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **261** | **178** | **96** | **117** |
+| **Total** | **261** | **178** | **111** | **118** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

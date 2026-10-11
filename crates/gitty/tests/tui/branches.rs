@@ -62,6 +62,7 @@ fn sort_choices_and_pins_run_no_git_and_are_remembered() {
     assert_eq!(sidebar_order(&dumps(&out, 30)[0]), ["side", "main", "done"], "remembered: {out}");
 }
 
+/// Workflow: BR-19
 #[gitti_test::test]
 fn clean_up_merged_deletes_the_merged_branch() {
     let dir = fixture();
@@ -81,6 +82,7 @@ fn clean_up_merged_deletes_the_merged_branch() {
     assert_ne!(rev(d, "refs/heads/side"), "", "{out}");
 }
 
+/// Workflow: BR-19
 #[gitti_test::test]
 fn delete_branches_needs_force_for_an_unmerged_one() {
     let dir = fixture();
