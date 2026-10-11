@@ -229,6 +229,7 @@ impl GittiApp {
     /// worktrees) or not.
     pub(super) fn toggle_main_worktree_alone(&mut self, cx: &mut Context<Self>) {
         self.update_settings(cx, |s| s.show_main_worktree_alone = !s.show_main_worktree_alone);
+        self.sync_side_cursor();
         // Without linked worktrees the section appears / goes: say why.
         if self.worktrees.len() == 1 {
             self.set_info(if self.settings.show_main_worktree_alone {

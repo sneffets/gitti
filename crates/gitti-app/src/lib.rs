@@ -1119,6 +1119,9 @@ pub mod testing {
         pub selected_commit: Option<String>,
         /// The selected row of the commit list (`commit-row:N`).
         pub selected_row: usize,
+        /// The commit the detail panel shows: its id, `+ stash@{n}` for a stash (`None`:
+        /// not a commit — working directory, comparison, loading).
+        pub shown_commit: Option<String>,
         /// The operation git left half-done: `clean`, `merging`, `rebasing`,
         /// `cherrypicking`, `reverting` (as `gitti_workflow::OpState::name`).
         pub repo_state: String,
@@ -1135,6 +1138,8 @@ pub mod testing {
         pub selected_lines: usize,
         /// Sidebar keyboard cursor (entry index) and the collapsed sidebar groups, sorted.
         pub side_cursor: Option<usize>,
+        /// The sidebar cursor's entry (`ref:refs/heads/main`, `stash:<id>`, `section:tags`).
+        pub side_entry: Option<String>,
         pub collapsed: Vec<String>,
         /// Compare mode: `base=<id>[ swapped][ shown=<old>..<new>]` (`None` = off).
         pub compare: Option<String>,

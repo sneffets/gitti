@@ -104,6 +104,89 @@ impl GittiApp {
         items
     }
 
+    /// Each entry's identity (not its index: a stash by its commit, a branch by its full
+    /// ref name, …) and depth (section headers 0, remote branches under their remote 2),
+    /// for [`gitti_core::reselect::list_cursor`].
+    fn side_keys(&self, items: &[SideItem]) -> Vec<(String, u8)> {
+        items
+            .iter()
+            .map(|it| match it {
+                SideItem::Section { key, .. } => (format!("section:{key}"), 0),
+                SideItem::Remote(ri) => (format!("remote:{}", self.remotes[*ri].name), 1),
+                SideItem::Ref(i, depth) => (format!("ref:{}", self.refs[*i].full_name), *depth as u8),
+                SideItem::Stash(si) => (format!("stash:{}", self.stashes[*si].id), 1),
+                SideItem::Worktree(wi) => (format!("worktree:{}", self.worktrees[*wi].path.display()), 1),
+                SideItem::Submodule(si) => (format!("submodule:{}", self.submodules[*si].path), 1),
+                SideItem::Subtree(si) => (format!("subtree:{}", self.subtrees[*si].prefix), 1),
+            })
+            .collect()
+    }
+
+    /// Scripts: the key of the sidebar cursor's entry.
+    pub(super) fn script_side_entry(&self) -> Option<String> {
+        let c = self.side_cursor?;
+        let items = self.sidebar_items();
+        let item = items.get(c..=c)?;
+        self.side_keys(item).pop().map(|(k, _)| k)
+    }
+
+    /// Puts the sidebar cursor on entry `ix` (`None`: no cursor) and notes the entries as
+    /// they are now ([`Self::sync_side_cursor`] follows the entry from there).
+    pub(super) fn set_side_cursor(&mut self, ix: Option<usize>) {
+        self.side_cursor = ix;
+        self.side_cursor_keys = match ix {
+            Some(_) => self.side_keys(&self.sidebar_items()),
+            None => Vec::new(),
+        };
+    }
+
+    /// The sidebar's entries changed (a refresh, a fold, another order): the cursor stays
+    /// on its entry; a gone one (deleted here or outside) moves to its next neighbour of
+    /// the same section, else the previous, else the section header
+    /// ([`gitti_core::reselect::list_cursor`]) — never onto another entry that took its
+    /// index. Kept in view, the list's scroll position otherwise unchanged.
+    pub(super) fn sync_side_cursor(&mut self) {
+        let Some(c) = self.side_cursor else {
+            return;
+        };
+        let items = self.sidebar_items();
+        let now = self.side_keys(&items);
+        let keys: Vec<String> = now.iter().map(|(k, _)| k.clone()).collect();
+        let to = gitti_core::reselect::list_cursor(&self.side_cursor_keys, c, &keys);
+        let moved = self.side_cursor_keys.get(c).map(|(k, _)| k) != to.and_then(|t| keys.get(t));
+        self.side_cursor = to;
+        self.side_cursor_keys = if to.is_some() { now } else { Vec::new() };
+        if let Some(t) = to.filter(|_| moved) {
+            self.reveal_side_entry(&items, t);
+        }
+    }
+
+    /// Scrolls the sidebar so entry `to` of `items` is in view (no scroll when it is).
+    fn reveal_side_entry(&self, items: &[SideItem], to: usize) {
+        let header_h = self.settings.row_h() - px(2.) + px(4.);
+        let row_h = self.settings.row_h() - px(4.);
+        let height = |it: &SideItem| match it {
+            SideItem::Section { .. } => header_h,
+            _ => row_h,
+        };
+        let top = items[..to].iter().map(height).fold(px(8.), |a, b| a + b);
+        let bottom = top + height(&items[to]);
+        let viewport = self.sidebar_scroll.bounds().size.height;
+        let offset = -self.sidebar_scroll.offset().y;
+        let new_offset = if top < offset {
+            top - px(8.)
+        } else if bottom > offset + viewport {
+            bottom + px(8.) - viewport
+        } else {
+            offset
+        };
+        if new_offset != offset {
+            let x = self.sidebar_scroll.offset().x;
+            self.sidebar_scroll
+                .set_offset(point(x, -new_offset.max(px(0.))));
+        }
+    }
+
     /// Virtualised: only the entries in (and a screen around) the visible part are built;
     /// the others are spacers of their exact height (headers and rows have fixed heights),
     /// so the list looks and scrolls exactly as if all were there. With hundreds of tags /
@@ -184,7 +267,7 @@ impl GittiApp {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                            this.side_cursor = Some(ix);
+                            this.set_side_cursor(Some(ix));
                             this.side_focus.focus(window, cx);
                             cx.notify();
                         }),
@@ -212,10 +295,11 @@ impl GittiApp {
         }
         if self.side_cursor.is_none() {
             let head = self.head.branch.clone();
-            self.side_cursor = self.sidebar_items().iter().position(|it| {
+            let at = self.sidebar_items().iter().position(|it| {
                 matches!(it, SideItem::Ref(i, _) if self.refs[*i].kind == RefKind::LocalBranch
                     && Some(&self.refs[*i].short_name) == head.as_ref())
             });
+            self.set_side_cursor(at);
         }
         self.side_focus.focus(window, cx);
         cx.notify();
@@ -236,30 +320,9 @@ impl GittiApp {
         let last = items.len() as isize - 1;
         let at = self.side_cursor.map_or(-1, |c| c as isize);
         let to = at.saturating_add(delta).clamp(0, last) as usize;
-        self.side_cursor = Some(to);
+        self.set_side_cursor(Some(to));
         // Keep it visible.
-        let header_h = self.settings.row_h() - px(2.) + px(4.);
-        let row_h = self.settings.row_h() - px(4.);
-        let height = |it: &SideItem| match it {
-            SideItem::Section { .. } => header_h,
-            _ => row_h,
-        };
-        let top = items[..to].iter().map(height).fold(px(8.), |a, b| a + b);
-        let bottom = top + height(&items[to]);
-        let viewport = self.sidebar_scroll.bounds().size.height;
-        let offset = -self.sidebar_scroll.offset().y;
-        let new_offset = if top < offset {
-            top - px(8.)
-        } else if bottom > offset + viewport {
-            bottom + px(8.) - viewport
-        } else {
-            offset
-        };
-        if new_offset != offset {
-            let x = self.sidebar_scroll.offset().x;
-            self.sidebar_scroll
-                .set_offset(point(x, -new_offset.max(px(0.))));
-        }
+        self.reveal_side_entry(&items, to);
         if let Some(row) = self.side_item_row(&items[to]) {
             self.select_row(row, window, cx);
         }
@@ -303,6 +366,7 @@ impl GittiApp {
             if !self.collapsed.remove(&key) {
                 self.collapsed.insert(key);
             }
+            self.sync_side_cursor();
             self.refresh_worktree_marks(cx);
             cx.notify();
             return;
@@ -569,6 +633,7 @@ impl GittiApp {
                 if !this.collapsed.remove(key) {
                     this.collapsed.insert(key.to_string());
                 }
+                this.sync_side_cursor();
                 this.refresh_worktree_marks(cx);
                 cx.notify();
             }))
@@ -603,6 +668,7 @@ impl GittiApp {
                 if !this.collapsed.remove(&key) {
                     this.collapsed.insert(key.clone());
                 }
+                this.sync_side_cursor();
                 cx.notify();
             }))
             .context_menu(move |menu, _, cx| {

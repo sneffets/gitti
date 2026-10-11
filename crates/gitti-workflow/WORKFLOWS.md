@@ -219,6 +219,7 @@ working tree or the index while the app shows an older state.
 | SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | `op_safety::stash_commands_act_on_the_chosen_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` |
 | SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | `wf_stash::sh19_pop_blocked_by_an_untracked_file`, `wf_stash::sh19_what_is_in_the_way` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` |
 | SH-20 | Branch from a stash, blocked | the stash has `x`; an untracked `x` exists (or a file the stash changes has local changes); Create Branch from Stash… | refused in plain words before anything changes (git alone would create and check out the branch, then stop half applied); still on `main`, no new branch, stash kept; with `x` moved away the branch is created at the stash's base | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file`, `wf_stash::sh20_branch_from_a_stash_blocked_by_local_changes`, `wf_stash::sh20_what_blocks_a_branch_from_a_stash` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` |
+| SH-21 | Drop the stash being looked at | stash row selected (its diff shown, sidebar cursor on it); drop it from its menu, or a terminal runs `git stash drop` (also: pop it) | its base commit selected and shown, nothing of the stash left on screen — not the other stash that took over `stash@{0}`; the sidebar cursor on its neighbour | `wf_stash::sh21_drop_the_stash_looked_at` | `wf_stash::sh21_drop_the_stash_looked_at_from_its_menu`, `wf_stash::sh21_drop_the_stash_looked_at_in_a_terminal`, `wf_stash::sh21_the_stash_below_stays_shown_renumbered` | `wf_stash::sh21_drop_the_stash_looked_at`, `wf_stash::sh21_the_stash_below_stays_shown_renumbered` |
 
 ## BR — Branches
 
@@ -243,6 +244,7 @@ working tree or the index while the app shows an older state.
 | BR-17 | Set / unset upstream | Set as Upstream | ahead / behind follow | `repo_ops::config_upstream_and_blobs` | ~`menus::branch_commit_stash_menus`, `wf_branches::br17_set_the_upstream` | `keybar::the_keys_shown_run_their_entries` |
 | BR-18 | Leave a detached HEAD with work on it | detached at a commit no branch has; switch to `main` | switched; the status line names the commit left on no branch and how to keep it (reflog → Create Branch Here…); HEAD's reflog has it | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` |
 | BR-19 | Clean up branches | Clean Up Merged Branches…; Delete Branches… with Force | merged branch deleted, unmerged one only with its Force box | `wf_branches::br19_clean_up_merged_then_delete_with_force` | `branches::clean_up_and_delete` | `branches::clean_up_merged_deletes_the_merged_branch`, `branches::delete_branches_needs_force_for_an_unmerged_one` |
+| BR-20 | Delete the selected branch | sidebar cursor on a branch, its tip selected; delete it (merged), then an unmerged one (Force) | merged: its tip stays selected (only the badge goes); unmerged: the selection goes along the first parents to the nearest commit still there, its diff shown; the sidebar cursor on the next branch, else the previous | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` |
 
 ## MG — Merge
 
@@ -512,8 +514,8 @@ layer (partial `~` and `n/a` don't count as covered).
 | ST staging | 21 | 16 | 19 | 15 |
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
-| SH stash | 20 | 19 | 18 | 19 |
-| BR branches | 19 | 19 | 19 | 18 |
+| SH stash | 21 | 20 | 19 | 20 |
+| BR branches | 20 | 20 | 20 | 19 |
 | MG merge | 27 | 27 | 26 | 27 |
 | CP cherry-pick | 18 | 18 | 18 | 18 |
 | RV revert | 7 | 7 | 7 | 7 |
@@ -532,7 +534,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **271** | **261** | **251** | **252** |
+| **Total** | **273** | **263** | **253** | **254** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

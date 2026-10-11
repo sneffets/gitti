@@ -279,7 +279,7 @@ impl App {
     fn side_jump(&mut self) {
         // A worktree's mark says what it means (gitti: its tooltip).
         let info = match self.sidebar.get(self.side_cursor) {
-            Some(SideItem::Worktree { index, name }) => self
+            Some(SideItem::Worktree { index, name, .. }) => self
                 .worktree_marks(*index)
                 .filter(|m| m.mark().is_some())
                 .map(|m| format!("{name}: {}", m.describe().replace('\n', " · "))),

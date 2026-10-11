@@ -945,7 +945,7 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                     vec![Span::styled(name.clone(), Style::new().fg(p.tag))],
                 );
             }
-            SideItem::Stash { index, message } => {
+            SideItem::Stash { index, message, .. } => {
                 put(
                     buf,
                     x + 4,
@@ -987,7 +987,7 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                     put_right(buf, x + w - rw, y, rw, vec![Span::styled(detail, Style::new().fg(p.text_muted))]);
                 }
             }
-            SideItem::Worktree { index, name } => {
+            SideItem::Worktree { index, name, .. } => {
                 // Folder name (bold for gitty's own), what it has checked out on the right.
                 let Some(wt) = app.worktrees.get(*index) else {
                     continue;

@@ -1498,10 +1498,21 @@ impl App {
             }
             _ => String::new(),
         };
+        // The commit the detail shows (`-`: not a commit — working directory, comparison,
+        // loading) and the sidebar cursor's entry.
+        let shown = match &self.detail {
+            Detail::Commit(cv) if cv.compare.is_none() => match cv.stash {
+                Some(n) => format!("{}+stash@{{{n}}}", cv.id),
+                None => cv.id.to_string(),
+            },
+            _ => "-".into(),
+        };
+        let side_entry = self.sidebar.get(self.side_cursor).map_or("-".into(), |it| it.key().0);
         format!(
             "focus={:?} selected={} [{sel}] cursor={} {row} sel_lines={lines} marked={} unstaged={} staged={} \
              repo_state={} conflicted={} history_rows={} history_load={:?} status={status:?} \
              commit_offset={} diff_offset={} hscroll={} side_cursor={} side_offset={} \
+             side_entry={side_entry} shown={shown} \
              log_first={log_first} log_follow={} top={}{list} commit_marks={}{}{}{}",
             self.focus,
             self.selected,
@@ -1775,25 +1786,25 @@ impl App {
         self.history.commits.get(self.selected).map(|c| c.id)
     }
 
+    /// Shows `h`. The selection stays on its commit (by id); one that vanished goes to the
+    /// commit taking its place ([`gitti_core::reselect::history_row`]), its detail loaded.
     fn set_history(&mut self, h: History) {
-        let prev = self.selected_id();
-        let was_worktree =
-            self.history.is_worktree_row(self.selected) || self.history.commits.is_empty();
         let first = self.history.commits.is_empty();
-        self.history = Arc::new(h);
-        let row = match prev {
-            Some(id) => self.history.row_of(&id),
-            None if was_worktree => Some(0),
-            None => None,
+        let prev = std::mem::replace(&mut self.history, Arc::new(h));
+        let pick = gitti_core::reselect::history_row(&prev, self.selected, &self.history);
+        let row = pick.row().min(self.history.commits.len().saturating_sub(1));
+        let replaced = matches!(pick, gitti_core::reselect::Reselect::Replaced(_));
+        if replaced {
+            // The row taking its place in view (no scroll when it is).
+            self.follow = true;
         }
-        .unwrap_or(0)
-        .min(self.history.commits.len().saturating_sub(1));
-        if first || row != self.selected || prev.is_none() {
-            self.selected = row;
-            // A commit that is still there keeps its loaded diff.
-            if prev.is_none() || prev != self.selected_id() || first {
-                self.load_detail();
-            }
+        let was_worktree = prev.is_worktree_row(self.selected) || prev.commits.is_empty();
+        self.selected = row;
+        // A commit that is still there keeps its loaded diff.
+        if first || replaced || was_worktree {
+            self.load_detail();
+        } else {
+            self.renumber_shown_stash();
         }
         // Marks of commits the new history no longer lists go.
         let history = self.history.clone();
@@ -1802,6 +1813,25 @@ impl App {
         // reads its commit times.
         self.rewrap_header();
         self.rebuild_sidebar();
+    }
+
+    /// The shown stash moved in the stash list (one above it dropped / popped, another
+    /// pushed): its header says its new `stash@{n}`.
+    fn renumber_shown_stash(&mut self) {
+        let Detail::Commit(cv) = &self.detail else {
+            return;
+        };
+        let Some(c) = self.history.commits.get(self.selected) else {
+            return;
+        };
+        if cv.compare.is_none() && cv.id == c.id && cv.stash.is_some() && cv.stash != c.stash {
+            self.detail = Detail::Commit(Arc::new(CommitView {
+                id: cv.id,
+                data: cv.data.clone(),
+                stash: c.stash,
+                compare: None,
+            }));
+        }
     }
 
     /// Selects commit list row `row` and loads its detail.
@@ -2259,7 +2289,22 @@ impl App {
 
     pub fn rebuild_sidebar(&mut self) {
         self.update_branch_order();
-        self.sidebar = sidebar::build(self);
+        let built = sidebar::build(self);
+        let prev = std::mem::replace(&mut self.sidebar, built);
+        // The cursor stays on its entry; a gone one (deleted here or outside) moves to its
+        // next neighbour of the same section, else the previous, else the section header
+        // (`gitti_core::reselect::list_cursor`) — never onto the entry that took its
+        // index. The list's scroll offset stays (the drawing keeps the cursor in view).
+        if !prev.is_empty() {
+            let before: Vec<(String, u8)> = prev.iter().map(SideItem::key).collect();
+            let now: Vec<String> = self.sidebar.iter().map(|it| it.key().0).collect();
+            let to = gitti_core::reselect::list_cursor(&before, self.side_cursor, &now).unwrap_or(0);
+            if before.get(self.side_cursor).map(|k| &k.0) != now.get(to) {
+                // Moved to a neighbour: in view (the sidebar focused).
+                self.follow = true;
+            }
+            self.side_cursor = to;
+        }
         self.side_cursor = self.side_cursor.min(self.sidebar.len().saturating_sub(1));
     }
 

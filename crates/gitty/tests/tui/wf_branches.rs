@@ -137,6 +137,38 @@ fn br13_force_delete_names_the_commit_it_drops() {
     wf::expect_gone(&d, &s, &[wf::UNMERGED], "BR-13 after Force Delete").unwrap();
 }
 
+/// BR-20: the sidebar cursor on a branch whose tip is selected (BRANCHES: done, main,
+/// side), the branch deleted from its menu (m d). done (merged, its tip `one` stays in
+/// the history): `one` stays selected and shown, the cursor goes to the next branch
+/// (main). side (Force Delete, its tip vanishes): the selection goes to its first parent
+/// `one`, its diff shown, nothing of side left; the cursor goes to the previous branch
+/// (main — side was the last).
+/// Workflow: BR-20
+#[gitti_test::test]
+fn br20_delete_the_selected_branch() {
+    use br::delete as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture(&d);
+    let out = run(
+        &d,
+        "press:backtab;press:g;key:j;state;press:m;press:d;key:enter;state;\
+         key:j;state;press:m;press:d;key:enter;key:enter;dump;state",
+    );
+    let st = states(&out);
+    let at = |st: &str, commit: &str, side: &str| {
+        st.contains(&format!("[{} ", &commit[..7]))
+            && st.contains(&format!(" shown={commit} "))
+            && st.contains(&format!(" side_entry=branch:{side} "))
+    };
+    assert!(at(st[0], &s.one, wf::MERGED), "done's tip selected: {out}");
+    assert!(at(st[1], &s.one, "main"), "done deleted: one stays, the cursor on main: {out}");
+    assert!(at(st[2], &s.side, wf::UNMERGED), "side's tip selected: {out}");
+    assert!(at(st[3], &s.one, "main"), "side deleted: one selected and shown, the cursor on main: {out}");
+    assert!(!screens(&out)[0].contains(wf::SIDE_WORK), "nothing of side left: {out}");
+    no_error(st[3], &out);
+    wf::expect_gone(&d, &s, &[wf::MERGED, wf::UNMERGED], "BR-20 after both deletes").unwrap();
+}
+
 /// RL-02: side was force-deleted; the reflog (palette), ↓ to the entry of side's commit,
 /// ⏎, b (Create Branch Here…) as side, not checked out: side is back.
 /// Workflow: RL-02

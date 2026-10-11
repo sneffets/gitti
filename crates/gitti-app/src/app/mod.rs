@@ -84,6 +84,7 @@ use gitti_core::diff::FileDiff;
 use gitti_core::discard::{DiscardOptions, DiscardPlan};
 use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, StashInfo, Tracking};
 use gitti_core::patch::{PatchMode, Selection};
+use gitti_core::reselect::Reselect;
 use gitti_core::{
     HeadInfo, History, LogOrder, RefInfo, RefKind, Repo, RepoSnapshot, WorkingState,
 };
@@ -368,6 +369,9 @@ pub struct GittiApp {
     side_focus: FocusHandle,
     /// Keyboard cursor in the sidebar (index into `sidebar_items`).
     side_cursor: Option<usize>,
+    /// The sidebar entries' keys when `side_cursor` was last set or followed
+    /// (`sidebar.rs`: `sync_side_cursor`).
+    side_cursor_keys: Vec<(String, u8)>,
     diff_focus: FocusHandle,
     loaded_once: bool,
     /// A restored background tab that hasn't started reading its repository yet
@@ -736,6 +740,7 @@ impl GittiApp {
             list_focus: cx.focus_handle(),
             side_focus: cx.focus_handle(),
             side_cursor: None,
+            side_cursor_keys: Vec::new(),
             diff_focus: cx.focus_handle(),
             loaded_once: false,
             load_deferred: false,
@@ -1078,6 +1083,7 @@ impl GittiApp {
         self.conflict_sides = s.conflict_sides;
         self.worktrees = s.worktrees;
         self.submodules = s.submodules;
+        self.sync_side_cursor();
         self.apply_lfs_state(s.lfs, cx);
         // Only when HEAD moved (in-process, in the background).
         self.refresh_subtrees(false, cx);
@@ -1160,30 +1166,49 @@ impl GittiApp {
             ));
         }
         self.history_full = true;
-        self.set_history(hist);
+        if self.set_history(hist) {
+            // What was selected is gone: the row that took its place, its detail shown
+            // (in view; the list keeps its scroll position when it already is).
+            self.show_row(self.selected, cx);
+        } else {
+            self.renumber_shown_stash();
+        }
         self.check_compare_base(cx);
     }
 
-    fn set_history(&mut self, hist: History) {
-        // Keep the selected commit selected if it still exists.
-        let selected_id = self
-            .history
-            .commits
-            .get(self.selected)
-            .filter(|_| !self.history.is_worktree_row(self.selected))
-            .map(|c| c.id);
-        self.history = Arc::new(hist);
+    /// The shown stash moved in the stash list (one above it dropped / popped, another
+    /// pushed): its header says its new `stash@{n}`.
+    fn renumber_shown_stash(&mut self) {
+        let Detail::Commit(cv) = &self.detail else {
+            return;
+        };
+        let Some(c) = self.history.commits.get(self.selected) else {
+            return;
+        };
+        if cv.compare.is_none() && cv.details.id == c.id && cv.stash.is_some() && cv.stash != c.stash {
+            self.detail = Detail::Commit(Arc::new(CommitView {
+                data: cv.data.clone(),
+                stash: c.stash,
+                compare: None,
+            }));
+        }
+    }
+
+    /// Shows `hist`. The selection stays on its commit (by id); one that vanished goes to
+    /// the commit taking its place ([`gitti_core::reselect::history_row`]) — `true` then:
+    /// the caller shows that row's detail.
+    fn set_history(&mut self, hist: History) -> bool {
+        let prev = std::mem::replace(&mut self.history, Arc::new(hist));
         // Sorting by date reads the new history's commit times.
         self.update_branch_order();
-        let new_sel = match selected_id {
-            Some(id) => self.history.row_of(&id).unwrap_or(0),
-            None => 0,
-        };
+        self.sync_side_cursor();
+        let pick = gitti_core::reselect::history_row(&prev, self.selected, &self.history);
+        let new_sel = pick.row();
         // New commits above the selected one (or it moved in a new order): keep it in its
         // place on screen instead of letting the list slide under it — unless the list is
         // at its top, where the new commits are what one wants to see.
-        if let Some(id) = selected_id
-            && self.history.row_of(&id) == Some(new_sel)
+        if matches!(pick, Reselect::Kept(_))
+            && !prev.is_worktree_row(self.selected)
             && new_sel != self.selected
         {
             let state = self.commit_scroll.0.borrow();
@@ -1205,6 +1230,7 @@ impl GittiApp {
         // Marks of commits the new history no longer lists go.
         let history = self.history.clone();
         self.commit_marks.retain(&history);
+        matches!(pick, Reselect::Replaced(_))
     }
 
     /// New rows for a new working state (`prev` = the one the current rows show). What is
@@ -1625,6 +1651,11 @@ impl GittiApp {
     }
 
     pub fn select_row(&mut self, row: usize, _window: &mut Window, cx: &mut Context<Self>) {
+        self.show_row(row, cx);
+    }
+
+    /// [`Self::select_row`] without a window (a history load that replaced the selection).
+    fn show_row(&mut self, row: usize, cx: &mut Context<Self>) {
         if row >= self.history.commits.len() {
             return;
         }
@@ -2200,6 +2231,7 @@ impl GittiApp {
                 this.pending = None;
                 if let Some(subs) = subs {
                     this.submodules = subs;
+                    this.sync_side_cursor();
                 }
                 match done {
                     Ok(note) => {

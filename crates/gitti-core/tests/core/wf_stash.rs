@@ -316,3 +316,42 @@ fn wt08_stash_from_one_worktree_popped_in_another() {
     repo.stash_apply(list[0].target(), true).unwrap();
     wf::expect_popped(&work, &s).unwrap();
 }
+
+/// SH-21: the stash being looked at goes — the app's Drop, a terminal's `git stash drop`
+/// or the app's Pop: the selection on its row moves to its base commit `init`
+/// (`reselect::history_row`, the history read again as the apps do), not to the other
+/// stash that took over `stash@{0}`.
+/// Workflow: SH-21
+#[gitti_test::test]
+fn sh21_drop_the_stash_looked_at() {
+    use gitti_core::LogOrder;
+    use gitti_core::reselect::{Reselect, history_row};
+    use gitti_workflow::ext::terminal_git;
+    use sh::drop_selected as wf;
+    for how in ["drop", "terminal", "pop"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let s = wf::fixture(dir);
+        let repo = Repo::open(dir).unwrap();
+        let before = repo.history(LogOrder::Topo).unwrap();
+        let look = gitti_core::ObjectId::from_hex(s.look.as_bytes()).unwrap();
+        let row = before.row_of(&look).expect("the stash's row");
+        assert_eq!(before.commits.at(row).stash, Some(0));
+        let target = repo.stashes().unwrap()[0].target();
+        match how {
+            "drop" => drop(repo.stash_drop(target).unwrap()),
+            "terminal" => assert!(terminal_git(dir, &wf::TERMINAL).status.success()),
+            _ => drop(repo.stash_apply(target, true).unwrap()),
+        }
+        let after = repo.history_update(&before, LogOrder::Topo).unwrap().expect("a new history");
+        let init = gitti_core::ObjectId::from_hex(s.init.as_bytes()).unwrap();
+        let other = gitti_core::ObjectId::from_hex(s.other.as_bytes()).unwrap();
+        assert_eq!(history_row(&before, row, &after), Reselect::Replaced(after.row_of(&init).unwrap()), "{how}");
+        // The other stash is still there and keeps its own selection.
+        let other_row = before.row_of(&other).unwrap();
+        assert_eq!(history_row(&before, other_row, &after), Reselect::Kept(after.row_of(&other).unwrap()));
+        if how != "pop" {
+            wf::expect_dropped(dir, &s).unwrap();
+        }
+    }
+}

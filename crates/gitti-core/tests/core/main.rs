@@ -32,6 +32,7 @@ mod reflog;
 mod repo_ops;
 mod repo_setup;
 mod repo_stats;
+mod reselect;
 mod repo_shapes;
 mod restore;
 mod runner;

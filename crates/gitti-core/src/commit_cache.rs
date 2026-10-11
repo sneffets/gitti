@@ -144,10 +144,32 @@ impl Repo {
             return Ok(data);
         }
         let files = match stash {
-            Some(n) => self.stash_diff(n, opts)?,
+            Some(n) => {
+                // `n` may be stale (a stash dropped, popped or pushed since the caller
+                // read it): the diff of the stash that is `id` — never another one's,
+                // cached under `id`. Checked again after the read (the list is re-read
+                // only when the stash reflog changed).
+                let n = self.stash_index_of(id, n)?;
+                let files = self.stash_diff(n, opts)?;
+                if self.stash_index_of(id, n)? != n {
+                    anyhow::bail!("The stash list changed while its diff was read");
+                }
+                files
+            }
             None => self.commit_diff_with(id, opts)?,
         };
         self.cache_commit(id, files, opts)
+    }
+
+    /// The index of stash commit `id` in the stash list (`n` when it is still there).
+    fn stash_index_of(&self, id: ObjectId, n: usize) -> Result<usize> {
+        let list = self.stash_list()?;
+        if list.get(n).is_some_and(|s| s.id == id) {
+            return Ok(n);
+        }
+        list.iter()
+            .position(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("This stash is no longer there (dropped or popped)"))
     }
 
     /// Loads the commits that aren't cached yet with one `git show` for all of them

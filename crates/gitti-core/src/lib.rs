@@ -79,6 +79,7 @@ pub mod restore;
 pub mod ref_badges;
 pub mod repo;
 pub mod repo_stats;
+pub mod reselect;
 pub mod reset;
 pub mod reword;
 pub mod rows;

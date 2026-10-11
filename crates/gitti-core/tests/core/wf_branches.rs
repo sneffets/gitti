@@ -211,3 +211,31 @@ fn br18_leaving_a_detached_commit_warns() {
     assert!(line.contains("Show Reflog… and Create Branch Here…"), "{line}");
     wf::expect_left(&dir, &s).unwrap();
 }
+
+/// BR-20: deleting the branch whose tip is selected. The merged `done` (its tip `one`
+/// stays in the history): the selection stays on `one`. The unmerged `side` (force):
+/// its tip vanishes, the selection goes along its first parents to `one`
+/// (`reselect::history_row`). The sidebar half is the apps' (`reselect::list_cursor`).
+/// Workflow: BR-20
+#[gitti_test::test]
+fn br20_delete_the_selected_branch() {
+    use gitti_core::LogOrder;
+    use gitti_core::reselect::{Reselect, history_row};
+    use br::delete as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    let repo = Repo::open(&dir).unwrap();
+    let id = |hex: &str| gitti_core::ObjectId::from_hex(hex.as_bytes()).unwrap();
+    let h0 = repo.history(LogOrder::Topo).unwrap();
+    let one = h0.row_of(&id(&s.one)).unwrap();
+    repo.delete_branch(wf::MERGED, false).unwrap();
+    let h1 = repo.history_update(&h0, LogOrder::Topo).unwrap().expect("a new history");
+    assert_eq!(history_row(&h0, one, &h1), Reselect::Kept(h1.row_of(&id(&s.one)).unwrap()));
+    wf::expect_gone(&dir, &s, &[wf::MERGED], "BR-20 after deleting the merged branch").unwrap();
+    let side = h1.row_of(&id(&s.side)).unwrap();
+    repo.delete_branch(wf::UNMERGED, true).unwrap();
+    let h2 = repo.history_update(&h1, LogOrder::Topo).unwrap().expect("a new history");
+    assert!(h2.row_of(&id(&s.side)).is_none());
+    assert_eq!(history_row(&h1, side, &h2), Reselect::Replaced(h2.row_of(&id(&s.one)).unwrap()));
+    wf::expect_gone(&dir, &s, &[wf::MERGED, wf::UNMERGED], "BR-20 after Force Delete").unwrap();
+}

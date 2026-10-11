@@ -37,11 +37,14 @@ pub enum SideItem {
     Stash {
         index: usize,
         message: String,
+        /// The stash's commit (what it is, wherever it moves in the list).
+        id: gitti_core::ObjectId,
     },
-    /// Index into `App::worktrees` and its folder name.
+    /// Index into `App::worktrees`, its folder name and path.
     Worktree {
         index: usize,
         name: String,
+        path: std::path::PathBuf,
     },
     /// Index into `App::submodules` and its path.
     Submodule {
@@ -67,6 +70,23 @@ impl SideItem {
             SideItem::Submodule { path, .. } => format!("Submodule {path}"),
             SideItem::Subtree { prefix, .. } => format!("Subtree {prefix}/"),
             SideItem::Worktree { name, .. } => format!("Worktree {name}"),
+        }
+    }
+
+    /// The entry's identity (not its index: a stash by its commit, a worktree by its
+    /// path) and depth (headers 0, remote branches under their remote 2), for
+    /// [`gitti_core::reselect::list_cursor`].
+    pub fn key(&self) -> (String, u8) {
+        match self {
+            SideItem::Header { key, .. } => (format!("section:{key}"), 0),
+            SideItem::Branch { name, .. } => (format!("branch:{name}"), 1),
+            SideItem::Remote { name } => (format!("remote:{name}"), 1),
+            SideItem::RemoteBranch { full, .. } => (format!("remote-branch:{full}"), 2),
+            SideItem::Tag { name } => (format!("tag:{name}"), 1),
+            SideItem::Stash { id, .. } => (format!("stash:{id}"), 1),
+            SideItem::Worktree { path, .. } => (format!("worktree:{}", path.display()), 1),
+            SideItem::Submodule { path, .. } => (format!("submodule:{path}"), 1),
+            SideItem::Subtree { prefix, .. } => (format!("subtree:{prefix}"), 1),
         }
     }
 
@@ -133,6 +153,7 @@ pub fn build(app: &App) -> Vec<SideItem> {
             out.push(SideItem::Worktree {
                 index,
                 name: wt.name(),
+                path: wt.path.clone(),
             });
         }
     }
@@ -174,6 +195,7 @@ pub fn build(app: &App) -> Vec<SideItem> {
             out.push(SideItem::Stash {
                 index: s.index,
                 message: s.message.clone(),
+                id: s.id,
             });
         }
     }

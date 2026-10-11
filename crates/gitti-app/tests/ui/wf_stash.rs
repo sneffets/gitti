@@ -76,6 +76,9 @@ pub fn main() {
         ("sh17_pop_with_index_from_the_stash_menu", sh17_pop_with_index_from_the_stash_menu),
         ("sh17_pop_with_index_refused", sh17_pop_with_index_refused),
         ("sh18_drop_after_a_terminal_stash", sh18_drop_after_a_terminal_stash),
+        ("sh21_drop_the_stash_looked_at_from_its_menu", sh21_drop_the_stash_looked_at_from_its_menu),
+        ("sh21_drop_the_stash_looked_at_in_a_terminal", sh21_drop_the_stash_looked_at_in_a_terminal),
+        ("sh21_the_stash_below_stays_shown_renumbered", sh21_the_stash_below_stays_shown_renumbered),
         ("sh19_pop_blocked_by_an_untracked_file", sh19_pop_blocked_by_an_untracked_file),
         ("sh20_branch_from_a_stash_blocked_by_an_untracked_file", sh20_branch_from_a_stash_blocked_by_an_untracked_file),
         ("wt08_pop_in_another_worktree", wt08_pop_in_another_worktree),
@@ -119,6 +122,7 @@ pub fn main() {
                 (Box::new(()), dir)
             }
             "sh20" => (Box::new(sh::branch_blocked::fixture(&dir)), dir),
+            "sh21" => (Box::new(sh::drop_selected::fixture(&dir)), dir),
             "wt08" => {
                 let work = dir.join("work");
                 let s = sh::pop_in_other_worktree::fixture(&work);
@@ -490,6 +494,119 @@ fn sh18_drop_after_a_terminal_stash(ui: &mut Ui) {
     }
     ui.cx.simulate_prompt_answer("Drop");
     ui.settle();
+    expect(ui, wf::expect_dropped(&dir, &s));
+}
+
+/// SH-21: the stash looked at — its sidebar row clicked: its row selected, its diff shown,
+/// the sidebar cursor on it. The workflow's setup (`None`: failed).
+fn sh21_look(ui: &mut Ui) -> Option<sh::drop_selected::Setup> {
+    use sh::drop_selected as wf;
+    let s: wf::Setup = setup();
+    ui.click_on("side:stash-0", MouseButton::Left);
+    ui.settle();
+    let st = ui.ui_state();
+    let lines = ui_lines(ui);
+    let shown = format!("{} stash@{{0}}", s.look);
+    if st.selected_commit.as_deref() != Some(s.look.as_str())
+        || st.shown_commit.as_deref() != Some(shown.as_str())
+        || !lines.contains(&format!("+{}", wf::LOOK_LINE))
+        || st.side_entry != Some(format!("stash:{}", s.look))
+    {
+        fail!(ui, "the stash looked at: selected {:?}, shown {:?}, side {:?}, lines {lines:?}", st.selected_commit, st.shown_commit, st.side_entry);
+        return None;
+    }
+    Some(s)
+}
+
+/// The detail's diff lines (`+text`, `-text`, ` text`).
+fn ui_lines(ui: &mut Ui) -> Vec<String> {
+    let ws = ui.ws.clone();
+    ui.cx.update(|cx| testing::line_texts(&ws, cx))
+}
+
+/// SH-21 after the stash went: its base `init` selected and shown (its diff: `a.txt`
+/// added), nothing of the stash left; the sidebar cursor on the other stash (its
+/// neighbour, now `stash@{0}`); the repository as the workflow expects.
+fn sh21_check(ui: &mut Ui, s: &sh::drop_selected::Setup) {
+    use sh::drop_selected as wf;
+    let dir = ui.workdir();
+    let st = ui.ui_state();
+    let lines = ui_lines(ui);
+    if st.selected_commit.as_deref() != Some(s.init.as_str())
+        || st.shown_commit.as_deref() != Some(s.init.as_str())
+        || lines != ["+a"]
+    {
+        fail!(ui, "after the drop: selected {:?} (want init {}), shown {:?}, lines {lines:?}", st.selected_commit, s.init, st.shown_commit);
+    }
+    if st.side_entry != Some(format!("stash:{}", s.other)) {
+        fail!(ui, "after the drop: the sidebar cursor on {:?}, want the other stash", st.side_entry);
+    }
+    expect(ui, wf::expect_dropped(&dir, s));
+}
+
+/// SH-21: the stash looked at, dropped from its sidebar menu: its base commit selected and
+/// shown, the sidebar cursor on its neighbour.
+/// Workflow: SH-21
+fn sh21_drop_the_stash_looked_at_from_its_menu(ui: &mut Ui) {
+    let Some(s) = sh21_look(ui) else { return };
+    if !stash_menu(ui, 0, "Drop…") {
+        return;
+    }
+    ui.step("menu:Drop…");
+    if !ui.cx.has_pending_prompt() {
+        fail!(ui, "Drop… did not ask");
+        return;
+    }
+    ui.cx.simulate_prompt_answer("Drop");
+    ui.settle();
+    sh21_check(ui, &s);
+}
+
+/// SH-21: the stash looked at, dropped by a terminal (the file watcher reports it): the
+/// same as from the menu.
+/// Workflow: SH-21
+fn sh21_drop_the_stash_looked_at_in_a_terminal(ui: &mut Ui) {
+    use sh::drop_selected as wf;
+    let Some(s) = sh21_look(ui) else { return };
+    let dir = ui.workdir();
+    let out = gitti_workflow::ext::terminal_git(&dir, &wf::TERMINAL);
+    if !out.status.success() {
+        fail!(ui, "terminal git stash drop: {}", String::from_utf8_lossy(&out.stderr));
+        return;
+    }
+    if !ui.wait_real(1500, |ui| ui.ui_state().stashes == 1 && ui.is_idle()) {
+        fail!(ui, "the file watcher did not report the drop within 1.5 s");
+        return;
+    }
+    sh21_check(ui, &s);
+}
+
+/// SH-21, the other way round: the stash below the dropped one is looked at — it stays
+/// selected and shown, its header now says `stash@{0}`; the sidebar cursor stays on it.
+/// Workflow: SH-21
+fn sh21_the_stash_below_stays_shown_renumbered(ui: &mut Ui) {
+    use sh::drop_selected as wf;
+    let s: wf::Setup = setup();
+    ui.click_on("side:stash-1", MouseButton::Left);
+    ui.settle();
+    let dir = ui.workdir();
+    let out = gitti_workflow::ext::terminal_git(&dir, &wf::TERMINAL);
+    if !out.status.success() {
+        fail!(ui, "terminal git stash drop: {}", String::from_utf8_lossy(&out.stderr));
+        return;
+    }
+    if !ui.wait_real(1500, |ui| ui.ui_state().stashes == 1 && ui.is_idle()) {
+        fail!(ui, "the file watcher did not report the drop within 1.5 s");
+        return;
+    }
+    let st = ui.ui_state();
+    let shown = format!("{} stash@{{0}}", s.other);
+    if st.selected_commit.as_deref() != Some(s.other.as_str())
+        || st.shown_commit.as_deref() != Some(shown.as_str())
+        || st.side_entry != Some(format!("stash:{}", s.other))
+    {
+        fail!(ui, "the other stash after the drop: selected {:?}, shown {:?}, sidebar {:?}", st.selected_commit, st.shown_commit, st.side_entry);
+    }
     expect(ui, wf::expect_dropped(&dir, &s));
 }
 

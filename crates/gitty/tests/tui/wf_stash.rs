@@ -351,3 +351,51 @@ fn wt08_pop_in_another_worktree() {
     assert!(states(&out)[0].contains("unstaged=1 staged=0"), "{out}");
     wf::expect_popped(&work, &s).unwrap();
 }
+
+/// SH-21: the stash looked at (sidebar: the first stash — G, k), then dropped: from its
+/// menu (`m d y`) or by a terminal (`git stash drop`, the file watcher reports it). Its
+/// base commit `init` gets selected and shown (not the other stash, now `stash@{0}`);
+/// nothing of the dropped stash stays on screen; the sidebar cursor on the other stash.
+/// Workflow: SH-21
+#[gitti_test::test]
+fn sh21_drop_the_stash_looked_at() {
+    use sh::drop_selected as wf;
+    for drop in ["press:m;press:d;key:y", &format!("git:{};watched", wf::TERMINAL.join(" "))] {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let s = wf::fixture(d);
+        let out = gitty(d, &format!("press:backtab;press:G;key:k;state;{drop};dump;state"));
+        let st = states(&out);
+        assert!(
+            st[0].contains(&format!(" shown={}+stash@{{0}} ", s.look)) && st[0].contains(&format!(" side_entry=stash:{} ", s.look)),
+            "the stash looked at: {out}"
+        );
+        assert!(
+            st[1].contains(&format!("[{} init]", &s.init[..7])) && st[1].contains(&format!(" shown={} ", s.init)),
+            "{drop}: its base commit selected and shown: {out}"
+        );
+        assert!(st[1].contains(&format!(" side_entry=stash:{} ", s.other)), "{drop}: the sidebar cursor on the other stash: {out}");
+        assert!(!screens(&out)[0].contains(wf::LOOK_LINE), "{drop}: nothing of the dropped stash: {out}");
+        wf::expect_dropped(d, &s).unwrap();
+    }
+}
+
+/// SH-21, the other way round: the stash below the dropped one is looked at (G: the last
+/// one); a terminal drops `stash@{0}`: it stays selected and shown as `stash@{0}` now, the
+/// sidebar cursor stays on it.
+/// Workflow: SH-21
+#[gitti_test::test]
+fn sh21_the_stash_below_stays_shown_renumbered() {
+    use sh::drop_selected as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    let s = wf::fixture(d);
+    let out = gitty(d, &format!("press:backtab;key:G;state;git:{};watched;state", wf::TERMINAL.join(" ")));
+    let st = states(&out);
+    assert!(st[0].contains(&format!(" shown={}+stash@{{1}} ", s.other)), "{out}");
+    assert!(
+        st[1].contains(&format!(" shown={}+stash@{{0}} ", s.other)) && st[1].contains(&format!(" side_entry=stash:{} ", s.other)),
+        "{out}"
+    );
+    wf::expect_dropped(d, &s).unwrap();
+}

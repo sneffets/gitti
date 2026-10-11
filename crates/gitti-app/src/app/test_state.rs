@@ -90,6 +90,13 @@ impl GittiApp {
                 .filter(|c| !c.id.is_null())
                 .map(|c| c.id.to_string()),
             selected_row: self.selected,
+            shown_commit: match &self.detail {
+                Detail::Commit(cv) if cv.compare.is_none() => Some(match cv.stash {
+                    Some(n) => format!("{} stash@{{{n}}}", cv.details.id),
+                    None => cv.details.id.to_string(),
+                }),
+                _ => None,
+            },
             repo_state: format!("{:?}", self.repo_state).to_lowercase(),
             conflicted: paths(&self.working.conflicted),
             unstaged: paths(&self.working.unstaged),
@@ -105,6 +112,7 @@ impl GittiApp {
                 .map(|r| self.history.commits.at(r).id.to_string())
                 .collect(),
             side_cursor: self.side_cursor,
+            side_entry: self.script_side_entry(),
             collapsed: {
                 let mut c: Vec<String> = self.collapsed.iter().cloned().collect();
                 c.sort();

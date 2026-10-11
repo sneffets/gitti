@@ -1,7 +1,8 @@
 //! SH — stash: stash and pop with its variants (untracked, `--all`, keep the index, only
 //! staged), pop restoring the index, a pop an untracked file blocks, a branch from a stash
 //! that an untracked file or local changes block, dropping a stash
-//! (also after the list changed outside), an apply that conflicts, looking into a stash,
+//! (also after the list changed outside, and the one being looked at), an apply that
+//! conflicts, looking into a stash,
 //! stashing lines with odd bytes; and WT-08, a stash made in one worktree and popped in
 //! another. Stashes in fixtures come from [`Fixture::stash`] (no git process).
 
@@ -336,6 +337,59 @@ pub mod drop_after_push {
         let mut k = Checks::new("SH-18 after the drop");
         k.eq("stash list", stash_messages(&e), vec![TERMINAL_MESSAGE.to_string()]);
         k.ok("the chosen stash is gone", !stash_ids(&e).contains(&s.chosen), stash_ids(&e));
+        k.done()
+    }
+}
+
+/// **SH-21 — drop the stash being looked at.** `main`: `init` (`a.txt`), [`SECOND`]
+/// (`b.txt`). Two stashes: [`OTHER`] on [`SECOND`] (`stash@{1}`) and [`LOOK`] on `init`
+/// (`stash@{0}`, `a.txt` with [`LOOK_LINE`] added). The user selects [`LOOK`]'s row (its
+/// diff shows) and drops it — in the app, or a terminal runs [`TERMINAL`] (the watcher
+/// picks it up).
+///
+/// Expected: only [`OTHER`] is left ([`expect_dropped`]). In the apps the selection moves
+/// to [`LOOK`]'s base commit `init` and shows its diff — not [`OTHER`], which took over
+/// `stash@{0}`, and nothing of [`LOOK`] stays on screen.
+pub mod drop_selected {
+    use super::*;
+
+    pub const SECOND: &str = "second";
+    pub const OTHER: &str = "On main: other";
+    pub const LOOK: &str = "On main: look";
+    pub const LOOK_LINE: &str = "looked at";
+    /// The terminal's command.
+    pub const TERMINAL: [&str; 4] = ["stash", "drop", "-q", "stash@{0}"];
+
+    pub struct Setup {
+        pub init: String,
+        pub second: String,
+        pub other: String,
+        pub look: String,
+    }
+
+    /// See the module docs. Two git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        let i = fx.commit("main", "init", &[put("a.txt", "a\n")]);
+        let s = fx.commit("main", SECOND, &[put("b.txt", "b\n")]);
+        let o = fx.stash(s, OTHER, &[], &[put("b.txt", "b\nother\n")], &[]);
+        let l = fx.stash(i, LOOK, &[], &[put("a.txt", &format!("a\n{LOOK_LINE}\n"))], &[]);
+        let ids = fx.build(dir);
+        Setup {
+            init: ids[i].into(),
+            second: ids[s].into(),
+            other: ids[o].into(),
+            look: ids[l].into(),
+        }
+    }
+
+    /// After the drop: only [`OTHER`]. No git process but the status.
+    pub fn expect_dropped(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("SH-21 after dropping the stash looked at");
+        k.eq("stash list", stash_messages(&e), vec![OTHER.to_string()]);
+        k.eq("stash commits", stash_ids(&e), vec![s.other.clone()]);
+        k.eq("status", e.status_lines(), Vec::<String>::new());
         k.done()
     }
 }

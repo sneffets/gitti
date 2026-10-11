@@ -63,6 +63,7 @@ pub fn main() {
         ("br10_switch_to_fewer_ignore_rules_says_why", br10_switch_to_fewer_ignore_rules_says_why),
         ("br12_delete_a_merged_branch", br12_delete_a_merged_branch),
         ("br13_force_delete_names_the_commit_it_drops", br13_force_delete_names_the_commit_it_drops),
+        ("br20_delete_the_selected_branch", br20_delete_the_selected_branch),
         ("rl02_recover_a_deleted_branch_from_the_reflog", rl02_recover_a_deleted_branch_from_the_reflog),
         ("br14_switch_to_a_remote_branch", br14_switch_to_a_remote_branch),
         ("br16_checkout_a_commit_and_commit_there", br16_checkout_a_commit_and_commit_there),
@@ -87,7 +88,9 @@ pub fn main() {
                 br::ignore_rules::fixture(&dir);
                 Setup::None
             }
-            "br12_delete_a_merged_branch" | "br13_force_delete_names_the_commit_it_drops" => {
+            "br12_delete_a_merged_branch"
+            | "br13_force_delete_names_the_commit_it_drops"
+            | "br20_delete_the_selected_branch" => {
                 Setup::Delete(br::delete::fixture(&dir))
             }
             "rl02_recover_a_deleted_branch_from_the_reflog" => Setup::Delete(br::delete::fixture_deleted(&dir)),
@@ -358,6 +361,49 @@ fn br13_force_delete_names_the_commit_it_drops(ui: &mut Ui) {
     ui.step("modalok");
     info(ui, "after Force Delete");
     expect(ui, wf::expect_gone(&dir, &s, &[wf::UNMERGED], "BR-13 after Force Delete"));
+}
+
+/// BR-20: the sidebar cursor on a branch whose tip is selected, the branch deleted from its
+/// menu. done (merged, its tip `one` stays in the history): `one` stays selected and
+/// shown, the cursor goes to the next branch (main). side (force, its tip vanishes): the
+/// selection goes to its first parent `one`, its diff shown, nothing of side left; the
+/// cursor goes to the previous branch (main — side was the last).
+/// Workflow: BR-20
+fn br20_delete_the_selected_branch(ui: &mut Ui) {
+    use br::delete as wf;
+    let Setup::Delete(s) = setup() else { unreachable!() };
+    let dir = ui.workdir();
+    let lines = |ui: &mut Ui| {
+        let ws = ui.ws.clone();
+        ui.cx.update(|cx| testing::line_texts(&ws, cx))
+    };
+    // Where things are: (selected, shown, sidebar cursor, diff lines).
+    let at = |ui: &mut Ui| {
+        let st = ui.ui_state();
+        (st.selected_commit, st.shown_commit, st.side_entry, lines(ui))
+    };
+    // After each delete: `one` (its diff: a.txt "one" added), the cursor on main.
+    let want = (Some(s.one.clone()), Some(s.one.clone()), Some("ref:refs/heads/main".to_string()), vec!["+one".to_string()]);
+    for (branch, tip) in [(wf::MERGED, &s.one), (wf::UNMERGED, &s.side)] {
+        ui.click_on(&format!("side:ref-refs/heads/{branch}"), MouseButton::Left);
+        ui.settle();
+        let got = at(ui);
+        if got.0.as_deref() != Some(tip.as_str()) || got.2 != Some(format!("ref:refs/heads/{branch}")) {
+            return fail!(ui, "{branch} clicked: {got:?}");
+        }
+        delete_from_sidebar(ui, branch);
+        if branch == wf::UNMERGED {
+            match dialog(ui) {
+                Some(t) if t == "side is not fully merged" => ui.step("modalok"),
+                other => return fail!(ui, "Delete… on side: dialog {other:?}, status {:?}", ui.status()),
+            }
+        }
+        let got = at(ui);
+        if got != want {
+            fail!(ui, "{branch} deleted: (selected, shown, sidebar, lines) {got:?}, want {want:?}");
+        }
+    }
+    expect(ui, wf::expect_gone(&dir, &s, &[wf::MERGED, wf::UNMERGED], "BR-20 after both deletes"));
 }
 
 /// RL-02: side was force-deleted; HEAD's reflog, the entry of side's commit, Create

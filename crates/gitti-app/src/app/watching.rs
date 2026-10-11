@@ -160,6 +160,7 @@ impl GittiApp {
                         this.watch_filter.reread(&scope, started);
                         if let Some(subs) = subs {
                             this.submodules = subs;
+                            this.sync_side_cursor();
                         }
                         this.apply_working(w, styles, touched, cx);
                     }

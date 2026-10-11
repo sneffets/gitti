@@ -161,6 +161,7 @@ impl GittiApp {
         let pinned = branch_order::toggle_pin(&mut self.branches.pins, full_name);
         branch_order::save_pins(&repo, &self.branches.pins);
         self.update_branch_order();
+        self.sync_side_cursor();
         self.set_info(branch_order::pin_message(short_name, pinned));
         cx.notify();
     }
@@ -175,6 +176,7 @@ impl GittiApp {
             }
         });
         self.update_branch_order();
+        self.sync_side_cursor();
         self.set_info(sort.chosen_message(remote));
         cx.notify();
     }

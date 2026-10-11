@@ -191,6 +191,7 @@ impl GittiApp {
                 this.subtrees_head = Some(head);
                 // An unreadable history: no list (the refresh reports what is wrong).
                 this.subtrees = result.unwrap_or_default();
+                this.sync_side_cursor();
                 if std::mem::take(&mut this.subtrees_queued) {
                     this.refresh_subtrees(true, cx);
                 }
