@@ -3849,7 +3849,8 @@ impl GittiApp {
         let w = f32::from(body.width + now.width - viewport.width);
         let h = f32::from(body.height + now.height - viewport.height);
         let s = &self.settings;
-        let mut sidebar = PaneLayout::size(s.pane_sidebar, w, 230.);
+        let side_min = self.sidebar_min_width();
+        let mut sidebar = PaneLayout::size(s.pane_sidebar, w, 230.).max(side_min);
         let mut list = PaneLayout::size(s.pane_list, w, 640.);
         if self.settings.show_sidebar {
             if let Some(sizes) = rescale_panes(&self.panes.main, w, cx) {
@@ -3896,6 +3897,7 @@ impl GittiApp {
                 .child(commit_list)
                 .child(detail)
         } else {
+            let compact = self.sidebar_compact(sidebar, cx);
             let panes = self.panes.clone();
             h_resizable("main")
                 .with_state(&self.panes.main)
@@ -3918,8 +3920,8 @@ impl GittiApp {
             .child(
                 resizable_panel()
                     .size(px(sidebar))
-                    .size_range(px(120.)..px(700.))
-                    .child(div().size_full().probe("sidebar").child(self.render_sidebar(window, cx))),
+                    .size_range(px(side_min)..px(700.))
+                    .child(div().size_full().probe("sidebar").child(self.render_sidebar(window, compact, cx))),
             )
             .child(commit_list)
             .child(detail)

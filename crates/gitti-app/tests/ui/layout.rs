@@ -44,6 +44,7 @@ pub fn main() {
         ("panes_restore_after_resize", panes_restore_after_resize),
         ("panes_first_frame_after_resize", panes_first_frame_after_resize),
         ("panes_drag_edges", panes_drag_edges),
+        ("sidebar_minimum_width", sidebar_minimum_width),
         ("worktree_sweep", worktree_sweep),
         ("file_tabs_sweep", file_tabs_sweep),
         ("repo_tabs_reorder_and_list", repo_tabs_reorder_and_list),
@@ -873,44 +874,7 @@ fn panes_drag_edges(ui: &mut Ui) {
         let Some(b) = find(&p, name).map(|q| q.bounds) else { return };
         let from = point(b.right(), b.center().y);
         let ctx = format!("{name}'s edge by {by}");
-        testing::clear_probes();
-        let mut frames = Vec::new();
-        let steps = [(Some(true), 0.), (None, by / 3.), (None, by * 2. / 3.), (None, by), (Some(false), by)];
-        for (down, dx) in steps {
-            ui.cx
-                .update_window(ui.window, |_, window, cx| {
-                    let position = point(from.x + px(dx), from.y);
-                    let event = match down {
-                        Some(true) => PlatformInput::MouseDown(MouseDownEvent {
-                            button: MouseButton::Left,
-                            position,
-                            modifiers: Modifiers::default(),
-                            click_count: 1,
-                            first_mouse: false,
-                        }),
-                        Some(false) => PlatformInput::MouseUp(MouseUpEvent {
-                            button: MouseButton::Left,
-                            position,
-                            modifiers: Modifiers::default(),
-                            click_count: 1,
-                        }),
-                        None => PlatformInput::MouseMove(MouseMoveEvent {
-                            position,
-                            pressed_button: Some(MouseButton::Left),
-                            modifiers: Modifiers::default(),
-                        }),
-                    };
-                    window.dispatch_event(event, cx);
-                })
-                .unwrap();
-            for _ in 0..2 {
-                ui.cx.executor().advance_clock(std::time::Duration::from_millis(20));
-                ui.cx.run_until_parked();
-                ui.render();
-            }
-            frames.extend(testing::take_frames());
-        }
-        ui.settle();
+        let frames = drag_by(ui, from, by);
         for (k, f) in frames.iter().enumerate() {
             for e in testing::check(f) {
                 ui.fail(format!("{ctx}: frame {k}: {e}"));
@@ -946,6 +910,129 @@ fn panes_drag_edges(ui: &mut Ui) {
     }
     let unset = PaneLayout::default();
     gitti_core::store::save_changed_settings(&load_settings::<PaneLayout>(), &unset);
+}
+
+/// Presses at `from`, moves `by` px right (negative: left) in three steps, releases; a
+/// frame or two after each event. Returns those frames (then settles).
+fn drag_by(ui: &mut Ui, from: Point<Pixels>, by: f32) -> Vec<Vec<Probe>> {
+    testing::clear_probes();
+    let mut frames = Vec::new();
+    let steps = [(Some(true), 0.), (None, by / 3.), (None, by * 2. / 3.), (None, by), (Some(false), by)];
+    for (down, dx) in steps {
+        ui.cx
+            .update_window(ui.window, |_, window, cx| {
+                let position = point(from.x + px(dx), from.y);
+                let event = match down {
+                    Some(true) => PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    Some(false) => PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    }),
+                    None => PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Modifiers::default(),
+                    }),
+                };
+                window.dispatch_event(event, cx);
+            })
+            .unwrap();
+        for _ in 0..2 {
+            ui.cx.executor().advance_clock(std::time::Duration::from_millis(20));
+            ui.cx.run_until_parked();
+            ui.render();
+        }
+        frames.extend(testing::take_frames());
+    }
+    ui.settle();
+    frames
+}
+
+/// The sidebar drags down to a strip about three characters of the UI font wide (default
+/// and biggest fonts): it shows the sections' initials only — no entry cut in the middle,
+/// every frame of the drag keeps the invariants —, its edge still drags it back wide (names
+/// again). The width is stored and a new window starts with it; a smaller window keeps it
+/// at least that wide.
+fn sidebar_minimum_width(ui: &mut Ui) {
+    use gitti_core::store::{PaneLayout, load_settings, save_changed_settings};
+    let side = |ui: &mut Ui| find(&ui.frame(), "sidebar").map(|q| q.bounds);
+    for (font_ui, font_diff) in fonts() {
+        ui.step(&format!("fonts:{font_ui},{font_diff}"));
+        let min = (font_ui * 2.).round();
+        let ctx = format!("fonts {font_ui}/{font_diff}");
+        let Some(b) = side(ui) else {
+            ui.fail(format!("{ctx}: no sidebar"));
+            return;
+        };
+        let from = point(b.right(), b.center().y);
+        for (k, f) in drag_by(ui, from, -f32::from(b.right())).iter().enumerate() {
+            for e in testing::check(f) {
+                ui.fail(format!("{ctx}: drag frame {k}: {e}"));
+            }
+        }
+        let p = ui.check(&format!("{ctx}, narrowest"));
+        let vis = |n: &str| p.iter().filter(|q| q.name.starts_with(n) && q.visible().is_some()).count();
+        match find(&p, "sidebar").map(|q| f32::from(q.bounds.size.width)) {
+            Some(w) if (w - min).abs() < 1. => {}
+            other => ui.fail(format!("{ctx}: narrowest sidebar {other:?}, want {min}")),
+        }
+        if vis("side-section:") < 4 || vis("side:") > 0 {
+            ui.fail(format!(
+                "{ctx}: a strip shows the sections' initials only: {} sections, {} entries",
+                vis("side-section:"),
+                vis("side:")
+            ));
+        }
+        let stored = load_settings::<PaneLayout>().pane_sidebar;
+        let total: f32 = ["sidebar", "commit-list", "detail"]
+            .iter()
+            .filter_map(|n| find(&p, n).map(|q| f32::from(q.bounds.size.width)))
+            .sum();
+        if (stored * total - min).abs() > 1.5 {
+            ui.fail(format!("{ctx}: stored sidebar {stored} of {total}, want {min} px"));
+        }
+        // Still grabbable: back to the narrowest with names (`panes.rs` `COMPACT_EMS`:
+        // 6.5 UI font sizes), names cut with "…".
+        let Some(b) = side(ui) else { return };
+        let want = (font_ui * 6.5).ceil() + 2.;
+        let frames = drag_by(ui, point(b.right() - px(1.), b.center().y), want - min + 1.);
+        for (k, f) in frames.iter().enumerate() {
+            for e in testing::check(f) {
+                ui.fail(format!("{ctx}: drag back, frame {k}: {e}"));
+            }
+        }
+        let p = ui.check(&format!("{ctx}, dragged back"));
+        let w = find(&p, "sidebar").map(|q| f32::from(q.bounds.size.width));
+        let names = p.iter().any(|q| q.name.starts_with("side:") && q.visible().is_some());
+        if w.is_none_or(|w| (w - want).abs() > 1.5) || !names {
+            ui.fail(format!("{ctx}: dragged back to {w:?}, want {want} with names"));
+        }
+    }
+    // Narrowest at the default font: a new window starts with it; a smaller one keeps it.
+    ui.step(&format!("fonts:{},{}", FONTS[1].0, FONTS[1].1));
+    let Some(b) = side(ui) else { return };
+    drag_by(ui, point(b.right(), b.center().y), -f32::from(b.right()));
+    let min = (FONTS[1].0 * 2.).round();
+    *ui = Ui::new(&ui.repo.clone(), 1500., 950.);
+    match side(ui).map(|b| f32::from(b.size.width)) {
+        Some(w) if (w - min).abs() < 1.5 => {}
+        other => ui.fail(format!("restored narrowest sidebar {other:?}, want {min}")),
+    }
+    ui.resize(800., 500.);
+    let p = ui.check("narrowest sidebar, 800x500");
+    match find(&p, "sidebar").map(|q| f32::from(q.bounds.size.width)) {
+        Some(w) if w >= min - 0.5 => {}
+        other => ui.fail(format!("narrowest sidebar in a smaller window {other:?}, at least {min}")),
+    }
+    save_changed_settings(&load_settings::<PaneLayout>(), &PaneLayout::default());
 }
 
 /// `make_repo` in `<dir>/repo` plus two linked worktrees next to it (one with long names,

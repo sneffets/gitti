@@ -107,8 +107,15 @@ impl GittiApp {
     /// Virtualised: only the entries in (and a screen around) the visible part are built;
     /// the others are spacers of their exact height (headers and rows have fixed heights),
     /// so the list looks and scrolls exactly as if all were there. With hundreds of tags /
-    /// remote branches expanded every frame laid them all out before.
-    pub(super) fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// remote branches expanded every frame laid them all out before. `compact` (dragged
+    /// down to a strip): the sections show their initials, the entries nothing — they keep
+    /// their places, so the keyboard cursor still shows where it is.
+    pub(super) fn render_sidebar(
+        &self,
+        window: &Window,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let p = cx.palette().clone();
         let items = self.sidebar_items();
         let header_h = self.settings.row_h() - px(2.) + px(4.); // + `mt_1`
@@ -151,8 +158,9 @@ impl GittiApp {
             }
             let entry = match it {
                 SideItem::Section { key, title, count } => {
-                    self.section_header(key, title, *count, &p, cx).into_any_element()
+                    self.section_header(key, title, *count, compact, &p, cx).into_any_element()
                 }
+                _ if compact => div().flex_none().h(row_h).into_any_element(),
                 SideItem::Remote(ri) => {
                     let remote = &self.remotes[*ri];
                     let key = format!("remote:{}", remote.name);
@@ -519,6 +527,7 @@ impl GittiApp {
         key: &'static str,
         title: &'static str,
         count: usize,
+        compact: bool,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -531,7 +540,6 @@ impl GittiApp {
             .probe(format!("side-section:{key}"))
             .id(SharedString::from(format!("section-{key}")))
             .h(self.settings.row_h() - px(2.))
-            .px_2()
             .mt_1()
             .items_center()
             .gap_1()
@@ -539,9 +547,24 @@ impl GittiApp {
             .text_size(self.settings.ui_small())
             .font_weight(FontWeight::BOLD)
             .text_color(p.text_muted)
-            .child(div().w(px(12.)).child(if collapsed { "▸" } else { "▾" }))
-            .child(format!("{title} ({count})"))
-            .tooltip(crate::shortcuts::FOLD_SECTION.tooltip())
+            .map(|d| {
+                if compact {
+                    // Its initial alone; the tooltip names it.
+                    let tip = format!("{title} ({count})");
+                    d.justify_center()
+                        .overflow_hidden()
+                        .child(title.chars().next().unwrap_or_default().to_string())
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(tip.clone()).build(window, cx)
+                        })
+                } else {
+                    // A narrow sidebar cuts the title with "…", not in a letter.
+                    d.px_2()
+                        .child(div().flex_none().w(px(12.)).child(if collapsed { "▸" } else { "▾" }))
+                        .child(div().min_w_0().truncate().child(format!("{title} ({count})")))
+                        .tooltip(crate::shortcuts::FOLD_SECTION.tooltip())
+                }
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
                 if !this.collapsed.remove(key) {
                     this.collapsed.insert(key.to_string());

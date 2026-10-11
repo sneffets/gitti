@@ -10,10 +10,14 @@
 //! width lays the panels out with the noted one ([`PaneStates::keep_list_width`]) before
 //! the layout, so no frame shows the list at another width. The release stores the same
 //! sizes ([`PaneStates::stored_main_sizes`]).
+//!
+//! The sidebar drags down to about three characters of the UI font
+//! ([`GittiApp::sidebar_min_width`]); too narrow for names it shows the sections' initials
+//! only ([`GittiApp::sidebar_compact`]).
 
 use gpui_kit::*;
 
-use super::PaneStates;
+use super::{GittiApp, PaneStates};
 
 /// gpui-base's `PANEL_MIN_SIZE`: the narrowest a commit list or detail gets.
 const PANE_MIN: f32 = 100.;
@@ -64,6 +68,25 @@ impl PaneStates {
         Some((side, list))
     }
 }
+
+impl GittiApp {
+    /// The narrowest the sidebar gets: about three characters of the UI font — still
+    /// there, its edge still easy to grab.
+    pub(super) fn sidebar_min_width(&self) -> f32 {
+        (self.settings.ui_font_size * 2.).round()
+    }
+
+    /// The sidebar is too narrow for its names (`planned`: its size for this frame unless
+    /// the resize state has a newer one): it shows only the sections' initials
+    /// (`render_sidebar`), not names cut down to an ellipsis or half an icon.
+    pub(super) fn sidebar_compact(&self, planned: f32, cx: &App) -> bool {
+        let now = self.panes.main.read(cx).sizes().first().map_or(planned, |&s| f32::from(s));
+        now < self.settings.ui_font_size * COMPACT_EMS
+    }
+}
+
+/// Below this many UI font sizes the sidebar is compact ([`GittiApp::sidebar_compact`]).
+const COMPACT_EMS: f32 = 6.5;
 
 /// `list` as wide as a row of `total` leaves next to a `side` wide sidebar and the
 /// narrowest detail; never below the narrowest list.
