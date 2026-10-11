@@ -721,6 +721,45 @@ impl Git {
         });
     }
 
+    /// git `args` for the user's terminal — a terminal diff / merge tool that gitty hands
+    /// the terminal to ([`crate::ext_tool::TerminalRun`]): this runner's directory and
+    /// environment, the terminal's stdin / stdout / stderr, not detached from it. Run it
+    /// with the terminal handed over, then log it with [`Git::log_terminal_run`].
+    pub fn terminal_command(&self, args: &[String]) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(&self.workdir)
+            .args(["-c", "core.quotepath=false"])
+            .args(args);
+        for var in LOCAL_REPO_ENV {
+            cmd.env_remove(var);
+        }
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
+        cmd
+    }
+
+    /// Logs a [`Git::terminal_command`] that ran for `took` and exited with `code` (-1:
+    /// it couldn't start); its output went to the terminal.
+    pub fn log_terminal_run(&self, args: &[String], took: Duration, code: i32) {
+        let Some(log) = &self.log else {
+            return;
+        };
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let mut entry = LogEntry {
+            args: args.to_vec(),
+            code,
+            duration: took,
+            at: SystemTime::now(),
+            read_only: is_read_only(&refs),
+            user: false,
+            output: "(ran in the terminal: its output went there)".into(),
+            previous_session: false,
+            in_process: false,
+            program: None,
+        };
+        redact_entry(&mut entry);
+        log.push(entry);
+    }
+
     /// Runs a user's shell command line (a custom command, [`crate::custom_command`]):
     /// `program` with `args` in `dir`, with this runner's environment (askpass: a git the
     /// script runs asks through the app), detached from any terminal, cancellable like git

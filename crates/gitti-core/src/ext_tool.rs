@@ -10,8 +10,9 @@
 //!   `--tool=<name>`: without a configured tool git would *guess* one (and could pick a
 //!   terminal tool), so an unset tool is reported with what to do instead;
 //! - tools that need a terminal (vimdiff, nvimdiff, emerge, a user command running vim,
-//!   …) are refused with the reason: the apps start git without a terminal (`setsid`), so
-//!   such a tool would hang or fail;
+//!   …) are refused with the reason where the app starts git without a terminal
+//!   (`setsid`: gitti), since such a tool would hang or fail; gitty hands them its
+//!   terminal ([`ToolStart::Terminal`], [`TerminalRun`]);
 //! - an untracked file (git's diff doesn't see it) is shown with `--no-index` against an
 //!   empty side; a stash's untracked file comes from the stash's third parent;
 //! - after a merge tool run: whether the file is resolved (git mergetool stages it), the
@@ -19,8 +20,9 @@
 //!   up the way git cleans up a failed one (the file put back, the temporary copies
 //!   removed unless `mergetool.keepTemporaries`).
 //!
-//! The list of tools git knows ([`Repo::tool_help`], `git difftool --tool-help`) is read
-//! only when a chooser asks for it; [`Repo::set_tool`] writes the choice.
+//! Without a tool set up, the apps' "Open in External … Tool" offers the set-up dialog
+//! ([`ToolStart::Choose`], [`crate::tool_setup`]); the list of tools git knows
+//! ([`Repo::tool_help`], `git difftool --tool-help`) is read only then.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -31,7 +33,7 @@ use gix::ObjectId;
 use crate::Repo;
 use crate::compare::CompareSide;
 use crate::git_cli::GitError;
-use crate::ops::{ConfigScope, split_command_line};
+use crate::ops::split_command_line;
 
 /// Which of git's two tool commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +157,11 @@ pub struct ToolConfig {
     values: HashMap<String, String>,
 }
 
+/// Tests: a folder with `difftool.txt` / `mergetool.txt` holding `--tool-help` output,
+/// read by [`Repo::tool_help`] instead of running git (which sources every tool script
+/// and looks for its program: seconds).
+pub const ENV_TEST_TOOL_HELP: &str = "GITTI_TEST_TOOL_HELP";
+
 /// The `git config --get-regexp` pattern of [`ToolConfig`].
 const CONFIG_PATTERN: &str = r"^(diff|merge)\.(gui)?tool$|^(diff|merge)tool\.";
 
@@ -205,6 +212,15 @@ impl ToolConfig {
             let v = self.get(k)?.trim();
             (!v.is_empty()).then(|| (k.to_string(), v.to_string()))
         })?;
+        Some(Tool {
+            key,
+            ..self.named(kind, &name)
+        })
+    }
+
+    /// Tool `name` for `kind` with the user's own settings for it (`.cmd`, `.path`); its
+    /// `key` is the one a chooser writes ([`ToolKind::key`]).
+    pub fn named(&self, kind: ToolKind, name: &str) -> Tool {
         let own = |what: &str| {
             kind.sections().iter().find_map(|s| {
                 self.values
@@ -213,14 +229,35 @@ impl ToolConfig {
                     .cloned()
             })
         };
-        let (cmd, path) = (own("cmd"), own("path"));
-        Some(Tool {
+        Tool {
             kind,
-            name,
-            key,
-            cmd,
-            path,
-        })
+            name: name.to_string(),
+            key: kind.key().to_string(),
+            cmd: own("cmd"),
+            path: own("path"),
+        }
+    }
+
+    /// The value of `key` (`diff.tool`, …) as git reads it (the last one wins).
+    pub fn value(&self, key: &str) -> Option<&str> {
+        self.get(key)
+    }
+
+    /// The user's own tools for `kind`: the names with a command of their own
+    /// (`difftool.<name>.cmd`, `mergetool.<name>.cmd`), sorted.
+    pub fn own_tools(&self, kind: ToolKind) -> Vec<String> {
+        let names: BTreeSet<String> = self
+            .values
+            .iter()
+            .filter(|(_, v)| !v.trim().is_empty())
+            .filter_map(|(k, _)| {
+                kind.sections().iter().find_map(|s| {
+                    let name = k.strip_prefix(s)?.strip_prefix('.')?.strip_suffix(".cmd")?;
+                    (!name.is_empty()).then(|| name.to_string())
+                })
+            })
+            .collect();
+        names.into_iter().collect()
     }
 
     /// `mergetool.keepBackup` (git's default: on).
@@ -247,7 +284,7 @@ fn canonical(key: &str) -> String {
     }
 }
 
-fn parse_bool(v: &str) -> Option<bool> {
+pub(crate) fn parse_bool(v: &str) -> Option<bool> {
     match v.trim().to_lowercase().as_str() {
         "true" | "yes" | "on" | "1" | "" => Some(true),
         "false" | "no" | "off" | "0" => Some(false),
@@ -274,14 +311,84 @@ pub fn no_tool_message(kind: ToolKind) -> String {
 pub fn terminal_tool_message(tool: &Tool) -> String {
     format!(
         "The {} {} runs inside a terminal, and git tools are started here without one, so \
-         it can't run from this app. Run `git {} -- <file>` in a terminal, or set {} to a \
-         tool with its own window (`git {} --tool-help` lists them).",
+         it can't run from this app. Run `git {} -- <file>` in a terminal (gitty, the \
+         terminal app, runs it too), or set {} to a tool with its own window: {} lists \
+         them.",
         tool.kind.noun(),
         tool.describe(),
         tool.kind.command(),
         tool.key,
-        tool.kind.command(),
+        crate::tool_setup::CHOOSE_LABEL,
     )
+}
+
+/// Whether this is a graphical session for git's `guiDefault = auto` (git checks
+/// `DISPLAY`).
+fn graphical_session() -> bool {
+    std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty())
+}
+
+/// What starting an external tool came to ([`Repo::start_diff_tool`],
+/// [`Repo::start_merge_tool`]).
+#[derive(Debug, Clone)]
+pub enum ToolStart {
+    /// The tool ran and was closed: what the status line says.
+    Done(String),
+    /// No tool is set up for it: what the set-up dialog offers. After the choice is
+    /// written ([`Repo::write_tool_settings`]) the caller starts again.
+    Choose(Box<crate::tool_setup::ToolChoices>),
+    /// A tool that runs inside the terminal (the caller said it can hand the terminal
+    /// over): run [`TerminalRun::command`] with the terminal, then
+    /// [`Repo::finish_terminal_tool`].
+    Terminal(Box<TerminalRun>),
+}
+
+/// A tool run in the user's terminal: the `git difftool` / `git mergetool` command and
+/// what to check afterwards.
+#[derive(Clone)]
+pub struct TerminalRun {
+    pub tool: Tool,
+    /// The file it shows / merges.
+    pub path: String,
+    args: Vec<String>,
+    git: crate::git_cli::Git,
+    /// A `--no-index` diff (exit code 1 = the files differ).
+    no_index: bool,
+    merge: Option<MergeWatch>,
+}
+
+impl std::fmt::Debug for TerminalRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalRun")
+            .field("tool", &self.tool.name)
+            .field("args", &self.args)
+            .finish()
+    }
+}
+
+impl TerminalRun {
+    /// The command to run with the terminal handed over (the user's locale and
+    /// environment, the terminal's stdin / stdout / stderr).
+    pub fn command(&self) -> std::process::Command {
+        self.git.terminal_command(&self.args)
+    }
+
+    /// `git difftool -y --tool=vimdiff -- a.txt`.
+    pub fn command_line(&self) -> String {
+        format!("git {}", self.args.join(" "))
+    }
+}
+
+/// What a merge tool run is checked against afterwards: the file, whether its `.orig`
+/// backup was there before, git's temporary copies that were there before.
+#[derive(Debug, Clone)]
+struct MergeWatch {
+    path: String,
+    file: PathBuf,
+    orig: PathBuf,
+    had_orig: bool,
+    before: BTreeSet<PathBuf>,
+    keep_temporaries: bool,
 }
 
 /// The two sides of the diff a diff tool shows.
@@ -409,15 +516,100 @@ impl Repo {
 
     /// The tool git would run for `kind`, or why there is none / it can't run here.
     pub fn external_tool(&self, kind: ToolKind) -> Result<(Tool, ToolConfig)> {
+        match self.tool_for(kind, false)? {
+            Some(found) => Ok(found),
+            None => bail!(no_tool_message(kind)),
+        }
+    }
+
+    /// The tool git would run for `kind` (`None`: none is set up); a terminal tool is
+    /// refused unless the caller can hand it the `terminal`.
+    fn tool_for(&self, kind: ToolKind, terminal: bool) -> Result<Option<(Tool, ToolConfig)>> {
         let config = self.tool_config();
-        let display = std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty());
-        let Some(tool) = config.tool(kind, display) else {
-            bail!(no_tool_message(kind));
+        let Some(tool) = config.tool(kind, graphical_session()) else {
+            return Ok(None);
         };
-        if tool.needs_terminal() {
+        if tool.needs_terminal() && !terminal {
             bail!(terminal_tool_message(&tool));
         }
-        Ok((tool, config))
+        Ok(Some((tool, config)))
+    }
+
+    /// "Open in External Diff Tool" as the apps run it: `target` in the configured diff
+    /// tool ([`ToolStart::Done`] when it is closed); without a tool, what the set-up
+    /// dialog offers; a terminal tool for a caller that can hand over the `terminal`, as
+    /// a command to run there (else it is refused with the reason).
+    pub fn start_diff_tool(&self, target: &DiffToolTarget, terminal: bool) -> Result<ToolStart> {
+        let Some((tool, _)) = self.tool_for(ToolKind::Diff, terminal)? else {
+            return Ok(ToolStart::Choose(Box::new(self.tool_choices()?)));
+        };
+        if tool.needs_terminal() {
+            let (args, no_index) = self.diff_tool_command(&tool, target)?;
+            return Ok(ToolStart::Terminal(Box::new(TerminalRun {
+                path: target.path.clone(),
+                args,
+                git: self.tool_git(),
+                no_index,
+                merge: None,
+                tool,
+            })));
+        }
+        self.run_diff_tool(&tool, target).map(ToolStart::Done)
+    }
+
+    /// "Open in External Merge Tool" as the apps run it: conflicted `path` in the
+    /// configured merge tool, like [`Repo::start_diff_tool`] (the outcome:
+    /// [`MergeToolResult::describe`]).
+    pub fn start_merge_tool(&self, path: &str, terminal: bool) -> Result<ToolStart> {
+        let Some((tool, config)) = self.tool_for(ToolKind::Merge, terminal)? else {
+            return Ok(ToolStart::Choose(Box::new(self.tool_choices()?)));
+        };
+        if tool.needs_terminal() {
+            let watch = self.watch_merge(path, &config)?;
+            return Ok(ToolStart::Terminal(Box::new(TerminalRun {
+                path: path.to_string(),
+                args: merge_tool_args(&tool, path),
+                git: self.tool_git(),
+                no_index: false,
+                merge: Some(watch),
+                tool,
+            })));
+        }
+        self.run_merge_tool(&tool, &config, path)
+            .map(|r| ToolStart::Done(r.describe()))
+    }
+
+    /// After a [`TerminalRun`] (its exit `status`, how long it ran): logs it and says how
+    /// it went — for a merge tool whether the file is resolved, the backup git kept and
+    /// the conflicts left, as after [`Repo::open_merge_tool`].
+    pub fn finish_terminal_tool(
+        &self,
+        run: &TerminalRun,
+        status: std::io::Result<std::process::ExitStatus>,
+        took: std::time::Duration,
+    ) -> Result<String> {
+        let code = match &status {
+            Ok(s) => s.code().unwrap_or(-1),
+            Err(_) => -1,
+        };
+        run.git.log_terminal_run(&run.args, took, code);
+        if let Err(e) = status {
+            bail!("cannot start {}: {e}", run.command_line());
+        }
+        let tool = &run.tool;
+        match &run.merge {
+            Some(watch) => {
+                let r = self.merge_outcome(watch, tool, code, "")?;
+                Ok(r.describe())
+            }
+            None if code == 0 || (run.no_index && code == 1) => {
+                Ok(format!("Diff tool {} closed: {}", tool.name, run.path))
+            }
+            None => bail!(
+                "{} (its messages are in the terminal)",
+                tool_failure(tool, "", code)
+            ),
+        }
     }
 
     /// git for a tool run: literal pathspecs, the user's locale (the tool's language and its file names),
@@ -433,27 +625,41 @@ impl Repo {
     /// returns when the tool is closed.
     pub fn open_diff_tool(&self, target: &DiffToolTarget) -> Result<String> {
         let (tool, _) = self.external_tool(ToolKind::Diff)?;
-        let diff = self.diff_tool_args(target)?;
-        let tool_arg = format!("--tool={}", tool.name);
-        let mut args: Vec<&str> = vec!["difftool", "-y", &tool_arg];
-        match &diff {
-            DiffArgs::Revs(revs) => {
-                args.extend(revs.iter().map(String::as_str));
-                args.push("--");
-                args.push(&target.path);
-                if let Some(old) = target.old_path.as_deref().filter(|o| *o != target.path) {
-                    args.push(old);
-                }
-            }
-            DiffArgs::NoIndex(old, new) => args.extend(["--no-index", "--", old, new]),
-        }
+        self.run_diff_tool(&tool, target)
+    }
+
+    fn run_diff_tool(&self, tool: &Tool, target: &DiffToolTarget) -> Result<String> {
+        let (args, no_index) = self.diff_tool_command(tool, target)?;
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = self.tool_git().run_raw(&args, None)?;
         // `--no-index` diffs exit 1 when the files differ (as `--exit-code`).
-        let differ = matches!(diff, DiffArgs::NoIndex(..)) && out.code == 1 && out.stderr.trim().is_empty();
+        let differ = no_index && out.code == 1 && out.stderr.trim().is_empty();
         if out.code != 0 && !differ {
-            bail!(tool_failure(&tool, &out.stderr, out.code));
+            bail!(tool_failure(tool, &out.stderr, out.code));
         }
         Ok(format!("Diff tool {} closed: {}", tool.name, target.path))
+    }
+
+    /// `git difftool` with `tool` for `target`'s two sides, and whether it is a
+    /// `--no-index` diff.
+    fn diff_tool_command(&self, tool: &Tool, target: &DiffToolTarget) -> Result<(Vec<String>, bool)> {
+        let diff = self.diff_tool_args(target)?;
+        let mut args: Vec<String> = vec!["difftool".into(), "-y".into(), format!("--tool={}", tool.name)];
+        let no_index = matches!(diff, DiffArgs::NoIndex(..));
+        match diff {
+            DiffArgs::Revs(revs) => {
+                args.extend(revs);
+                args.push("--".into());
+                args.push(target.path.clone());
+                if let Some(old) = target.old_path.as_deref().filter(|o| *o != target.path) {
+                    args.push(old.to_string());
+                }
+            }
+            DiffArgs::NoIndex(old, new) => {
+                args.extend(["--no-index".into(), "--".into(), old, new]);
+            }
+        }
+        Ok((args, no_index))
     }
 
     fn diff_tool_args(&self, t: &DiffToolTarget) -> Result<DiffArgs> {
@@ -548,82 +754,104 @@ impl Repo {
     /// the file, git stages it and keeps `<path>.orig` as `mergetool.keepBackup` says.
     pub fn open_merge_tool(&self, path: &str) -> Result<MergeToolResult> {
         let (tool, config) = self.external_tool(ToolKind::Merge)?;
+        self.run_merge_tool(&tool, &config, path)
+    }
+
+    fn run_merge_tool(&self, tool: &Tool, config: &ToolConfig, path: &str) -> Result<MergeToolResult> {
+        let watch = self.watch_merge(path, config)?;
+        let args = merge_tool_args(tool, path);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let run = self.tool_git().run_raw(&args, None);
+        if let Err(GitError::Cancelled) = &run {
+            clean_up_cancelled_merge(&watch);
+            return Err(GitError::Cancelled.into());
+        }
+        let out = run?;
+        self.merge_outcome(&watch, tool, out.code, &out.stderr)
+    }
+
+    /// Before a merge tool run on `path`: it must be conflicted; what is there now.
+    fn watch_merge(&self, path: &str, config: &ToolConfig) -> Result<MergeWatch> {
         if !self.unmerged_paths()?.contains(path) {
             bail!("{path} has no conflict to merge");
         }
         let file = crate::paths::join_repo_path(self.workdir(), path);
         let orig = PathBuf::from(format!("{}.orig", file.display()));
-        let had_orig = orig.symlink_metadata().is_ok();
-        let before = temp_files(&file);
-        let tool_arg = format!("--tool={}", tool.name);
-        let args = ["mergetool", "-y", &tool_arg, "--", path];
-        let run = self.tool_git().run_raw(&args, None);
-        if let Err(GitError::Cancelled) = &run {
-            self.clean_up_cancelled_merge(&file, &before, &config);
-            return Err(GitError::Cancelled.into());
-        }
-        let out = run?;
+        Ok(MergeWatch {
+            path: path.to_string(),
+            had_orig: orig.symlink_metadata().is_ok(),
+            before: temp_files(&file),
+            orig,
+            file,
+            keep_temporaries: config.keep_temporaries(),
+        })
+    }
+
+    /// After a merge tool run that exited with `code`: resolved (git staged it), the
+    /// backup git kept, the conflicts left; an error when it failed and the file is still
+    /// conflicted.
+    fn merge_outcome(&self, w: &MergeWatch, tool: &Tool, code: i32, stderr: &str) -> Result<MergeToolResult> {
+        let path = &w.path;
         let left = self.unmerged_paths()?;
         let resolved = !left.contains(path);
-        if out.code != 0 && !resolved {
+        if code != 0 && !resolved {
             bail!(
                 "{}; {path} is still conflicted, as it was before",
-                tool_failure(&tool, &out.stderr, out.code)
+                tool_failure(tool, stderr, code)
             );
         }
-        let backup = (!had_orig && orig.symlink_metadata().is_ok()).then(|| format!("{path}.orig"));
+        let backup = (!w.had_orig && w.orig.symlink_metadata().is_ok()).then(|| format!("{path}.orig"));
         Ok(MergeToolResult {
-            path: path.to_string(),
-            tool: tool.name,
+            path: path.clone(),
+            tool: tool.name.clone(),
             resolved,
             backup,
             conflicts_left: left.len(),
         })
     }
 
-    /// After a cancelled `git mergetool` (its process group was stopped, so git could
-    /// not clean up): what git does when a tool fails — the file put back from git's
-    /// backup copy, the copies of the sides removed unless `mergetool.keepTemporaries`.
-    fn clean_up_cancelled_merge(&self, file: &Path, before: &BTreeSet<PathBuf>, config: &ToolConfig) {
-        let new: Vec<PathBuf> = temp_files(file).difference(before).cloned().collect();
-        let is = |p: &Path, role: &str| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().contains(&format!("_{role}_")))
-        };
-        let backups: Vec<&PathBuf> = new.iter().filter(|p| is(p, "BACKUP")).collect();
-        if let [backup] = backups.as_slice() {
-            let _ = std::fs::rename(backup, file);
-        }
-        if !config.keep_temporaries() {
-            for p in new.iter().filter(|p| !is(p, "BACKUP")) {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-    }
-
     /// The tools git knows for `kind` (`git <kind>tool --tool-help`, which checks which
     /// are installed — only when a chooser asks).
     pub fn tool_help(&self, kind: ToolKind) -> Result<ToolHelp> {
+        if let Some(dir) = self.git().env_var(ENV_TEST_TOOL_HELP) {
+            let file = Path::new(&dir).join(format!("{}.txt", kind.command()));
+            let text = std::fs::read_to_string(&file)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+            return Ok(ToolHelp::parse(&text));
+        }
         let out = self.git().run(&[kind.command(), "--tool-help"])?;
         Ok(ToolHelp::parse(&out.stdout_str()))
     }
+}
 
-    /// Writes `name` as the tool for `kind` (`diff.tool` / `merge.tool`) into `scope`'s
-    /// config file; returns what was written where.
-    pub fn set_tool(&self, kind: ToolKind, scope: ConfigScope, name: &str) -> Result<String> {
-        let name = name.trim();
-        if name.is_empty() || name.chars().any(char::is_whitespace) {
-            bail!("not a tool name: `{name}`");
+/// `git mergetool -y --tool=<name> -- <path>`.
+fn merge_tool_args(tool: &Tool, path: &str) -> Vec<String> {
+    vec![
+        "mergetool".into(),
+        "-y".into(),
+        format!("--tool={}", tool.name),
+        "--".into(),
+        path.to_string(),
+    ]
+}
+
+/// After a cancelled `git mergetool` (its process group was stopped, so git could not
+/// clean up): what git does when a tool fails — the file put back from git's backup
+/// copy, the copies of the sides removed unless `mergetool.keepTemporaries`.
+fn clean_up_cancelled_merge(w: &MergeWatch) {
+    let new: Vec<PathBuf> = temp_files(&w.file).difference(&w.before).cloned().collect();
+    let is = |p: &Path, role: &str| {
+        p.file_name()
+            .is_some_and(|n| n.to_string_lossy().contains(&format!("_{role}_")))
+    };
+    let backups: Vec<&PathBuf> = new.iter().filter(|p| is(p, "BACKUP")).collect();
+    if let [backup] = backups.as_slice() {
+        let _ = std::fs::rename(backup, &w.file);
+    }
+    if !w.keep_temporaries {
+        for p in new.iter().filter(|p| !is(p, "BACKUP")) {
+            let _ = std::fs::remove_file(p);
         }
-        self.config_set(scope, kind.key(), name)?;
-        let file = self
-            .config_path(scope)
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| match scope {
-                ConfigScope::Local => "this repository's config".into(),
-                ConfigScope::Global => "your global config".into(),
-            });
-        Ok(format!("{} = {name} written to {file}", kind.key()))
     }
 }
 
