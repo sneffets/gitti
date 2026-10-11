@@ -208,6 +208,16 @@ pub fn is_unrelated_histories(e: &anyhow::Error) -> bool {
 }
 
 /// `result` with git's unrelated-histories refusal turned into [`UnrelatedHistories`].
+/// A fast-forward-only merge of `rev` into `current` that git refused because the two
+/// diverged, in plain words: what blocks, that nothing changed, the ways out.
+pub fn not_fast_forward(current: &str, rev: &str) -> String {
+    format!(
+        "Not merged: {current} and {rev} have diverged (each has commits the other doesn't), \
+         so {current} can't simply move ahead to {rev} (--ff-only). Nothing was changed. Merge \
+         without --ff-only to create a merge commit, or rebase {current} onto {rev} first."
+    )
+}
+
 pub(crate) fn unrelated_as(
     result: Result<String>,
     retry: impl FnOnce() -> UnrelatedRetry,
@@ -575,6 +585,13 @@ impl Repo {
                 rev: rev.to_string(),
                 opts: opts.clone(),
             });
+            let out = match out {
+                Err(e) if opts.ff == FastForward::Only && crate::pull::is_not_fast_forward(&e) => {
+                    let current = self.head().ok().and_then(|h| h.branch).unwrap_or_else(|| "HEAD".into());
+                    Err(anyhow::anyhow!(not_fast_forward(&current, rev)))
+                }
+                other => other,
+            };
             self.local_changes_as(out, || BlockedOp::Merge { rev: rev.to_string(), opts: opts.clone() })
         })
     }
