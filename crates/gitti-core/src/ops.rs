@@ -828,11 +828,18 @@ impl Repo {
     /// their own), cleaned up like git's default `strip` ([`cleanup_message`]: comment
     /// lines such as `# Conflicts:` per `core.commentChar` / `core.commentString` go);
     /// `None` when there is none or nothing is left. git deletes both files when a commit
-    /// succeeds (also `commit -F`, as gitti commits) and on abort / `reset`.
+    /// succeeds (also `commit -F`, as gitti commits) and on abort / `reset`. A rebase with
+    /// the apply backend (`rebase --apply`) writes neither: its stopped patch's message
+    /// (`rebase-apply/final-commit`, what its Continue commits with) stands in — so the box
+    /// shows it as for the merge backend, and an edit of it is noticed (and refused,
+    /// [`Self::continue_with`]) instead of being dropped silently.
     pub fn prepared_message(&self) -> Option<String> {
         let dir = self.git_dir()?;
-        let merge = std::fs::read(dir.join("MERGE_MSG")).ok();
+        let mut merge = std::fs::read(dir.join("MERGE_MSG")).ok();
         let squash = std::fs::read(dir.join("SQUASH_MSG")).ok();
+        if merge.is_none() && squash.is_none() && dir.join("rebase-apply").join("rebasing").exists() {
+            merge = std::fs::read(dir.join("rebase-apply").join("final-commit")).ok();
+        }
         if merge.is_none() && squash.is_none() {
             return None;
         }
