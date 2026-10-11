@@ -52,6 +52,7 @@ mod lfs_fetch;
 mod lfs_health;
 mod op_cancel;
 mod op_output;
+mod op_stops;
 mod overwrite;
 pub mod reflog;
 mod remote_cmds;
@@ -1161,6 +1162,9 @@ impl App {
                             if let Some(u) = e.downcast_ref::<UnrelatedHistories>() {
                                 self.offer_unrelated_merge(u.clone());
                             }
+                            // Nothing to commit / refused for uncommitted changes: the
+                            // ways out (`app/op_stops.rs`).
+                            self.offer_ways_out(&e);
                             if let Some(lock) = stale {
                                 self.offer_stale_lock(&label, lock);
                             }
@@ -4207,6 +4211,14 @@ impl App {
                     }));
                 }),
             );
+            if gitti_core::skip::can_skip(self.repo_state) {
+                items.insert(
+                    0,
+                    PickItem::new(gitti_core::skip::SKIP_LABEL, "leave the stopped commit out", |app: &mut App| {
+                        app.skip_operation()
+                    }),
+                );
+            }
             if !clean {
                 items.insert(
                     0,

@@ -34,6 +34,7 @@ mod nav_keys;
 mod navigate;
 mod op_cancel;
 mod op_progress;
+mod op_stops;
 mod overlay_keys;
 mod picker;
 mod push_ui;
@@ -1942,6 +1943,9 @@ impl GittiApp {
                             }
                             this.op_failed(&label, format!("{e:#}"));
                             this.offer_unrelated_merge(&e, window, cx);
+                            // Nothing to commit / refused for uncommitted changes: the
+                            // ways out (`op_stops.rs`).
+                            this.offer_ways_out(&e, window, cx);
                             if let Some(lock) = stale {
                                 this.offer_stale_lock(&label, lock, window, cx);
                             }
@@ -3505,6 +3509,16 @@ impl GittiApp {
                         })
                         .on_click(cx.listener(|this, _, w, cx| this.continue_operation(w, cx))),
                 )
+                .when(gitti_core::skip::can_skip(self.repo_state), |d| {
+                    d.child(
+                        Button::new("op-skip")
+                            .probe("op-skip")
+                            .label("Skip")
+                            .small()
+                            .tooltip(gitti_core::skip::skip_explain(self.repo_state))
+                            .on_click(cx.listener(|this, _, w, cx| this.skip_operation(w, cx))),
+                    )
+                })
                 .child(
                     Button::new("op-abort")
                         .probe("op-abort")

@@ -4,6 +4,8 @@
 use anyhow::{Context as _, Result};
 use gix::ObjectId;
 
+use crate::local_changes::BlockedOp;
+
 use crate::{Repo, WorkingState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -523,17 +525,19 @@ impl Repo {
             a.push("--no-commit");
         }
         a.push(rev);
-        self.noting_fs_paths(|| self.out(&a))
+        let out = self.empty_pick_as(self.noting_fs_paths(|| self.out(&a)));
+        self.local_changes_as(out, || BlockedOp::CherryPick { rev: rev.to_string(), is_merge, opts })
     }
 
     pub fn revert(&self, rev: &str, is_merge: bool) -> Result<String> {
-        self.noting_fs_paths(|| {
+        let out = self.empty_pick_as(self.noting_fs_paths(|| {
             if is_merge {
                 self.out(&["revert", "--no-edit", "-m", "1", rev])
             } else {
                 self.out(&["revert", "--no-edit", rev])
             }
-        })
+        }));
+        self.local_changes_as(out, || BlockedOp::Revert { rev: rev.to_string(), is_merge })
     }
 
     pub fn reset(&self, rev: &str, mode: ResetMode) -> Result<String> {
@@ -554,14 +558,16 @@ impl Repo {
     pub fn merge_with(&self, rev: &str, opts: &MergeOptions) -> Result<String> {
         let args = opts.args(rev);
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        unrelated_as(self.noting_fs_paths(|| self.out(&args)), || UnrelatedRetry::Merge {
+        let out = unrelated_as(self.noting_fs_paths(|| self.out(&args)), || UnrelatedRetry::Merge {
             rev: rev.to_string(),
             opts: opts.clone(),
-        })
+        });
+        self.local_changes_as(out, || BlockedOp::Merge { rev: rev.to_string(), opts: opts.clone() })
     }
 
     pub fn rebase(&self, onto: &str) -> Result<String> {
-        self.out(&["rebase", onto])
+        let out = self.out(&["rebase", onto]);
+        self.local_changes_as(out, || BlockedOp::Rebase { onto: onto.to_string() })
     }
 
     pub fn state(&self) -> RepoState {
@@ -773,6 +779,10 @@ impl Repo {
     /// [`Self::continue_operation`]; the merge commit with Sign Off when `opts` says so
     /// (git's own `--continue` of the others takes no `--signoff`).
     pub fn continue_operation_with(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
+        self.empty_pick_as(self.continue_operation_raw(opts))
+    }
+
+    fn continue_operation_raw(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
         match self.state().command() {
             Some("merge") if opts.sign_off => {
                 self.out(&["commit", "--no-edit", "--cleanup=strip", "--signoff"])
@@ -814,6 +824,14 @@ impl Repo {
         let Some(message) = message.filter(|m| !m.trim().is_empty()) else {
             return self.continue_operation_with(opts);
         };
+        self.empty_pick_as(self.continue_with_message(message, opts))
+    }
+
+    fn continue_with_message(
+        &self,
+        message: &str,
+        opts: crate::commit_message::CommitOptions,
+    ) -> Result<String> {
         let dir = self.git_dir();
         let has = |name: &str| dir.as_ref().is_some_and(|d| d.join(name).exists());
         match self.state() {
@@ -1043,7 +1061,7 @@ impl Repo {
     }
 
     /// The stash list's commits, newest (`stash@{0}`) first.
-    fn stash_ids(&self) -> Result<Vec<ObjectId>> {
+    pub(crate) fn stash_ids(&self) -> Result<Vec<ObjectId>> {
         let in_process = || -> Result<Vec<ObjectId>> {
             let repo = self.gix()?;
             let Some(r) = repo.try_find_reference("refs/stash").map_err(crate::repo::gx)? else {

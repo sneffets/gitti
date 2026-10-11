@@ -424,7 +424,9 @@ impl Repo {
             }
             Err(e) => Err(e),
         };
-        unrelated_as(out, || UnrelatedRetry::Pull { args })
+        let retry = args.clone();
+        let out = unrelated_as(out, || UnrelatedRetry::Pull { args: retry });
+        self.local_changes_as(out, || crate::local_changes::BlockedOp::Pull { args })
     }
 
     /// `git pull <strategy> <remote> <branch>` into the current branch, `strategy` chosen

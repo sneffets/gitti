@@ -718,6 +718,14 @@ impl GittiApp {
                     |t, w, cx| t.git_op("Abort", w, cx, |r| r.abort_operation()),
                 ),
             );
+            if gitti_core::skip::can_skip(self.repo_state) {
+                items.insert(
+                    0,
+                    item(gitti_core::skip::SKIP_LABEL, "leave the stopped commit out", |t, w, cx| {
+                        t.skip_operation(w, cx)
+                    }),
+                );
+            }
             items.insert(
                 0,
                 item(

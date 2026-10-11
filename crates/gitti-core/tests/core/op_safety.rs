@@ -261,3 +261,124 @@ fn conflict_markers_left_are_found_before_stage_all() {
     let (title, ..) = gitti_core::stage_all::markers_prompt(&["a.txt".into()]);
     assert_eq!(title, "a.txt still contains conflict markers");
 }
+
+/// main already has feature's change of a.txt: picking it stops with nothing to commit.
+fn already_applied(p: &Path) {
+    fx::init(p);
+    let mut i = Import::new();
+    let base = i.commit("main", None, &[], "init", &[put("a.txt", "base\n")]);
+    i.commit("feature", Some(&base), &[], "feature change", &[put("a.txt", "same\n")]);
+    i.commit("main", None, &[], "same change", &[put("a.txt", "same\n")]);
+    i.run(p);
+    fx::checkout(p);
+}
+
+/// A pick that changes nothing: EmptyPick (pick and Continue), then Skip leaves it out.
+#[gitti_test::test]
+fn an_empty_pick_is_explained_and_skipped() {
+    use gitti_core::skip::EmptyPick;
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    already_applied(p);
+    let r = Repo::open(p).unwrap();
+    let e = r.cherry_pick("feature", false).unwrap_err();
+    let empty = e.downcast_ref::<EmptyPick>().unwrap_or_else(|| panic!("{e:#}"));
+    assert_eq!(empty.state, RepoState::CherryPicking);
+    assert!(empty.describe().contains("Skip leaves the commit out"), "{}", empty.describe());
+    assert!(format!("{e}").starts_with("Nothing to commit"), "{e}");
+    let e = r.continue_operation().unwrap_err();
+    assert!(e.is::<EmptyPick>(), "Continue: {e:#}");
+    r.skip_operation().unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    assert_eq!(fx::git(p, &["log", "--format=%s", "-1"]), "same change");
+}
+
+/// … or Commit Empty records it with its message (and author).
+#[gitti_test::test]
+fn an_empty_pick_can_be_committed_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    already_applied(p);
+    let r = Repo::open(p).unwrap();
+    assert!(r.cherry_pick("feature", false).is_err());
+    r.commit_empty_pick(None, Default::default()).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    assert_eq!(fx::git(p, &["log", "--format=%s", "-1"]), "feature change");
+    assert_eq!(fx::git(p, &["diff", "HEAD~1", "HEAD", "--stat"]), "", "an empty commit");
+}
+
+/// A conflicting pick: Skip throws its changes away and ends the single pick.
+#[gitti_test::test]
+fn skip_a_conflicting_pick() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    diverged(p);
+    fx::git_fails(p, &["cherry-pick", "feature"]);
+    let r = Repo::open(p).unwrap();
+    assert!(gitti_core::skip::can_skip(r.state()));
+    r.skip_operation().unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    assert_eq!(fx::git(p, &["status", "--porcelain"]), "");
+    assert_eq!(fs::read_to_string(p.join("a.txt")).unwrap(), "main\n");
+}
+
+/// main and feature: feature changes line 1 of b.txt (merges cleanly); b.txt has a local
+/// change on line 5.
+fn blocked_merge(p: &Path) {
+    fx::init(p);
+    let mut i = Import::new();
+    let base = i.commit("main", None, &[], "init", &[put("b.txt", "1\n2\n3\n4\n5\n")]);
+    i.commit("feature", Some(&base), &[], "feature change", &[put("b.txt", "ONE\n2\n3\n4\n5\n")]);
+    i.run(p);
+    fx::checkout(p);
+    fs::write(p.join("b.txt"), "1\n2\n3\n4\nFIVE\n").unwrap();
+}
+
+/// A merge refused because of local changes: LocalChanges names the file; Stash and
+/// Merge merges and puts the change back; Discard and Merge throws it away.
+#[gitti_test::test]
+fn a_merge_blocked_by_local_changes_and_its_ways_out() {
+    use gitti_core::local_changes::{LocalChanges, LocalChangesWay};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    blocked_merge(p);
+    let r = Repo::open(p).unwrap();
+    let e = r.merge("feature").unwrap_err();
+    let block = e.downcast_ref::<LocalChanges>().unwrap_or_else(|| panic!("{e:#}")).clone();
+    assert_eq!(block.local, ["b.txt"]);
+    assert!(!block.any_change);
+    assert!(format!("{e}").starts_with("Merge refused"), "{e}");
+    let out = r.resolve_local_changes(&block, LocalChangesWay::Stash).unwrap();
+    assert!(out.contains("put back"), "{out}");
+    assert_eq!(fs::read_to_string(p.join("b.txt")).unwrap(), "ONE\n2\n3\n4\nFIVE\n");
+    assert_eq!(r.stashes().unwrap().len(), 0, "the stash was popped");
+    // Again, discarding.
+    fx::git(p, &["reset", "-q", "--hard", "HEAD@{1}"]);
+    fs::write(p.join("b.txt"), "1\n2\n3\n4\nFIVE\n").unwrap();
+    let e = r.merge("feature").unwrap_err();
+    let block = e.downcast_ref::<LocalChanges>().unwrap().clone();
+    r.resolve_local_changes(&block, LocalChangesWay::Discard).unwrap();
+    assert_eq!(fs::read_to_string(p.join("b.txt")).unwrap(), "ONE\n2\n3\n4\n5\n");
+}
+
+/// A rebase refuses with any uncommitted change, without a list: the files come from
+/// `git status`; Stash and Rebase rebases and puts them back.
+#[gitti_test::test]
+fn a_rebase_blocked_by_local_changes() {
+    use gitti_core::local_changes::{LocalChanges, LocalChangesWay};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    diverged(p);
+    fs::write(p.join("b.txt"), "b local\n").unwrap();
+    let r = Repo::open(p).unwrap();
+    // main's a.txt conflicts with feature's: rebase main onto a branch without it.
+    fx::git(p, &["branch", "-q", "base", "main~1"]);
+    let e = r.rebase("base").unwrap_err();
+    let block = e.downcast_ref::<LocalChanges>().unwrap_or_else(|| panic!("{e:#}")).clone();
+    assert!(block.any_change);
+    assert_eq!(block.local, ["b.txt"]);
+    assert!(block.describe().contains("A rebase needs a working tree without uncommitted changes"));
+    r.resolve_local_changes(&block, LocalChangesWay::Stash).unwrap();
+    assert_eq!(r.state(), RepoState::Clean);
+    assert_eq!(fs::read_to_string(p.join("b.txt")).unwrap(), "b local\n");
+}

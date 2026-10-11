@@ -562,8 +562,9 @@ fn draw_toolbar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!(
-                " {} — ctrl-p: Continue / Abort ",
-                app.repo_state.label().to_uppercase()
+                " {} — ctrl-p: Continue / {}Abort ",
+                app.repo_state.label().to_uppercase(),
+                if gitti_core::skip::can_skip(app.repo_state) { "Skip / " } else { "" }
             ),
             Style::new().fg(p.accent_text).bg(p.warning),
         ));
