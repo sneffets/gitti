@@ -28,6 +28,30 @@ fn open(dir: &Path) -> Repo {
     repo
 }
 
+/// RM-01: a remote added (and fetched), its URL changed, renamed, removed — the
+/// configuration and the remote-tracking branches follow each step; `origin` untouched.
+/// Workflow: RM-01
+#[gitti_test::test]
+fn rm01_add_change_url_rename_and_remove_a_remote() {
+    use rm::manage_remotes as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = work(&tmp);
+    let s = wf::fixture(&dir);
+    let repo = open(&dir);
+    repo.add_remote(wf::ADDED, &wf::added_url(&dir)).unwrap();
+    repo.fetch_remote(wf::ADDED).unwrap();
+    wf::expect_added(&dir, &s).unwrap();
+    let names = |repo: &Repo| repo.remotes().unwrap().into_iter().map(|r| r.name).collect::<Vec<_>>();
+    assert_eq!(names(&repo), ["origin", wf::ADDED]);
+    repo.set_remote_url(wf::ADDED, &wf::moved_url(&dir)).unwrap();
+    wf::expect_url_changed(&dir, &s).unwrap();
+    repo.rename_remote(wf::ADDED, wf::RENAMED).unwrap();
+    wf::expect_renamed(&dir, &s).unwrap();
+    repo.remove_remote(wf::RENAMED).unwrap();
+    wf::expect_removed(&dir, &s).unwrap();
+    assert_eq!(names(&repo), ["origin"]);
+}
+
 /// RM-02, RM-03: Fetch brings what someone else pushed into `origin/main`, nothing else
 /// changes; Pull fast-forwards `main` to it and keeps the local edit.
 /// Workflow: RM-02, RM-03

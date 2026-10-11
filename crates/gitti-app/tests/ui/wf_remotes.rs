@@ -52,6 +52,7 @@ pub fn main() {
     }
     let base = gitti_core::paths::canonical(tmp.path());
     let tests: &[(&str, Scenario)] = &[
+        ("rm01_add_change_url_rename_and_remove_a_remote", rm01_add_change_url_rename_and_remove_a_remote),
         ("rm02_fetch_then_pull_fast_forwards", rm02_fetch_then_pull_fast_forwards),
         ("rm05_pull_merge_stops_on_the_conflict", rm05_pull_merge_stops_on_the_conflict),
         ("rm05_resolve_and_commit_the_stopped_pull", rm05_resolve_and_commit_the_stopped_pull),
@@ -65,6 +66,7 @@ pub fn main() {
     common::run(tests, |name| {
         let dir: PathBuf = base.join(name);
         match &name[..4] {
+            "rm01" => keep(rm::manage_remotes::fixture(&dir)),
             "rm02" => keep(rm::fetch_and_pull::fixture(&dir)),
             _ if name.contains("_stops_") => keep(rm::pull_conflict::fixture(&dir)),
             "rm05" => keep(rm::pull_conflict::fixture_stopped(&dir, false)),
@@ -130,6 +132,80 @@ fn resolve_a_and_mark_resolved(ui: &mut Ui, dir: &Path) {
     if modal_message(ui).contains("conflict markers") || !st.conflicted.is_empty() {
         fail!(ui, "Mark Resolved: dialog {:?}, conflicted {:?}, status {:?}", st.modal, st.conflicted, st.status);
     }
+}
+
+/// The sidebar shows remote `name`.
+fn has_remote(ui: &mut Ui, name: &str) -> bool {
+    let probe = format!("side:remote:{name}");
+    ui.frame().iter().any(|p| p.name == probe)
+}
+
+/// `remote`'s sidebar menu → `entry`; false (and the scenario failed) when it has none.
+fn remote_menu(ui: &mut Ui, remote: &str, entry: &str) -> bool {
+    testing::menu_labels();
+    ui.click_on(&format!("side:remote:{remote}"), MouseButton::Right);
+    let labels = testing::menu_labels();
+    if !labels.iter().any(|l| l == entry) {
+        fail!(ui, "{remote}'s menu has no {entry}: {labels:?}");
+        return false;
+    }
+    ui.step(&format!("menu:{entry}"));
+    true
+}
+
+/// RM-01: `origin`'s menu → Add Remote… (name, URL, fetch after adding) → `upstream` in
+/// the sidebar, fetched; its menu → Edit URL…, Rename… → `fork`; Remove… asks (a system
+/// prompt) and removes it.
+/// Workflow: RM-01
+fn rm01_add_change_url_rename_and_remove_a_remote(ui: &mut Ui) {
+    use rm::manage_remotes as wf;
+    let s: wf::Setup = setup();
+    let dir = ui.workdir();
+    if !remote_menu(ui, "origin", "Add Remote…") {
+        return;
+    }
+    match ui.modal() {
+        Some((t, _)) if t == "Add remote" => {}
+        other => return fail!(ui, "no Add remote dialog: {other:?}"),
+    }
+    ui.quick(&format!("field:0={}", wf::ADDED));
+    ui.quick(&format!("field:1={}", wf::added_url(&dir)));
+    ui.step("modalok");
+    no_error(ui, "Add remote");
+    if !has_remote(ui, wf::ADDED) {
+        ui.fail("upstream not in the sidebar after adding it".into());
+    }
+    expect(ui, wf::expect_added(&dir, &s));
+    if !remote_menu(ui, wf::ADDED, "Edit URL…") {
+        return;
+    }
+    ui.quick(&format!("field:0={}", wf::moved_url(&dir)));
+    ui.step("modalok");
+    no_error(ui, "Edit URL");
+    expect(ui, wf::expect_url_changed(&dir, &s));
+    if !remote_menu(ui, wf::ADDED, "Rename…") {
+        return;
+    }
+    ui.quick(&format!("field:0={}", wf::RENAMED));
+    ui.step("modalok");
+    no_error(ui, "Rename remote");
+    if has_remote(ui, wf::ADDED) || !has_remote(ui, wf::RENAMED) {
+        ui.fail("the sidebar after the rename: upstream still there or fork missing".into());
+    }
+    expect(ui, wf::expect_renamed(&dir, &s));
+    if !remote_menu(ui, wf::RENAMED, "Remove…") {
+        return;
+    }
+    if !ui.cx.has_pending_prompt() {
+        return fail!(ui, "no confirmation before removing: {:?}", ui.status());
+    }
+    ui.cx.simulate_prompt_answer("Remove");
+    ui.settle();
+    no_error(ui, "Remove remote");
+    if has_remote(ui, wf::RENAMED) {
+        ui.fail("fork still in the sidebar after removing it".into());
+    }
+    expect(ui, wf::expect_removed(&dir, &s));
 }
 
 /// RM-02, RM-03: Fetch → `origin/main` has their commit (one more row in the history),

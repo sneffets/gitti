@@ -1,5 +1,6 @@
 //! RM — remotes, each against a local bare `origin` next to the working repository
-//! ([`origin_of`]): fetch and pull what someone else pushed, pulls that stop on a conflict
+//! ([`origin_of`]): add / re-URL / rename / remove a remote, fetch and pull what someone
+//! else pushed, pulls that stop on a conflict
 //! or are refused, a force push whose lease no longer holds, pull from another remote and
 //! prune, delete a remote branch, cancel a fetch that hangs.
 //!
@@ -58,6 +59,40 @@ fn tracks_origin(fx: &mut Fixture, work: &Path) {
     fx.upstream("main", "origin");
 }
 
+/// `path` as a URL the user types (and git writes into the config unchanged): forward
+/// slashes on every system.
+pub fn url_of(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+/// The `url` and `fetch` values of remote `name` in `work`'s `.git/config` (read from the
+/// file, no git). `None` = no such remote.
+pub fn remote_config(work: &Path, name: &str) -> Option<(String, String)> {
+    let text = fs::read_to_string(work.join(".git/config")).ok()?;
+    let header = format!("[remote \"{name}\"]");
+    let (mut inside, mut found) = (false, false);
+    let (mut url, mut fetch) = (None, None);
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            inside = line == header;
+            found |= inside;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let value = value.trim().trim_matches('"').to_string();
+            match key.trim() {
+                "url" => url = Some(value),
+                "fetch" => fetch = Some(value),
+                _ => {}
+            }
+        }
+    }
+    found.then(|| (url.unwrap_or_default(), fetch.unwrap_or_default()))
+}
+
 /// The id `branch` has in the bare repository `bare` (from the files, no git): loose ref
 /// first, then `packed-refs`. `None` = no such branch.
 pub fn remote_ref(bare: &Path, branch: &str) -> Option<String> {
@@ -70,6 +105,145 @@ pub fn remote_ref(bare: &Path, branch: &str) -> Option<String> {
         let (id, name) = l.split_once(' ')?;
         (name == full).then(|| id.to_string())
     })
+}
+
+/// **RM-01 — add, re-URL, rename, remove a remote.** The user's `main` tracks `origin`
+/// (both at [`INIT`]). A second bare repository, `upstream` ([`remote_of`]`(work,
+/// "upstream")`), has [`FIX`] by [`OTHER`]. The user adds it as remote [`ADDED`] (with the
+/// fetch after adding), changes its URL to where it moved ([`moved_url`]), renames it to
+/// [`RENAMED`], and removes it.
+///
+/// Expected, after each step: the remote in `.git/config` with the URL typed and git's
+/// fetch refspec, `upstream/main` fetched = [`FIX`] ([`expect_added`]); the new URL, the
+/// refspec and the fetched branch kept ([`expect_url_changed`]); the section and the
+/// remote-tracking branch under the new name, nothing left under the old one
+/// ([`expect_renamed`]); the remote and its remote-tracking branches gone
+/// ([`expect_removed`]). `origin`, `origin/main` and `main` never change.
+pub mod manage_remotes {
+    use std::path::Path;
+
+    use super::*;
+    use crate::expect::{Checks, Expect};
+
+    /// The name the remote is added under.
+    pub const ADDED: &str = "upstream";
+    /// The name it is renamed to.
+    pub const RENAMED: &str = "fork";
+    /// The commit only `upstream` has.
+    pub const FIX: &str = "Upstream fix";
+
+    pub struct Setup {
+        pub init: String,
+        pub fix: String,
+    }
+
+    /// The URL the user adds the remote with: the `upstream` bare repository.
+    pub fn added_url(work: &Path) -> String {
+        url_of(&remote_of(work, "upstream"))
+    }
+
+    /// The URL it moved to (not fetched from: the step only changes the setting).
+    pub fn moved_url(work: &Path) -> String {
+        url_of(&remote_of(work, "moved"))
+    }
+
+    /// `main` = `origin/main` = [`INIT`], tracking `origin`; `upstream` (not a remote yet)
+    /// has [`FIX`]. Five git processes.
+    pub fn fixture(work: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        let i = init(&mut fx);
+        fx.branch("refs/remotes/origin/main", i);
+        tracks_origin(&mut fx, work);
+        let ids = fx.build(work);
+        let mut o = Fixture::new();
+        init(&mut o);
+        o.build_bare(&origin_of(work));
+        o.author(OTHER);
+        let f = o.commit("main", FIX, &[put("b.txt", &b(Some("b 5 upstream")))]);
+        let oids = o.build_bare(&remote_of(work, "upstream"));
+        Setup { init: ids[i].into(), fix: oids[f].into() }
+    }
+
+    /// The state after a step without the steps before it: the working repository with
+    /// remote `name` at `url` and `<name>/main` = [`FIX`] (the same commit as `upstream`'s)
+    /// — after adding: [`ADDED`], [`added_url`] ([`expect_added`]); after the URL change:
+    /// [`ADDED`], [`moved_url`]; after the rename: [`RENAMED`], [`moved_url`]. No remote
+    /// repository is written (re-URL, rename and remove don't reach it). Three git
+    /// processes.
+    pub fn fixture_after(work: &Path, name: &str, url: &str) -> Setup {
+        let mut fx = Fixture::new();
+        let i = init(&mut fx);
+        fx.branch("refs/remotes/origin/main", i);
+        tracks_origin(&mut fx, work);
+        fx.author(OTHER);
+        let tracking = format!("refs/remotes/{name}/main");
+        let f = fx.commit_from(&tracking, i, FIX, &[put("b.txt", &b(Some("b 5 upstream")))]);
+        fx.config(&format!(
+            "[remote \"{name}\"]\n\turl = {url}\n\tfetch = +refs/heads/*:refs/remotes/{name}/*\n"
+        ));
+        let ids = fx.build(work);
+        Setup { init: ids[i].into(), fix: ids[f].into() }
+    }
+
+    /// `origin` and `main` as the fixture wrote them.
+    fn origin_unchanged(k: &mut Checks, e: &Expect, work: &Path, s: &Setup) {
+        let origin = (url_of(&origin_of(work)), "+refs/heads/*:refs/remotes/origin/*".to_string());
+        k.eq("origin", remote_config(work, "origin"), Some(origin));
+        k.eq("origin/main", e.ref_id("refs/remotes/origin/main"), Some(s.init.clone()));
+        k.eq("main", e.ref_id("main"), Some(s.init.clone()));
+        k.eq("branch", e.branch().as_deref(), Some("main"));
+    }
+
+    /// Remote `name` at `url` with git's refspec, its `main` fetched at [`FIX`].
+    fn remote_at(k: &mut Checks, e: &Expect, work: &Path, s: &Setup, name: &str, url: String) {
+        let fetch = format!("+refs/heads/*:refs/remotes/{name}/*");
+        k.eq(&format!("remote {name}"), remote_config(work, name), Some((url, fetch)));
+        let tracking = format!("refs/remotes/{name}/main");
+        k.eq(&format!("{name}/main"), e.ref_id(&tracking), Some(s.fix.clone()));
+    }
+
+    /// After Add Remote (and its fetch): [`ADDED`] at [`added_url`], `upstream/main` =
+    /// [`FIX`]. No git process.
+    pub fn expect_added(work: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(work);
+        let mut k = Checks::new("RM-01 after adding the remote");
+        remote_at(&mut k, &e, work, s, ADDED, added_url(work));
+        origin_unchanged(&mut k, &e, work, s);
+        k.done()
+    }
+
+    /// After Edit URL: [`ADDED`] at [`moved_url`], the refspec and `upstream/main` kept.
+    /// No git process.
+    pub fn expect_url_changed(work: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(work);
+        let mut k = Checks::new("RM-01 after changing the URL");
+        remote_at(&mut k, &e, work, s, ADDED, moved_url(work));
+        origin_unchanged(&mut k, &e, work, s);
+        k.done()
+    }
+
+    /// After Rename: [`RENAMED`] at [`moved_url`] with its refspec, `fork/main` = [`FIX`];
+    /// no [`ADDED`] section, no `upstream/main`. No git process.
+    pub fn expect_renamed(work: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(work);
+        let mut k = Checks::new("RM-01 after renaming the remote");
+        remote_at(&mut k, &e, work, s, RENAMED, moved_url(work));
+        k.eq("remote upstream", remote_config(work, ADDED), None);
+        k.eq("upstream/main", e.ref_id("refs/remotes/upstream/main"), None);
+        origin_unchanged(&mut k, &e, work, s);
+        k.done()
+    }
+
+    /// After Remove: no [`RENAMED`] section, no `fork/main`. No git process.
+    pub fn expect_removed(work: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(work);
+        let mut k = Checks::new("RM-01 after removing the remote");
+        k.eq("remote fork", remote_config(work, RENAMED), None);
+        k.eq("fork/main", e.ref_id("refs/remotes/fork/main"), None);
+        k.eq("remote upstream", remote_config(work, ADDED), None);
+        origin_unchanged(&mut k, &e, work, s);
+        k.done()
+    }
 }
 
 /// **RM-02, RM-03 — someone else pushed: Fetch shows it, Pull fast-forwards.** The user's

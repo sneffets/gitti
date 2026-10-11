@@ -37,6 +37,81 @@ fn palette(query: &str) -> String {
     format!("press:ctrl-p;{}key:enter;", presses(query))
 }
 
+/// Sidebar top, then down to row 5: BRANCHES, main, WORKTREES, work, REMOTES, the first
+/// remote.
+fn first_remote() -> String {
+    format!("press:g;{}", "press:j;".repeat(5))
+}
+
+/// RM-01, adding: on the sidebar's `origin` (row 5) a asks for name and URL; ⏎ adds
+/// `upstream` and fetches it (gitty always does).
+/// Workflow: RM-01
+#[gitti_test::test]
+fn rm01_add_a_remote() {
+    use rm::manage_remotes as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = work(&tmp);
+    let s = wf::fixture(&d);
+    let script = format!(
+        "press:backtab;{top}state;press:a;dump;type:{added};press:tab;type:{url};key:enter;state;dump",
+        top = first_remote(),
+        added = wf::ADDED,
+        url = wf::added_url(&d),
+    );
+    let out = run(&tmp, &d, &script);
+    let (st, sc) = (states(&out), screens(&out));
+    assert!(st[0].contains("focus=Sidebar") && st[0].contains("side_cursor=5"), "{out}");
+    assert!(sc[0].contains("Add Remote") && sc[0].contains("URL"), "a opens Add Remote: {out}");
+    assert!(st[1].contains("status=\"Add remote — ") && !st[1].contains("ERROR"), "{out}");
+    assert!(sc[1].contains("upstream/main"), "added and fetched: {out}");
+    wf::expect_added(&d, &s).unwrap();
+}
+
+/// RM-01, re-URL and rename (from the state after adding): on `upstream` (row 7, after
+/// origin/main) m e changes its URL, m r renames it to `fork` — sorted before origin now.
+/// Workflow: RM-01
+#[gitti_test::test]
+fn rm01_change_the_url_and_rename_a_remote() {
+    use rm::manage_remotes as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = work(&tmp);
+    let s = wf::fixture_after(&d, wf::ADDED, &wf::added_url(&d));
+    wf::expect_added(&d, &s).unwrap();
+    let script = format!(
+        "press:backtab;{top}press:j;press:j;state;press:m;key:e;dump;press:ctrl-u;type:{moved};key:enter;state;\
+         press:m;key:r;press:ctrl-u;type:{renamed};key:enter;state;dump",
+        top = first_remote(),
+        moved = wf::moved_url(&d),
+        renamed = wf::RENAMED,
+    );
+    let out = run(&tmp, &d, &script);
+    let (st, sc) = (states(&out), screens(&out));
+    assert!(st[0].contains("side_cursor=7"), "{out}");
+    assert!(sc[0].contains("Edit URL of upstream") && sc[0].contains("work-upstream.git"), "{out}");
+    assert!(st[1].contains("status=\"Set URL — ") && !st[1].contains("ERROR"), "{out}");
+    assert!(!st[2].contains("ERROR"), "{out}");
+    assert!(sc[1].contains("fork/main") && !sc[1].contains("upstream"), "renamed: {out}");
+    // The rename keeps the new URL (checked here: the URL isn't on screen).
+    wf::expect_renamed(&d, &s).unwrap();
+}
+
+/// RM-01, removing (from the state after the rename): on `fork` (row 5) m d asks — the
+/// remote and its remote-tracking branches, nothing on the server — and y removes it.
+/// Workflow: RM-01
+#[gitti_test::test]
+fn rm01_remove_a_remote() {
+    use rm::manage_remotes as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = work(&tmp);
+    let s = wf::fixture_after(&d, wf::RENAMED, &wf::moved_url(&d));
+    wf::expect_renamed(&d, &s).unwrap();
+    let out = run(&tmp, &d, &format!("press:backtab;{}press:m;key:d;dump;key:y;state;dump", first_remote()));
+    let (st, sc) = (states(&out), screens(&out));
+    assert!(sc[0].contains("Remove remote fork") && sc[0].contains("nothing on the"), "asks first: {out}");
+    assert!(!st[0].contains("ERROR") && !sc[1].contains("fork"), "removed: {out}");
+    wf::expect_removed(&d, &s).unwrap();
+}
+
 /// RM-02, RM-03: f fetches (their commit in the history, `main` unchanged), p pulls
 /// (fast-forward, the local edit kept).
 /// Workflow: RM-02, RM-03

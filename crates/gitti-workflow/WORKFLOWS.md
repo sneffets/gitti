@@ -347,7 +347,7 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| RM-01 | Add / rename / re-URL / remove a remote | sidebar and dialogs | config as said | `repo_ops::branch_tag_stash_remote_ops` | ~`menus::menu_entries` | ~`keybar::the_keys_shown_run_their_entries` |
+| RM-01 | Add / rename / re-URL / remove a remote | sidebar and dialogs | config as said | `repo_ops::branch_tag_stash_remote_ops`, `wf_remotes::rm01_add_change_url_rename_and_remove_a_remote` | ~`menus::menu_entries`, `wf_remotes::rm01_add_change_url_rename_and_remove_a_remote` | ~`keybar::the_keys_shown_run_their_entries`, `wf_remotes::rm01_add_a_remote`, `wf_remotes::rm01_change_the_url_and_rename_a_remote`, `wf_remotes::rm01_remove_a_remote` |
 | RM-02 | Fetch | f / Fetch | remote-tracking branches updated; progress shown | ~`runner::fetch_streams_progress_meters`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `keys::remote_keys`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `remote::fetch_and_pull_with_a_local_remote`, `progress::fetch_progress_shows_while_fetching`, `wf_remotes::rm02_fetch_then_pull_fast_forwards`, `wf_remotes::rm02_fetch_shows_what_someone_pushed` |
 | RM-03 | Pull fast-forward | behind only | fast-forwarded | `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `keys::remote_keys`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` | `remote::fetch_and_pull_with_a_local_remote`, `wf_remotes::rm02_fetch_then_pull_fast_forwards` |
 | RM-04 | Pull diverged | no strategy configured | asks merge / rebase / ff-only; remembers on request; config wins | `pull::a_diverged_pull_asks_and_each_choice_does_what_it_says`, `pull::a_remembered_strategy_is_used_without_asking`, `pull::git_config_decides_over_the_remembered_strategy`, `pull::branch_rebase_config_decides_and_no_upstream_runs_no_pull`, `pull::pull_from_asks_and_takes_the_remembered_strategy` | `menus::pull_diverged` | `remote::diverged_pull_asks_for_a_strategy_and_remembers_it` |
@@ -508,7 +508,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | RB rebase | 9 | 4 | 1 | 1 |
 | RS reset / restore | 9 | 7 | 2 | 3 |
 | TG tags | 6 | 4 | 2 | 4 |
-| RM remotes | 18 | 17 | 15 | 17 |
+| RM remotes | 18 | 17 | 16 | 18 |
 | WT worktrees | 8 | 7 | 6 | 5 |
 | SM submodules | 8 | 7 | 7 | 5 |
 | LF LFS | 6 | 6 | 4 | 5 |
@@ -520,7 +520,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **259** | **163** | **90** | **106** |
+| **Total** | **259** | **163** | **91** | **107** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -534,4 +534,4 @@ at the step; once fixed, the assertion goes in and the entry goes.
 |---|---|---|
 | CP-13, RM-05, RM-06 (gitti, gitty) | A merge (also a pull: RM-05 / RM-06, whose first line is then the fetch's ref update, e.g. "git pull --no-rebase: 6bbdb2d..275804e main -> origin/main") that stops on a conflict is reported as "git merge --no-edit feat: git ended with exit code 1, without a message" (gitty: "Merge failed: …" with the error mark): git prints its `CONFLICT (content): Merge conflict in a.txt` lines on stdout, and the error is built from stderr only. The conflict itself is shown right (banner, conflicted list). | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there`, `wf_remotes::rm05_pull_merge_stops_on_the_conflict` (gitti and gitty) |
 | RM-07 (gitti, gitty) | A pull refused because of a local change shows git's raw message (B11 of the gaps list); the tests assert git's words (`rm::pull_dirty::REASON`). | `wf_remotes::rm07_pull_into_a_dirty_tree_is_refused` (gitty) |
-| RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21). | — |
+| RM-14, RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21), and a credential prompt from a real git can't be answered while its fetch blocks that thread. The prompt dialog itself is covered with the `ask:` step (`layout::askpass_key_icon`); the round trip in gitty. | — |
