@@ -2676,6 +2676,8 @@ fn draw_diff_row(
                     gitti_core::commit_files::placeholder_note(d).unwrap_or_default()
                 }
                 (Some(d), _) if d.binary => "Binary file".to_string(),
+                // Line-ending / BOM-only changes, above the hunks.
+                (Some(d), _) if let Some(note) = gitti_core::eol_note::eol_note(d) => note,
                 (Some(d), _) if d.hunks.is_empty() => {
                     "No content changes (mode / rename only)".to_string()
                 }

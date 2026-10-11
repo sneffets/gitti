@@ -27,6 +27,7 @@ pub mod desktop;
 pub mod diff;
 pub mod discard;
 pub mod editor;
+pub mod eol_note;
 pub mod error_mark;
 pub mod ext_tool;
 pub mod fd_limit;

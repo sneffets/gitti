@@ -400,3 +400,27 @@ fn a_stop_on_conflicts_is_said_plainly() {
     // Conflicted already: another failure is not taken for a stop.
     assert!(r.merge("feature").is_err());
 }
+
+/// A file whose only change is its line endings (CRLF → LF): the diff rows carry a note
+/// that says so, and staging its lines puts exactly those bytes into the index.
+#[gitti_test::test]
+fn line_ending_only_changes_are_said_and_stage() {
+    use gitti_core::patch::{PatchMode, Selection};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    fx::init(p);
+    let mut i = Import::new();
+    i.commit("main", None, &[], "init", &[put("w.txt", "a\r\nb\r\nc\r\n")]);
+    i.run(p);
+    fx::checkout(p);
+    fs::write(p.join("w.txt"), "a\nb\nc\r\n").unwrap();
+    let r = Repo::open(p).unwrap();
+    let d = unstaged(&r, "w.txt");
+    assert_eq!(
+        gitti_core::eol_note::eol_note(&d).as_deref(),
+        Some("2 lines differ only in their line ending (CRLF → LF)")
+    );
+    r.apply_selection(&d, &Selection::whole_hunk(0), PatchMode::Stage).unwrap();
+    let index = std::process::Command::new("git").current_dir(p).args(["cat-file", "blob", ":w.txt"]).output().unwrap();
+    assert_eq!(index.stdout, b"a\nb\nc\r\n");
+}

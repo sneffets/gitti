@@ -831,6 +831,9 @@ fn push_file(
     } else if diff.binary || diff.hunks.is_empty() {
         rows.push(DiffRow::Note { src, file });
         return;
+    } else if crate::eol_note::eol_note(diff).is_some() {
+        // Line-ending / BOM-only changes look like no change: said above the hunks.
+        rows.push(DiffRow::Note { src, file });
     }
     let ctx = exp.context(src, diff);
     let gaps = context::gaps(diff, ctx.map(|c| c.total()));
