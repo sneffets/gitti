@@ -1644,7 +1644,9 @@ impl GittiApp {
     }
 
     /// "Create Branch from Stash…": `git stash branch` — a new branch at the commit the
-    /// stash was made on, checked out, the stash applied (and dropped when that worked).
+    /// stash was made on, checked out, the stash applied (and dropped when that worked);
+    /// refused before anything changes when git would stop half-way
+    /// (`Repo::stash_branch_refusal`).
     pub(super) fn stash_branch_dialog(
         &mut self,
         stash: StashRef,
@@ -1653,10 +1655,7 @@ impl GittiApp {
     ) {
         let index = stash.index;
         let spec = ModalSpec::new(format!("Create branch from stash@{{{index}}}"))
-            .message(
-                "Checks the branch out at the commit the stash was made on and applies the \
-                 stash there (dropped when it applies cleanly).",
-            )
+            .message(gitti_core::stash::BRANCH_DIALOG_TEXT)
             .field("Branch name", "")
             .ok("Create Branch");
         self.open_modal(spec, window, cx, move |this, res, w, cx| {

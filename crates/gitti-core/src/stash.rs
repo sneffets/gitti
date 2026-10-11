@@ -48,6 +48,11 @@
 //!   checkout") — a half-applied stash, which a second apply can't finish. Apply / pop
 //!   check the untracked files first ([`Repo::stash_untracked_in_the_way`]) and refuse
 //!   before anything changes.
+//! - **Branch from a stash** (`git stash branch`): git creates and checks out the branch
+//!   at the stash's base first and only then applies the stash — an untracked file in the
+//!   way, local changes to the stash's files or an operation in progress would leave the
+//!   user on the new branch with the stash half applied (or a merge silently ended).
+//!   [`Repo::stash_branch_refusal`] checks them first.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -909,14 +914,20 @@ pub fn index_refusal(name: &str, pop: bool) -> String {
 pub const INDEX_NOT_RESTORED: &str =
     "git did not restore the index: the stash's staged changes are unstaged with the rest.";
 
+/// "x.txt" / "a, b, c, d, e and 2 more" for a refusal: the first few of `paths`.
+fn some_names(paths: &[String]) -> String {
+    const SHOWN: usize = 5;
+    let mut names = paths.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(", ");
+    if paths.len() > SHOWN {
+        names.push_str(&format!(" and {} more", paths.len() - SHOWN));
+    }
+    names
+}
+
 /// Why applying / popping `name` is refused: its untracked files `blocked` exist in the
 /// working tree.
 pub fn untracked_refusal(name: &str, blocked: &[String]) -> String {
-    const SHOWN: usize = 5;
-    let mut names = blocked.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(", ");
-    if blocked.len() > SHOWN {
-        names.push_str(&format!(" and {} more", blocked.len() - SHOWN));
-    }
+    let names = some_names(blocked);
     let (one, it, them) = if blocked.len() == 1 {
         ("an untracked file", "it exists", "it")
     } else {
@@ -927,6 +938,63 @@ pub fn untracked_refusal(name: &str, blocked: &[String]) -> String {
          git would apply the stash's other changes and then stop there, half applied. \
          Nothing was changed and the stash is kept: move, rename or delete {them}, then \
          apply the stash again."
+    )
+}
+
+/// The dialog text of Create Branch from Stash… (both apps).
+pub const BRANCH_DIALOG_TEXT: &str = "Creates a new branch at the commit the stash was made \
+     on, checks it out and applies the stash there with its index (what was staged is \
+     staged again), then drops the stash. Your uncommitted changes to other files come \
+     along to the new branch. When something is in the way (an untracked file of the \
+     stash, changes to the stash's files), nothing is done and you are told what.";
+
+/// Why Create Branch from Stash of `name` is refused during an operation (`what`: "a merge
+/// is in progress", …).
+pub fn branch_during_refusal(name: &str, state: crate::ops::RepoState, what: &str) -> String {
+    use crate::ops::RepoState;
+    let op = match state {
+        RepoState::Merging => "merge",
+        RepoState::Rebasing => "rebase",
+        RepoState::CherryPicking => "cherry-pick",
+        RepoState::Reverting => "revert",
+        RepoState::Clean => "operation",
+    };
+    format!(
+        "Not created: {what}. A branch from {name} is checked out right away, which would \
+         leave the {op} half done (git forgets a merge, cherry-pick or revert and carries \
+         its result along as uncommitted changes). Continue or abort the {op} first, then \
+         create the branch."
+    )
+}
+
+/// Why Create Branch from Stash of `name` is refused: its untracked files `blocked` would
+/// be in the way on the new branch.
+pub fn branch_untracked_refusal(name: &str, blocked: &[String]) -> String {
+    let names = some_names(blocked);
+    let (one, it, them) = if blocked.len() == 1 {
+        ("an untracked file", "it is", "it")
+    } else {
+        ("untracked files", "they are", "them")
+    };
+    format!(
+        "Not created: {name} brings back {one} — {names} — and {it} in the way: in the \
+         working tree now, or in the commit the stash was made on. git would create and \
+         check out the branch, apply the stash's other changes and then stop there, half \
+         applied. Nothing was changed and the stash is kept: move, rename or delete {them}, \
+         then create the branch again."
+    )
+}
+
+/// Why Create Branch from Stash of `name` is refused: the files `local` have uncommitted
+/// changes and the stash changes them too.
+pub fn branch_local_refusal(name: &str, local: &[String]) -> String {
+    let names = some_names(local);
+    let (files, have) = if local.len() == 1 { ("file", "has") } else { ("files", "have") };
+    format!(
+        "Not created: {name} changes the {files} {names}, which {have} uncommitted changes \
+         here. git would create and check out the branch and then refuse to apply the \
+         stash over them, leaving you on the new branch without it. Nothing was changed: \
+         commit, stash or discard those changes first, then create the branch again."
     )
 }
 
@@ -974,6 +1042,17 @@ impl Repo {
     /// them back. Read in-process (no git process); empty for a stash without untracked
     /// files.
     pub fn stash_untracked_in_the_way(&self, id: ObjectId) -> Result<Vec<String>> {
+        let mut blocked: Vec<String> = self
+            .stash_untracked_files(id)?
+            .into_iter()
+            .filter(|p| !self.existing_in_the_way(p).is_empty())
+            .collect();
+        blocked.sort();
+        Ok(blocked)
+    }
+
+    /// The files of stash commit `id`'s untracked part (its third parent; none without).
+    fn stash_untracked_files(&self, id: ObjectId) -> Result<Vec<String>> {
         let repo = self.gix()?;
         let commit = repo.find_commit(id).map_err(gx)?;
         let Some(third) = commit.parent_ids().nth(2) else {
@@ -981,24 +1060,133 @@ impl Repo {
         };
         let tree = repo.find_commit(third.detach()).map_err(gx)?.tree().map_err(gx)?;
         let files = tree.traverse().breadthfirst.files().map_err(gx)?;
+        Ok(files
+            .iter()
+            .filter(|e| !e.mode.is_tree())
+            .map(|f| f.filepath.to_str_lossy().into_owned())
+            .collect())
+    }
+
+    /// What in the working tree keeps git from writing the file `path`: the path itself
+    /// when anything exists there, and every folder of it that is a file (or a symlink).
+    fn existing_in_the_way(&self, path: &str) -> Vec<String> {
         let workdir = self.workdir();
-        let mut blocked = Vec::new();
-        for f in files.iter().filter(|e| !e.mode.is_tree()) {
-            let path = f.filepath.to_str_lossy();
-            let full = crate::paths::join_repo_path(workdir, &path);
-            // The file itself, or a file where one of its folders should be.
-            let in_the_way = full.symlink_metadata().is_ok()
-                || path.match_indices('/').any(|(at, _)| {
-                    crate::paths::join_repo_path(workdir, &path[..at])
-                        .symlink_metadata()
-                        .is_ok_and(|m| !m.is_dir())
-                });
-            if in_the_way {
-                blocked.push(path.into_owned());
+        let mut found = Vec::new();
+        if crate::paths::join_repo_path(workdir, path).symlink_metadata().is_ok() {
+            found.push(path.to_string());
+        }
+        for (at, _) in path.match_indices('/') {
+            if crate::paths::join_repo_path(workdir, &path[..at])
+                .symlink_metadata()
+                .is_ok_and(|m| !m.is_dir())
+            {
+                found.push(path[..at].to_string());
             }
         }
-        blocked.sort();
-        Ok(blocked)
+        found
+    }
+
+    /// Why Create Branch from Stash (`git stash branch <branch> <stash>`) is refused
+    /// (`None`: it can go ahead) — checked before anything changes. git first creates the
+    /// branch and checks it out at the commit the stash was made on, and only then
+    /// applies the stash (restoring its index); whatever stops the apply leaves the user
+    /// on the new branch with the stash half applied or not at all. Refused:
+    /// - while a merge / rebase / cherry-pick / revert is in progress — the checkout ends
+    ///   a merge (git forgets it) and carries its result along as uncommitted changes;
+    /// - when a branch of that name exists (git's refusal, in plain words);
+    /// - when an untracked file of the stash will be in the way after the checkout: it
+    ///   exists now and the checkout keeps it (a file HEAD tracks, the base commit lacks
+    ///   and that has no changes is removed by the checkout — no obstacle), or the base
+    ///   commit has it;
+    /// - when files the stash changes have uncommitted changes: git refuses to apply over
+    ///   them, after the checkout.
+    ///
+    /// One `git status` (tracked files only), one `git diff-tree` only when there are
+    /// uncommitted changes; the rest in-process.
+    pub fn stash_branch_refusal(
+        &self,
+        branch: &str,
+        stash: crate::ops::StashRef,
+    ) -> Result<Option<String>> {
+        let name = self.stash_name(stash)?;
+        let state = self.state();
+        if let Some(what) = crate::availability::in_progress(state) {
+            return Ok(Some(branch_during_refusal(&name, state, what)));
+        }
+        let repo = self.gix()?;
+        if repo.find_reference(format!("refs/heads/{branch}").as_str()).is_ok() {
+            return Ok(Some(format!(
+                "Not created: a branch named {branch} exists already. Choose another name — \
+                 {name} is still there."
+            )));
+        }
+        let commit = repo.find_commit(stash.id).map_err(gx)?;
+        let parents: Vec<ObjectId> = commit.parent_ids().map(|p| p.detach()).collect();
+        let Some(&base_id) = parents.first() else {
+            bail!("{name} is not a stash commit (it has no parent).");
+        };
+        let base = repo.find_commit(base_id).map_err(gx)?.tree().map_err(gx)?;
+        let head = repo
+            .head_commit()
+            .ok()
+            .and_then(|c| c.tree().ok());
+        let blob_in = |tree: Option<&gix::Tree<'_>>, path: &str| {
+            tree.and_then(|t| t.lookup_entry_by_path(path).ok().flatten())
+                .is_some_and(|e| !e.mode().is_tree())
+        };
+        // Tracked files with uncommitted changes (staged or not).
+        let status = self
+            .git()
+            .run(&["status", "--porcelain=v2", "-z", "--untracked-files=no"])?;
+        let mut dirty: Vec<String> = Vec::new();
+        for e in crate::status::parse_porcelain_v2(&status.stdout).entries {
+            dirty.extend(e.orig_path);
+            dirty.push(e.path);
+        }
+        // The untracked part: in the way after the checkout to the base commit?
+        let mut blocked = Vec::new();
+        for path in self.stash_untracked_files(stash.id)? {
+            let prefixes = path.match_indices('/').map(|(at, _)| &path[..at]);
+            let in_base = blob_in(Some(&base), &path) || prefixes.clone().any(|d| blob_in(Some(&base), d));
+            let stays = self.existing_in_the_way(&path).into_iter().any(|x| {
+                let removed = blob_in(head.as_ref(), &x)
+                    && !blob_in(Some(&base), &x)
+                    && !dirty.contains(&x);
+                !removed
+            });
+            if in_base || stays {
+                blocked.push(path);
+            }
+        }
+        if !blocked.is_empty() {
+            blocked.sort();
+            return Ok(Some(branch_untracked_refusal(&name, &blocked)));
+        }
+        if dirty.is_empty() {
+            return Ok(None);
+        }
+        // Files the stash changes: its working-tree and its index commit against its base.
+        let mut pairs = format!("{base_id} {}\n", stash.id);
+        if let Some(index) = parents.get(1) {
+            pairs.push_str(&format!("{base_id} {index}\n"));
+        }
+        let out = self.git().run_stdin(
+            &["diff-tree", "--stdin", "--no-commit-id", "-r", "-z", "--name-only", "--no-renames"],
+            Some(pairs.as_bytes()),
+        )?;
+        let mut local: Vec<String> = out
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .filter(|p| dirty.contains(p))
+            .collect();
+        local.sort();
+        local.dedup();
+        if local.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(branch_local_refusal(&name, &local)))
     }
 }
 

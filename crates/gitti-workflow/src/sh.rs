@@ -1,5 +1,6 @@
 //! SH — stash: stash and pop with its variants (untracked, `--all`, keep the index, only
-//! staged), pop restoring the index, a pop an untracked file blocks, dropping a stash
+//! staged), pop restoring the index, a pop an untracked file blocks, a branch from a stash
+//! that an untracked file or local changes block, dropping a stash
 //! (also after the list changed outside), an apply that conflicts, looking into a stash,
 //! stashing lines with odd bytes; and WT-08, a stash made in one worktree and popped in
 //! another. Stashes in fixtures come from [`Fixture::stash`] (no git process).
@@ -576,6 +577,118 @@ pub mod untracked_in_the_way {
         k.eq("stashes", e.stashes(), 0);
         k.eq("status", e.status_lines(), status(&[" M a.txt", "?? x-mine.txt", "?? x.txt"]));
         k.text("a.txt", e.file("a.txt").as_deref(), Some(A_STASHED));
+        k.text("x.txt", e.file("x.txt").as_deref(), Some(X_STASHED));
+        k.text("x-mine.txt", e.file("x-mine.txt").as_deref(), Some(X_HERE));
+        k.done()
+    }
+}
+
+/// **SH-20 — a branch from a stash, blocked.** `main` has `init` (`a.txt`, `b.txt`) and
+/// `later` (`b.txt` changed). A stash on `init` (made with `-u`) has `a.txt` changed
+/// ([`A_STASHED`]) and the untracked `x.txt` ([`X_STASHED`]); now an untracked `x.txt`
+/// exists ([`X_HERE`]). The user creates the branch [`BRANCH`] from the stash.
+///
+/// Expected ([`expect_refused`]): refused in plain words naming `x.txt`; nothing changed
+/// — still on `main` (git alone would have created and checked out the branch, applied
+/// `a.txt` and then stopped), no branch [`BRANCH`], `x.txt` still the user's, the stash
+/// kept. Once the user moved `x.txt` away ([`move_away`]) it works ([`expect_branched`]):
+/// on [`BRANCH`] at `init`, `a.txt` as stashed, `x.txt` back, the user's `x-mine.txt`
+/// kept, no stash.
+///
+/// With [`fixture_local`] there is no `x.txt` but `a.txt` has an uncommitted edit
+/// ([`A_LOCAL`]), which the stash changes too: git would check the branch out and then
+/// refuse to apply the stash. Expected ([`expect_refused_local`]): refused naming
+/// `a.txt`, nothing changed.
+pub mod branch_blocked {
+    use super::*;
+
+    pub const A_STASHED: &str = "a\nstashed\n";
+    pub const A_LOCAL: &str = "a\nedited here\n";
+    pub const B_LATER: &str = "b\nlater\n";
+    pub const X_STASHED: &str = "x from the stash\n";
+    pub const X_HERE: &str = "x, new here\n";
+    pub const STASH: &str = "On main: with x";
+    pub const BRANCH: &str = "from-stash";
+
+    pub struct Setup {
+        pub init: String,
+        pub later: String,
+    }
+
+    fn base(local: bool) -> (Fixture, Mark, Mark) {
+        let mut fx = Fixture::new();
+        let i = fx.commit("main", "init", &[put("a.txt", "a\n"), put("b.txt", "b\n")]);
+        let l = fx.commit("main", "later", &[put("b.txt", B_LATER)]);
+        fx.stash(i, STASH, &[], &[put("a.txt", A_STASHED)], &[put("x.txt", X_STASHED)]);
+        if local {
+            fx.write("a.txt", A_LOCAL);
+        } else {
+            fx.write("x.txt", X_HERE);
+        }
+        (fx, i, l)
+    }
+
+    /// See the module docs. Two git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let (fx, i, l) = base(false);
+        let ids = fx.build(dir);
+        Setup { init: ids[i].into(), later: ids[l].into() }
+    }
+
+    /// No `x.txt`, `a.txt` edited ([`A_LOCAL`]). Two git processes.
+    pub fn fixture_local(dir: &Path) -> Setup {
+        let (fx, i, l) = base(true);
+        let ids = fx.build(dir);
+        Setup { init: ids[i].into(), later: ids[l].into() }
+    }
+
+    /// The user moves `x.txt` to `x-mine.txt` (no git).
+    pub fn move_away(dir: &Path) {
+        std::fs::rename(dir.join("x.txt"), dir.join("x-mine.txt")).unwrap();
+    }
+
+    fn unchanged(dir: &Path, s: &Setup, k: &mut Checks) -> Expect {
+        let e = Expect::new(dir);
+        k.eq("branch", e.branch(), Some("main".to_string()));
+        k.eq("main", e.ref_id("main"), Some(s.later.clone()));
+        k.eq(BRANCH, e.ref_id(BRANCH), None);
+        k.eq("stash list", stash_messages(&e), vec![STASH.to_string()]);
+        k.text("b.txt", e.file("b.txt").as_deref(), Some(B_LATER));
+        e
+    }
+
+    /// After the refused branch: nothing changed, the stash kept. One git process.
+    pub fn expect_refused(dir: &Path, s: &Setup) -> Result<(), String> {
+        let mut k = Checks::new("SH-20 after the refused branch from the stash");
+        let e = unchanged(dir, s, &mut k);
+        k.eq("status", e.status_lines(), status(&["?? x.txt"]));
+        k.text("a.txt", e.file("a.txt").as_deref(), Some("a\n"));
+        k.text("x.txt", e.file("x.txt").as_deref(), Some(X_HERE));
+        k.done()
+    }
+
+    /// After the branch refused over the local edit of `a.txt`: nothing changed. One git
+    /// process.
+    pub fn expect_refused_local(dir: &Path, s: &Setup) -> Result<(), String> {
+        let mut k = Checks::new("SH-20 after the branch from the stash refused over local changes");
+        let e = unchanged(dir, s, &mut k);
+        k.eq("status", e.status_lines(), status(&[" M a.txt"]));
+        k.text("a.txt", e.file("a.txt").as_deref(), Some(A_LOCAL));
+        k.done()
+    }
+
+    /// After moving `x.txt` away and creating the branch: on [`BRANCH`] at `init`, the
+    /// stash's files back, `x-mine.txt` kept, no stash. One git process.
+    pub fn expect_branched(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("SH-20 after moving x.txt away and creating the branch");
+        k.eq("branch", e.branch(), Some(BRANCH.to_string()));
+        k.eq(BRANCH, e.ref_id(BRANCH), Some(s.init.clone()));
+        k.eq("main", e.ref_id("main"), Some(s.later.clone()));
+        k.eq("stashes", e.stashes(), 0);
+        k.eq("status", e.status_lines(), status(&[" M a.txt", "?? x-mine.txt", "?? x.txt"]));
+        k.text("a.txt", e.file("a.txt").as_deref(), Some(A_STASHED));
+        k.text("b.txt", e.file("b.txt").as_deref(), Some("b\n"));
         k.text("x.txt", e.file("x.txt").as_deref(), Some(X_STASHED));
         k.text("x-mine.txt", e.file("x-mine.txt").as_deref(), Some(X_HERE));
         k.done()

@@ -468,6 +468,101 @@ fn copy_with_y_and_open_in_editor_with_shift_o() {
     assert!(text.trim_end().ends_with("d.txt 3"), "{text}");
 }
 
+/// `A ← B ← C` (a.txt, a.txt changed, b.txt added), a terminal editor (named nvim) and
+/// the copies' folder: the repository, the editor, the folder, the tools' temp dir.
+#[cfg(unix)]
+fn versions_repo() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf, tempfile::TempDir) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "A", files: &[("a.txt", "one\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "B", files: &[("a.txt", "one\ntwo\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "C", files: &[("b.txt", "b\n")] },
+    ]);
+    let tools = tempfile::tempdir().unwrap();
+    let nvim = tools.path().join("nvim");
+    std::fs::write(&nvim, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&nvim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let versions = tools.path().join("versions");
+    (dir, nvim, versions, tools)
+}
+
+/// Runs `script` in [`versions_repo`]'s repository with its editor and copies' folder.
+#[cfg(unix)]
+fn versions_run(d: &std::path::Path, nvim: &std::path::Path, versions: &std::path::Path, script: &str) -> String {
+    let config = tempfile::tempdir().unwrap();
+    gitty_env(
+        d,
+        config.path(),
+        "120x30",
+        &[("VISUAL", nvim.to_str().unwrap()), ("EDITOR", ""), ("GITTI_VERSIONS_DIR", versions.to_str().unwrap())],
+        script,
+    )
+}
+
+/// That `file` (a read-only copy) holds `want` and went to the terminal editor `nvim`
+/// (the script runner runs it without a terminal), which then finished (`state`).
+#[cfg(unix)]
+fn opened_in_terminal(out: &str, state: &str, nvim: &std::path::Path, file: &std::path::Path, want: &str) {
+    assert_eq!(std::fs::read_to_string(file).ok().as_deref(), Some(want), "{}: {out}", file.display());
+    assert!(std::fs::metadata(file).unwrap().permissions().readonly(), "{}", file.display());
+    assert!(out.contains(&format!("(terminal editor: {} +", nvim.display())), "{out}");
+    assert!(out.contains(&format!(" {})", file.display())), "{}: {out}", file.display());
+    assert!(state.contains(&format!("{} finished", nvim.display())), "{out}");
+}
+
+#[cfg(unix)]
+const OLD_VERSION: &str = "key:ctrl-p;type:open old version;key:enter;";
+
+/// Open This Version (`V`) and Open Old Version (palette) of a commit's file: a read-only
+/// copy of that version, handed to a terminal editor with the terminal; in the working
+/// directory the palette says where it works instead.
+#[cfg(unix)]
+#[gitti_test::test]
+fn open_this_and_old_version_of_a_commit_file() {
+    let (dir, nvim, versions, _tools) = versions_repo();
+    let d = dir.path();
+    let [a, b] = ["main~2", "main~1"].map(|r| rev(d, r));
+    // Rows: 0 working directory, 1 C, 2 B, 3 A.
+    let out = versions_run(
+        d,
+        &nvim,
+        &versions,
+        &format!(
+            "key:ctrl-p;type:open this version;key:enter;state;\
+             press:j;press:j;key:enter;key:];key:V;state;{OLD_VERSION}state"
+        ),
+    );
+    let name = d.file_name().unwrap().to_str().unwrap();
+    let copy = |id: &str| versions.join(name).join(&id[..10]).join("a.txt");
+    let st = states(&out);
+    assert!(st[0].contains("not available: no commit's file shown"), "{out}");
+    opened_in_terminal(&out, st[1], &nvim, &copy(&b), "one\ntwo\n");
+    opened_in_terminal(&out, st[2], &nvim, &copy(&a), "one\n");
+}
+
+/// Open This / Old Version in a comparison (base C, A selected): the selected side's file
+/// (A's a.txt) and the base's (C's); b.txt is deleted in it — no new version, said.
+#[cfg(unix)]
+#[gitti_test::test]
+fn open_this_and_old_version_in_a_comparison() {
+    let (dir, nvim, versions, _tools) = versions_repo();
+    let d = dir.path();
+    let [a, c] = ["main~2", "main"].map(|r| rev(d, r));
+    let out = versions_run(
+        d,
+        &nvim,
+        &versions,
+        &format!("press:j;press:C;press:G;key:enter;key:V;state;{OLD_VERSION}state;key:];key:V;state"),
+    );
+    let name = d.file_name().unwrap().to_str().unwrap();
+    let copy = |id: &str| versions.join(name).join(&id[..10]).join("a.txt");
+    let st = states(&out);
+    assert!(st[0].contains(&format!("base={},shown={}..{}", &c[..7], &c[..7], &a[..7])), "{out}");
+    opened_in_terminal(&out, st[0], &nvim, &copy(&a), "one\n");
+    opened_in_terminal(&out, st[1], &nvim, &copy(&c), "one\ntwo\n");
+    assert!(st[2].contains("b.txt is deleted here: open the old version instead"), "{out}");
+}
+
 /// `A ← B ← C ← D` on main, `side` = `D ← S`, a local change to `one.rs`. Rows:
 /// 0 worktree, 1 S, 2 D, 3 C, 4 B.
 fn compare_repo() -> tempfile::TempDir {

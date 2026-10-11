@@ -213,11 +213,12 @@ working tree or the index while the app shows an older state.
 | SH-12 | Pop that conflicts, abort | pop over a conflicting commit; Abort | files back to HEAD; the stash entry stays | `conflicts::stash_pop_conflict_abort_keeps_the_stash` | `layout::stash_conflict_abort` | `merge_editor::stash_pop_conflict_aborts_from_the_palette_and_keeps_the_stash` |
 | SH-13 | Apply that conflicts, resolve | apply conflicts; take the stash's side | resolved, no operation state left | `repo_ops::conflict_from_stash_apply`, `wf_stash::sh13_apply_conflicts_take_the_stash_side` | `wf_stash::sh13_apply_conflicts_take_the_stash_side` | `wf_stash::sh13_apply_stops_on_a_conflict`, `wf_stash::sh13_take_the_stash_side` |
 | SH-14 | Branch from a stash | Create Branch from Stash… | branch at the stash's base, stash applied and dropped | `sidebar_ops::stash_branch_checks_out_a_branch_with_the_stash` | `menus::sidebar_menus` | `menus::sidebar_menus_drop_a_stash_and_the_stashes_header` |
-| SH-15 | Look into a stash | select the stash row | its diff incl. untracked files; open a version | `history_diffs::stash_rows_in_history_and_stash_diff`, `navigate::stash_versions_include_untracked_files` | `wf_stash::sh15_look_into_a_stash` | ~`wf_stash::sh15_look_into_a_stash` (no Open This Version in gitty) |
+| SH-15 | Look into a stash | select the stash row | its diff incl. untracked files; open a version | `history_diffs::stash_rows_in_history_and_stash_diff`, `navigate::stash_versions_include_untracked_files` | `wf_stash::sh15_look_into_a_stash` | `wf_stash::sh15_look_into_a_stash` |
 | SH-16 | Stash while a merge is in progress | merge with conflicts resolved; Stash Changes | refused with the reason (a stash would end the merge) | `op_safety::no_stash_during_a_merge` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
 | SH-17 | Pop with the index restored | staged + unstaged stashed; Pop with Index… (asks, naming what is staged again) | staged part staged again (`--index`); when it doesn't apply to the index git refuses: nothing changed, said with the ways out | `wf_stash::sh17_pop_restoring_the_index`, `wf_stash::sh17_pop_with_the_index_refused_changes_nothing`, `wf_stash::sh17_pop_with_the_index_that_conflicts_says_the_index_is_not_restored`, `wf_stash::sh17_nothing_staged_in_the_stash_is_said` | `wf_stash::sh17_pop_with_index_from_the_stash_menu`, `wf_stash::sh17_pop_with_index_refused` | `wf_stash::sh17_pop_with_index_from_the_stash_menu`, `wf_stash::sh17_pop_with_index_refused` |
 | SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | `op_safety::stash_commands_act_on_the_chosen_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` |
 | SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | `wf_stash::sh19_pop_blocked_by_an_untracked_file`, `wf_stash::sh19_what_is_in_the_way` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` |
+| SH-20 | Branch from a stash, blocked | the stash has `x`; an untracked `x` exists (or a file the stash changes has local changes); Create Branch from Stash… | refused in plain words before anything changes (git alone would create and check out the branch, then stop half applied); still on `main`, no new branch, stash kept; with `x` moved away the branch is created at the stash's base | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file`, `wf_stash::sh20_branch_from_a_stash_blocked_by_local_changes`, `wf_stash::sh20_what_blocks_a_branch_from_a_stash` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` |
 
 ## BR — Branches
 
@@ -507,7 +508,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | ST staging | 21 | 16 | 19 | 15 |
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
-| SH stash | 19 | 18 | 17 | 17 |
+| SH stash | 20 | 19 | 18 | 19 |
 | BR branches | 19 | 19 | 19 | 18 |
 | MG merge | 26 | 25 | 21 | 22 |
 | CP cherry-pick | 18 | 16 | 16 | 16 |
@@ -527,7 +528,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 4 | 2 | 1 |
 | NU non-UTF-8 | 5 | 5 | 2 | 2 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **266** | **242** | **209** | **209** |
+| **Total** | **267** | **243** | **210** | **211** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

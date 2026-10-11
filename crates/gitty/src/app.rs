@@ -72,6 +72,7 @@ mod submodules;
 mod subtrees;
 mod terminal;
 mod unavailable;
+mod versions;
 mod view_anchor;
 mod watching;
 mod worktrees;
@@ -102,6 +103,15 @@ pub enum Msg {
     TerminalOpened(Result<String, String>, std::path::PathBuf),
     /// "Get Signing Keys from GitHub…": a lookup or an import finished.
     SigningKeys(Box<signing_keys::KeysMsg>),
+    /// "Open This / Old Version in Editor": the read-only copy is written (or why not),
+    /// of that version, to open at that line (`app/versions.rs`).
+    VersionWritten(
+        Box<(
+            Result<gitti_core::version_file::VersionCopy, String>,
+            gitti_core::version_file::VersionTarget,
+            u32,
+        )>,
+    ),
     OpDone {
         label: String,
         result: Result<String>,
@@ -1160,6 +1170,11 @@ impl App {
             Msg::SigningKeys(m) => self.signing_keys_msg(*m),
             Msg::SignersSet(result) => self.signers_set(result),
             Msg::TerminalOpened(result, dir) => self.terminal_opened(result, dir),
+            Msg::VersionWritten(w) => {
+                self.loads_in_flight -= 1;
+                let (copy, target, line) = *w;
+                self.version_written(copy, target, line)
+            }
             Msg::OpDone {
                 label,
                 result,
@@ -4148,6 +4163,7 @@ impl App {
                     Vec::new()
                 };
                 items.extend(self.restore_file_items(src, file));
+                items.extend(self.version_items(src, file));
                 items.extend(self.lfs_menu_items());
                 items.extend(self.external_diff_item(src, file));
                 items.push(MenuItem::new("Copy Path", move |app| app.copy(path)));
@@ -4379,6 +4395,7 @@ impl App {
         items.extend(self.reflog_palette_items());
         items.extend(self.repo_palette_items());
         items.extend(self.ext_tool_palette_items());
+        items.extend(self.version_palette_items());
         items.extend(self.terminal_palette_items());
         items.extend(self.submodule_palette_items());
         items.extend(self.lfs_palette_items());
@@ -4589,12 +4606,19 @@ impl App {
     /// Opens working-tree file `path` at `line` (1-based) in the editor; terminal editors
     /// run with the terminal handed over (the main loop does it).
     pub fn open_path_in_editor(&mut self, path: &str, line: u32) {
-        let workdir = self.repo.workdir().to_path_buf();
-        let full = gitti_core::paths::join_repo_path(&workdir, path);
+        let full = gitti_core::paths::join_repo_path(self.repo.workdir(), path);
         if !full.exists() {
             self.set_error(format!("{path} does not exist in the working tree"));
             return;
         }
+        self.open_file_in_editor(&full, line, format!("Opened {path}:{line}"));
+    }
+
+    /// Opens file `full` at `line` in the editor (setting `editor_command`, else `$VISUAL`
+    /// / `$EDITOR`, else the system default); `info` is the status once a GUI editor
+    /// started. A terminal editor runs with the terminal handed over (the main loop).
+    pub fn open_file_in_editor(&mut self, full: &std::path::Path, line: u32, info: String) {
+        let workdir = self.repo.workdir().to_path_buf();
         let mut template = self.settings.editor_command.clone();
         if template.trim().is_empty() {
             // A set but empty `$VISUAL` counts as unset (`VISUAL= gitty` must not hide
@@ -4602,12 +4626,12 @@ impl App {
             let var = |name| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
             template = var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_default();
         }
-        match gitti_core::editor::editor_argv(&template, &full, line) {
+        match gitti_core::editor::editor_argv(&template, full, line) {
             Ok(argv) if gitti_core::editor::is_terminal_editor(&argv) => {
                 self.run_in_terminal = Some((argv, workdir));
             }
             Ok(argv) => match gitti_core::editor::spawn_editor(&argv, &workdir) {
-                Ok(()) => self.set_info(format!("Opened {path}:{line}")),
+                Ok(()) => self.set_info(info),
                 Err(e) => self.set_error(format!("{e:#}")),
             },
             Err(e) => self.set_error(format!("{e:#}")),

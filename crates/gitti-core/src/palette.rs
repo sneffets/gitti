@@ -187,8 +187,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     ),
     both("ShowContaining", "Branches and Tags Containing Selected Commit…"),
     both("RestoreFromCommit", "Restore File or Folder from Selected Commit…"),
-    gitti("OpenThisVersion", "gitty gap"),
-    gitti("OpenOldVersion", "gitty gap"),
+    both("OpenThisVersion", crate::version_file::THIS_LABEL),
+    both("OpenOldVersion", crate::version_file::OLD_LABEL),
     // On the file at the diff cursor (`ext_tool`).
     both("OpenExternalDiffTool", "Open in External Diff Tool"),
     both("OpenExternalMergeTool", "Open in External Merge Tool"),

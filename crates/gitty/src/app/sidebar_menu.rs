@@ -643,7 +643,8 @@ impl App {
                     r.stash_branch(&name, stash)
                 })
             },
-        ));
+        )
+        .with_note(gitti_core::stash::BRANCH_DIALOG_TEXT));
     }
 }
 

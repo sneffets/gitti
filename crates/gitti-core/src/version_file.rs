@@ -163,6 +163,34 @@ fn remove_tree(dir: &Path) -> std::io::Result<()> {
     }
 }
 
+/// The palette's entries (both apps).
+pub const THIS_LABEL: &str = "Open This Version in Editor (read-only copy)";
+pub const OLD_LABEL: &str = "Open Old Version in Editor (read-only copy)";
+
+/// Why there is no version to open: the shown diff is the working directory's.
+pub const NOT_HERE: &str = "Open This Version works in commit, stash and comparison views; the \
+     working directory's files open with Open in Editor";
+
+/// The diff menu's entry for `side` (`old`: the old side), naming the commit the copy
+/// comes from: "Open This Version in Editor — read-only copy at 1a2b3c4".
+pub fn menu_label(side: &VersionSide, old: bool) -> String {
+    format!(
+        "Open {} Version in Editor — read-only copy at {}",
+        if old { "Old" } else { "This" },
+        side.commit.to_hex_with_len(7)
+    )
+}
+
+/// The status line once `copy` of `t` was handed to the editor.
+pub fn opened_message(t: &VersionTarget, copy: &VersionCopy) -> String {
+    format!(
+        "Opened a read-only copy of {} at {}: {}",
+        t.path,
+        t.commit.to_hex_with_len(7),
+        copy.path.display()
+    )
+}
+
 /// The commit holding one side of a diff view's files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VersionSide {

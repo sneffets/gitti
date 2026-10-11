@@ -1146,7 +1146,12 @@ impl Repo {
 
     /// `git stash branch <branch> stash@{N}`: a new branch at the commit the stash was
     /// made on, checked out, the stash applied there and dropped when that worked.
+    /// Refused before anything changes when git would stop half-way
+    /// ([`Self::stash_branch_refusal`]).
     pub fn stash_branch(&self, branch: &str, stash: StashRef) -> Result<String> {
+        if let Some(why) = self.stash_branch_refusal(branch, stash)? {
+            anyhow::bail!(why);
+        }
         let name = self.stash_name(stash)?;
         self.out(&["stash", "branch", branch, &name])
     }

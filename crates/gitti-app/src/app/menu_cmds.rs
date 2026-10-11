@@ -9,12 +9,12 @@ use std::rc::Rc;
 
 use gitti_core::RefKind;
 use gitti_core::ops::StashFlags;
-use gitti_core::version_file::{DiffSource, VersionSide, version_sides, version_target};
+use gitti_core::version_file::{self, DiffSource, VersionSide, version_sides, version_target};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 
 use super::picker::PickerItem;
-use super::{Detail, GittiApp, short};
+use super::{Detail, GittiApp};
 use crate::rows::Src;
 use crate::{
     CherryPickCommit, DeleteBranchMenu, DropLatestStash, DropStash, EditCommitMessage, GetSigningKeys,
@@ -176,7 +176,7 @@ impl GittiApp {
             .act(&ToggleSidebar),
             entry("Toggle Full Screen", "", |_, w, _| w.toggle_fullscreen()),
             entry(
-                "Open This Version in Editor (read-only copy)",
+                version_file::THIS_LABEL,
                 "file at the diff cursor",
                 |t, w, cx| {
                     let row = t.diff_cursor_row();
@@ -184,7 +184,7 @@ impl GittiApp {
                 },
             ),
             entry(
-                "Open Old Version in Editor (read-only copy)",
+                version_file::OLD_LABEL,
                 "file at the diff cursor",
                 |t, w, cx| {
                     let row = t.diff_cursor_row();
@@ -430,18 +430,8 @@ impl GittiApp {
             return (None, None);
         };
         (
-            new.map(|s| {
-                format!(
-                    "Open This Version in Editor — read-only copy at {}",
-                    short(&s.commit)
-                )
-            }),
-            old.map(|s| {
-                format!(
-                    "Open Old Version in Editor — read-only copy at {}",
-                    short(&s.commit)
-                )
-            }),
+            new.map(|s| version_file::menu_label(&s, false)),
+            old.map(|s| version_file::menu_label(&s, true)),
         )
     }
 
@@ -459,10 +449,7 @@ impl GittiApp {
             return;
         };
         let Some((new_side, old_side)) = self.version_sides() else {
-            self.set_info(
-                "Open This Version works in commit, stash and comparison views; the working \
-                 directory's files open with Open in Editor",
-            );
+            self.set_info(version_file::NOT_HERE);
             cx.notify();
             return;
         };
@@ -498,7 +485,6 @@ impl GittiApp {
         cx.spawn_in(window, async move |this, cx| {
             let result = job.await;
             this.update(cx, |this, cx| {
-                let at = short(&target.commit);
                 match result.and_then(|copy| {
                     super::open_editor(
                         &this.settings.editor_command,
@@ -508,11 +494,7 @@ impl GittiApp {
                     )?;
                     Ok(copy)
                 }) {
-                    Ok(copy) => this.set_info(format!(
-                        "Opened a read-only copy of {} at {at}: {}",
-                        target.path,
-                        copy.path.display()
-                    )),
+                    Ok(copy) => this.set_info(version_file::opened_message(&target, &copy)),
                     Err(e) => this.set_error(format!("{e:#}")),
                 }
                 cx.notify();

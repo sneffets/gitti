@@ -4144,6 +4144,8 @@ Diff / working directory
                   the message, file header: its path); shift-drag selects text natively
   O               open the file at this line in the editor (setting editor_command,
                   shared with gitti; else $VISUAL / $EDITOR)
+  V               in a commit, stash or comparison: open the file as it is there — a
+                  read-only copy — at this line in the editor (m: the old version too)
   ← →  h l        scroll long lines horizontally
   esc             clear selection, end comparing, then back to the commit list
 

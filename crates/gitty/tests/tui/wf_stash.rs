@@ -187,18 +187,57 @@ fn sh13_take_the_stash_side() {
 }
 
 /// SH-15: selecting the stash's row shows its diff: the changed a.txt and the untracked
-/// n.txt it holds; nothing changes. (Opening a version is a gitty gap.)
+/// n.txt it holds; Open This Version opens the stash's version of each (a.txt with `V`,
+/// n.txt from its menu, `m V`) as a read-only copy in the editor; n.txt has no old
+/// version (said, greyed); nothing changes.
 /// Workflow: SH-15
 #[gitti_test::test]
 fn sh15_look_into_a_stash() {
     use sh::look_into as wf;
     let tmp = tempfile::tempdir().unwrap();
-    let d = tmp.path();
+    let d = &tmp.path().join("work");
     let s = wf::fixture(d);
-    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "160x45", "press:backtab;key:G;wait;dump");
-    let sc = screens(&out)[0];
-    assert!(sc.contains(&format!("Stash  {}", s.stash)), "{out}");
-    assert!(sc.contains("M a.txt") && sc.contains("A n.txt") && sc.contains("+ new in the stash"), "{out}");
+    let versions = tmp.path().join("versions");
+    let log = tmp.path().join("editor.log");
+    let visual = fake_editor(tmp.path(), &log);
+    let config = tmp.path().join("config");
+    let out = gitty_env(
+        d,
+        &config,
+        "160x45",
+        &[("VISUAL", &visual), ("EDITOR", ""), ("GITTI_VERSIONS_DIR", versions.to_str().unwrap())],
+        "press:backtab;key:G;wait;dump;press:tab;key:enter;key:];key:V;state;\
+         key:];key:m;dump;key:V;state;key:ctrl-p;type:open old version;key:enter;state",
+    );
+    let sc = screens(&out);
+    assert!(sc[0].contains(&format!("Stash  {}", s.stash)), "{out}");
+    assert!(sc[0].contains("M a.txt") && sc[0].contains("A n.txt") && sc[0].contains("+ new in the stash"), "{out}");
+    let short = &s.stash[..7];
+    let copies = versions.join("work").join(&s.stash[..10]);
+    let st = states(&out);
+    for (n, (path, want)) in [("a.txt", wf::A_STASHED), ("n.txt", wf::N)].into_iter().enumerate() {
+        let copy = copies.join(path);
+        assert!(
+            status_of(st[n]).starts_with(&format!("Opened a read-only copy of {path} at {short}: ")),
+            "{out}"
+        );
+        assert_eq!(std::fs::read_to_string(&copy).ok().as_deref(), Some(want), "{out}");
+        assert!(std::fs::metadata(&copy).unwrap().permissions().readonly());
+    }
+    // n.txt's menu: this version with its key, the old one greyed with the reason.
+    assert!(sc[1].contains(&format!("Open This Version in Editor — read-only copy at {short}")), "{out}");
+    assert!(status_of(st[2]).contains("n.txt is new here: there is no old version"), "{out}");
+    // The editor (started detached) got both copies.
+    let mut text = String::new();
+    for _ in 0..50 {
+        text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.lines().count() >= 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let canon = |p: &std::path::Path| p.display().to_string();
+    assert!(text.contains(&canon(&copies.join("a.txt"))) && text.contains(&canon(&copies.join("n.txt"))), "{text}");
     wf::expect_unchanged(d).unwrap();
 }
 
@@ -271,6 +310,32 @@ fn sh19_pop_blocked_by_an_untracked_file() {
     let st = states(&out)[0];
     assert!(status_of(st).contains("Not applied: stash@{0} brings back an untracked file — x.txt"), "{out}");
     wf::expect_refused(d).unwrap();
+}
+
+/// SH-20: the stash's menu ▸ Create Branch from Stash… (b; the dialog says what it does)
+/// with the stash's untracked x.txt in the way: refused in plain words naming x.txt,
+/// nothing changed; with x.txt moved away (a second run) the branch is created at the
+/// stash's base.
+/// Workflow: SH-20
+#[gitti_test::test]
+fn sh20_branch_from_a_stash_blocked_by_an_untracked_file() {
+    use sh::branch_blocked as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    let s = wf::fixture(d);
+    let keys = format!("{LAST_STASH_MENU}key:b;type:{};", wf::BRANCH);
+    let out = gitty(d, &format!("{keys}dump;key:enter;state"));
+    let sc = screens(&out);
+    assert!(sc[0].contains("┌ Create branch from stash@{0} "), "{out}");
+    let text = dialog_text(sc[0]);
+    assert!(text.contains("Creates a new branch at the commit the stash was made on"), "{text}");
+    let st = states(&out)[0];
+    assert!(status_of(st).contains("Not created: stash@{0} brings back an untracked file — x.txt"), "{out}");
+    wf::expect_refused(d, &s).unwrap();
+    wf::move_away(d);
+    let out = gitty(d, &format!("{keys}key:enter;state"));
+    assert!(!status_of(states(&out)[0]).contains("Not created"), "{out}");
+    wf::expect_branched(d, &s).unwrap();
 }
 
 /// WT-08: gitty in the linked worktree lists the stash made in the main worktree; its
