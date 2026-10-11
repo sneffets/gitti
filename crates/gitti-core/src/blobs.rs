@@ -84,33 +84,43 @@ impl Repo {
             &["cat-file", "--batch"]
         };
         let res = self.git().run_raw(args, Some(batch.as_bytes()))?;
-        let data = res.stdout;
-        let end = end as u8;
-        let mut pos = 0;
-        for &i in &batch_idx {
-            let Some(nl) = data[pos..].iter().position(|b| *b == end) else {
-                break;
-            };
-            let header = String::from_utf8_lossy(&data[pos..pos + nl]).into_owned();
-            pos += nl + 1;
-            // `<oid> <type> <size>`, or `<spec> missing` / `<spec> ambiguous` (the spec
-            // may contain spaces).
-            if header.ends_with(" missing") || header.ends_with(" ambiguous") {
-                continue;
-            }
-            let mut parts = header.split(' ');
-            let (_, kind, size) = (parts.next(), parts.next(), parts.next());
-            let Some(size) = size.and_then(|s| s.parse::<usize>().ok()) else {
-                continue;
-            };
-            let stop = (pos + size).min(data.len());
-            if kind == Some("blob") && size <= MAX_BLOB_BYTES {
-                out[i] = text(data[pos..stop].to_vec());
-            }
-            pos = stop + 1; // the terminator after the content
+        for (&i, bytes) in batch_idx.iter().zip(parse_batch(&res.stdout, end as u8)) {
+            out[i] = bytes;
         }
         Ok(out)
     }
+}
+
+/// The objects of a `git cat-file --batch` output, in request order: the content of each
+/// text blob up to [`MAX_BLOB_BYTES`], else `None` (missing, ambiguous, not a blob, binary,
+/// too large). `end` terminates each header and each content (`\n`, or NUL with `-Z`).
+/// Output that stops early — git ended before printing everything — ends the list: the
+/// objects it didn't finish are left out, never read past the end.
+fn parse_batch(data: &[u8], end: u8) -> Vec<Option<Vec<u8>>> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Some(nl) = data.get(pos..).and_then(|rest| rest.iter().position(|b| *b == end)) {
+        let header = String::from_utf8_lossy(&data[pos..pos + nl]).into_owned();
+        pos += nl + 1;
+        // `<oid> <type> <size>`, or `<spec> missing` / `<spec> ambiguous` (the spec
+        // may contain spaces).
+        if header.ends_with(" missing") || header.ends_with(" ambiguous") {
+            out.push(None);
+            continue;
+        }
+        let mut parts = header.split(' ');
+        let (_, kind, size) = (parts.next(), parts.next(), parts.next());
+        let Some(size) = size.and_then(|s| s.parse::<usize>().ok()) else {
+            out.push(None);
+            continue;
+        };
+        let Some(content) = data.get(pos..pos.saturating_add(size)) else {
+            break; // cut off inside this object's content
+        };
+        out.push((kind == Some("blob") && size <= MAX_BLOB_BYTES).then(|| text(content.to_vec())).flatten());
+        pos += size + 1; // the terminator after the content
+    }
+    out
 }
 
 /// `None` for binary content (git's heuristic: a NUL byte in the first 8000 bytes).
@@ -146,4 +156,28 @@ pub fn hunk_texts(diff: &FileDiff) -> (String, String) {
         }
     }
     (old.join("\n"), new.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_batch;
+
+    #[gitti_test::test]
+    fn batch_output_in_request_order() {
+        let data = b"aa blob 3\nab\n\nbb tree 2\nxy\n:x missing\ncc blob 2\nhi\n";
+        let got = parse_batch(data, b'\n');
+        assert_eq!(got, vec![Some(b"ab\n".to_vec()), None, None, Some(b"hi".to_vec())]);
+    }
+
+    /// git stopped early: the object cut off and everything after it is left out, nothing
+    /// is read past the end (this panicked in the highlighting job before).
+    #[gitti_test::test]
+    fn output_cut_off_ends_the_list() {
+        let whole = b"aa blob 3\nab\n\ncc blob 2\nhi\n";
+        assert_eq!(parse_batch(&whole[..14], b'\n'), vec![Some(b"ab\n".to_vec())]);
+        assert_eq!(parse_batch(&whole[..13], b'\n'), vec![Some(b"ab\n".to_vec())]);
+        assert_eq!(parse_batch(&whole[..12], b'\n'), Vec::<Option<Vec<u8>>>::new());
+        assert_eq!(parse_batch(&whole[..20], b'\n'), vec![Some(b"ab\n".to_vec())]);
+        assert_eq!(parse_batch(b"aa blob 3\nab\n", b'\0'), Vec::<Option<Vec<u8>>>::new());
+    }
 }
