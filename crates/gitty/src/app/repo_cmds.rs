@@ -366,6 +366,11 @@ impl App {
             PickItem::new("Edit .gitattributes…", "", |app: &mut App| {
                 app.edit_rules_file(".gitattributes")
             }),
+            PickItem::new(
+                gitti_core::renormalize::MENU_LABEL,
+                "git add --renormalize — after .gitattributes or core.autocrlf changed",
+                |app: &mut App| app.renormalize_dialog(),
+            ),
             PickItem::new("Start-up Timings…", "", |app: &mut App| {
                 let records = gitti_core::startup::load();
                 let text = gitti_core::startup::format_all(&records, &crate::app::local_time);

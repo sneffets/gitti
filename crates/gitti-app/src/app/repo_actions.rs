@@ -25,8 +25,8 @@ use crate::theme::PaletteExt as _;
 use crate::{
     About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, CreateBranch, CreateTag, EditGitattributes,
     EditGitignore, EditGlobalConfig, EditRepoConfig, GlobalGitSettings, GoToWorkingDirectory,
-    MergeBranch, OpenInFileManager, OpenTerminal, PopStash, PopStashIndex, RepoGitSettings, RepositoryStatistics,
-    StartupTimings,
+    MergeBranch, OpenInFileManager, OpenTerminal, PopStash, PopStashIndex, RenormalizeLineEndings,
+    RepoGitSettings, RepositoryStatistics, StartupTimings,
     ThirdPartyLicences, TrackWithLfs, WriteCommitGraph,
 };
 
@@ -122,6 +122,9 @@ impl GittiApp {
         }))
         .on_action(cx.listener(|this, _: &EditGitattributes, w, cx| {
             this.edit_rules_file(".gitattributes", w, cx)
+        }))
+        .on_action(cx.listener(|this, _: &RenormalizeLineEndings, w, cx| {
+            this.renormalize_dialog(w, cx)
         }))
         .on_action(cx.listener(|this, _: &AddToGitignore, w, cx| {
             let row = this.diff_cursor_row();
@@ -249,6 +252,12 @@ impl GittiApp {
             entry("Edit .gitattributes…", "", |t, w, cx| {
                 t.edit_rules_file(".gitattributes", w, cx)
             }),
+            entry(
+                gitti_core::renormalize::MENU_LABEL,
+                "git add --renormalize — after .gitattributes or core.autocrlf changed",
+                |t, w, cx| t.renormalize_dialog(w, cx),
+            )
+            .act(&RenormalizeLineEndings),
             keyed(
                 if self.amend {
                     "Amend: off"

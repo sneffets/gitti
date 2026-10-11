@@ -126,7 +126,8 @@ impl GittiApp {
     }
 
     /// `kind src path [line kind]`, e.g. `line Unstaged big.txt Added`, `section Staged`,
-    /// `group untracked`.
+    /// `group untracked`; a line-ending note row with its text (`note Unstaged w.txt: 2
+    /// lines differ only in their line ending (CRLF → LF)`).
     fn describe_row(&self, row: &DiffRow) -> String {
         let mut out = row.kind_name().to_string();
         if let DiffRow::Section(src) = row {
@@ -138,6 +139,15 @@ impl GittiApp {
         if let Some((src, file)) = row.file_ref() {
             let path = self.file_path(src, file).unwrap_or_default();
             out.push_str(&format!(" {src:?} {path}"));
+        }
+        // A line-ending / BOM-only change: what its note row says.
+        if let DiffRow::Note { src, file } = *row
+            && let Some(note) = self
+                .file_diff(src, file)
+                .filter(|d| !d.binary && !d.hunks.is_empty())
+                .and_then(gitti_core::eol_note::eol_note)
+        {
+            out.push_str(&format!(": {note}"));
         }
         if let DiffRow::Line {
             src,

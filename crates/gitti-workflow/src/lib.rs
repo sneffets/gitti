@@ -13,9 +13,10 @@
 //!   terminal `git`);
 //! - [`expect`]: [`Expect`], the repository afterwards read with few git processes, and
 //!   [`Checks`] collecting the mismatches;
-//! - the workflows, one module each in their area's module ([`st`], [`cm`], [`cp`], [`rs`], [`sh`], [`tg`], …): a
-//!   `fixture(dir)`, the step constants the drivers need, and `expect…(dir)` functions
-//!   returning `Err(text)` with every mismatch.
+//! - the workflows, one module each in their area's module ([`st`], [`dc`], [`bg`],
+//!   [`cm`], [`cp`], [`ex`], [`rs`], [`sh`], [`tg`], …): a `fixture(dir)`, the step
+//!   constants the drivers need, and `expect…(dir)` functions returning `Err(text)` with
+//!   every mismatch.
 //!
 //! The catalog of all workflows — IDs, steps, expected results and which test covers each
 //! on which layer — is `WORKFLOWS.md` next to this crate's `Cargo.toml`; keep it in sync.
@@ -23,14 +24,18 @@
 //! std only (no gitti-core, no gix): a dev-dependency that adds no dependency features to
 //! the workspace build. Every git process here runs without the user's global config.
 
+pub mod bg;
 pub mod br;
 pub mod cm;
 pub mod cp;
+pub mod dc;
+pub mod ex;
 pub mod expect;
 pub mod ext;
 pub mod fixture;
 pub mod git;
 pub mod lf;
+pub mod nu;
 pub mod rm;
 pub mod rs;
 pub mod sh;

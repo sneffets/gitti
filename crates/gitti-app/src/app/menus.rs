@@ -563,7 +563,21 @@ pub(super) fn diff_menu(
             .item(item("Track with Git LFS…", app, |this, w, cx| {
                 let row = this.menu_row.take().unwrap_or(this.diff_cursor_row());
                 this.lfs_track_dialog_for_row(row, w, cx)
-            }))
+            }));
+        // A `.gitattributes` file: its rules applied to the tracked files.
+        let attributes = app.upgrade().is_some_and(|a| {
+            let a = a.read(cx);
+            a.is_attributes_row(a.menu_row.unwrap_or_else(|| a.diff_cursor_row()))
+        });
+        if attributes {
+            menu = menu.item(command_item(
+                gitti_core::renormalize::MENU_LABEL,
+                "RenormalizeLineEndings",
+                app,
+                |this, w, cx| this.renormalize_dialog(w, cx),
+            ));
+        }
+        menu = menu
             .separator()
             .item(command_item("Stage All", "StageAll", app, |this, w, cx| {
                 this.stage_everything(true, w, cx)

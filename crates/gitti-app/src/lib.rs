@@ -1107,7 +1107,8 @@ pub mod testing {
         pub unstaged: Vec<String>,
         pub staged: Vec<String>,
         pub stashes: usize,
-        /// Every diff row: `kind src path [line kind]`, e.g. `line Unstaged big.txt Added`.
+        /// Every diff row: `kind src path [line kind]`, e.g. `line Unstaged big.txt Added`
+        /// (a line-ending / BOM note row: `note Unstaged w.txt: <its text>`).
         pub rows: Vec<String>,
         /// Lines in the diff line selection.
         pub selected_lines: usize,
@@ -1374,6 +1375,7 @@ actions!(
         EditGitignore,
         TrackWithLfs,
         EditGitattributes,
+        RenormalizeLineEndings,
         RepoGitSettings,
         GlobalGitSettings,
         EditRepoConfig,
@@ -1730,6 +1732,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Edit .gitignore…", EditGitignore),
                 MenuItem::action("Track with Git LFS…", TrackWithLfs),
                 MenuItem::action("Edit .gitattributes…", EditGitattributes),
+                MenuItem::action(gitti_core::renormalize::MENU_LABEL, RenormalizeLineEndings),
                 MenuItem::separator(),
                 MenuItem::action("Paths This File System Can't Hold…", FsPaths),
                 MenuItem::action("Hide Paths This File System Can't Hold", HideFsPaths),
