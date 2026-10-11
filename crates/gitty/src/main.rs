@@ -41,6 +41,8 @@ const USAGE: &str = "\
 gitty — terminal git client (gitti's TUI sibling)
 
 usage: gitty [PATH]    open the repository containing PATH (default: current directory)
+       gitty --version
+       gitty --licenses print the third-party licences of this binary
 
 Press ? inside for the key bindings, ctrl-p for all commands.
 
@@ -80,6 +82,13 @@ fn run() -> Result<()> {
         Some("-V" | "--version") => {
             let (version, build) = (env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
             println!("{}", gitti_core::about::version_line("gitty", version, build));
+            return Ok(());
+        }
+        Some("--licenses" | "--licences") => {
+            // Into a pager / `head` that quits early: no broken-pipe panic.
+            use std::io::Write as _;
+            let text = gitti_core::third_party::text("gitty");
+            let _ = std::io::stdout().lock().write_all(text.as_bytes());
             return Ok(());
         }
         _ => {}

@@ -202,7 +202,9 @@ The apps and the shared core are licensed differently:
 - **gitti-core** and the dev crates (`crates/gitti-core`, `crates/gitti-test`,
   `crates/xtask`): MIT OR Apache-2.0, at your option, see `LICENSE-MIT` and `LICENSE-APACHE`.
 
-Copyright (c) 2026 sneffets. Third-party material: `THIRD-PARTY.md`. The screenshots show
+Copyright (c) 2026 sneffets. Third-party material: `THIRD-PARTY.md` (the licences of every
+compiled-in crate: `licenses/THIRD-PARTY-LICENSES.txt`, also in Help ▸ About). Security
+issues: `SECURITY.md`. The screenshots show
 [VectorCraft](https://github.com/storytold/vectorcraft) (MIT OR Apache-2.0) as an example
 repository.
 

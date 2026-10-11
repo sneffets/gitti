@@ -368,12 +368,45 @@ impl App {
                 let text = gitti_core::startup::format_all(&records, &crate::app::local_time);
                 app.modal = Some(Modal::text("Start-up Timings", text));
             }),
-            PickItem::new("About gitty", "", |app: &mut App| {
-                let (version, build) = (env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
-                let text = gitti_core::about::text("gitty", version, build);
-                app.modal = Some(Modal::text("About gitty", text));
-            }),
+            PickItem::new("About gitty", "", |app: &mut App| app.show_about()),
+            PickItem::new("Third-Party Licences…", "", |app: &mut App| app.show_licences()),
         ]
+    }
+
+    /// Help ▸ About: version and build commit first (`y` copies them), licence, the
+    /// third-party summary (`l` opens the whole list), this system.
+    pub fn show_about(&mut self) {
+        use crate::modal::TextKey;
+        let (version, build) = (env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
+        let extras = gitti_core::about::Extras {
+            licences_hint: "press l here, or run `gitty --licenses`",
+            renderer: None,
+        };
+        let text = gitti_core::about::text("gitty", version, build, &extras);
+        let keys = vec![
+            TextKey {
+                key: 'y',
+                label: "copy version",
+                keep: true,
+                run: |app| {
+                    let (version, build) = (env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
+                    app.copy(gitti_core::about::version_line("gitty", version, build))
+                },
+            },
+            TextKey {
+                key: 'l',
+                label: "third-party licences",
+                keep: false,
+                run: App::show_licences,
+            },
+        ];
+        self.modal = Some(Modal::text("About gitty", text).with_text_keys(keys));
+    }
+
+    /// The third-party licences of this binary on this platform (also `gitty --licenses`).
+    pub fn show_licences(&mut self) {
+        let text = gitti_core::third_party::text("gitty");
+        self.modal = Some(Modal::text("Third-Party Licences", text));
     }
 }
 

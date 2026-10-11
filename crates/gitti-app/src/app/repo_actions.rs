@@ -26,7 +26,7 @@ use crate::{
     About, AddRemote, AddToGitignore, ApplyStash, CreateBranch, CreateTag, EditGitattributes,
     EditGitignore, EditGlobalConfig, EditRepoConfig, GlobalGitSettings, GoToWorkingDirectory,
     MergeBranch, OpenInFileManager, OpenTerminal, PopStash, RepoGitSettings, StartupTimings,
-    TrackWithLfs, WriteCommitGraph,
+    ThirdPartyLicences, TrackWithLfs, WriteCommitGraph,
 };
 
 /// One target file of a rule dialog ("Add to .gitignore…", "Track with Git LFS…"): its
@@ -158,6 +158,9 @@ impl GittiApp {
             this.message.update(cx, |m, cx| m.focus(w, cx));
         }))
         .on_action(cx.listener(|this, _: &About, w, cx| this.show_about(w, cx)))
+        .on_action(cx.listener(|this, _: &ThirdPartyLicences, w, cx| {
+            this.show_licences(w, cx)
+        }))
         .on_action(cx.listener(|this, _: &StartupTimings, w, cx| {
             this.show_startup_timings(w, cx)
         }))
@@ -298,6 +301,7 @@ impl GittiApp {
             }),
             entry("Start-up Timings…", "", |t, w, cx| t.show_startup_timings(w, cx)),
             entry("About gitti", "", |t, w, cx| t.show_about(w, cx)),
+            entry("Third-Party Licences…", "", |t, w, cx| t.show_licences(w, cx)),
         ]
     }
 
@@ -717,10 +721,40 @@ impl GittiApp {
         self.git_op(label, window, cx, move |r| r.stash_apply(0, pop));
     }
 
+    /// Help ▸ About: version and build commit first (Copy Version), licence, the
+    /// third-party summary (Third-Party Licences… opens the whole list), this system.
     fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text =
-            gitti_core::about::text("gitti", env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
-        self.show_text_modal("About gitti", text, window, cx);
+        let (version, build) = (env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
+        // gpui reports the GPU on Linux (Vulkan) and Windows (DirectX); macOS draws with
+        // Metal and reports nothing.
+        let renderer = match window.gpu_specs() {
+            Some(g) => Some(format!(
+                "{}{} ({} {})",
+                g.device_name,
+                if g.is_software_emulated { ", software emulated (no GPU)" } else { "" },
+                g.driver_name,
+                g.driver_info
+            )),
+            None if cfg!(target_os = "macos") => Some("Metal".to_string()),
+            None => None,
+        };
+        let extras = gitti_core::about::Extras {
+            licences_hint: "the Third-Party Licences… button below (also in the Help menu)",
+            renderer: renderer.as_deref(),
+        };
+        let text = gitti_core::about::text("gitti", version, build, &extras);
+        let spec = ModalSpec::new("About gitti")
+            .ok("Close")
+            .cancel(None)
+            .copy("Copy Version", gitti_core::about::version_line("gitti", version, build))
+            .extra("Third-Party Licences…", |t, w, cx| t.show_licences(w, cx));
+        self.show_text_modal_spec(spec, text, window, cx);
+    }
+
+    /// The third-party licences compiled into gitti on this platform.
+    fn show_licences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = gitti_core::third_party::text("gitti");
+        self.show_text_modal("Third-Party Licences", text, window, cx);
     }
 
     // ------------------------------------------------------------------ no repository

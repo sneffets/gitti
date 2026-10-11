@@ -82,6 +82,8 @@ pub struct Modal {
     on_cancel: Option<CancelFn>,
     /// A further button left of Cancel / OK (`ModalSpec::extra`).
     extra: Option<(String, ExtraFn)>,
+    /// A Copy button (`ModalSpec::copy`): its label, the text, copied already.
+    copy: Option<(String, String, bool)>,
     choices: Vec<Choice>,
     /// Field `dst` follows field `src` until the user edits it (see `ModalSpec::derive`).
     derive: Option<Derive>,
@@ -163,6 +165,7 @@ pub struct ModalSpec {
     spell: Vec<usize>,
     live: Option<LiveFn>,
     extra: Option<(String, ExtraFn)>,
+    copy: Option<(String, String)>,
 }
 
 impl ModalSpec {
@@ -185,7 +188,15 @@ impl ModalSpec {
             spell: Vec::new(),
             live: None,
             extra: None,
+            copy: None,
         }
+    }
+
+    /// A button (`label`, leftmost) that copies `text` to the clipboard; the dialog stays
+    /// open and the button says "Copied" (About: the version and build commit).
+    pub fn copy(mut self, label: impl Into<String>, text: impl Into<String>) -> Self {
+        self.copy = Some((label.into(), text.into()));
+        self
     }
 
     /// A further button (`label`) left of Cancel / OK that closes the dialog and runs `f`
@@ -505,6 +516,7 @@ impl GittiApp {
             on_ok: Some(on_ok),
             on_cancel,
             extra: spec.extra,
+            copy: spec.copy.map(|(label, text)| (label, text, false)),
             choices: spec.choices,
             derive,
             notes,
@@ -949,6 +961,19 @@ impl GittiApp {
             ok(self, result, window, cx);
         }
         self.after_modal_closed(modal.return_focus.take(), window, cx);
+    }
+
+    /// The dialog's Copy button (`ModalSpec::copy`): its text to the clipboard, the dialog
+    /// stays open.
+    pub(super) fn run_modal_copy(&mut self, cx: &mut Context<Self>) {
+        let Some((_, text, copied)) = self.modal.as_mut().and_then(|m| m.copy.as_mut()) else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        *copied = true;
+        let info = format!("Copied {text}");
+        self.set_info(info);
+        cx.notify();
     }
 
     /// The dialog's further button (`ModalSpec::extra`): closes it, runs its action.
@@ -1478,6 +1503,17 @@ impl GittiApp {
             .flex_none()
             .gap_2()
             .justify_end()
+            .when_some(modal.copy.as_ref(), |d, (label, _, copied)| {
+                d.child(
+                    div().probe("modal-copy").child(
+                        Button::new("modal-copy")
+                            .label(if *copied { "Copied".to_string() } else { label.clone() })
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| this.run_modal_copy(cx))),
+                    ),
+                )
+            })
             .when_some(modal.extra.as_ref().map(|(l, _)| l.clone()), |d, label| {
                 d.child(
                     div().probe("modal-extra").child(

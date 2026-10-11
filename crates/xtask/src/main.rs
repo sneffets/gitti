@@ -2,6 +2,7 @@
 //! bash needed on Windows). `cargo xtask` is an alias in `.cargo/config.toml`.
 
 mod config;
+mod licenses;
 mod worktree;
 
 use std::path::{Path, PathBuf};
@@ -20,12 +21,17 @@ cargo xtask <task>
   worktree drop <N|all>   remove free slots completely (their target/ too)
   worktree root           where the slots live on this machine
 
+  licenses [--check]      regenerate licenses/THIRD-PARTY-LICENSES.txt (the third-party
+                          licence list the apps embed) after Cargo.lock changed; --check
+                          only compares
+
 Machine-local settings (never in the repo): see `cargo xtask config`.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("worktree") => worktree::run(&args[1..]),
+        Some("licenses") => licenses::run(&args[1..]),
         Some("config") => {
             println!("{}", config::describe());
             Ok(())

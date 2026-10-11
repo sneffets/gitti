@@ -13,6 +13,11 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/gitti "$APP/Contents/MacOS/gitti"
 cp assets/icon/gitti.icns "$APP/Contents/Resources/gitti.icns"
+# Licences shipped with the binary: our own, and every third-party component's
+# (`cargo xtask licenses` keeps the list current; the app also shows it).
+mkdir -p "$APP/Contents/Resources/licenses"
+cp COPYING LICENSE-MIT LICENSE-APACHE licenses/THIRD-PARTY-LICENSES.txt licenses/LUCIDE.txt \
+  "$APP/Contents/Resources/licenses/"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

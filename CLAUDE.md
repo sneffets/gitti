@@ -103,6 +103,9 @@ Don't pipe a build into `tail` and then run the binary — a failed build leaves
 
 - `Cargo.lock` must keep `cc` at 1.2.x (tree-sitter-sequel requires `~1.2`). If it drifts:
   `cargo update -p cc --precise 1.2.67`.
+- After `Cargo.lock` changed: `cargo xtask licenses` regenerates
+  `licenses/THIRD-PARTY-LICENSES.txt` (the third-party licence list both apps embed; it
+  also fails on a dependency that isn't GPL-3.0-compatible). A test fails until it's done.
 - Dev profile builds dependencies with `opt-level = 3`, own crates with `opt-level = 1`.
 
 ## Architecture

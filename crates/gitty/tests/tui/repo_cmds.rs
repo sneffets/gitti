@@ -71,14 +71,44 @@ fn ignore_a_tracked_file_and_info_exclude() {
     assert!(exclude.lines().any(|l| l == "/build/x.o" || l == "/.gitignore"), "{exclude}\n{out}");
 }
 
-/// Palette → About gitty names the git commit gitty was built from.
+/// Palette → About gitty names the git commit gitty was built from first; `y` copies the
+/// version line (the window stays open), `l` opens the third-party licences.
 #[gitti_test::test]
 fn about_names_the_build_commit() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
-    let out = gitty(dir.path(), &format!("press:ctrl-p;{}press:enter;dump", presses("about gitty")));
-    let screen = screens(&out)[0];
-    assert!(screen.contains("About gitty"), "{out}");
-    assert!(screen.contains(&format!("Built from git commit {}", env!("GITTI_BUILD"))), "{out}");
+    let script = format!("press:ctrl-p;{}press:enter;dump;press:y;state;dump;press:l;dump", presses("about gitty"));
+    let out = gitty(dir.path(), &script);
+    let s = screens(&out);
+    let build = env!("GITTI_BUILD");
+    assert!(s[0].contains("About gitty"), "{out}");
+    assert!(s[0].contains(&format!("gitty {}", env!("CARGO_PKG_VERSION"))), "{out}");
+    assert!(s[0].contains(&format!("Built from git commit {build}")), "{out}");
+    assert!(s[0].contains("y copy version · l third-party licences"), "{out}");
+    let copied = gitti_core::about::version_line("gitty", env!("CARGO_PKG_VERSION"), build);
+    assert!(states(&out)[0].contains(&format!("Copied {}", &copied[..20])), "{out}");
+    assert!(s[1].contains("About gitty"), "y closed About:\n{out}");
+    let os = gitti_core::third_party::os_name(std::env::consts::OS);
+    assert!(s[2].contains(" Third-Party Licences "), "{out}");
+    assert!(s[2].contains(&format!("Third-party licences of gitty on {os}")), "{out}");
+}
+
+/// `gitty --licenses` prints this binary's part of the third-party list: its components
+/// (no gitti-only ones like gpui or the icons), then the licence texts.
+#[gitti_test::test]
+fn licenses_flag_prints_this_binarys_list() {
+    let config = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_gitty"))
+        .arg("--licenses")
+        .env("GITTI_CONFIG_DIR", config.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    let os = gitti_core::third_party::os_name(std::env::consts::OS);
+    assert!(text.starts_with(&format!("Third-party licences of gitty on {os}\n\ngitty on {os} contains ")), "{}", &text[..500]);
+    assert!(text.contains("\nComponents\n  ") && text.contains("\n  ratatui "), "{}", &text[..2000]);
+    assert!(!text.contains("\n  gpui") && !text.contains("Lucide icons"), "gitti's components listed");
+    assert!(text.contains("\nLicence texts\n\n[1] used by "));
 }
 
 /// Clone (URL, parent folder; the name from the URL) offers the new repository — gitty

@@ -1356,6 +1356,7 @@ actions!(
         PopStash,
         GoToWorkingDirectory,
         About,
+        ThirdPartyLicences,
         StartupTimings,
         AddWorktree,
         PruneWorktrees,
@@ -1812,6 +1813,7 @@ fn menu_bar() -> Vec<Menu> {
             vec![
                 MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
                 MenuItem::action("Start-up Timings…", StartupTimings),
+                MenuItem::action("Third-Party Licences…", ThirdPartyLicences),
                 MenuItem::action("About gitti", About),
             ],
         ),

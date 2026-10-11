@@ -17,7 +17,12 @@ case "${1:-}" in
     cargo build --release --locked -p gitty
     mkdir -p "$HOME/.local/bin"
     install -m755 target/release/gitty "$HOME/.local/bin/gitty"
-    echo "installed gitty into ~/.local/bin (make sure it is on PATH)"
+    # Licences shipped with the binary (gitty --licenses prints its third-party part too).
+    DOC="${XDG_DATA_HOME:-$HOME/.local/share}/doc/gitty"
+    for f in COPYING LICENSE-MIT LICENSE-APACHE licenses/THIRD-PARTY-LICENSES.txt; do
+      install -Dm644 "$f" "$DOC/$(basename "$f")"
+    done
+    echo "installed gitty into ~/.local/bin (make sure it is on PATH), licences into $DOC"
     ;;
   *)
     echo "usage: $0 [--cargo]" >&2
