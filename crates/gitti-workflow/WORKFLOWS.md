@@ -247,28 +247,28 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| MG-01 | Fast-forward merge | `main` behind `feat`; merge `feat` | `main` at `feat`, no merge commit | — | — | `palette::palette_merge_picker_and_synonyms` |
-| MG-02 | No-ff merge with a message | Merge… with "always create a merge commit" | two parents, the message | `repo_ops::merge_and_cherry_pick_options` | — | — |
-| MG-03 | Squash merge | Merge… squash; commit | changes staged, no `MERGE_HEAD`; one-parent commit with `SQUASH_MSG` | ~`repo_ops::merge_and_cherry_pick_options`, ~`conflicts::squash_merge_message_in_a_linked_worktree` | — | — |
-| MG-04 | Fast-forward only on diverged history | ff-only | refused in plain words, nothing changed | `repo_ops::merge_and_cherry_pick_options` | — | — |
-| MG-05 | Clean three-way merge | diverged, different files | merge commit, both changes | `repo_ops::merge_and_cherry_pick_options` | — | — |
+| MG-01 | Fast-forward merge | `main` behind `feat`; merge `feat` | `main` at `feat`, no merge commit | `wf_merge::mg01_fast_forward_merge` | `wf_merge::mg01_fast_forward_merge` | `palette::palette_merge_picker_and_synonyms` |
+| MG-02 | No-ff merge with a message | Merge… with "always create a merge commit" | two parents, the message | `repo_ops::merge_and_cherry_pick_options` | `wf_merge::mg02_no_ff_merge_with_a_message` | `wf_merge::mg02_no_ff_merge_with_a_message` |
+| MG-03 | Squash merge | Merge… squash; commit | changes staged, no `MERGE_HEAD`, `SQUASH_MSG` in the commit box; one-parent commit with it | `wf_merge::mg03_squash_merge_then_commit`, ~`repo_ops::merge_and_cherry_pick_options`, ~`conflicts::squash_merge_message_in_a_linked_worktree` | `wf_merge::mg03_squash_merge_then_commit` | `wf_merge::mg03_squash_merge_then_commit` |
+| MG-04 | Fast-forward only on diverged history | ff-only | refused in plain words (what blocks, nothing changed, merge without `--ff-only` or rebase), nothing changed | `repo_ops::merge_and_cherry_pick_options`, `wf_merge::mg04_fast_forward_only_on_diverged_branches_is_refused` | `wf_merge::mg04_fast_forward_only_on_diverged_branches` | `wf_merge::mg04_fast_forward_only_on_diverged_branches` |
+| MG-05 | Clean three-way merge | diverged, different files | merge commit, both changes | `repo_ops::merge_and_cherry_pick_options` | `wf_merge::mg05_clean_three_way_merge` | `wf_merge::mg05_clean_three_way_merge` |
 | MG-06 | **Content conflict → merge editor → commit** | same line changed; resolve in the editor; commit | box has git's message; Commit off while conflicted; merge concluded with two parents | `conflicts::committing_a_resolved_merge_concludes_it`, `repo_ops::merge_doc_from_conflict_stages` | `layout::merge_commit_flow` | `merge_editor::merge_message_prefilled_commit_blocked_then_concludes_the_merge` |
-| MG-07 | Resolve by taking a side | ours for one file, theirs for another; Continue | each file as that side; merge concluded | `repo_ops::conflicts_from_a_merge_resolved_per_side` | — | ~`merge_editor::merge_editor_save_single_view_questions_editor_and_resolve` |
+| MG-07 | Resolve by taking a side | ours for one file, theirs for another; Continue | each file as that side; merge concluded | `repo_ops::conflicts_from_a_merge_resolved_per_side` | `wf_merge::mg07_take_a_side_per_file_then_continue` | `wf_merge::mg07_take_a_side_per_file`, `wf_merge::mg07_continue_after_taking_sides`, ~`merge_editor::merge_editor_save_single_view_questions_editor_and_resolve` |
 | MG-08 | Modify / delete conflict | one side deleted, other changed; keep / delete | header says so; keep stages it, delete removes it | `conflicts::delete_and_rename_conflicts_resolve_by_keeping_or_deleting` | `layout::delete_conflict_choices` | `merge_editor::deleted_file_conflict_offers_keep_and_delete` |
-| MG-09 | Rename / rename conflict | both renamed `r.txt` differently | both names listed; resolving keeps the chosen one | `conflicts::delete_and_rename_conflicts_resolve_by_keeping_or_deleting` | — | — |
-| MG-10 | Abort a conflicting merge | Abort in the banner | back to the pre-merge commit and files | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | ~`layout::merge_commit_flow` | — |
-| MG-11 | Conclude with the box emptied / edited | empty box, or an edited message | git's message without `# Conflicts:` lines / the edited one | `conflicts::continue_concludes_a_merge_without_conflict_comments_or_with_the_edited_message` | — | `merge_editor::merge_concluded_with_the_box_emptied` |
-| MG-12 | Unrelated histories | merge a branch with its own root | refused, "Merge anyway" offered and works | `conflicts::unrelated_histories_merge_and_pull` | `menus::merge_unrelated_histories` | ~`repo_cmds::pull_with_unrelated_histories_offers_merge_anyway` |
+| MG-09 | Rename / rename conflict | both renamed `r.txt` differently; keep `feat`'s name, delete `main`'s and `r.txt`; Continue | both names listed; resolving keeps the chosen one | `conflicts::delete_and_rename_conflicts_resolve_by_keeping_or_deleting` | `wf_merge::mg09_both_renamed_keep_theirs_name` | `wf_merge::mg09_both_renamed_keep_theirs_name`, `wf_merge::mg09_delete_the_old_name_and_continue` |
+| MG-10 | Abort a conflicting merge | Abort in the banner | back to the pre-merge commit and files | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | `wf_merge::mg10_abort_a_conflicting_merge`, ~`layout::merge_commit_flow` | `wf_merge::mg10_abort_a_conflicting_merge` |
+| MG-11 | Conclude with the box emptied / edited | empty box, or an edited message | git's message without `# Conflicts:` lines / the edited one | `conflicts::continue_concludes_a_merge_without_conflict_comments_or_with_the_edited_message` | `wf_merge::mg11_conclude_with_the_box_emptied`, `wf_merge::mg11_conclude_with_an_edited_message` | `merge_editor::merge_concluded_with_the_box_emptied` |
+| MG-12 | Unrelated histories | merge a branch with its own root | refused, "Merge anyway" offered and works | `conflicts::unrelated_histories_merge_and_pull` | `menus::merge_unrelated_histories` | `wf_merge::mg12_unrelated_histories_merge_anyway`, ~`repo_cmds::pull_with_unrelated_histories_offers_merge_anyway` |
 | MG-13 | Merge preview in the graph | during a merge | working row is the pending merge, dashed edge to `MERGE_HEAD` | `merge_preview::merge_head_makes_the_worktree_row_the_pending_merge`, `merge_preview::unreachable_merge_head_and_octopus` | `layout::merge_preview_graph` | `views::merge_preview_dashes_the_pending_merge` |
 | MG-14 | Long conflict markers | `conflict-marker-size=10` | the editor and the "still has markers" check use the size | `conflicts::conflict_marker_size_attribute`, `merge_session::marker_size_attribute` (unit) | — | — |
 | MG-15 | Conflict in a non-UTF-8 / CRLF file | Latin-1 conflict; autocrlf CRLF conflict | written back byte for byte in the working-tree form | `non_utf8::merge_editor_writes_non_utf8_files_exactly`, `non_utf8::merge_editor_writes_the_working_tree_form` | — | `merge_editor::merge_editor_saves_a_latin1_file_exactly` |
-| MG-16 | Merge into a dirty tree (overlapping) | local change in a file the merge changes | git refuses; the app says what blocks and offers a way out (stash first); nothing changed | — | `op_safety::blocked_merge_stash_and_merge` | `op_safety::a_blocked_merge_offers_ways_out` |
-| MG-17 | Merge into a dirty tree (not overlapping) | local change elsewhere; conflicting merge; abort | the local change survives merge and abort | — | — | — |
+| MG-16 | Merge into a dirty tree (overlapping) | local change in a file the merge changes | git refuses; the app says what blocks and offers a way out (stash first); nothing changed | `wf_merge::mg16_merge_into_an_overlapping_dirty_tree_stash_and_merge` | `op_safety::blocked_merge_stash_and_merge` | `op_safety::a_blocked_merge_offers_ways_out` |
+| MG-17 | Merge into a dirty tree (not overlapping) | local change elsewhere; conflicting merge; abort | the local change survives merge and abort | `wf_merge::mg17_dirty_tree_survives_a_conflicting_merge_and_its_abort` | `wf_merge::mg17_dirty_tree_survives_merge_and_abort` | `wf_merge::mg17_dirty_tree_survives_merge_and_abort` |
 | MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | `op_safety::unstage_all_keeps_a_merge_and_its_conflicts` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::unstage_all_keeps_the_merge` |
 | MG-19 | Stage All with markers left | a conflicted file still has `<<<<<<<`; Stage All | asks first like Mark Resolved does | `op_safety::conflict_markers_left_are_found_before_stage_all` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
-| MG-20 | Merge in a linked worktree | conflict in a linked worktree | state from its own git dir; main worktree clean | `conflicts::merge_conflict_in_a_linked_worktree` | — | — |
+| MG-20 | Merge in a linked worktree | conflict in a linked worktree; the app opened there; take theirs; Continue | state from its own git dir; concluded there; main worktree clean | `conflicts::merge_conflict_in_a_linked_worktree` | `wf_merge::mg20_merge_conflict_in_a_linked_worktree` | `wf_merge::mg20_merge_conflict_in_a_linked_worktree` |
 | MG-21 | Submodule pointer conflict | both sides moved the pointer | listed as a conflict; resolving picks a commit | `submodules::conflicting_pointers` | — | — |
-| MG-22 | Binary conflict | both sides changed a binary | no merge editor; take ours / theirs | — | — | — |
+| MG-22 | Binary conflict | both sides changed a binary; take theirs; Continue | shown as a binary conflict (not "same as main"); no merge editor; take ours / theirs | `wf_merge::mg22_binary_conflict_take_theirs` | `wf_merge::mg22_binary_conflict_take_theirs` | `wf_merge::mg22_binary_conflict_take_theirs` |
 | MG-23 | Merge conflict in a SHA-256 repository | — | as in SHA-1 | `sha256::merge_conflict_worktrees_and_branch_ops` | — | — |
 | MG-24 | Resolve with an external merge tool | conflicted file → Open in External Merge Tool | the tool's result staged; status says no conflict is left | ~`ext_tool::describes_the_merge_outcome` (unit) | `ext_tools::merge_tool` | `ext_tools::merge_tool_from_the_resolve_menu` |
 | MG-25 | First external merge tool, set up on the way | no merge tool set; Open in External Merge Tool; choose one in the set-up dialog (this repository) | the dialog lists git's tools (own first, installed, missing); the choice written to the named config file; the tool resolves the file right after | `ext_tools::without_a_tool_the_choices_come_first_then_the_chosen_tool_runs` | `ext_tools::merge_tool_set_up_first` | ~`ext_tools::set_up_dialog_then_the_diff_tool_runs` (diff tool) |
@@ -451,7 +451,7 @@ working tree or the index while the app shows an older state.
 | RN-02 | Rename with edits, stage some lines | `mv a b` + edit | lines of `b` stage; rename detected once both staged | — | — | — |
 | RN-03 | File history across a rename | Go to Commit with the file | commits through the rename | `search::file_history_follows_renames_and_deleted_files` | `menus::go_to_commit` | `views::go_to_commit_finds_file_history_and_messages` |
 | RN-04 | Commit diff of a rename | select the commit | old → new name | `history_diffs::batched_commit_diffs_match_single_ones` | — | — |
-| RN-05 | Merge across a rename | `feat` renames `a`, `main` edits `a` | clean merge, edit in the new name | — | — | — |
+| RN-05 | Merge across a rename | `feat` renames `a`, `main` edits `a` | clean merge, edit in the new name | `wf_merge::rn05_merge_across_a_rename` | `wf_merge::rn05_merge_across_a_rename` | `wf_merge::rn05_merge_across_a_rename` |
 
 ## BN — Binary files
 
@@ -508,7 +508,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 13 | 6 | 7 |
 | BR branches | 19 | 19 | 19 | 18 |
-| MG merge | 26 | 20 | 9 | 11 |
+| MG merge | 26 | 25 | 21 | 22 |
 | CP cherry-pick | 18 | 9 | 3 | 3 |
 | RV revert | 6 | 2 | 0 | 0 |
 | RB rebase | 9 | 4 | 1 | 1 |
@@ -521,12 +521,12 @@ layer (partial `~` and `n/a` don't count as covered).
 | DC discard | 9 | 6 | 3 | 4 |
 | RL recovery | 4 | 2 | 2 | 2 |
 | IG ignore | 6 | 5 | 5 | 5 |
-| RN renames | 5 | 2 | 1 | 1 |
+| RN renames | 5 | 3 | 2 | 2 |
 | BN binary | 3 | 3 | 1 | 1 |
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **265** | **205** | **142** | **147** |
+| **Total** | **265** | **211** | **155** | **159** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

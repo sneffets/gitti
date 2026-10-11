@@ -38,6 +38,7 @@ mod unicode;
 mod views;
 mod wf_branches;
 mod wf_commit;
+mod wf_merge;
 mod wf_modules;
 mod wf_pilot;
 mod wf_remotes;
