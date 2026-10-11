@@ -396,12 +396,12 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| LF-01 | LFS file changed | edit a tracked LFS file | content diff; whole-file stage only, partial refused | `lfs::working_lfs_files_stage_only_whole`, `lfs::whole_file_stage_runs_the_clean_filter` | — | `lfs::lfs_rows_whole_file_staging_and_the_notice` |
+| LF-01 | LFS file changed | edit a tracked LFS file | content diff; whole-file stage only, partial refused | `lfs::working_lfs_files_stage_only_whole`, `lfs::whole_file_stage_runs_the_clean_filter`, `wf_modules::lf01_an_lfs_file_stages_only_whole` | `wf_modules::lf01_an_lfs_file_stages_only_whole` | `lfs::lfs_rows_whole_file_staging_and_the_notice` |
 | LF-02 | Track with Git LFS | Track… in a folder | line in that `.gitattributes`; file stored as a pointer | `lfs::track_in_a_folder`, `lfs::track_sets_up_git_lfs_only_when_asked` | `lfs::track_without_git_lfs` | `lfs::track_with_git_lfs_from_the_diff_menu`, `lfs::track_without_git_lfs_says_how_to_install` |
 | LF-03 | Push uploads the object | commit and push | object on the remote | `lfs::push_uploads_to_a_local_remote` | `lfs::push_without_the_lfs_hook_asks` | `lfs::push_without_the_lfs_hook_asks` |
 | LF-04 | Missing objects downloaded | a commit whose object isn't local | Download fetches it; diff shows content | `lfs::download_fetches_missing_objects_from_the_remote`, `lfs::cached_diffs_reannotate_when_objects_arrive` | `lfs::download_missing_objects` | `lfs::download_missing_objects_from_the_diff_menu` |
 | LF-05 | Pointers left / not set up / hooks | clone without git-lfs; Set Up | health explained and fixed | `lfs_health::not_set_up_then_set_up`, `lfs_health::pointer_files_in_the_working_tree`, `lfs_health::download_replaces_the_pointers` | `lfs::missing_git_lfs_banner`, `lfs::hooks_without_lfs_offer_removal` | `lfs::missing_git_lfs_badge_explained_and_hidden`, `lfs::hooks_without_lfs_removed` |
-| LF-06 | Clone checks out content | clone a repo with LFS | content, nothing to commit | `lfs::clone_checks_out_the_content` | — | — |
+| LF-06 | Clone checks out content | clone a repo with LFS | content, nothing to commit | `lfs::clone_checks_out_the_content`, `wf_modules::lf06_clone_checks_out_the_content` | `wf_modules::lf06_clone_checks_out_the_content` | `wf_modules::lf06_clone_checks_out_the_content` |
 
 ## DC — Discard
 
@@ -511,7 +511,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | RM remotes | 18 | 17 | 16 | 18 |
 | WT worktrees | 8 | 7 | 7 | 7 |
 | SM submodules | 8 | 8 | 8 | 8 |
-| LF LFS | 6 | 6 | 4 | 5 |
+| LF LFS | 6 | 6 | 6 | 6 |
 | DC discard | 9 | 6 | 3 | 4 |
 | RL recovery | 4 | 1 | 1 | 1 |
 | IG ignore | 6 | 4 | 4 | 4 |
@@ -520,7 +520,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **259** | **164** | **93** | **112** |
+| **Total** | **259** | **164** | **95** | **113** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

@@ -7,7 +7,7 @@
 use crate::common::*;
 use crate::support::*;
 
-use gitti_workflow::{sm, wt};
+use gitti_workflow::{lf, sm, wt};
 
 /// A screen's text without line breaks and frame (dialog text is word-wrapped).
 fn flat(screen: &str) -> String {
@@ -129,4 +129,45 @@ fn sm07_record_the_submodule_commit_in_the_superproject() {
     assert!(st[0].contains("unstaged=0 staged=1"), "{out}");
     assert!(st[1].contains("unstaged=0 staged=0 repo_state=clean") && !st[1].contains("ERROR"), "{out}");
     wf::expect_recorded(&d, &s).unwrap();
+}
+
+/// LF-06: the palette's Clone Repository… of a repository with an LFS file (git-lfs
+/// installed; its filters in the global config): the clone has the content, gitty offers
+/// to open it, and there it shows nothing to commit.
+/// Workflow: LF-06
+#[gitti_test::test]
+fn lf06_clone_checks_out_the_content() {
+    use lf::clone_content as wf;
+    if !gitti_core::lfs::LfsCaps::get().installed() {
+        println!("note: git-lfs isn't installed — LF-06 (clone with LFS content) is not checked");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let base = gitti_core::paths::canonical(tmp.path());
+    let work = base.join("work");
+    let head = wf::fixture(&work);
+    // gitty runs in a repository: the user's own, any.
+    let mut fx = gitti_workflow::Fixture::new();
+    fx.commit("main", "init", &[gitti_workflow::put("a.txt", "a\n")]);
+    fx.build(&work);
+    let global = base.join("lfs-gitconfig");
+    std::fs::write(&global, lf::LFS_FILTERS).unwrap();
+    let global = global.display().to_string();
+    let env = [("GIT_CONFIG_GLOBAL", global.as_str()), ("GIT_CONFIG_NOSYSTEM", "1")];
+    let parent = base.join("clones");
+    std::fs::create_dir_all(&parent).unwrap();
+    let config = base.join("gitty-config");
+    let script = format!(
+        "press:ctrl-p;{}press:enter;type:{};press:tab;press:ctrl-u;type:{};key:enter;dump;press:enter",
+        presses("clone repo"),
+        gitti_workflow::rm::url_of(&wf::remote(&work)),
+        parent.display(),
+    );
+    let out = gitty_env(&work, &config, "120x30", &env, &script);
+    let clone = parent.join("work-lfs");
+    assert!(screens(&out)[0].contains("Open the new repository?"), "{out}");
+    assert!(out.contains(&format!("(reopen {})", clone.display())), "{out}");
+    wf::expect_cloned(&clone, &head).unwrap();
+    let out = gitty_env(&clone, &config, "120x30", &env, "state");
+    assert!(states(&out)[0].contains("unstaged=0 staged=0"), "nothing to commit: {out}");
 }

@@ -6,7 +6,7 @@
 
 use gitti_core::Repo;
 use gitti_core::worktree::{AddInput, AddMode, plan_add};
-use gitti_workflow::{sm, wt};
+use gitti_workflow::{lf, sm, wt};
 
 /// WT-03: a change staged and committed in a repository opened at a linked worktree —
 /// the branch shared with the main worktree moves, the main worktree is untouched.
@@ -106,4 +106,73 @@ fn sm07_commit_inside_a_submodule() {
     repo.stage_paths(&[sm::PATH]).unwrap();
     repo.commit(wf::UPDATE_LIB, false).unwrap();
     wf::expect_recorded(&dir, &s).unwrap();
+}
+
+/// The global config with git-lfs's filters, for `Repo::set_env` / `Git::set_env`
+/// (written into `dir`).
+fn lfs_global_config(dir: &std::path::Path) -> Vec<(String, String)> {
+    let path = dir.join("global.gitconfig");
+    std::fs::write(&path, lf::LFS_FILTERS).unwrap();
+    vec![
+        ("GIT_CONFIG_GLOBAL".into(), path.display().to_string()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+    ]
+}
+
+/// The workflow's pointer constants are what gitti-core computes.
+#[gitti_test::test]
+fn lf_pointers_are_what_gitti_core_writes() {
+    use gitti_core::lfs::Pointer;
+    for c in [lf::whole_file_only::DOC1, lf::whole_file_only::DOC2, lf::clone_content::X] {
+        assert_eq!(Pointer::of(c.data).text(), c.pointer());
+    }
+}
+
+/// LF-01: an LFS file's change shows the content's lines; a hunk of it is refused before
+/// git runs; the whole file stages the new pointer.
+/// Workflow: LF-01
+#[gitti_test::test]
+fn lf01_an_lfs_file_stages_only_whole() {
+    use gitti_core::lfs::LfsContent;
+    use gitti_core::patch::{PatchMode, Selection};
+    use lf::whole_file_only as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("work");
+    wf::fixture(&dir);
+    let repo = Repo::open(&dir).unwrap();
+    let state = repo.working_state().unwrap();
+    let doc = state.unstaged.iter().find(|f| f.path() == "doc.dat").and_then(|f| f.diff.clone()).expect("doc.dat");
+    assert_eq!(doc.lfs.as_ref().map(|l| l.content), Some(LfsContent::Diffed));
+    let err = repo.apply_selection(&doc, &Selection::whole_hunk(0), PatchMode::Stage).unwrap_err();
+    assert!(err.to_string().contains(wf::REFUSED), "{err}");
+    wf::expect_unstaged(&dir).unwrap();
+    repo.stage_paths(&["doc.dat"]).unwrap();
+    wf::expect_staged(&dir).unwrap();
+}
+
+/// LF-06: a clone of a repository with an LFS file (git-lfs installed) has the content
+/// and nothing to commit.
+/// Workflow: LF-06
+#[gitti_test::test]
+fn lf06_clone_checks_out_the_content() {
+    use lf::clone_content as wf;
+    if !gitti_core::lfs::LfsCaps::get().installed() {
+        println!("note: git-lfs isn't installed — LF-06 (clone with LFS content) is not checked");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let base = gitti_core::paths::canonical(tmp.path());
+    let work = base.join("work");
+    let head = wf::fixture(&work);
+    let env = lfs_global_config(&base);
+    let mut git = gitti_core::git_cli::Git::new(&base);
+    git.set_env(env.clone());
+    let clone = base.join("clone");
+    let url = gitti_workflow::rm::url_of(&wf::remote(&work));
+    gitti_core::create::clone_repo(&git, &url, &clone, &mut |_| {}).unwrap();
+    wf::expect_cloned(&clone, &head).unwrap();
+    let mut repo = Repo::open(&clone).unwrap();
+    repo.set_env(env);
+    let state = repo.working_state().unwrap();
+    assert!(state.unstaged.is_empty() && state.staged.is_empty(), "nothing to commit");
 }

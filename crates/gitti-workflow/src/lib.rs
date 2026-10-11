@@ -28,6 +28,7 @@ pub mod expect;
 pub mod ext;
 pub mod fixture;
 pub mod git;
+pub mod lf;
 pub mod rm;
 pub mod sm;
 pub mod st;

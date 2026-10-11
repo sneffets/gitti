@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use common::*;
 use gitti_app::testing_menus as menus;
-use gitti_workflow::{sm, wt};
+use gitti_workflow::{lf, sm, wt};
 
 macro_rules! fail {
     ($ui:expr, $($arg:tt)*) => {{
@@ -40,11 +40,22 @@ fn setup<T: 'static>() -> T {
 
 pub fn main() {
     let tmp = common::setup();
+    // git-lfs's filters as `git lfs install` writes them, nothing else of a developer's
+    // global config (LF-06 clones with them; LF-01 switches them off in its repository).
+    let global = tmp.path().join("lfs-gitconfig");
+    std::fs::write(&global, lf::LFS_FILTERS).unwrap();
+    // SAFETY: still single-threaded (this suite runs in its own process).
+    unsafe {
+        std::env::set_var("GIT_CONFIG_GLOBAL", &global);
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+    }
     let base = gitti_core::paths::canonical(tmp.path());
     let tests: &[(&str, Scenario)] = &[
         ("wt07_track_a_remote_branch_in_a_new_worktree", wt07_track_a_remote_branch_in_a_new_worktree),
         ("sm08_plain_clone_leaves_the_submodule_uninitialised", sm08_plain_clone_leaves_the_submodule_uninitialised),
         ("sm08_recursive_clone_asks_then_checks_it_out", sm08_recursive_clone_asks_then_checks_it_out),
+        ("lf01_an_lfs_file_stages_only_whole", lf01_an_lfs_file_stages_only_whole),
+        ("lf06_clone_checks_out_the_content", lf06_clone_checks_out_the_content),
     ];
     common::run(tests, |name| {
         let dir: PathBuf = base.join(name);
@@ -54,6 +65,11 @@ pub fn main() {
             "sm08" => {
                 std::fs::create_dir_all(&dir).unwrap();
                 keep((sm::clone_with_submodules::fixture(&dir), dir.clone()));
+            }
+            "lf01" => lf::whole_file_only::fixture(&dir),
+            "lf06" => {
+                std::fs::create_dir_all(&dir).unwrap();
+                keep((lf::clone_content::fixture(&dir), dir.clone()));
             }
             other => panic!("no fixture for {other}"),
         }
@@ -172,4 +188,64 @@ fn sm08_recursive_clone_asks_then_checks_it_out(ui: &mut Ui) {
         fail!(ui, "the submodule after the update: {subs:?}");
     }
     expect(ui, sm::clone_with_submodules::expect_recursive(&clone, &s));
+}
+
+/// LF-01: the LFS file's change shows the LFS row, the content's lines (not the
+/// pointer's) and "whole file only"; the hunk button is refused before git runs, saying
+/// why; Stage File stages the new pointer.
+/// Workflow: LF-01
+fn lf01_an_lfs_file_stages_only_whole(ui: &mut Ui) {
+    use lf::whole_file_only as wf;
+    let dir = ui.workdir();
+    let probes = ui.check("working directory with an LFS change");
+    for name in ["lfs:", "lfs-whole:"] {
+        if !probes.iter().any(|p| p.name.starts_with(name)) {
+            fail!(ui, "no {name} probe in the working directory");
+        }
+    }
+    let ws = ui.ws.clone();
+    let lines = ui.cx.update(|cx| testing::line_texts(&ws, cx));
+    if !lines.iter().any(|l| l == "+BETA") || !lines.iter().any(|l| l == "+gamma") || lines.iter().any(|l| l.contains("sha256")) {
+        fail!(ui, "the change as the content's lines: {lines:?}");
+    }
+    let n = ui.n_git();
+    ui.quick("stagehunk:doc.dat,0");
+    ui.no_git_since(n, "a refused hunk stage");
+    let want = format!("doc.dat {}stage the whole file instead", wf::REFUSED);
+    if ui.error().as_deref() != Some(want.as_str()) {
+        fail!(ui, "error {:?}, expected {want:?}", ui.error());
+    }
+    expect(ui, wf::expect_unstaged(&dir));
+    ui.step("stagefile:doc.dat");
+    if ui.ui_state().staged != ["doc.dat"] {
+        fail!(ui, "doc.dat not staged as a whole: {:?}", ui.working());
+    }
+    expect(ui, wf::expect_staged(&dir));
+}
+
+/// LF-06: Clone Repository… of a repository with an LFS file (git-lfs installed): the
+/// clone opens with the content checked out and nothing to commit.
+/// Workflow: LF-06
+fn lf06_clone_checks_out_the_content(ui: &mut Ui) {
+    use lf::clone_content as wf;
+    let (head, work): (String, PathBuf) = setup();
+    if !gitti_core::lfs::LfsCaps::get().installed() {
+        println!("note: git-lfs isn't installed — LF-06 (clone with LFS content) is not checked");
+        return;
+    }
+    let name = format!("{}-clone", work.file_name().unwrap().to_string_lossy());
+    ui.quick("action:gitti::CloneRepository");
+    ui.quick(&format!("field:0={}", gitti_workflow::rm::url_of(&wf::remote(&work))));
+    ui.quick(&format!("field:1={}", work.parent().unwrap().display()));
+    ui.quick(&format!("field:2={name}"));
+    ui.step("modalok");
+    no_error(ui, "Clone");
+    let clone = work.with_file_name(name);
+    if ui.tabs() != (2, 1) || ui.workdir() != clone {
+        fail!(ui, "the clone isn't open in a new tab: tabs {:?}, {}", ui.tabs(), ui.workdir().display());
+    }
+    if !ui.working().is_empty() {
+        fail!(ui, "changes after the clone: {:?}", ui.working());
+    }
+    expect(ui, wf::expect_cloned(&clone, &head));
 }
