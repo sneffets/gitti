@@ -13,7 +13,7 @@ use std::rc::Rc;
 use gitti_core::branch_cleanup::{self, BranchSet, Mode};
 use gitti_core::branch_order::{self, BranchOrder, BranchSort, Sorting};
 use gitti_core::{RefInfo, RefKind};
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
 use super::GittiApp;
@@ -44,9 +44,9 @@ fn item(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
@@ -99,6 +99,21 @@ pub(super) fn pin_item(menu: PopupMenu, app: &AppHandle, r: &RefInfo, pinned: bo
         })
         .checked(pinned),
     )
+}
+
+/// Ref `r`'s whole menu as its sidebar row has it ([`super::menus::ref_context_menu`],
+/// then "Pin to Top" for a branch) — for its badges in the commit list and the commit
+/// header. No git.
+pub(super) fn ref_menu_pinnable(
+    menu: PopupMenu,
+    app: &AppHandle,
+    r: &RefInfo,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let pinned = app.upgrade().is_some_and(|a| a.read(cx).is_pinned(&r.full_name));
+    let menu = super::menus::ref_context_menu(menu, app, r, window, cx);
+    pin_item(menu, app, r, pinned)
 }
 
 impl GittiApp {

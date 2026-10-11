@@ -193,7 +193,7 @@ fn line_staging_untracked_files_commit_and_stash() {
         .map(|f| f.path().to_string())
         .collect();
     assert!(paths.contains(&"b.txt".to_string()) && paths.contains(&"new.txt".to_string()), "{paths:?}");
-    r.stash_apply(0, true).unwrap();
+    r.stash_apply(r.stashes().unwrap()[0].target(), true).unwrap();
     assert_eq!(fs::read_to_string(fx.p.join("b.txt")).unwrap(), "BEE\n");
 }
 
@@ -231,7 +231,7 @@ fn merge_conflict_worktrees_and_branch_ops() {
     let r = Repo::open(&p).unwrap();
 
     // A conflicting merge: the pending merge row, the merge editor's stages.
-    assert!(r.merge("side").is_err());
+    assert!(r.merge("side").unwrap().starts_with("Merge stopped on "), "a conflict: a stop, not a failure");
     let hist = r.history(LogOrder::Topo).unwrap();
     assert_eq!(hist.commits.at(0).parents.len(), 2, "HEAD + MERGE_HEAD");
     assert_eq!(r.working_state().unwrap().conflicted.len(), 1);

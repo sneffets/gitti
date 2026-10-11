@@ -12,7 +12,7 @@ use std::rc::Rc;
 use gitti_core::ops::StashFlags;
 use gitti_core::patch::Selection;
 use gitti_core::stash::{self, Scope};
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
 use super::GittiApp;
@@ -23,15 +23,25 @@ use crate::{RenameStash, StashSelection};
 
 type AppHandle = WeakEntity<GittiApp>;
 
+/// A stash entry of the diff's menu; greyed with the reason while `busy` (a merge /
+/// rebase / cherry-pick / revert is in progress: a stash would end it half-done).
 fn entry(
-    label: impl Into<SharedString>,
+    label: impl Into<String>,
+    busy: Option<&str>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
+    let label = label.into();
+    let label = match busy {
+        Some(why) => gitti_core::availability::with_reason(&label, why),
+        None => label,
+    };
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
-        app.update(cx, |this, cx| f(this, window, cx)).ok();
-    })
+    super::menus::menu_entry(label)
+        .on_click(move |_, window, cx| {
+            app.update(cx, |this, cx| f(this, window, cx)).ok();
+        })
+        .disabled(busy.is_some())
 }
 
 fn palette_entry(
@@ -64,10 +74,11 @@ pub(super) fn diff_menu_items(mut menu: PopupMenu, app: &AppHandle, cx: &App) ->
     let Some(&at) = a.rows.get(row) else {
         return menu;
     };
+    let busy = gitti_core::availability::in_progress(a.repo_state);
     if let DiffRow::Group(group) = at {
         let paths = crate::rows::group_paths(&a.working, group);
         if !paths.is_empty() {
-            menu = menu.item(entry(format!("Stash {}…", group.title()), app, move |this, w, cx| {
+            menu = menu.item(entry(format!("Stash {}…", group.title()), busy, app, move |this, w, cx| {
                 this.menu_row = None;
                 this.stash_paths_dialog(paths.clone(), w, cx)
             }));
@@ -84,19 +95,19 @@ pub(super) fn diff_menu_items(mut menu: PopupMenu, app: &AppHandle, cx: &App) ->
         .map(|s| s.to_selection());
     if let Some(sel) = selected {
         let n = a.file_diff(src, file).map_or(0, |d| stash::selected_lines(d, &sel));
-        menu = menu.item(entry(format!("Stash {}…", lines_word(n)), app, move |this, w, cx| {
+        menu = menu.item(entry(format!("Stash {}…", lines_word(n)), busy, app, move |this, w, cx| {
             this.menu_row = None;
             this.stash_lines_dialog(src, file, sel.clone(), w, cx)
         }));
     }
     if let DiffRow::Hunk { hunk, .. } | DiffRow::Line { hunk, .. } = at {
-        menu = menu.item(entry("Stash This Hunk…", app, move |this, w, cx| {
+        menu = menu.item(entry("Stash This Hunk…", busy, app, move |this, w, cx| {
             this.menu_row = None;
             this.stash_lines_dialog(src, file, Selection::whole_hunk(hunk), w, cx)
         }));
     }
     if let Some(path) = a.file_path(src, file) {
-        menu = menu.item(entry("Stash This File…", app, move |this, w, cx| {
+        menu = menu.item(entry("Stash This File…", busy, app, move |this, w, cx| {
             this.menu_row = None;
             this.stash_paths_dialog(vec![path.clone()], w, cx)
         }));
@@ -133,6 +144,9 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_stash_now("Stash Changes", cx) {
+            return;
+        }
         let scope = Scope::of(&self.working, &paths);
         let title = match paths.as_slice() {
             [] => "Stash Changes".to_string(),
@@ -160,6 +174,18 @@ impl GittiApp {
             let flags = StashFlags::from_checks(&res.checks);
             this.git_op("Stash", w, cx, move |r| r.stash_push(&msg, flags, &paths))
         });
+    }
+
+    /// While a merge / rebase / cherry-pick / revert is in progress a stash would end it
+    /// half-done: says so (`true`) instead of opening a stash dialog — the toolbar button
+    /// and the file menus reach here past the greyed menu commands.
+    fn refuse_stash_now(&mut self, label: &str, cx: &mut Context<Self>) -> bool {
+        let Some(why) = gitti_core::availability::in_progress(self.repo_state) else {
+            return false;
+        };
+        self.set_info(gitti_core::availability::refusal(label, why));
+        cx.notify();
+        true
     }
 
     /// "Stash Selected Lines or File…": the selected lines of the working-directory diff,
@@ -195,6 +221,9 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_stash_now(stash::SELECTION_LABEL, cx) {
+            return;
+        }
         let Some(shown) = self.file_diff(src, file) else {
             return;
         };
@@ -244,9 +273,9 @@ impl GittiApp {
             .stashes
             .iter()
             .map(|st| {
-                let index = st.index;
+                let stash = st.target();
                 palette_entry(&st.message, &st.name, move |t, w, cx| {
-                    t.rename_stash_dialog(index, w, cx)
+                    t.rename_stash_dialog(stash, w, cx)
                 })
             })
             .collect();
@@ -262,11 +291,12 @@ impl GittiApp {
     /// dialog says how git does it (no rename command) and the new list entry.
     pub(super) fn rename_stash_dialog(
         &mut self,
-        index: usize,
+        stash: gitti_core::ops::StashRef,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(st) = self.stashes.iter().find(|s| s.index == index) else {
+        let index = stash.index;
+        let Some(st) = self.stashes.iter().find(|s| s.id == stash.id) else {
             self.set_info("No such stash");
             cx.notify();
             return;
@@ -288,7 +318,7 @@ impl GittiApp {
             });
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let text = res.values[0].clone();
-            this.git_op("Rename stash", w, cx, move |r| r.stash_rename(index, &text))
+            this.git_op("Rename stash", w, cx, move |r| r.stash_rename(stash, &text))
         });
     }
 }

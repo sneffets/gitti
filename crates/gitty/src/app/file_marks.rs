@@ -38,6 +38,29 @@ impl App {
         }
     }
 
+    /// The folder row the diff cursor is on (kept across a rebuild, [`Self::settle_cursor`]).
+    pub(super) fn cursor_folder(&self) -> Option<(Src, Folder)> {
+        if !matches!(self.detail, Detail::Worktree) {
+            return None;
+        }
+        self.folder_at(self.diff_cursor)
+    }
+
+    /// After the working rows were rebuilt: the cursor back on its folder row (`folder`,
+    /// from before) while that folder is still there, and never on a gap band — when a
+    /// folder or marked files left the section, on the next file or folder there.
+    pub(super) fn settle_cursor(&mut self, folder: Option<(Src, Folder)>) {
+        if let Some((src, f)) = folder
+            && let Some(id) = self.folders.position(src, f.group, &f.path)
+            && let Some(i) = self.rows.iter().position(|r| *r == DiffRow::Folder { src, folder: id })
+        {
+            self.diff_cursor = i;
+        }
+        self.diff_cursor = gitti_core::rows::real_row_near(&self.rows, self.diff_cursor);
+        let h = usize::from(self.areas.detail.height);
+        self.diff_offset = gitti_core::nav::keep_visible(self.diff_offset, self.diff_cursor, h, self.rows.len());
+    }
+
     fn folder_paths(&self, src: Src, folder: &Folder) -> Vec<String> {
         let files = work_files(&self.working, src);
         folder.files.iter().filter_map(|&i| Some(files.get(i)?.path().to_string())).collect()
@@ -212,6 +235,10 @@ impl App {
         if !matches!(self.detail, Detail::Worktree) {
             return items;
         }
+        // A stash would end a merge / rebase / cherry-pick / revert half-done.
+        let busy = gitti_core::availability::in_progress(self.repo_state);
+        let stash_item =
+            |label: String, paths: Vec<String>| MenuItem::new(label, move |app| app.stash_paths_dialog(paths)).unless(busy);
         if let Some((src, f)) = self.folder_at(self.diff_cursor) {
             let paths = self.folder_paths(src, &f);
             let n = files_word(paths.len());
@@ -230,10 +257,7 @@ impl App {
                 _ => {}
             }
             if matches!(src, Src::Unstaged | Src::Staged) {
-                let p = paths.clone();
-                items.push(MenuItem::new(format!("Stash Folder ({n})…"), move |app| {
-                    app.stash_paths_dialog(p)
-                }));
+                items.push(stash_item(format!("Stash Folder ({n})…"), paths.clone()));
             }
             let dir = format!("{}/", f.path);
             items.push(MenuItem::new("Copy Folder Path", move |app| app.copy(dir)));
@@ -261,8 +285,7 @@ impl App {
             }));
         }
         let paths = self.marks.all_paths();
-        let p = paths.clone();
-        items.push(MenuItem::new(format!("Stash Marked ({n})…"), move |app| app.stash_paths_dialog(p)));
+        items.push(stash_item(format!("Stash Marked ({n})…"), paths.clone()));
         items.push(MenuItem::new(format!("Open Marked in Editor ({n})"), |app| app.open_marked()));
         let text = paths.join("\n");
         items.push(MenuItem::new(format!("Copy Marked Paths ({n})"), move |app| app.copy(text)));
@@ -300,9 +323,15 @@ impl App {
                 app.marks_action(PatchMode::Discard)
             }));
             let paths = self.marks.all_paths();
-            items.push(PickItem::new(format!("Stash Marked ({n})…"), "", move |app: &mut App| {
+            let stash = PickItem::new(format!("Stash Marked ({n})…"), "", move |app: &mut App| {
                 app.stash_paths_dialog(paths.clone())
-            }));
+            });
+            // Greyed during a merge / rebase / cherry-pick / revert (a stash would end it
+            // half-done), as the Stash commands and the diff menu's entry.
+            items.push(match gitti_core::availability::in_progress(self.repo_state) {
+                Some(why) => stash.unavailable(why),
+                None => stash,
+            });
             items.push(PickItem::new(format!("Open Marked in Editor ({n})"), "", |app: &mut App| {
                 app.open_marked()
             }));

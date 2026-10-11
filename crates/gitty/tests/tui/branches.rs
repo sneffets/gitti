@@ -56,12 +56,19 @@ fn sort_choices_and_pins_run_no_git_and_are_remembered() {
     assert_eq!(sidebar_order(&s[3]), ["side", "main", "done"], "side pinned: {out}");
     assert!(s[3].contains("side ▴"), "the pin mark: {out}");
     assert!(states(&out)[0].contains("is pinned"), "{out}");
-    assert_no_git(&cmds(&out)[1..], "sorting and pinning", &out);
+    // The sidebar cursor selects each branch's tip commit: loading one that wasn't
+    // prefetched yet is a `git show` (timing-dependent) — that's moving, not sorting.
+    let blocks: Vec<Vec<String>> = cmds(&out)[1..]
+        .iter()
+        .map(|b| b.iter().filter(|c| !c.starts_with("show ")).cloned().collect())
+        .collect();
+    assert_no_git(&blocks, "sorting and pinning", &out);
     // The next run: the same choice and pin.
     let out = gitty_with(dir.path(), config.path(), "120x30", "press:backtab;dump");
     assert_eq!(sidebar_order(&dumps(&out, 30)[0]), ["side", "main", "done"], "remembered: {out}");
 }
 
+/// Workflow: BR-19
 #[gitti_test::test]
 fn clean_up_merged_deletes_the_merged_branch() {
     let dir = fixture();
@@ -81,6 +88,7 @@ fn clean_up_merged_deletes_the_merged_branch() {
     assert_ne!(rev(d, "refs/heads/side"), "", "{out}");
 }
 
+/// Workflow: BR-19
 #[gitti_test::test]
 fn delete_branches_needs_force_for_an_unmerged_one() {
     let dir = fixture();
@@ -100,4 +108,40 @@ fn delete_branches_needs_force_for_an_unmerged_one() {
     assert!(!st[2].contains("modal="), "{out}");
     assert_eq!(rev(d, "refs/heads/side"), "", "forced: {out}");
     assert_ne!(rev(d, "refs/heads/done"), "", "not ticked: {out}");
+}
+
+/// A checklist taller than the terminal (40 merged branches at 80x20) scrolls between the
+/// title and the key line: the focused box stays in view — the last one with the text
+/// under it —, marks say there is more above / below, the key line stays.
+#[gitti_test::test]
+fn long_branch_checklist_scrolls_with_the_focus() {
+    let extra: String = (0..40).map(|i| format!("reset refs/heads/b{i:02}\nfrom :1\n\n")).collect();
+    let dir = import_with(
+        &[
+            Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "one\n")] },
+            Commit { branch: "main", from: None, merge: None, msg: "two", files: &[("a.txt", "two\n")] },
+        ],
+        &extra,
+    );
+    let script = format!(
+        "press:ctrl-p;{}press:enter;wait;state;dump;press:up;state;dump;press:down;state;dump",
+        presses("clean up merged")
+    );
+    let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "80x20", &script);
+    let st = states(&out);
+    let s = dumps(&out, 20);
+    assert!(st[0].contains("Clean Up Branches Merged into main"), "{out}");
+    // At the start: the first boxes, more below.
+    assert!(st[0].contains("input_focus=0 input_offset=0"), "{out}");
+    assert!(s[0].contains("☑ b00") && !s[0].contains("b39") && s[0].contains('▼'), "{out}");
+    // Up wraps to the last box: scrolled to the end, the live text under it in view.
+    assert!(st[1].contains("input_focus=39") && !st[1].contains("input_offset=0 "), "{out}");
+    assert!(s[1].contains("☑ b39") && !s[1].contains("☑ b00") && s[1].contains('▲'), "{out}");
+    assert!(s[1].contains("Delete 40 Branches"), "{out}");
+    // Down wraps to the first again: back at the top.
+    assert!(st[2].contains("input_focus=0 input_offset=0"), "{out}");
+    assert!(s[2].contains("☑ b00"), "{out}");
+    for (n, screen) in s.iter().enumerate() {
+        assert!(screen.contains("esc cancel"), "screen {n}: the key line: {out}");
+    }
 }

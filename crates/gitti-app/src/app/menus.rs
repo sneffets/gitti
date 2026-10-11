@@ -2,7 +2,7 @@
 //! behind their entries. The actual git work lives in `gitti_core::ops`.
 
 use gitti_core::ops::{CherryPickOptions, FastForward, MergeOptions, RemoteInfo, ResetMode};
-use gitti_core::ops::{UnrelatedHistories, UnrelatedRetry};
+use gitti_core::ops::{StashRef, UnrelatedHistories, UnrelatedRetry};
 use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget, SwitchWay};
 use gitti_core::worktree::BranchDeletion;
 use gitti_core::{RefInfo, RefKind};
@@ -17,24 +17,77 @@ use super::modal::{ModalLive, ModalSpec};
 type AppHandle = WeakEntity<GittiApp>;
 
 thread_local! {
-    /// Labels of the menu entries built since the last [`take_menu_labels`] (only while
-    /// the layout probes are on: tests, scripted runs).
-    static BUILT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Labels of the menu entries built since the last [`take_menu_labels`], each with
+    /// whether it is enabled (only while the layout probes are on: tests, scripted runs).
+    static BUILT: std::cell::RefCell<Vec<(String, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// A context-menu entry: `PopupMenuItem::new` that tests can read back (the sidebar menus
-/// are checked against `gitti_core::sidebar_menus`; gpui-component keeps a menu's items
-/// private).
-pub(super) fn menu_entry(label: impl Into<SharedString>) -> PopupMenuItem {
-    let label = label.into();
-    if crate::probe::enabled() {
-        BUILT.with(|b| b.borrow_mut().push(label.to_string()));
+/// A context-menu entry being built: a `PopupMenuItem` that tests can read back (the
+/// sidebar menus are checked against `gitti_core::sidebar_menus`; gpui-component keeps a
+/// menu's items private). It becomes the item in `menu.item(…)`, which records its label,
+/// whether it is greyed and what it does ([`menu_action`]) — so after every `.disabled`.
+pub(crate) struct Entry {
+    item: PopupMenuItem,
+    action: Option<EntryAction>,
+}
+
+impl Entry {
+    /// Greyed (with `disabled`): a click does nothing, nor does the `menu:LABEL` step.
+    pub(crate) fn disabled(mut self, disabled: bool) -> Self {
+        self.item = self.item.disabled(disabled);
+        self
     }
-    PopupMenuItem::new(label)
+
+    pub(crate) fn checked(mut self, checked: bool) -> Self {
+        self.item = self.item.checked(checked);
+        self
+    }
+
+    pub(crate) fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.item = self.item.on_click(f);
+        self
+    }
+}
+
+impl gpui_kit::prelude::FluentBuilder for Entry {}
+
+impl From<Entry> for PopupMenuItem {
+    fn from(e: Entry) -> Self {
+        if crate::probe::enabled()
+            && let PopupMenuItem::Item { label, disabled, .. } = &e.item
+        {
+            let (label, enabled) = (label.to_string(), !*disabled);
+            BUILT.with(|b| b.borrow_mut().push((label.clone(), enabled)));
+            if let Some(f) = e.action {
+                ACTIONS.with(|a| {
+                    let mut a = a.borrow_mut();
+                    // Menus are built on every open: keep the recent ones.
+                    if a.len() >= 512 {
+                        a.drain(..256);
+                    }
+                    a.push((label, enabled, f));
+                });
+            }
+        }
+        e.item
+    }
+}
+
+/// A context-menu entry ([`Entry`]).
+pub(super) fn menu_entry(label: impl Into<SharedString>) -> Entry {
+    Entry {
+        item: PopupMenuItem::new(label),
+        action: None,
+    }
 }
 
 /// The labels of the menu entries built since the last call (see [`menu_entry`]).
 pub fn take_menu_labels() -> Vec<String> {
+    take_menu_entries().into_iter().map(|(l, _)| l).collect()
+}
+
+/// [`take_menu_labels`] with whether each entry is enabled (not greyed).
+pub fn take_menu_entries() -> Vec<(String, bool)> {
     BUILT.with(|b| std::mem::take(&mut *b.borrow_mut()))
 }
 
@@ -42,9 +95,10 @@ pub fn take_menu_labels() -> Vec<String> {
 type EntryAction = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 
 thread_local! {
-    /// The entries of the menus built lately with what they do, newest last (only while
-    /// the layout probes are on): the `menu:LABEL` script step chooses one by its label.
-    static ACTIONS: std::cell::RefCell<Vec<(String, EntryAction)>> =
+    /// The entries of the menus built lately — label, enabled, what it does —, newest last
+    /// (only while the layout probes are on): the `menu:LABEL` script step chooses one by
+    /// its label.
+    static ACTIONS: std::cell::RefCell<Vec<(String, bool, EntryAction)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -53,40 +107,38 @@ thread_local! {
 pub(super) fn menu_action(
     label: impl Into<SharedString>,
     f: impl Fn(&mut Window, &mut App) + 'static,
-) -> PopupMenuItem {
-    let label = label.into();
+) -> Entry {
     let f: EntryAction = std::rc::Rc::new(f);
-    if crate::probe::enabled() {
-        ACTIONS.with(|a| {
-            let mut a = a.borrow_mut();
-            // Menus are built on every open: keep the recent ones.
-            if a.len() >= 512 {
-                a.drain(..256);
-            }
-            a.push((label.to_string(), f.clone()));
-        });
-    }
-    menu_entry(label).on_click(move |_, window, cx| f(window, cx))
+    let mut e = menu_entry(label);
+    e.item = e.item.on_click({
+        let f = f.clone();
+        move |_, window, cx| f(window, cx)
+    });
+    e.action = Some(f);
+    e
 }
 
 /// Runs the entry `label` (exactly as shown, a greyed one with its reason) of the menu
 /// built last that has it — what clicking it does, without the menu's coordinates. The
-/// caller closes the open menu first. An error when no such entry was built.
+/// caller closes the open menu first. An error when no such entry was built, or when it
+/// is greyed (a click on it does nothing: a test must not choose it by accident).
 pub fn run_menu_entry(label: &str, window: &mut Window, cx: &mut App) -> Result<(), String> {
     let found = ACTIONS.with(|a| {
         a.borrow()
             .iter()
             .rev()
-            .find(|(l, _)| l == label)
-            .map(|(_, f)| f.clone())
+            .find(|(l, ..)| l == label)
+            .map(|(_, enabled, f)| (*enabled, f.clone()))
     });
     match found {
-        Some(f) => {
+        Some((true, f)) => {
             f(window, cx);
             Ok(())
         }
+        Some((false, _)) => Err(format!("menu entry {label:?} is greyed (disabled)")),
         None => {
-            let known: Vec<String> = ACTIONS.with(|a| a.borrow().iter().rev().take(40).map(|(l, _)| l.clone()).collect());
+            let known: Vec<String> =
+                ACTIONS.with(|a| a.borrow().iter().rev().take(40).map(|(l, ..)| l.clone()).collect());
             Err(format!("no menu entry {label:?} (latest: {known:?})"))
         }
     }
@@ -97,20 +149,20 @@ fn item(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> Entry {
     let app = app.clone();
     menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
 
-pub(super) fn copy_item(label: impl Into<SharedString>, text: String) -> PopupMenuItem {
+pub(super) fn copy_item(label: impl Into<SharedString>, text: String) -> Entry {
     menu_entry(label)
         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())))
 }
 
 /// "Mark for Comparison" for the commit `target` points at (a ref's row).
-fn compare_item(app: &AppHandle, target: gitti_core::ObjectId) -> PopupMenuItem {
+fn compare_item(app: &AppHandle, target: gitti_core::ObjectId) -> Entry {
     item("Mark for Comparison", app, move |this, _, cx| {
         match this.history.row_of(&target) {
             Some(row) => this.mark_compare_row(row, cx),
@@ -148,7 +200,7 @@ fn command_item(
     command: &str,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> Entry {
     let why = crate::why_not_now(command);
     item(why_label(label, why), app, f).disabled(why.is_some())
 }
@@ -951,11 +1003,12 @@ pub(super) fn ref_menu(
             }
             menu = menu.separator().item({
                 let name = name.clone();
+                let remotes = remotes.to_vec();
                 item("Delete Tag…", app, move |this, w, cx| {
                     let name = name.clone();
                     this.confirm(
                         format!("Delete tag {name}?"),
-                        None,
+                        Some(gitti_core::tag::delete_note(&name, &remotes)),
                         "Delete",
                         w,
                         cx,
@@ -1141,13 +1194,13 @@ pub(super) fn section_menu(
             .separator()
             .item(
                 item(why_label("Apply Latest Stash", none), app, |this, w, cx| {
-                    this.git_op("Stash apply", w, cx, |r| r.stash_apply(0, false))
+                    this.latest_stash(false, w, cx)
                 })
                 .disabled(none.is_some()),
             )
             .item(
                 item(why_label("Pop Latest Stash", none), app, |this, w, cx| {
-                    this.git_op("Stash pop", w, cx, |r| r.stash_apply(0, true))
+                    this.latest_stash(true, w, cx)
                 })
                 .disabled(none.is_some()),
             )
@@ -1197,18 +1250,19 @@ pub(super) fn section_menu(
 }
 
 /// A stash's menu (sidebar row, commit list row).
-pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, index: usize) -> PopupMenu {
+pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, stash: StashRef) -> PopupMenu {
+    let index = stash.index;
     menu.item(item("Apply", app, move |this, w, cx| {
-        this.git_op("Stash apply", w, cx, move |r| r.stash_apply(index, false))
+        this.git_op("Stash apply", w, cx, move |r| r.stash_apply(stash, false))
     }))
     .item(item("Pop", app, move |this, w, cx| {
-        this.git_op("Stash pop", w, cx, move |r| r.stash_apply(index, true))
+        this.git_op("Stash pop", w, cx, move |r| r.stash_apply(stash, true))
     }))
     .item(item("Create Branch from Stash…", app, move |this, w, cx| {
-        this.stash_branch_dialog(index, w, cx)
+        this.stash_branch_dialog(stash, w, cx)
     }))
     .item(item("Rename…", app, move |this, w, cx| {
-        this.rename_stash_dialog(index, w, cx)
+        this.rename_stash_dialog(stash, w, cx)
     }))
     .item(item("Copy Message", app, move |this, _, cx| {
         if let Some(s) = this.stashes.iter().find(|s| s.index == index) {
@@ -1223,7 +1277,7 @@ pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, index: usize) -> Popu
             "Drop",
             w,
             cx,
-            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(index)),
+            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(stash)),
         )
     }))
 }
@@ -1501,6 +1555,12 @@ impl GittiApp {
             )
             .field("Tag name", "")
             .ok("Create");
+        // A name git would refuse (an existing tag, an invalid name) is refused here first.
+        let refs = self.refs.clone();
+        let spec = spec.live(move |res| ModalLive {
+            blocked: gitti_core::tag::new_tag_problem(res.values.first().map_or("", |v| v.as_str()), &refs),
+            ..Default::default()
+        });
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let name = res.values[0].trim().to_string();
             let message = res.text.unwrap_or_default();
@@ -1555,10 +1615,11 @@ impl GittiApp {
     /// stash was made on, checked out, the stash applied (and dropped when that worked).
     pub(super) fn stash_branch_dialog(
         &mut self,
-        index: usize,
+        stash: StashRef,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let index = stash.index;
         let spec = ModalSpec::new(format!("Create branch from stash@{{{index}}}"))
             .message(
                 "Checks the branch out at the commit the stash was made on and applies the \
@@ -1572,7 +1633,7 @@ impl GittiApp {
                 return;
             }
             this.git_op("Create branch from stash", w, cx, move |r| {
-                r.stash_branch(&name, index)
+                r.stash_branch(&name, stash)
             })
         });
     }
@@ -1668,6 +1729,9 @@ impl GittiApp {
         });
     }
 
+    /// "Reset <branch> to …" with `mode`: soft and mixed lose nothing and run at once (the
+    /// status says what happened); a hard reset first reads what it would lose (in the
+    /// background) and asks with that ([`gitti_core::reset::ResetPlan`]).
     pub(super) fn reset_to(
         &mut self,
         rev: String,
@@ -1675,22 +1739,45 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let branch = self.head.branch.clone().unwrap_or("HEAD".into());
-        let go = move |this: &mut Self, w: &mut Window, cx: &mut Context<Self>| {
-            let rev = rev.clone();
-            this.git_op("Reset", w, cx, move |r| r.reset(&rev, mode))
-        };
-        if mode == ResetMode::Hard {
-            self.confirm(
-                format!("Hard reset {branch}?"),
-                Some("All uncommitted changes will be lost.".into()),
-                "Reset",
-                window,
-                cx,
-                go,
-            );
-        } else {
-            go(self, window, cx);
+        if mode != ResetMode::Hard {
+            return self.git_op("Reset", window, cx, move |r| r.reset(&rev, mode));
         }
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let job = cx.background_executor().spawn({
+            let rev = rev.clone();
+            async move { repo.reset_plan(&rev, mode) }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = job.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(plan) => this.hard_reset_dialog(rev, plan, window, cx),
+                    Err(e) => this.set_error(format!("{e:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The hard reset's dialog: what moves, which uncommitted changes are lost, which
+    /// untracked files stay, where the commits that leave the branch are found again.
+    fn hard_reset_dialog(
+        &mut self,
+        rev: String,
+        plan: gitti_core::reset::ResetPlan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut spec = ModalSpec::new(plan.title()).message(plan.describe()).ok(plan.ok_label());
+        if !plan.lost().is_empty() {
+            spec = spec.danger();
+        }
+        self.open_modal(spec, window, cx, move |this, _, w, cx| {
+            this.git_op("Reset", w, cx, move |r| r.reset(&rev, ResetMode::Hard))
+        });
     }
 }

@@ -17,8 +17,15 @@ fn lines_word(n: usize) -> String {
 
 impl App {
     /// The diff menu's stash entries for diff row `row`: the selected lines, the hunk,
-    /// the file, or a group of the unstaged section.
+    /// the file, or a group of the unstaged section — greyed with the reason while a
+    /// merge / rebase / cherry-pick / revert is in progress (a stash would end it
+    /// half-done).
     pub(crate) fn stash_row_items(&self, row: Option<DiffRow>) -> Vec<MenuItem> {
+        let busy = gitti_core::availability::in_progress(self.repo_state);
+        self.stash_row_entries(row).into_iter().map(|i| i.unless(busy)).collect()
+    }
+
+    fn stash_row_entries(&self, row: Option<DiffRow>) -> Vec<MenuItem> {
         let mut items = Vec::new();
         let Some(row) = row else {
             return items;
@@ -74,6 +81,9 @@ impl App {
     /// The stash dialog for `paths` (all changes when empty): message, the four check
     /// boxes, and a sentence saying what Enter does (or why it can't).
     pub fn stash_paths_dialog(&mut self, paths: Vec<String>) {
+        if self.refuse_stash_now("Stash Changes") {
+            return;
+        }
         let scope = Scope::of(&self.working, &paths);
         let title = match paths.as_slice() {
             [] => "Stash Changes".to_string(),
@@ -132,7 +142,21 @@ impl App {
     }
 
     /// The partial-stash dialog: `sel` of file `file` of `src` (unstaged or staged).
+    /// While a merge / rebase / cherry-pick / revert is in progress a stash would end it
+    /// half-done: says so (`true`) instead of opening a stash dialog (the file menus
+    /// reach here past the greyed menu commands).
+    fn refuse_stash_now(&mut self, label: &str) -> bool {
+        let Some(why) = gitti_core::availability::in_progress(self.repo_state) else {
+            return false;
+        };
+        self.set_info(gitti_core::availability::refusal(label, why));
+        true
+    }
+
     pub fn stash_lines_dialog(&mut self, src: Src, file: usize, sel: Selection) {
+        if self.refuse_stash_now(stash::SELECTION_LABEL) {
+            return;
+        }
         let Some(shown) = self.file_diff(src, file) else {
             return;
         };
@@ -183,9 +207,9 @@ impl App {
             .stashes
             .iter()
             .map(|s| {
-                let index = s.index;
+                let stash = s.target();
                 PickItem::new(s.message.clone(), s.name.clone(), move |app: &mut App| {
-                    app.rename_stash_dialog(index)
+                    app.rename_stash_dialog(stash)
                 })
             })
             .collect();
@@ -197,8 +221,9 @@ impl App {
 
     /// Renames `stash@{index}` (see `gitti_core::stash`): the field holds the part the
     /// user wrote; the dialog says how git does it and the new list entry.
-    pub fn rename_stash_dialog(&mut self, index: usize) {
-        let Some(s) = self.stashes.iter().find(|s| s.index == index) else {
+    pub fn rename_stash_dialog(&mut self, stash: gitti_core::ops::StashRef) {
+        let index = stash.index;
+        let Some(s) = self.stashes.iter().find(|s| s.id == stash.id) else {
             return self.set_info("No such stash");
         };
         let old = s.message.clone();
@@ -207,7 +232,7 @@ impl App {
             Modal::input(format!("Rename stash@{{{index}}}"), vec![("Message", &text)], move |app, v| {
                 let text = v[0].clone();
                 app.run_op("Rename stash", true, After::Nothing, move |r| {
-                    r.stash_rename(index, &text)
+                    r.stash_rename(stash, &text)
                 });
             })
             .with_note(stash::RENAME_NOTE)

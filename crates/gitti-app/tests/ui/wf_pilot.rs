@@ -134,7 +134,8 @@ fn cp12_pick_then_merge_the_source_branch(ui: &mut Ui) {
 }
 
 /// CP-13: Merge Branch into Current… → `feat` → Merge stops: the app shows the merge in
-/// progress with `a.txt` conflicted and `b.txt` staged.
+/// progress with `a.txt` conflicted and `b.txt` staged, and says so in the status bar
+/// (not as an error).
 /// Workflow: CP-13
 fn cp13_pick_edit_then_merge_conflicts_there(ui: &mut Ui) {
     use cp::pick_edit_then_merge as wf;
@@ -155,9 +156,10 @@ fn cp13_pick_edit_then_merge_conflicts_there(ui: &mut Ui) {
             st.status
         );
     }
-    // TODO (catalog: suspected bug "merge conflict reported without git's message"): the
-    // status bar should name the conflict ("CONFLICT (content): Merge conflict in a.txt");
-    // today it says "git merge --no-edit feat: git ended with exit code 1, without a
-    // message" — git prints the CONFLICT lines on stdout. Assert it once that is fixed.
+    // A stop on a conflict is a result, said plainly — not an error.
+    let said = "Merge stopped on 1 conflict — resolve it, then Continue (or Abort).";
+    if st.status != Some((said.to_string(), false)) || st.error_mark.is_some() {
+        fail!(ui, "the merge stop: status {:?}, error mark {:?}", st.status, st.error_mark);
+    }
     expect(ui, wf::expect(&dir, &s));
 }

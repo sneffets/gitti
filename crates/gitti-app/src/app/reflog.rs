@@ -16,7 +16,7 @@ use gitti_core::ops::ResetMode;
 use gitti_core::reflog::{EXPLANATION, Reflog, ReflogEntry};
 use gitti_core::switch::SwitchTarget;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -613,11 +613,7 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) {
         let short_rev = rev[..rev.len().min(7)].to_string();
-        let text = format!(
-            "{branch} then points at {short_rev} ({subject}) — git branch -f. The commits only \
-             {branch} had stay in its reflog (this list). Nothing is checked out; the working \
-             directory stays as it is."
-        );
+        let text = gitti_core::reflog::reset_branch_note(&branch, &short_rev, &subject);
         let spec = ModalSpec::new(format!("Reset {branch} to {short_rev}?"))
             .message(text)
             .ok("Reset Branch");
@@ -683,15 +679,15 @@ fn item(
     label: impl Into<SharedString>,
     app: &WeakEntity<GittiApp>,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
 
 /// "Show Reflog…" of a local branch's menu.
-pub(super) fn reflog_item(app: &WeakEntity<GittiApp>, branch: &str) -> PopupMenuItem {
+pub(super) fn reflog_item(app: &WeakEntity<GittiApp>, branch: &str) -> super::menus::Entry {
     let b = branch.to_string();
     item("Show Reflog…", app, move |this, w, cx| this.open_reflog(b.clone(), w, cx))
 }

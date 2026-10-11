@@ -10,7 +10,7 @@ use anyhow::Result;
 use gitti_core::commit_cache::CommitData;
 use gitti_core::diff::FileDiff;
 use gitti_core::keys::Command;
-use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, ResetMode, StashInfo, Tracking};
+use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, StashInfo, Tracking};
 use gitti_core::ops::{UnrelatedHistories, UnrelatedRetry};
 use gitti_core::patch::{PatchMode, Selection};
 use gitti_core::rows::{DiffRow, Expansion, LineSel, Src};
@@ -19,6 +19,7 @@ use gitti_core::store::{self, PaneLayout, SharedSettings};
 use gitti_core::syntax::LineCategories;
 use gitti_core::discard::{DiscardOptions, DiscardPlan};
 use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget, SwitchWay};
+use gitti_core::worktree::BranchDeletion;
 use gitti_core::pull::{DivergentPull, PullStrategy};
 use gitti_core::push::{PullBlock, PushBlock, pull_block, push_block};
 use gitti_core::watch::Change;
@@ -31,7 +32,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::edit::TextEdit;
-use crate::modal::{MenuItem, Modal, PickItem};
+use crate::modal::{Live, MenuItem, Modal, PickItem};
 use crate::sidebar::{self, SideItem};
 use crate::theme::Palette;
 
@@ -53,9 +54,11 @@ mod lfs_fetch;
 mod lfs_health;
 mod op_cancel;
 mod op_output;
+mod op_stops;
 mod overwrite;
 pub mod reflog;
 mod remote_cmds;
+mod reset_cmds;
 mod repo_cmds;
 mod search;
 mod sidebar_menu;
@@ -217,8 +220,13 @@ pub enum Divider {
 pub enum FollowUp {
     /// git refused to switch because of untracked files / local changes.
     Switch(SwitchTarget, SwitchBlock),
-    /// `branch -d` refused: not fully merged.
-    ForceDelete(String),
+    /// `branch -d` refused: not fully merged; `lost` = the commits only it has
+    /// (`<short> <subject>`, and `more` beyond those) — what Force Delete drops.
+    ForceDelete {
+        branch: String,
+        lost: Vec<String>,
+        more: usize,
+    },
     /// `worktree remove` refused (local changes / untracked files): Force Remove?
     WorktreeRefused {
         wt: gitti_core::worktree::Worktree,
@@ -246,18 +254,26 @@ pub enum FollowUp {
     /// git refused to clone submodules from local paths (Update Submodules, a clone's
     /// `--recurse-submodules`): allow it for one update? (`app/submodules.rs`)
     SubmodulesRefused(Box<gitti_core::submodule::add::FileRefused>, submodules::RetryUpdate),
+    /// No external diff / merge tool set up: the set-up dialog, then the tool
+    /// (`app/ext_tools.rs`).
+    ChooseTool(Box<gitti_core::tool_setup::ToolChoices>, Option<ext_tools::ToolJob>),
+    /// A terminal diff / merge tool: it runs with the terminal handed over
+    /// (`run_tool_in_terminal`, `app/ext_tools.rs`).
+    ToolInTerminal(Box<gitti_core::ext_tool::TerminalRun>),
 }
 
 impl std::fmt::Display for FollowUp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FollowUp::Switch(t, _) => write!(f, "switching to {} is blocked", t.name()),
-            FollowUp::ForceDelete(n) => write!(f, "{n} is not fully merged"),
+            FollowUp::ForceDelete { branch, .. } => write!(f, "{branch} is not fully merged"),
             FollowUp::WorktreeRefused { wt, .. } => write!(f, "{} has changes", wt.name()),
             FollowUp::UnmergedBranch { branch, .. } => write!(f, "{branch} is not fully merged"),
             FollowUp::SplitDone { message, .. } => write!(f, "{message}"),
             FollowUp::Overwrite(o) => write!(f, "{}", o.title()),
             FollowUp::SubmodulesRefused(r, _) => write!(f, "{r}"),
+            FollowUp::ChooseTool(..) => write!(f, "choose an external diff / merge tool"),
+            FollowUp::ToolInTerminal(run) => write!(f, "{} runs in the terminal", run.command_line()),
         }
     }
 }
@@ -624,6 +640,9 @@ pub struct App {
     pub merge_single: bool,
     /// A terminal editor to run with the terminal handed over (the main loop does it).
     pub run_in_terminal: Option<(Vec<String>, std::path::PathBuf)>,
+    /// A terminal diff / merge tool to run with the terminal handed over (the main loop
+    /// does it, then [`App::terminal_tool_done`]).
+    pub run_tool_in_terminal: Option<Box<gitti_core::ext_tool::TerminalRun>>,
     pub cmd_history: Vec<String>,
     /// Switch to this repository: the main loop restarts gitty in it (one repository per
     /// process; `repo_cmds::reopen`).
@@ -888,6 +907,7 @@ impl App {
             settings,
             merge: None,
             run_in_terminal: None,
+            run_tool_in_terminal: None,
             layout: store::load_settings(),
             highlights: HashMap::new(),
             hl_gen: 0,
@@ -1129,6 +1149,8 @@ impl App {
                 // The output window goes with its operation.
                 self.op_output = None;
                 let cancelled = self.op_cancel.take().is_some_and(|t| t.is_cancelled());
+                // Set false by a follow-up that changed nothing yet.
+                let mut refresh = true;
                 match result {
                     Ok(out) => {
                         let summary = matches!(after, After::Summary);
@@ -1168,6 +1190,9 @@ impl App {
                     Err(_) if cancelled => self.set_info(format!("{label} cancelled")),
                     Err(e) => {
                         if let Some(f) = e.downcast_ref::<FollowUp>() {
+                            // The external tool's set-up dialog / terminal run: nothing
+                            // changed yet (the tool's end refreshes).
+                            refresh = !matches!(f, FollowUp::ChooseTool(..) | FollowUp::ToolInTerminal(_));
                             self.follow_up(f.clone());
                         } else if let Some(block) = e.downcast_ref::<PullBlock>() {
                             // The upstream went since the last refresh: no git ran.
@@ -1197,13 +1222,18 @@ impl App {
                             if let Some(u) = e.downcast_ref::<UnrelatedHistories>() {
                                 self.offer_unrelated_merge(u.clone());
                             }
+                            // Nothing to commit / refused for uncommitted changes: the
+                            // ways out (`app/op_stops.rs`).
+                            self.offer_ways_out(&e);
                             if let Some(lock) = stale {
                                 self.offer_stale_lock(&label, lock);
                             }
                         }
                     }
                 }
-                self.refresh(full);
+                if refresh {
+                    self.refresh(full);
+                }
                 self.run_deferred();
             }
             Msg::WorkDone {
@@ -1422,6 +1452,9 @@ impl App {
             Some(Modal::Text { scroll, .. } | Modal::Help { scroll }) => {
                 format!(" text_scroll={scroll}")
             }
+            Some(Modal::Input { focus, offset, .. }) => {
+                format!(" input_focus={focus} input_offset={offset}")
+            }
             _ => String::new(),
         };
         format!(
@@ -1582,6 +1615,7 @@ impl App {
                 .and_then(|f| f.diff.clone())
         });
         let at = self.cursor_file();
+        let at_folder = self.cursor_folder();
         let regroup = self.regroup_anchor(&s.working);
         let prev = std::mem::replace(&mut self.working, Arc::new(s.working));
         // Refs moved behind our back → the history may have changed too (the first
@@ -1640,6 +1674,7 @@ impl App {
             self.apply_regroup(regroup);
             self.schedule_highlight();
             self.follow_cursor_file(&prev, at);
+            self.settle_cursor(at_folder);
             let sel = self.line_sel.take();
             self.line_sel = sel
                 .zip(prev_sel_diff)
@@ -2477,6 +2512,7 @@ impl App {
                 .and_then(|f| f.diff.clone())
         });
         let at = self.cursor_file();
+        let at_folder = self.cursor_folder();
         let regroup = self.regroup_anchor(&working);
         let prev = std::mem::replace(&mut self.working, Arc::new(working));
         self.publish_marks();
@@ -2491,6 +2527,7 @@ impl App {
         self.rebuild_rows();
         self.apply_regroup(regroup);
         self.follow_cursor_file(&prev, at);
+        self.settle_cursor(at_folder);
         self.restore_view_anchor();
         let sel = self.line_sel.take();
         self.line_sel = sel
@@ -2721,10 +2758,28 @@ impl App {
         if self.defer_while_busy(|app| app.stage_all()) {
             return;
         }
+        // Conflicted files with markers left: ask first, as Mark Resolved does.
+        let conflicted: Vec<&str> = self.working.conflicted.iter().map(|f| f.path()).collect();
+        let markers = if conflicted.is_empty() {
+            Vec::new()
+        } else {
+            self.repo.with_conflict_markers(&conflicted)
+        };
+        if !markers.is_empty() {
+            let (title, detail, ok) = gitti_core::stage_all::markers_prompt(&markers);
+            self.modal = Some(Modal::confirm(title, detail, ok, |app: &mut App| app.stage_all_now()));
+            return;
+        }
+        self.stage_all_now();
+    }
+
+    /// Stage All, asked already: what the list shows (`gitti_core::stage_all`).
+    fn stage_all_now(&mut self) {
+        let untracked = self.working.status.untracked_files;
         // Paths this file system can't hold: asks first (`app/fs_paths.rs`).
         let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
-        self.guard_fs_stage(paths, |app, only| match only {
-            None => app.git_op("Stage all", None, |r| r.stage_all()),
+        self.guard_fs_stage(paths, move |app, only| match only {
+            None => app.work_op_noted("Stage all", None, move |r| r.stage_all_shown(untracked)),
             Some(list) => {
                 let paths = list.clone();
                 app.git_op("Stage all", Some(paths), move |r| r.stage_path_list(&list))
@@ -3444,10 +3499,17 @@ impl App {
         ));
     }
 
+    /// `git branch -d`; when git refuses because the branch is not fully merged, Force
+    /// Delete is offered, naming the commits it would drop.
     pub fn delete_branch(&mut self, name: String) {
         self.run_op("Delete branch", true, After::Nothing, move |r| {
-            r.delete_branch_if_merged(&name)?
-                .ok_or_else(|| FollowUp::ForceDelete(name).into())
+            match r.delete_branch_checked(&name) {
+                BranchDeletion::Deleted(out) => Ok(out),
+                BranchDeletion::Failed(e) => Err(anyhow::anyhow!(e)),
+                BranchDeletion::NotMerged { branch, lost, more } => {
+                    Err(FollowUp::ForceDelete { branch, lost, more }.into())
+                }
+            }
         });
     }
 
@@ -3456,6 +3518,8 @@ impl App {
             FollowUp::SplitDone { prefix, id, message } => self.split_done(&prefix, id, &message),
             FollowUp::Overwrite(plan) => self.overwrite_confirm(*plan),
             FollowUp::SubmodulesRefused(refused, retry) => self.submodules_refused(*refused, retry),
+            FollowUp::ChooseTool(choices, job) => self.tool_dialog(*choices, job),
+            FollowUp::ToolInTerminal(run) => self.tool_to_terminal(*run),
             FollowUp::Switch(target, block) => {
                 // What blocks, then one entry per way out, each explained.
                 let name = target.name().to_string();
@@ -3487,12 +3551,12 @@ impl App {
                 }
                 self.modal = Some(Modal::menu(format!("Switch to {name}?"), items));
             }
-            FollowUp::ForceDelete(name) => {
+            FollowUp::ForceDelete { branch: name, lost, more } => {
                 self.modal = Some(Modal::confirm(
-                    "Branch not fully merged",
+                    format!("{name} is not fully merged"),
                     format!(
-                        "{name} is not fully merged into its upstream or HEAD. Delete it \
-                         anyway? Its commits stay reachable via the reflog for a while."
+                        "git keeps the branch: it is not merged into its upstream or HEAD.\n\n{}",
+                        worktrees::lost_detail(lost, more)
                     ),
                     "Force Delete",
                     move |app| {
@@ -3563,7 +3627,9 @@ impl App {
     /// editor): with one an annotated tag (`git tag -a`), without a lightweight one.
     pub fn create_tag_dialog(&mut self, rev: String) {
         let title = format!("Create tag at {}", short_rev(&rev));
-        self.modal = Some(Modal::input_checks(
+        // A name git would refuse (an existing tag, an invalid name) is refused here first.
+        let refs = self.refs.clone();
+        let modal = Modal::input_checks(
             title,
             vec![("Tag name", "")],
             vec![("Annotated — write a message next (git tag -a)", true)],
@@ -3587,7 +3653,13 @@ impl App {
                     move |app, text| create(app, name, text),
                 ));
             },
-        ));
+        )
+        .with_live(move |values, checks| Live {
+            ok_label: if checks.first().copied().unwrap_or(true) { "Next…" } else { "Create" }.into(),
+            blocked: gitti_core::tag::new_tag_problem(values.first().map_or("", |v| v.as_str()), &refs),
+            ..Default::default()
+        });
+        self.modal = Some(modal);
     }
 
     /// Show Tag: tag `name`'s details (lightweight or annotated: tagger, date, message,
@@ -3770,7 +3842,8 @@ impl App {
         let short = sha[..7.min(sha.len())].to_string();
         let merge = c.parents.len() > 1;
         if let Some(n) = c.stash {
-            return Some((format!("stash@{{{n}}}"), sidebar_menu::stash_items(n)));
+            let stash = gitti_core::ops::StashRef { index: n, id: c.id };
+            return Some((format!("stash@{{{n}}}"), sidebar_menu::stash_items(stash)));
         }
         let head = self.current_branch().unwrap_or("HEAD").to_string();
         // Why the entries acting on the commit can't (HEAD itself, an operation git
@@ -3852,38 +3925,7 @@ impl App {
             })
             .unless(head_or_busy),
         );
-        for (label, mode) in [
-            ("soft", ResetMode::Soft),
-            ("mixed", ResetMode::Mixed),
-            ("hard", ResetMode::Hard),
-        ] {
-            let s = sha.clone();
-            let reset = move |app: &mut App| {
-                app.run_op(
-                    &format!("Reset ({label})"),
-                    true,
-                    After::Nothing,
-                    move |r| r.reset(&s, mode),
-                )
-            };
-            if mode == ResetMode::Hard {
-                let short = short.clone();
-                let head = head.clone();
-                items.push(MenuItem::new(format!("Reset {head} to here — hard"), move |app| {
-                    app.modal = Some(Modal::confirm(
-                        "Reset Hard",
-                        format!("Reset {head} to {short} and discard all uncommitted changes?\nThis cannot be undone."),
-                        "Reset",
-                        reset,
-                    ));
-                }));
-            } else {
-                items.push(MenuItem::new(
-                    format!("Reset {head} to here — {label}"),
-                    reset,
-                ));
-            }
-        }
+        items.extend(self.reset_items(&sha, &head));
         // The remote branch moves (push with lease); the local one stays.
         items.extend(self.remote_reset_items(&sha));
         items.push(MenuItem::separator());
@@ -4279,6 +4321,7 @@ impl App {
         items.extend(self.change_search_palette_items());
         items.extend(self.reflog_palette_items());
         items.extend(self.repo_palette_items());
+        items.extend(self.ext_tool_palette_items());
         items.extend(self.terminal_palette_items());
         items.extend(self.submodule_palette_items());
         items.extend(self.lfs_palette_items());
@@ -4314,6 +4357,14 @@ impl App {
                     }));
                 }),
             );
+            if gitti_core::skip::can_skip(self.repo_state) {
+                items.insert(
+                    0,
+                    PickItem::new(gitti_core::skip::SKIP_LABEL, "leave the stopped commit out", |app: &mut App| {
+                        app.skip_operation()
+                    }),
+                );
+            }
             if !clean {
                 items.insert(
                     0,
@@ -4329,13 +4380,13 @@ impl App {
             }
         }
         for s in self.stashes.iter().take(9) {
-            let i = s.index;
+            let stash = s.target();
             items.push(PickItem::new(
                 format!("Apply {} — {}", s.name, s.message),
                 "",
                 move |app: &mut App| {
                     app.run_op("Apply stash", true, After::Nothing, move |r| {
-                        r.stash_apply(i, false)
+                        r.stash_apply(stash, false)
                     })
                 },
             ));

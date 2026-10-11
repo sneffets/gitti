@@ -474,8 +474,9 @@ fn continue_a_rebase_with_the_edited_message() {
     assert_eq!(r.state(), RepoState::Rebasing);
     fs::write(p.join("a.txt"), "resolved\n").unwrap();
     fx::git(p, &["add", "a.txt"]);
-    let err = r.continue_with(Some("First, resolved\n\n#4 kept")).unwrap_err();
-    assert!(err.is::<gitti_core::ops::MessageCommitted>(), "{err:#}");
+    // Committed with the message, then Second conflicts: a stop, said in plain words.
+    let out = r.continue_with(Some("First, resolved\n\n#4 kept")).unwrap();
+    assert_eq!(out, "Rebase stopped on 1 conflict — resolve it, then Continue (or Skip / Abort).");
     assert_eq!(r.state(), RepoState::Rebasing, "Second conflicts");
     assert!(!r.git_dir().unwrap().join("GITTI_CONTINUE_MSG").exists());
     fs::write(p.join("a.txt"), "two\n").unwrap();

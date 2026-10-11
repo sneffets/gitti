@@ -61,20 +61,29 @@ pub fn main() {
         let dir: PathBuf = base.join(name);
         match &name[..4] {
             "wt07" => keep(wt::track_remote_branch::fixture(&dir)),
-            // The window opens on an empty folder; the clone goes next to it.
+            // The window opens on a repository of the user's (any); the clone goes next
+            // to it.
             "sm08" => {
-                std::fs::create_dir_all(&dir).unwrap();
+                own_repo(&dir);
                 keep((sm::clone_with_submodules::fixture(&dir), dir.clone()));
             }
             "lf01" => lf::whole_file_only::fixture(&dir),
             "lf06" => {
-                std::fs::create_dir_all(&dir).unwrap();
+                own_repo(&dir);
                 keep((lf::clone_content::fixture(&dir), dir.clone()));
             }
             other => panic!("no fixture for {other}"),
         }
         dir
     });
+}
+
+/// A repository at `dir` to open the window on, for the scenarios that clone (three git
+/// processes; a window on a plain folder waits for a file watcher it never gets).
+fn own_repo(dir: &Path) {
+    let mut fx = gitti_workflow::Fixture::new();
+    fx.commit("main", "init", &[gitti_workflow::put("a.txt", "a\n")]);
+    fx.build(dir);
 }
 
 /// A workflow's `expect` result as a scenario failure.

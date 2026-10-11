@@ -35,6 +35,7 @@ mod nav_keys;
 mod navigate;
 mod op_cancel;
 mod op_progress;
+mod op_stops;
 mod overlay_keys;
 mod picker;
 mod push_ui;
@@ -63,7 +64,7 @@ mod worktree_tabs;
 mod worktrees;
 
 pub(crate) use overlay_keys::intercept as intercept_overlay_keys;
-pub(crate) use menus::{run_menu_entry, take_menu_labels};
+pub(crate) use menus::{run_menu_entry, take_menu_entries, take_menu_labels};
 pub(crate) use signers::set_open_repos;
 pub(crate) use unavailable::set_tab_count;
 pub(crate) use startup_ui::WHERE as STARTUP_TIMINGS_WHERE;
@@ -1984,6 +1985,9 @@ impl GittiApp {
                             }
                             this.op_failed(&label, format!("{e:#}"));
                             this.offer_unrelated_merge(&e, window, cx);
+                            // Nothing to commit / refused for uncommitted changes: the
+                            // ways out (`op_stops.rs`).
+                            this.offer_ways_out(&e, window, cx);
                             if let Some(lock) = stale {
                                 this.offer_stale_lock(&label, lock, window, cx);
                             }
@@ -2827,17 +2831,35 @@ impl GittiApp {
             return;
         }
         if stage {
-            let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
-            self.guard_fs_stage(paths, window, cx, |this, only, w, cx| match only {
-                None => this.work_op("Staging", None, w, cx, |r| r.stage_all()),
-                Some(list) => {
-                    let paths = list.clone();
-                    this.work_op("Staging", Some(paths), w, cx, move |r| r.stage_path_list(&list))
-                }
-            });
+            // Conflicted files with markers left: ask first, as Mark Resolved does.
+            let conflicted: Vec<&str> = self.working.conflicted.iter().map(|f| f.path()).collect();
+            let markers = match &self.repo {
+                Some(r) if !conflicted.is_empty() => r.with_conflict_markers(&conflicted),
+                _ => Vec::new(),
+            };
+            if !markers.is_empty() {
+                let (title, detail, ok) = gitti_core::stage_all::markers_prompt(&markers);
+                return self.confirm(title, Some(detail), ok, window, cx, |this, w, cx| {
+                    this.stage_everything_now(w, cx)
+                });
+            }
+            self.stage_everything_now(window, cx);
         } else {
             self.work_op("Unstaging", None, window, cx, |r| r.unstage_all());
         }
+    }
+
+    /// Stage All, asked already: what the list shows (`gitti_core::stage_all`).
+    fn stage_everything_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let untracked = self.working.status.untracked_files;
+        let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
+        self.guard_fs_stage(paths, window, cx, move |this, only, w, cx| match only {
+            None => this.work_op_noted("Staging", None, w, cx, move |r| r.stage_all_shown(untracked)),
+            Some(list) => {
+                let paths = list.clone();
+                this.work_op("Staging", Some(paths), w, cx, move |r| r.stage_path_list(&list))
+            }
+        });
     }
 
     /// While an operation runs, queues a key action for when it is done (`true`).
@@ -3558,6 +3580,16 @@ impl GittiApp {
                         })
                         .on_click(cx.listener(|this, _, w, cx| this.continue_operation(w, cx))),
                 )
+                .when(gitti_core::skip::can_skip(self.repo_state), |d| {
+                    d.child(
+                        Button::new("op-skip")
+                            .probe("op-skip")
+                            .label("Skip")
+                            .small()
+                            .tooltip(gitti_core::skip::skip_explain(self.repo_state))
+                            .on_click(cx.listener(|this, _, w, cx| this.skip_operation(w, cx))),
+                    )
+                })
                 .child(
                     Button::new("op-abort")
                         .probe("op-abort")
@@ -3699,6 +3731,7 @@ impl Render for GittiApp {
         let root = self.reflog_actions(root, cx);
         let root = self.navigate_actions(root, cx);
         let root = self.menu_cmd_actions(root, cx);
+        let root = self.ext_tool_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
         let root = self.file_marks_actions(root, cx);

@@ -168,6 +168,20 @@ impl Expect {
         })
     }
 
+    /// The id `refname` (a full name, `refs/heads/main`) points at in the bare repository
+    /// `git_dir` — a remote laid out by `Fixture::build_bare` — read from the files (no
+    /// git): loose ref, then `packed-refs`.
+    pub fn bare_ref(git_dir: &Path, refname: &str) -> Option<String> {
+        if let Ok(text) = fs::read_to_string(git_dir.join(refname)) {
+            return Some(text.trim().to_string());
+        }
+        let packed = fs::read_to_string(git_dir.join("packed-refs")).ok()?;
+        packed.lines().find_map(|l| {
+            let (id, name) = l.split_once(' ')?;
+            (name == refname).then(|| id.to_string())
+        })
+    }
+
     /// The operation git left half-done (no git).
     pub fn state(&self) -> OpState {
         let d = &self.git_dir;
@@ -203,6 +217,56 @@ impl Expect {
         fs::read_to_string(self.common_dir.join("logs/refs/stash"))
             .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
             .unwrap_or(0)
+    }
+
+    /// The values of `key` (`branch.main.remote`: section, subsection, name) in the
+    /// repository's own config file (`.git/config`, no git; includes not followed), in
+    /// order. Section and name match without regard to case, the subsection exactly.
+    pub fn config(&self, key: &str) -> Vec<String> {
+        let (section, name) = key.rsplit_once('.').unwrap_or(("", key));
+        let (section, sub) = match section.split_once('.') {
+            Some((s, sub)) => (s, Some(sub)),
+            None => (section, None),
+        };
+        let text = fs::read_to_string(self.common_dir.join("config")).unwrap_or_default();
+        let mut inside = false;
+        let mut values = Vec::new();
+        for line in text.lines().map(str::trim) {
+            if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                let (s, h_sub) = match header.split_once(' ') {
+                    Some((s, q)) => (s, Some(q.trim().trim_matches('"'))),
+                    None => (header, None),
+                };
+                inside = s.eq_ignore_ascii_case(section) && h_sub == sub;
+                continue;
+            }
+            if !inside {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=')
+                && k.trim().eq_ignore_ascii_case(name)
+            {
+                values.push(v.trim().to_string());
+            }
+        }
+        values
+    }
+
+    /// The reflog of `refname` (`HEAD`, `refs/heads/main`) from its file (no git), newest
+    /// first: (old id, new id, message). Empty when it has none.
+    pub fn reflog(&self, refname: &str) -> Vec<(String, String, String)> {
+        let dir = if refname == "HEAD" { &self.git_dir } else { &self.common_dir };
+        let text = fs::read_to_string(dir.join("logs").join(refname)).unwrap_or_default();
+        let mut entries: Vec<(String, String, String)> = text
+            .lines()
+            .filter_map(|l| {
+                let (head, message) = l.split_once('\t').unwrap_or((l, ""));
+                let mut f = head.split(' ');
+                Some((f.next()?.to_string(), f.next()?.to_string(), message.to_string()))
+            })
+            .collect();
+        entries.reverse();
+        entries
     }
 
     /// A working-tree file's bytes (`None` = not there).

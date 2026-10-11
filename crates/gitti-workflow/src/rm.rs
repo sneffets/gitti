@@ -525,27 +525,41 @@ pub mod pull_conflict {
 }
 
 /// **RM-07 — pull into a dirty tree.** Someone else pushed [`THEIRS`], changing line 3
-/// of `a.txt`; the user has an uncommitted edit of the same file ([`LOCAL`]) and pulls.
+/// of `a.txt`; the user has an uncommitted edit of the same file, line 8 ([`LOCAL`]), and
+/// pulls; git refuses (it would overwrite the file). The user takes the way out "Stash
+/// and Pull".
 ///
-/// Expected: git refuses — the edit would be overwritten — and nothing the user has
-/// changes: `main` still [`INIT`], the edit still on disk, nothing in progress
-/// ([`expect_refused`]). The apps say so in plain words ([`REASON`]).
+/// Expected: the refusal names `a.txt` in plain words and nothing changes: `main` still
+/// [`INIT`], the edit on disk, nothing in progress ([`expect_refused`]). Stash and Pull
+/// fast-forwards to [`THEIRS`] and puts the edit back — both lines in `a.txt`, no stash
+/// left ([`expect_stashed_and_pulled`]).
 pub mod pull_dirty {
     use std::path::Path;
 
     use super::*;
     use crate::expect::{Checks, Expect, OpState};
 
-    /// The user's uncommitted line 3 of `a.txt`.
-    pub const LOCAL: &str = "a 3 local";
+    /// The user's uncommitted line 8 of `a.txt`.
+    pub const LOCAL: &str = "a 8 local";
     /// [`THEIRS`]'s line 3 of `a.txt`.
     pub const THEIR_LINE: &str = "a 3 theirs";
-    /// What git's refusal says — the words the apps must show.
-    pub const REASON: &str = "would be overwritten";
+    /// The way out the user takes.
+    pub const WAY: &str = "Stash and Pull";
 
     pub struct Setup {
         pub init: String,
         pub theirs: String,
+    }
+
+    /// `a.txt` with [`THEIR_LINE`] (`theirs`) and / or [`LOCAL`] (`local`).
+    pub fn a_with(theirs: bool, local: bool) -> String {
+        (1..=10)
+            .map(|i| match i {
+                3 if theirs => format!("{THEIR_LINE}\n"),
+                8 if local => format!("{LOCAL}\n"),
+                i => format!("a {i}\n"),
+            })
+            .collect()
     }
 
     /// `main` = `origin/main` = [`INIT`], `a.txt` edited; `origin` has [`THEIRS`]. Four
@@ -555,25 +569,41 @@ pub mod pull_dirty {
         let i = init(&mut fx);
         fx.branch("refs/remotes/origin/main", i);
         tracks_origin(&mut fx, work);
-        fx.write("a.txt", &a(Some(LOCAL)));
+        fx.write("a.txt", &a_with(false, true));
         let ids = fx.build(work);
         let mut o = Fixture::new();
         init(&mut o);
         o.author(OTHER);
-        let t = o.commit("main", THEIRS, &[put("a.txt", &a(Some(THEIR_LINE)))]);
+        let t = o.commit("main", THEIRS, &[put("a.txt", &a_with(true, false))]);
         let oids = o.build_bare(&origin_of(work));
         Setup { init: ids[i].into(), theirs: oids[t].into() }
     }
 
     /// After the refused pull: `main` = [`INIT`], nothing in progress, the local edit on
-    /// disk and the only change. One git process.
+    /// disk and the only change, no stash. One git process.
     pub fn expect_refused(work: &Path, s: &Setup) -> Result<(), String> {
         let e = Expect::new(work);
         let mut k = Checks::new("RM-07 after the refused pull");
         k.eq("state", e.state(), OpState::Clean);
         k.eq("branch", e.branch().as_deref(), Some("main"));
         k.eq("main", e.ref_id("main"), Some(s.init.clone()));
-        k.text("a.txt", e.file("a.txt").as_deref(), Some(&a(Some(LOCAL))));
+        k.text("a.txt", e.file("a.txt").as_deref(), Some(&a_with(false, true)));
+        k.eq("stashes", e.stashes(), 0);
+        k.eq("status", e.status_lines(), vec![" M a.txt".to_string()]);
+        k.done()
+    }
+
+    /// After Stash and Pull: `main` = [`THEIRS`] (fast-forward), `a.txt` has their line
+    /// and the user's edit (still uncommitted), no stash left, nothing in progress. One
+    /// git process.
+    pub fn expect_stashed_and_pulled(work: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(work);
+        let mut k = Checks::new("RM-07 after Stash and Pull");
+        k.eq("state", e.state(), OpState::Clean);
+        k.eq("branch", e.branch().as_deref(), Some("main"));
+        k.eq("main", e.ref_id("main"), Some(s.theirs.clone()));
+        k.text("a.txt", e.file("a.txt").as_deref(), Some(&a_with(true, true)));
+        k.eq("stashes", e.stashes(), 0);
         k.eq("status", e.status_lines(), vec![" M a.txt".to_string()]);
         k.done()
     }

@@ -562,8 +562,9 @@ fn draw_toolbar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!(
-                " {} — ctrl-p: Continue / Abort ",
-                app.repo_state.label().to_uppercase()
+                " {} — ctrl-p: Continue / {}Abort ",
+                app.repo_state.label().to_uppercase(),
+                if gitti_core::skip::can_skip(app.repo_state) { "Skip / " } else { "" }
             ),
             Style::new().fg(p.accent_text).bg(p.warning),
         ));
@@ -1471,25 +1472,75 @@ fn header_ref_lines(
     cols: u16,
 ) -> Vec<Line<'static>> {
     let indent = first.content.width() as u16;
+    let mut lines = vec![vec![first]];
+    for (line, _, b, _) in header_ref_layout(refs, current, worktrees, bg, p, indent, cols) {
+        if line == lines.len() {
+            lines.push(vec![Span::raw(" ".repeat(indent as usize))]);
+        }
+        lines[line].push(b);
+        lines[line].push(Span::raw(" "));
+    }
+    lines.into_iter().map(Line::from).collect()
+}
+
+/// Where [`header_ref_lines`] puts each badge: its line (0 = the "Refs" line), column,
+/// the badge, its ref.
+fn header_ref_layout<'r>(
+    refs: &[&'r RefInfo],
+    current: Option<&str>,
+    worktrees: &[gitti_core::worktree::Worktree],
+    bg: Color,
+    p: &Palette,
+    indent: u16,
+    cols: u16,
+) -> Vec<(usize, u16, Span<'static>, &'r RefInfo)> {
     let avail = cols.saturating_sub(indent);
     let max = (cols > 0).then_some(avail.max(3));
-    let mut lines = Vec::new();
-    let mut spans = vec![first];
-    let mut used = 0u16;
-    for r in refs {
+    let mut out = Vec::new();
+    let (mut line, mut used) = (0, 0u16);
+    for &r in refs {
         let b = ref_badge(r, current, worktrees, bg, p, max);
         let w = b.content.width() as u16;
         if cols > 0 && used > 0 && used + w > avail {
-            lines.push(Line::from(std::mem::take(&mut spans)));
-            spans.push(Span::raw(" ".repeat(indent as usize)));
+            line += 1;
             used = 0;
         }
-        spans.push(b);
-        spans.push(Span::raw(" "));
+        out.push((line, indent + used, b, r));
         used += w + 1;
     }
-    lines.push(Line::from(spans));
-    lines
+    out
+}
+
+/// Width of a commit header line's label (`commit_header`'s `label`): 12 columns + 2.
+const HEADER_LABEL_W: u16 = 14;
+
+/// The ref whose badge is at column `col` of header line `line` (its "Refs" lines) of the
+/// shown commit — a right click there opens the ref's menu, as on its badge in the list.
+pub fn header_ref_at(app: &App, line: usize, col: u16) -> Option<RefInfo> {
+    let Detail::Commit(cv) = &app.detail else {
+        return None;
+    };
+    if cv.compare.is_some() {
+        return None;
+    }
+    let first = refs_line(cv);
+    let refs = app.history.refs_by_commit.get(&cv.details.id)?;
+    let refs = badge_refs(refs, app.current_branch());
+    let p = &app.pal;
+    let layout = header_ref_layout(
+        &refs,
+        app.current_branch(),
+        &app.worktrees,
+        p.bg_diff,
+        p,
+        HEADER_LABEL_W,
+        app.header_cols,
+    );
+    let line = line.checked_sub(first)?;
+    layout
+        .into_iter()
+        .find(|(l, c, b, _)| *l == line && (*c..*c + b.content.width() as u16).contains(&col))
+        .map(|(.., r)| r.clone())
 }
 
 pub fn format_time(secs: i64) -> String {
@@ -1549,6 +1600,12 @@ pub fn header_date(d: &gitti_core::CommitDetails) -> String {
 pub fn parents_line(cv: &CommitView) -> Option<usize> {
     (cv.compare.is_none() && !cv.details.parents.is_empty())
         .then(|| SIGNATURE_LINE + usize::from(cv.sig_kind.is_some()))
+}
+
+/// Index of the first "Refs" line in `commit_header` (after the parents and the stats
+/// line); its lines are there only when the commit has refs.
+pub fn refs_line(cv: &CommitView) -> usize {
+    SIGNATURE_LINE + usize::from(cv.sig_kind.is_some()) + usize::from(!cv.details.parents.is_empty()) + 1
 }
 
 /// Header lines of a commit (the summary block), drawn over `HeaderSpace` rows.
@@ -1668,6 +1725,7 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
     if let Some(refs) = app.history.refs_by_commit.get(&d.id) {
         let refs = badge_refs(refs, app.current_branch());
         if !refs.is_empty() {
+            debug_assert_eq!(out.len(), refs_line(cv));
             out.extend(header_ref_lines(
                 label("Refs"),
                 &refs,
@@ -1857,7 +1915,7 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         let y = content.y + (i - app.diff_offset) as u16;
         let row = Rect::new(content.x, y, content.width, 1);
         let cursor = show_cursor && i == app.diff_cursor;
-        draw_diff_row(buf, row, app, i, cursor, digits, wrap, p);
+        draw_diff_row(buf, row, app, i, cursor, digits, wrap, false, p);
     }
     // Sticky header: the file whose lines fill the top keeps its header row visible.
     if let Some(file_row) = sticky_file_row(&app.rows, app.diff_offset).filter(|_| h > 0) {
@@ -1866,7 +1924,7 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         Clear.render(row, buf);
         buf.set_style(row, Style::new().bg(p.bg_diff));
         let cursor = show_cursor && app.diff_cursor == file_row;
-        draw_diff_row(buf, row, app, file_row, cursor, digits, wrap, p);
+        draw_diff_row(buf, row, app, file_row, cursor, digits, wrap, true, p);
     }
 }
 
@@ -2169,6 +2227,8 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
     total
 }
 
+/// Diff row `index` in `area`; `sticky`: the file header's copy at the top of the pane,
+/// which shows the whole path in the tree too (the folder rows above it scrolled away).
 #[allow(clippy::too_many_arguments)]
 fn draw_diff_row(
     buf: &mut Buffer,
@@ -2178,6 +2238,7 @@ fn draw_diff_row(
     cursor: bool,
     digits: u16,
     wrap: Option<usize>,
+    sticky: bool,
     p: &Palette,
 ) {
     let (x, y, w) = (area.x, area.y, area.width);
@@ -2354,7 +2415,7 @@ fn draw_diff_row(
                 .or_else(|| wf.map(|w| w.path().to_string()))
                 .unwrap_or_default();
             // The tree: the file's name under its folder (a rename says where from).
-            let depth = app.folders.file_depth(src, file);
+            let depth = app.folders.file_depth(src, file).filter(|_| !sticky);
             let path = match (depth, diff) {
                 (None, _) => path,
                 (Some(_), Some(d)) if d.old_path.is_some() && d.old_path != d.new_path => format!(
@@ -2754,6 +2815,8 @@ fn draw_diff_row(
                     gitti_core::commit_files::placeholder_note(d).unwrap_or_default()
                 }
                 (Some(d), _) if d.binary => "Binary file".to_string(),
+                // Line-ending / BOM-only changes, above the hunks.
+                (Some(d), _) if let Some(note) = gitti_core::eol_note::eol_note(d) => note,
                 (Some(d), _) if d.hunks.is_empty() => {
                     "No content changes (mode / rename only)".to_string()
                 }
@@ -3163,6 +3226,7 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
     let mut cursor: Option<(u16, u16)> = None;
     let mut list_area = Rect::default();
     let mut list_offset = None;
+    let mut input_offset = None;
     let mut text_max = None;
     match modal {
         Modal::Input {
@@ -3173,6 +3237,7 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
             note,
             pick,
             extra,
+            offset,
             ..
         } => {
             const W: u16 = 64;
@@ -3211,73 +3276,97 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                 }
             }
             let live_h = if live_lines.is_empty() { 0 } else { live_lines.len() as u16 + 1 };
-            let h = note_h + fields.len() as u16 * 3 + checks.len() as u16 + live_h + 4;
-            let area = centered(screen, W, h);
+            let content_h = note_h + fields.len() as u16 * 3 + checks.len() as u16 + live_h;
+            let area = centered(screen, W, content_h + 4);
             clear_popup(area, f.buffer_mut());
             let block = modal_block(title, p);
             let inner = block.inner(area);
             block.render(area, f.buffer_mut());
             let buf = f.buffer_mut();
-            let mut y = inner.y;
-            // On a short terminal the note gives way to the fields.
-            let room = inner
-                .height
-                .saturating_sub(fields.len() as u16 * 3 + checks.len() as u16 + 2);
-            for line in note.into_iter().take(room.saturating_sub(1) as usize) {
-                put(
-                    buf,
-                    inner.x + 1,
-                    y,
-                    inner.width.saturating_sub(2),
-                    vec![Span::styled(line, Style::new().fg(p.text))],
-                );
-                y += 1;
+            // The body (note, fields, checkboxes, live text) scrolls between the title and
+            // the key line when the terminal is too short for it: the focused field stays
+            // in view (gitti: `reveal_modal_focus`), the wheel scrolls it.
+            let body_h = inner.height.saturating_sub(2);
+            let max_off = content_h.saturating_sub(body_h);
+            let fields_y = note_h;
+            let checks_y = fields_y + fields.len() as u16 * 3;
+            let mut off = (*offset as u16).min(max_off);
+            if app.follow {
+                // The focused field's label and input, a checkbox's line; the last one
+                // takes the live text below it along (what Enter will do).
+                let (top, bottom) = if *focus < fields.len() {
+                    let y = fields_y + *focus as u16 * 3;
+                    (y, y + 2)
+                } else {
+                    let y = checks_y + (*focus - fields.len()) as u16;
+                    (y, y + 1)
+                };
+                let last = *focus + 1 >= fields.len() + checks.len();
+                let bottom = if last { content_h.min(top + body_h) } else { bottom };
+                if *focus == 0 {
+                    // The first one shows the note above it as far as it fits.
+                    off = bottom.saturating_sub(body_h);
+                } else if top < off {
+                    off = top;
+                } else if bottom > off + body_h {
+                    off = bottom - body_h;
+                }
+                off = off.min(max_off);
             }
-            if note_h > 0 && room > 1 {
-                y += 1;
+            input_offset = Some(off as usize);
+            list_area = Rect::new(inner.x, inner.y, inner.width, body_h);
+            // Body row `vy` on the screen, while it is in view.
+            let at = |vy: u16| (vy >= off && vy < off + body_h).then(|| inner.y + vy - off);
+            let text_w = inner.width.saturating_sub(2);
+            for (i, line) in note.into_iter().enumerate() {
+                if let Some(y) = at(i as u16) {
+                    put(buf, inner.x + 1, y, text_w, vec![Span::styled(line, Style::new().fg(p.text))]);
+                }
             }
             for (i, field) in fields.iter().enumerate() {
-                put(
-                    buf,
-                    inner.x + 1,
-                    y,
-                    inner.width.saturating_sub(2),
-                    vec![Span::styled(
-                        field.label.clone(),
-                        Style::new().fg(p.text_muted),
-                    )],
-                );
-                y += 1;
-                let input = Rect::new(inner.x + 1, y, inner.width.saturating_sub(2), 1);
-                let active = *focus == i;
-                buf.set_style(
-                    input,
-                    Style::new().bg(if active { p.bg_list } else { p.bg_section }),
-                );
-                let text = if field.secret {
-                    "•".repeat(field.edit.text().chars().count())
-                } else {
-                    field.edit.text()
-                };
-                let (_, col) = field.edit.cursor();
-                let skip = (col + 2).saturating_sub(input.width as usize);
-                let shown: String = text.chars().skip(skip).collect();
-                // A text put in for the user shows selected: typing replaces it.
-                let style = if field.fresh {
-                    Style::new().fg(p.text_strong).bg(p.bg_list_selected)
-                } else {
-                    Style::new().fg(p.text_strong)
-                };
-                put(
-                    buf,
-                    input.x + 1,
-                    y,
-                    input.width.saturating_sub(1),
-                    vec![Span::styled(shown, style)],
-                );
-                if active {
-                    cursor = Some((input.x + 1 + (col - skip) as u16, y));
+                let vy = fields_y + i as u16 * 3;
+                if let Some(y) = at(vy) {
+                    put(
+                        buf,
+                        inner.x + 1,
+                        y,
+                        text_w,
+                        vec![Span::styled(field.label.clone(), Style::new().fg(p.text_muted))],
+                    );
                 }
+                let active = *focus == i;
+                if let Some(y) = at(vy + 1) {
+                    let input = Rect::new(inner.x + 1, y, text_w, 1);
+                    buf.set_style(
+                        input,
+                        Style::new().bg(if active { p.bg_list } else { p.bg_section }),
+                    );
+                    let text = if field.secret {
+                        "•".repeat(field.edit.text().chars().count())
+                    } else {
+                        field.edit.text()
+                    };
+                    let (_, col) = field.edit.cursor();
+                    let skip = (col + 2).saturating_sub(input.width as usize);
+                    let shown: String = text.chars().skip(skip).collect();
+                    // A text put in for the user shows selected: typing replaces it.
+                    let style = if field.fresh {
+                        Style::new().fg(p.text_strong).bg(p.bg_list_selected)
+                    } else {
+                        Style::new().fg(p.text_strong)
+                    };
+                    put(
+                        buf,
+                        input.x + 1,
+                        y,
+                        input.width.saturating_sub(1),
+                        vec![Span::styled(shown, style)],
+                    );
+                    if active {
+                        cursor = Some((input.x + 1 + (col - skip) as u16, y));
+                    }
+                }
+                let Some(y) = at(vy + 2) else { continue };
                 // Its fill values ("Remotes (ctrl-n): origin · upstream", the one it holds
                 // marked), else its note ("From the clipboard"), in the gap under it.
                 let fills: Vec<&str> = live
@@ -3304,13 +3393,13 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                         };
                         spans.push(Span::styled(v.to_string(), style));
                     }
-                    put(buf, inner.x + 1, y + 1, inner.width.saturating_sub(2), spans);
+                    put(buf, inner.x + 1, y, text_w, spans);
                 } else if let Some(pk) = pick.as_ref().filter(|pk| pk.field == i) {
                     put(
                         buf,
                         inner.x + 1,
-                        y + 1,
-                        inner.width.saturating_sub(2),
+                        y,
+                        text_w,
                         vec![Span::styled(
                             format!("{}: {}", crate::modal::PICK_KEY_LABEL, pk.hint),
                             Style::new().fg(p.text_muted),
@@ -3320,14 +3409,14 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                     put(
                         buf,
                         inner.x + 1,
-                        y + 1,
-                        inner.width.saturating_sub(2),
+                        y,
+                        text_w,
                         vec![Span::styled(note.to_string(), Style::new().fg(p.text_muted))],
                     );
                 }
-                y += 2;
             }
             for (j, c) in checks.iter().enumerate() {
+                let Some(y) = at(checks_y + j as u16) else { continue };
                 let active = *focus == fields.len() + j;
                 let style = if active {
                     Style::new().fg(p.accent)
@@ -3338,30 +3427,27 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                     buf,
                     inner.x + 1,
                     y,
-                    inner.width.saturating_sub(2),
+                    text_w,
                     vec![Span::styled(
                         format!("{} {}", if c.on { "☑" } else { "☐" }, c.label),
                         style,
                     )],
                 );
-                y += 1;
             }
-            if !live_lines.is_empty() {
-                y += 1;
-                let bottom = inner.y + inner.height.saturating_sub(1);
-                for (line, color) in live_lines {
-                    if y >= bottom {
-                        break;
-                    }
-                    put(
-                        buf,
-                        inner.x + 1,
-                        y,
-                        inner.width.saturating_sub(2),
-                        vec![Span::styled(line, Style::new().fg(color))],
-                    );
-                    y += 1;
+            let live_y = checks_y + checks.len() as u16 + 1;
+            for (k, (line, color)) in live_lines.into_iter().enumerate() {
+                if let Some(y) = at(live_y + k as u16) {
+                    put(buf, inner.x + 1, y, text_w, vec![Span::styled(line, Style::new().fg(color))]);
                 }
+            }
+            // More above / below: a mark in the body's right column.
+            let mark = Style::new().fg(p.text_faint);
+            if off > 0 && body_h > 0 {
+                put(buf, inner.x + inner.width.saturating_sub(1), inner.y, 1, vec![Span::styled("▲", mark)]);
+            }
+            if off < max_off && body_h > 0 {
+                let y = inner.y + body_h - 1;
+                put(buf, inner.x + inner.width.saturating_sub(1), y, 1, vec![Span::styled("▼", mark)]);
             }
             // Enter's label follows the live answer; struck out while it can't run (the reason
             // is shown above).
@@ -3847,6 +3933,9 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
     if let (Some(off), Some(Modal::Menu { offset, .. } | Modal::Picker { offset, .. })) =
         (list_offset, &mut app.modal)
     {
+        *offset = off;
+    }
+    if let (Some(off), Some(Modal::Input { offset, .. })) = (input_offset, &mut app.modal) {
         *offset = off;
     }
     if let Some(c) = cursor {

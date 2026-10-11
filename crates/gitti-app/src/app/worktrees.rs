@@ -11,7 +11,7 @@ use gitti_core::worktree::{
     AddInput, AddMode, BranchDeletion, OK_CREATE, RemoveResult, Worktree, clip_lines,
     local_branch_name, move_blocker, plan_add, remove_blocker, suggested_folder_name,
 };
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
 use super::GittiApp;
@@ -45,9 +45,9 @@ fn item(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
@@ -154,7 +154,7 @@ pub(super) fn worktree_menu_in(
 
 /// "Remove Worktree…" for `wt` (`Remove Worktree <folder>…` with `named`), greyed out with
 /// the reason when git can't remove it.
-pub(super) fn remove_item_named(app: &AppHandle, wt: &Worktree, named: bool) -> PopupMenuItem {
+pub(super) fn remove_item_named(app: &AppHandle, wt: &Worktree, named: bool) -> super::menus::Entry {
     let base = if named {
         format!("Remove Worktree {}…", wt.name())
     } else {
@@ -172,12 +172,12 @@ pub(super) fn remove_item_named(app: &AppHandle, wt: &Worktree, named: bool) -> 
     .disabled(blocker.is_some())
 }
 
-fn remove_item(app: &AppHandle, wt: &Worktree) -> PopupMenuItem {
+fn remove_item(app: &AppHandle, wt: &Worktree) -> super::menus::Entry {
     remove_item_named(app, wt, false)
 }
 
 /// "Move…" for `wt`, greyed out with the reason when git can't move it.
-fn move_item(app: &AppHandle, wt: &Worktree) -> PopupMenuItem {
+fn move_item(app: &AppHandle, wt: &Worktree) -> super::menus::Entry {
     let blocker = move_blocker(wt);
     let label = match &blocker {
         Some(why) => format!("Move… ({why})"),

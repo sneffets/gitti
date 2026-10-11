@@ -593,18 +593,37 @@ pub fn run_client_if_requested() -> Option<i32> {
 
 /// The helper ends when the program that asked (ssh, git) is gone: an orphaned helper
 /// would keep its connection — and with it the dialog — open after the operation ended.
+///
+/// Gone means: the parent changed (reparented); or the parent is init already when the
+/// helper starts — the asker can exit before a slow start gets here (ssh giving up at
+/// once, a loaded machine), and then no later change shows; or the git command the app
+/// started is gone — it leads the helper's session (git runs under `setsid`), which also
+/// covers a reparenting to a subreaper (Linux) instead of init.
 #[cfg(unix)]
 fn exit_with_parent() {
-    // SAFETY: getppid has no preconditions and cannot fail.
-    let parent = unsafe { libc::getppid() };
+    // SAFETY: getppid, getpid and getsid(0) have no preconditions and cannot fail.
+    let (parent, me, session) = unsafe { (libc::getppid(), libc::getpid(), libc::getsid(0)) };
+    // Only a session another process leads (git's), not our own or init's.
+    let leader = (session > 1 && session != me).then_some(session);
+    let gone = move || {
+        // SAFETY: as above; signal 0 only checks that the process exists.
+        let reparented = unsafe { libc::getppid() } != parent || parent == 1;
+        reparented
+            || leader.is_some_and(|sid| {
+                let missing = unsafe { libc::kill(sid, 0) } != 0;
+                missing && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            })
+    };
+    if gone() {
+        std::process::exit(1);
+    }
     let _ = std::thread::Builder::new()
         .name("parent-watch".into())
         .stack_size(64 * 1024)
         .spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_millis(100));
-                // SAFETY: as above.
-                if unsafe { libc::getppid() } != parent {
+                if gone() {
                     std::process::exit(1);
                 }
             }

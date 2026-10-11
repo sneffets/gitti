@@ -132,8 +132,8 @@ fn sm07_record_the_submodule_commit_in_the_superproject() {
 }
 
 /// LF-06: the palette's Clone Repository… of a repository with an LFS file (git-lfs
-/// installed; its filters in the global config): the clone has the content, gitty offers
-/// to open it, and there it shows nothing to commit.
+/// installed; its filters in the global config): the clone has the content and nothing
+/// to commit, gitty offers to open it.
 /// Workflow: LF-06
 #[gitti_test::test]
 fn lf06_clone_checks_out_the_content() {
@@ -168,6 +168,10 @@ fn lf06_clone_checks_out_the_content() {
     assert!(screens(&out)[0].contains("Open the new repository?"), "{out}");
     assert!(out.contains(&format!("(reopen {})", clone.display())), "{out}");
     wf::expect_cloned(&clone, &head).unwrap();
-    let out = gitty_env(&clone, &config, "120x30", &env, "state");
-    assert!(states(&out)[0].contains("unstaged=0 staged=0"), "nothing to commit: {out}");
+    // Nothing to commit in it, as gitty would read it there (with git-lfs's filters; a
+    // second gitty run would cost more than the time limit has left).
+    let mut repo = gitti_core::Repo::open(&clone).unwrap();
+    repo.set_env(env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+    let state = repo.working_state().unwrap();
+    assert!(state.unstaged.is_empty() && state.staged.is_empty(), "nothing to commit");
 }

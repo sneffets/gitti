@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use gix::ObjectId;
 
 use crate::diff::{FileChange, FileDiff, parse_unified_bytes};
@@ -667,8 +667,13 @@ impl Repo {
     }
 
     pub fn commit_diff_with(&self, id: ObjectId, opts: &DiffOptions) -> Result<Vec<FileDiff>> {
+        // Never an empty diff for a commit git didn't report: that would be shown (and
+        // cached) as a commit without changes.
         let mut diffs = self.commit_diffs_with(&[id], opts)?;
-        Ok(diffs.pop().map(|(_, files)| files).unwrap_or_default())
+        diffs
+            .pop()
+            .map(|(_, files)| files)
+            .ok_or_else(|| anyhow::anyhow!("git show reported nothing for commit {id}"))
     }
 
     /// Diffs of several commits in one `git show` (a process costs ~5–10 ms; prefetching
@@ -856,6 +861,7 @@ impl Repo {
                             name,
                             index,
                             message,
+                            id,
                         },
                         id,
                         parents,
@@ -1437,13 +1443,44 @@ impl Repo {
         Ok(())
     }
 
+    /// Unstages everything and nothing else: a path-limited reset (`git reset -- :/`),
+    /// which — unlike a plain `git reset` — keeps a merge / cherry-pick / revert in progress
+    /// (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` stay, the next commit still
+    /// concludes it). Conflicted paths are left out: a reset would put HEAD's version in
+    /// their place and so mark them resolved.
     pub fn unstage_all(&self) -> Result<()> {
-        if self.has_head() {
-            self.git.run(&["reset", "-q"])?;
-        } else {
+        if !self.has_head() {
             self.git.run(&["rm", "--cached", "-r", "-q", "."])?;
+            return Ok(());
         }
+        let mut specs = b":/\0".to_vec();
+        for path in self.unmerged_index_paths()? {
+            specs.extend_from_slice(b":(top,exclude,literal)");
+            specs.extend_from_slice(&path);
+            specs.push(0);
+        }
+        self.git.run_stdin(
+            &["reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            Some(&specs),
+        )?;
         Ok(())
+    }
+
+    /// The conflicted paths of the index (in-process, no git), each once.
+    pub(crate) fn unmerged_index_paths(&self) -> Result<Vec<Vec<u8>>> {
+        let repo = self.gix()?;
+        let index = repo.index_or_empty().map_err(gx)?;
+        let mut paths: Vec<Vec<u8>> = Vec::new();
+        for e in index.entries() {
+            if e.stage_raw() == 0 {
+                continue;
+            }
+            let path = e.path(&index).to_vec();
+            if paths.last() != Some(&path) {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
     }
 
     /// Applies the selected part of `file` (a diff produced by [`Repo::working_state`]),
@@ -1468,10 +1505,19 @@ impl Repo {
         // An LFS file's index entry is its pointer: never a partial patch.
         crate::lfs::check_partial(file, mode)?;
         let patch = build_patch(file, sel, mode).ok_or_else(|| anyhow!("nothing selected"))?;
-        self.apply_patch(&patch, mode)
+        // A stale view: refused, nothing applied (`apply_check`).
+        self.check_shown(file, mode)?;
+        self.apply_patch_to(&patch, mode, Some(file.path()))
     }
 
     pub fn apply_patch(&self, patch: &[u8], mode: PatchMode) -> Result<()> {
+        self.apply_patch_to(patch, mode, None)
+    }
+
+    /// [`Self::apply_patch`]; a refusal says in plain words what could not be done to
+    /// `path` (git's reason and the patch follow for the details,
+    /// [`crate::apply_check::patch_failed`]).
+    fn apply_patch_to(&self, patch: &[u8], mode: PatchMode, path: Option<&str>) -> Result<()> {
         let mut args = vec!["apply", "--recount", "--whitespace=nowarn"];
         match mode {
             PatchMode::Stage => args.push("--cached"),
@@ -1479,10 +1525,13 @@ impl Repo {
             PatchMode::Discard => args.push("-R"),
         }
         args.push("-");
-        self.git
-            .run_stdin(&args, Some(patch))
-            .with_context(|| format!("patch was:\n{}", String::from_utf8_lossy(patch)))?;
-        Ok(())
+        match self.git.run_stdin(&args, Some(patch)) {
+            Ok(_) => Ok(()),
+            Err(crate::git_cli::GitError::Failed { stderr, .. }) => {
+                Err(crate::apply_check::patch_failed(path, mode, &stderr, patch))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn commit(&self, message: &str, amend: bool) -> Result<String> {
@@ -1521,7 +1570,12 @@ impl Repo {
         }
         match kind {
             CommitKind::Staged => {}
-            CommitKind::Amend => args.push("--amend"),
+            CommitKind::Amend => {
+                if let Some(why) = crate::ops::amend_blocker(self.state()) {
+                    anyhow::bail!(why);
+                }
+                args.push("--amend");
+            }
             CommitKind::StageAll => self.stage_all()?,
             // The whole tree (`:/`), as `git commit -a`: untracked files stay out.
             CommitKind::StageTracked => {

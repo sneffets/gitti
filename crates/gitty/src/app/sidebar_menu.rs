@@ -28,7 +28,12 @@ impl App {
             SideItem::RemoteBranch { full, .. } => self.remote_branch_menu(full),
             SideItem::Tag { name } => self.tag_menu(name),
             SideItem::Remote { name } => self.remote_menu(name),
-            SideItem::Stash { index, .. } => stash_items(*index),
+            SideItem::Stash { index, .. } => self
+                .stashes
+                .iter()
+                .find(|s| s.index == *index)
+                .map(|s| stash_items(s.target()))
+                .unwrap_or_default(),
             SideItem::Submodule { path, .. } => self.submodule_menu_items(path),
             SideItem::Subtree { index, .. } => self.subtree_menu_items(*index),
             SideItem::Worktree { index, .. } => match self.worktrees.get(*index) {
@@ -304,12 +309,13 @@ impl App {
         }
         v.push(MenuItem::separator());
         let n = name.to_string();
+        let remotes: Vec<String> = self.remotes.iter().map(|r| r.name.clone()).collect();
         v.push(
             MenuItem::new("Delete Tag…", move |app| {
                 let n2 = n.clone();
                 app.modal = Some(Modal::confirm(
                     "Delete Tag",
-                    format!("Delete tag {n}?"),
+                    format!("Delete tag {n}?\n\n{}", gitti_core::tag::delete_note(&n, &remotes)),
                     "Delete",
                     move |app| {
                         app.run_op("Delete tag", true, After::Nothing, move |r| r.delete_tag(&n2))
@@ -583,7 +589,8 @@ impl App {
 
     /// "Create Branch from Stash…": `git stash branch` (the stash applied on a new branch
     /// at the commit it was made on).
-    pub fn stash_branch_dialog(&mut self, index: usize) {
+    pub fn stash_branch_dialog(&mut self, stash: gitti_core::ops::StashRef) {
+        let index = stash.index;
         self.modal = Some(Modal::input(
             format!("Create branch from stash@{{{index}}}"),
             vec![("Branch name", "")],
@@ -593,29 +600,30 @@ impl App {
                     return;
                 }
                 app.run_op("Create branch from stash", true, After::Nothing, move |r| {
-                    r.stash_branch(&name, index)
+                    r.stash_branch(&name, stash)
                 })
             },
         ));
     }
 }
 
-pub(super) fn stash_items(n: usize) -> Vec<MenuItem> {
+pub(super) fn stash_items(stash: gitti_core::ops::StashRef) -> Vec<MenuItem> {
+    let n = stash.index;
     vec![
         MenuItem::new("Apply", move |app| {
             app.run_op("Apply stash", true, After::Nothing, move |r| {
-                r.stash_apply(n, false)
+                r.stash_apply(stash, false)
             })
         })
         .key('a'),
         MenuItem::new("Pop", move |app| {
             app.run_op("Pop stash", true, After::Nothing, move |r| {
-                r.stash_apply(n, true)
+                r.stash_apply(stash, true)
             })
         })
         .key('p'),
-        MenuItem::new("Create Branch from Stash…", move |app| app.stash_branch_dialog(n)).key('b'),
-        MenuItem::new("Rename…", move |app| app.rename_stash_dialog(n)).key('r'),
+        MenuItem::new("Create Branch from Stash…", move |app| app.stash_branch_dialog(stash)).key('b'),
+        MenuItem::new("Rename…", move |app| app.rename_stash_dialog(stash)).key('r'),
         MenuItem::new("Copy Message", move |app| {
             match app.stashes.iter().find(|s| s.index == n).map(|s| s.message.clone()) {
                 Some(m) => app.copy(m),
@@ -629,7 +637,7 @@ pub(super) fn stash_items(n: usize) -> Vec<MenuItem> {
                 "Drop Stash",
                 format!("Drop stash@{{{n}}}? This cannot be undone."),
                 "Drop",
-                move |app| app.run_op("Drop stash", true, After::Nothing, move |r| r.stash_drop(n)),
+                move |app| app.run_op("Drop stash", true, After::Nothing, move |r| r.stash_drop(stash)),
             ));
         })
         .key('d'),

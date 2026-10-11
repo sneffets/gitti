@@ -83,7 +83,9 @@ fn rm05_pull_merge_conflict_resolved_and_committed() {
     let dir = work(&tmp);
     let s = wf::fixture(&dir);
     let repo = open(&dir);
-    assert!(repo.pull_chosen(PullStrategy::Merge).is_err(), "the pull stops on the conflict");
+    // A stop on a conflict is a result, said plainly — not an error.
+    let out = repo.pull_chosen(PullStrategy::Merge).unwrap();
+    assert_eq!(out, "Merge stopped on 1 conflict — resolve it, then Continue (or Abort).");
     assert_eq!(repo.state(), RepoState::Merging);
     let state = repo.working_state().unwrap();
     let paths: Vec<&str> = state.conflicted.iter().map(|f| f.path()).collect();
@@ -107,7 +109,8 @@ fn rm06_pull_rebase_conflict_resolved_and_continued() {
     let dir = work(&tmp);
     let s = wf::fixture(&dir);
     let repo = open(&dir);
-    assert!(repo.pull_chosen(PullStrategy::Rebase).is_err(), "the pull stops on the conflict");
+    let out = repo.pull_chosen(PullStrategy::Rebase).unwrap();
+    assert!(out.starts_with("Rebase stopped on 1 conflict — resolve it, then Continue"), "{out}");
     assert_eq!(repo.state(), RepoState::Rebasing);
     wf::expect_rebase_stopped(&dir, &s).unwrap();
     std::fs::write(dir.join("a.txt"), wf::resolved_a()).unwrap();
@@ -125,26 +128,31 @@ fn rm06_pull_rebase_conflict_aborted() {
     let dir = work(&tmp);
     let s = wf::fixture(&dir);
     let repo = open(&dir);
-    assert!(repo.pull_chosen(PullStrategy::Rebase).is_err());
+    repo.pull_chosen(PullStrategy::Rebase).unwrap();
     wf::expect_rebase_stopped(&dir, &s).unwrap();
     repo.abort_operation().unwrap();
     wf::expect_rebase_aborted(&dir, &s).unwrap();
 }
 
-/// RM-07: a pull that would overwrite an uncommitted edit is refused; the error says
-/// why; nothing changed.
+/// RM-07: a pull that would overwrite an uncommitted edit is refused in plain words
+/// naming the file; nothing changed; Stash and Pull pulls and puts the edit back.
 /// Workflow: RM-07
 #[gitti_test::test]
 fn rm07_pull_into_a_dirty_tree_is_refused() {
+    use gitti_core::local_changes::{LocalChanges, LocalChangesWay};
     use rm::pull_dirty as wf;
     let tmp = tempfile::tempdir().unwrap();
     let dir = work(&tmp);
     let s = wf::fixture(&dir);
     let repo = open(&dir);
     let err = repo.pull_saved().unwrap_err();
-    let text = format!("{err:#}");
-    assert!(text.contains(wf::REASON) && text.contains("a.txt"), "{text}");
+    let block = err.downcast_ref::<LocalChanges>().unwrap_or_else(|| panic!("{err:#}")).clone();
+    assert_eq!(block.local, ["a.txt"]);
+    assert!(format!("{err}").starts_with("Pull refused: it would overwrite uncommitted changes"), "{err}");
+    assert_eq!(LocalChangesWay::Stash.label(&block), wf::WAY);
     wf::expect_refused(&dir, &s).unwrap();
+    repo.resolve_local_changes(&block, LocalChangesWay::Stash).unwrap();
+    wf::expect_stashed_and_pulled(&dir, &s).unwrap();
 }
 
 /// RM-13: deleting `origin/feat` deletes `feat` on the remote and the remote-tracking

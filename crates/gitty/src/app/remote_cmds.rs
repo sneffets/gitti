@@ -322,13 +322,15 @@ impl App {
         self.modal = Some(Modal::picker(format!("Rebase {current} onto…"), items));
     }
 
+    /// Applies / pops `stash@{0}` — the latest one as shown (not one pushed elsewhere
+    /// since).
     pub(super) fn latest_stash(&mut self, pop: bool) {
-        if self.stashes.is_empty() {
+        let Some(stash) = self.stashes.iter().find(|s| s.index == 0).map(|s| s.target()) else {
             self.set_info("No stashes");
             return;
-        }
+        };
         let label = if pop { "Pop stash" } else { "Apply stash" };
-        self.run_op(label, true, After::Nothing, move |r| r.stash_apply(0, pop));
+        self.run_op(label, true, After::Nothing, move |r| r.stash_apply(stash, pop));
     }
 
     /// Palette entries for gitti's menu-bar commands gitty has as well.

@@ -940,9 +940,9 @@ impl App {
                     filtered, offset, ..
                 } => scroll(offset, filtered.len()),
                 // Drawing clamps to the last line.
-                Modal::Text { scroll: s, .. } | Modal::Help { scroll: s } => {
-                    *s = s.saturating_add_signed(d)
-                }
+                Modal::Text { scroll: s, .. }
+                | Modal::Help { scroll: s }
+                | Modal::Input { offset: s, .. } => *s = s.saturating_add_signed(d),
                 _ => {}
             }
             return;
@@ -1102,7 +1102,15 @@ impl App {
                     }
                     if right {
                         self.diff_cursor = row;
-                        self.context_menu();
+                        // A badge of the commit header's "Refs" lines: that ref's menu
+                        // (as on its badge in the list).
+                        let badge = matches!(self.rows[row], DiffRow::HeaderSpace)
+                            .then(|| crate::ui::header_ref_at(self, row, m.column - a.detail.x))
+                            .flatten();
+                        match badge {
+                            Some(r) => self.ref_menu(&r),
+                            None => self.context_menu(),
+                        }
                     } else if shift {
                         self.extend_to(row);
                     } else {

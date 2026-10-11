@@ -302,6 +302,16 @@ impl Fixture {
         self.tips.insert(r, at);
     }
 
+    /// Drops `branch` (or a full ref name) written earlier in this fixture: its commits
+    /// stay in the object store, no ref keeps them — the work of a detached HEAD
+    /// ([`Self::detach`] to one of them).
+    pub fn forget(&mut self, branch: &str) {
+        let r = full_ref(branch);
+        // `reset` without `from`: fast-import doesn't write the ref.
+        self.stream.extend_from_slice(format!("reset {r}\n\n").as_bytes());
+        self.tips.remove(&r);
+    }
+
     /// A lightweight tag `name` on `at`.
     pub fn tag(&mut self, name: &str, at: Mark) {
         self.stream
@@ -319,6 +329,34 @@ impl Fixture {
             msg.len()
         );
         self.stream.extend_from_slice(t.as_bytes());
+    }
+
+    /// An annotated tag `name` on any object of this fixture (a commit, a blob of
+    /// [`Self::blob`], another tag of this method — a tag of a tag) with `msg`, tagged by
+    /// the current author; the tag object's mark.
+    pub fn tag_object(&mut self, name: &str, target: Mark, msg: &str) -> Mark {
+        self.time += 60;
+        self.marks += 1;
+        let mark = Mark(self.marks);
+        let msg = format!("{msg}\n");
+        let t = format!(
+            "tag {name}\nmark {mark}\nfrom {target}\ntagger {} {} +0000\ndata {}\n{msg}\n",
+            self.author,
+            self.time,
+            msg.len()
+        );
+        self.stream.extend_from_slice(t.as_bytes());
+        mark
+    }
+
+    /// A blob of `data` that no commit needs to have (to tag it); its mark.
+    pub fn blob(&mut self, data: &[u8]) -> Mark {
+        self.marks += 1;
+        let mark = Mark(self.marks);
+        self.stream.extend_from_slice(format!("blob\nmark {mark}\ndata {}\n", data.len()).as_bytes());
+        self.stream.extend_from_slice(data);
+        self.stream.push(b'\n');
+        mark
     }
 
     /// HEAD on `branch` once built (default `main`); index and working tree are its tip.

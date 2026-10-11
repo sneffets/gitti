@@ -30,6 +30,10 @@
 //!   are removed from the stash reflog (`git reflog delete`) and stored again in the same
 //!   order (`git stash store`), the renamed one with its new message. The commits stay the
 //!   same; only the entries' reflog times become "now".
+//! - **Not during an operation**: while a merge / rebase / cherry-pick / revert is in
+//!   progress stashing is refused ([`refusal_during`]): `git stash` resets the working
+//!   tree and the index to HEAD, which ends a merge (`MERGE_HEAD` goes) and puts its
+//!   result into the stash; the next commit would be a plain one.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -56,6 +60,31 @@ pub const CHECKS: [&str; 4] = [
     "Keep staged changes (--keep-index)",
     "Only staged changes (--staged)",
 ];
+
+/// Why stashing is refused in `state` (`None`: it isn't) — both apps grey their Stash
+/// commands with [`crate::availability::in_progress`]; this is the core's own check.
+pub fn refusal_during(state: crate::ops::RepoState) -> Option<String> {
+    use crate::ops::RepoState;
+    let what = crate::availability::in_progress(state)?;
+    let op = match state {
+        RepoState::Clean => return None,
+        RepoState::Merging => "merge",
+        RepoState::Rebasing => "rebase",
+        RepoState::CherryPicking => "cherry-pick",
+        RepoState::Reverting => "revert",
+    };
+    let effect = if state == RepoState::Rebasing {
+        "would move the changes of the stopped step into the stash: continuing would commit \
+         the step without them"
+            .to_string()
+    } else {
+        format!(
+            "would move the {op}'s result into the stash and end the {op} (git stash resets \
+             to HEAD and forgets it): the next commit would be a plain one"
+        )
+    };
+    Some(format!("Not stashed: {what}. A stash now {effect}. Continue or abort the {op} first, then stash."))
+}
 
 impl StashFlags {
     /// The flags of the [`CHECKS`] boxes.
@@ -394,6 +423,9 @@ impl Repo {
     /// "Only staged changes" is checked first: refused when git could not take the staged
     /// changes out of the working tree afterwards (see the module docs).
     pub fn stash_push(&self, message: &str, flags: StashFlags, paths: &[String]) -> Result<String> {
+        if let Some(why) = refusal_during(self.state()) {
+            bail!(why);
+        }
         if flags.staged_only && (flags.include_untracked || flags.include_ignored || flags.keep_index) {
             bail!("“Only staged changes” goes with neither untracked / ignored files nor “Keep staged changes”");
         }
@@ -494,6 +526,9 @@ impl Repo {
         let lines = selected_lines(file, sel);
         if lines == 0 {
             bail!("No changed lines selected");
+        }
+        if let Some(why) = refusal_during(self.state()) {
+            bail!(why);
         }
         let repo = self.gix()?;
         let head = repo
@@ -710,10 +745,10 @@ impl Repo {
         }
     }
 
-    /// Gives `stash@{index}` the message `text` (see the module docs): `git reflog
-    /// delete` of it and the entries above it, then `git stash store` of each again,
-    /// oldest first.
-    pub fn stash_rename(&self, index: usize, text: &str) -> Result<String> {
+    /// Gives `stash` the message `text` (see the module docs): `git reflog delete` of
+    /// it and the entries above it, then `git stash store` of each again, oldest first.
+    /// The entry is found by its commit (it may have moved in the list meanwhile).
+    pub fn stash_rename(&self, stash: crate::ops::StashRef, text: &str) -> Result<String> {
         if text.trim().is_empty() {
             bail!("The new message is empty");
         }
@@ -726,10 +761,16 @@ impl Repo {
             .filter_map(|l| l.split_once('\0'))
             .map(|(id, m)| (id.to_string(), m.to_string()))
             .collect();
-        let entries = &all[..all.len().min(index + 1)];
-        if entries.len() <= index {
-            bail!("There is no stash@{{{index}}}");
-        }
+        let is_it = |k: usize| all.get(k).is_some_and(|(id, _)| ObjectId::from_hex(id.as_bytes()).ok() == Some(stash.id));
+        let Some(index) = (is_it(stash.index).then_some(stash.index)).or_else(|| (0..all.len()).find(|&k| is_it(k)))
+        else {
+            bail!(
+                "The stash {} is no longer in the stash list (dropped or replaced outside gitti \
+                 meanwhile): nothing was renamed.",
+                stash.id.to_hex_with_len(7)
+            );
+        };
+        let entries = &all[..=index];
         let new = renamed_message(&entries[index].1, text);
         let refs: Vec<String> = (0..=index).rev().map(|k| format!("refs/stash@{{{k}}}")).collect();
         let mut args = vec!["reflog", "delete", "--rewrite", "--updateref"];

@@ -75,7 +75,8 @@ fn cp13_pick_edit_then_merge_conflicts_there() {
     let dir = tmp.path();
     let s = wf::fixture(dir);
     let repo = Repo::open(dir).unwrap();
-    assert!(repo.merge("feat").is_err(), "the merge stops on the conflict");
+    let said = repo.merge("feat").expect("a stop on a conflict is a result, not a failure");
+    assert_eq!(said, "Merge stopped on 1 conflict — resolve it, then Continue (or Abort).");
     assert_eq!(repo.state(), RepoState::Merging);
     let state = repo.working_state().unwrap();
     let paths: Vec<&str> = state.conflicted.iter().map(|f| f.path()).collect();

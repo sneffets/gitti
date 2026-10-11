@@ -219,7 +219,7 @@ fn error_mark_until_the_next_operation() {
     add_config(d, &(remote_config("origin", origin.path()) + &upstream_config("main", "origin", "nowhere")));
     let out = gitty(
         d,
-        "key:p;state;write:outside.txt=x;sleep:250;wait;state;key:S;state;dump;press:e;dump",
+        "key:p;state;write:outside.txt=x;watched:outside.txt;state;key:S;state;dump;press:e;dump",
     );
     let st = states(&out);
     assert!(st[0].contains("error_mark=\"⚠ Pull failed\"") && st[0].contains("status=\"ERROR"), "{out}");

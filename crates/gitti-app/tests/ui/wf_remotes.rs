@@ -247,10 +247,11 @@ fn rm05_pull_merge_stops_on_the_conflict(ui: &mut Ui) {
     if !st.message.starts_with("Merge branch 'main' of ") {
         fail!(ui, "the box after the pull stopped: {:?}", st.message);
     }
-    // TODO (catalog open point of CP-13, "merge conflict reported without git's
-    // message"): the status should name the conflict; today it is an error whose first
-    // line is the fetch's ref update (git prints the CONFLICT lines on stdout). Assert it
-    // once that is fixed.
+    // A stop on a conflict is a result, said plainly — not an error.
+    let said = "Merge stopped on 1 conflict — resolve it, then Continue (or Abort).";
+    if st.status != Some((said.to_string(), false)) || st.error_mark.is_some() {
+        fail!(ui, "the pull's stop: status {:?}, error mark {:?}", st.status, st.error_mark);
+    }
     if ui.frame().iter().all(|p| p.name != "op-continue") {
         ui.fail("no merge banner (Continue / Abort)".into());
     }
@@ -285,6 +286,10 @@ fn rm06_pull_rebase_stops_on_the_conflict(ui: &mut Ui) {
     if st.repo_state != "rebasing" || st.conflicted != ["a.txt"] {
         fail!(ui, "after the pull stopped: {}, conflicted {:?}, status {:?}", st.repo_state, st.conflicted, st.status);
     }
+    match &st.status {
+        Some((text, false)) if text.starts_with("Rebase stopped on 1 conflict — resolve it, then Continue") => {}
+        other => fail!(ui, "the pull's stop: status {other:?}"),
+    }
     if ui.frame().iter().all(|p| p.name != "op-continue") {
         ui.fail("no rebase banner (Continue / Abort)".into());
     }
@@ -309,28 +314,28 @@ fn rm06_resolve_and_continue_the_stopped_pull(ui: &mut Ui) {
     expect(ui, wf::expect_rebased(&dir, &s));
 }
 
-/// RM-07: Pull with an uncommitted edit in the file it changes: refused, the status says
-/// why and names the file; nothing changed.
+/// RM-07: Pull with an uncommitted edit in the file it changes: refused, the question
+/// says why in plain words, names the file and offers the ways out; nothing changed yet.
+/// Stash and Pull pulls and puts the edit back.
 /// Workflow: RM-07
 fn rm07_pull_into_a_dirty_tree_is_refused(ui: &mut Ui) {
     use rm::pull_dirty as wf;
     let s: wf::Setup = setup();
     let dir = ui.workdir();
     ui.step("action:gitti::Pull");
-    let st = ui.ui_state();
-    match &st.status {
-        Some((text, true)) if text.contains(wf::REASON) => {}
-        other => fail!(ui, "the refusal in the status line: {other:?}"),
-    }
-    let ws = ui.ws.clone();
-    let full = ui.cx.update(|cx| testing::error(&ws, cx)).unwrap_or_default();
-    if !full.contains("a.txt") {
-        fail!(ui, "the error doesn't name the file: {full:?}");
-    }
-    if st.repo_state != "clean" || st.unstaged != ["a.txt"] {
-        fail!(ui, "after the refused pull: {}, unstaged {:?}", st.repo_state, st.unstaged);
+    match ui.cx.pending_prompt() {
+        Some((title, detail)) if title.starts_with("Pull refused") && detail.contains("a.txt") => {}
+        other => return fail!(ui, "the refusal's question: {other:?}, status {:?}", ui.status()),
     }
     expect(ui, wf::expect_refused(&dir, &s));
+    ui.cx.simulate_prompt_answer(wf::WAY);
+    ui.settle();
+    no_error(ui, wf::WAY);
+    let st = ui.ui_state();
+    if st.repo_state != "clean" || st.unstaged != ["a.txt"] {
+        fail!(ui, "after {}: {}, unstaged {:?}", wf::WAY, st.repo_state, st.unstaged);
+    }
+    expect(ui, wf::expect_stashed_and_pulled(&dir, &s));
 }
 
 /// RM-10: Push… → Options… → Force with lease: the confirmation lists what `origin/main`

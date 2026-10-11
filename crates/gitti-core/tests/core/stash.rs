@@ -93,7 +93,7 @@ fn stash_unstaged_hunk_keeps_everything_else() {
     assert_eq!(stash_changes(&r, 0), ["a.txt:-2", "a.txt:+X"]);
     // git applies a stash only to files without uncommitted changes: commit the rest.
     fx::git(r.workdir(), &["commit", "-qam", "rest"]);
-    r.stash_apply(0, true).unwrap();
+    r.stash_apply(r.stashes().unwrap()[0].target(), true).unwrap();
     assert_eq!(read(&r, "a.txt"), changed.as_bytes());
 }
 
@@ -112,7 +112,7 @@ fn stash_lines_keeps_exact_bytes() {
     assert_eq!(read(&r, "l.txt"), b"caf\xe9!\r\none\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\nlast");
     assert!(r.stashes().unwrap()[0].message.starts_with("WIP on main: "));
     fx::git(r.workdir(), &["commit", "-qam", "rest"]);
-    r.stash_apply(0, true).unwrap();
+    r.stash_apply(r.stashes().unwrap()[0].target(), true).unwrap();
     assert_eq!(read(&r, "l.txt"), new);
 }
 
@@ -180,7 +180,7 @@ fn stash_staged_lines_keeps_unstaged_changes() {
         "1\n2\n3\nS\n5\n6\n7\n8\n9\n10"
     );
     fx::git(r.workdir(), &["commit", "-qam", "rest"]);
-    r.stash_apply(0, true).unwrap();
+    r.stash_apply(r.stashes().unwrap()[0].target(), true).unwrap();
     assert_eq!(read(&r, "a.txt"), b"1\n2\n3\nS\n5\nU\n7\n8\n9\n10\n");
 }
 
@@ -251,12 +251,12 @@ fn rename_keeps_order(r: &Repo) {
     }
     let ids = |r: &Repo| fx::git(r.workdir(), &["stash", "list", "--format=%H"]);
     let before = ids(r);
-    let msg = r.stash_rename(1, "renamed").unwrap();
+    let msg = r.stash_rename(r.stashes().unwrap()[1].target(), "renamed").unwrap();
     assert!(msg.contains("On main: renamed"), "{msg}");
     let names: Vec<String> = r.stashes().unwrap().into_iter().map(|s| s.message).collect();
     assert_eq!(names, ["On main: s3", "On main: renamed", "On main: s1"]);
     assert_eq!(ids(r), before, "same commits, same order");
-    r.stash_rename(0, "top").unwrap();
+    r.stash_rename(r.stashes().unwrap()[0].target(), "top").unwrap();
     assert_eq!(r.stashes().unwrap()[0].message, "On main: top");
     let _ = work;
 }
@@ -276,7 +276,7 @@ fn stash_rename_the_only_stash() {
     write(&r, "a.txt", b"1\n");
     r.stash_save("", false).unwrap();
     let id = fx::git(r.workdir(), &["rev-parse", "stash@{0}"]);
-    r.stash_rename(0, "only").unwrap();
+    r.stash_rename(r.stashes().unwrap()[0].target(), "only").unwrap();
     assert_eq!(fx::git(r.workdir(), &["stash", "list", "--format=%H %gs"]), format!("{id} On main: only"));
 }
 

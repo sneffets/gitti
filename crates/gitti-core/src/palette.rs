@@ -147,6 +147,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     gitti("GlobalGitSettings", CONFIG),
     gitti("EditRepoConfig", CONFIG),
     gitti("EditGlobalConfig", CONFIG),
+    // The external diff / merge tool (`tool_setup`).
+    both("ChooseExternalTool", crate::tool_setup::CHOOSE_LABEL),
     both("WriteCommitGraph", "Write Commit-Graph"),
     // Branch
     both("SwitchBranch", "Switch Branch…"),
@@ -183,6 +185,9 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("RestoreFromCommit", "Restore File or Folder from Selected Commit…"),
     gitti("OpenThisVersion", "gitty gap"),
     gitti("OpenOldVersion", "gitty gap"),
+    // On the file at the diff cursor (`ext_tool`).
+    both("OpenExternalDiffTool", "Open in External Diff Tool"),
+    both("OpenExternalMergeTool", "Open in External Merge Tool"),
     // Also on the signature (gitti: right-click / details; gitty: `m`, `K`).
     both("GetSigningKeys", "Get Signing Keys from GitHub…"),
     both("MarkCompare", "Mark Selected Commit for Comparison"),

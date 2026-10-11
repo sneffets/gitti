@@ -158,10 +158,8 @@ fn rm05_pull_merge_stops_on_the_conflict() {
     assert!(st[0].contains("staged=1 repo_state=merging conflicted=1"), "{out}");
     let screen = screens(&out)[0];
     assert!(screen.contains("MERGING") && screen.contains("Merge branch 'main' of "), "banner, prefilled box: {out}");
-    // TODO (catalog open point of CP-13, "merge conflict reported without git's
-    // message"): the status should name the conflict; today it is "ERROR Pull failed:
-    // git pull --no-rebase: <the fetch's ref update>" (git prints the CONFLICT lines on
-    // stdout). Assert it once that is fixed.
+    // A stop on a conflict is a result, said plainly — not an error.
+    assert!(st[0].contains("Merge stopped on 1 conflict — resolve it, then Continue (or Abort).\"") && !st[0].contains("ERROR"), "{out}");
     wf::expect_merge_stopped(&d, &s).unwrap();
 }
 
@@ -196,6 +194,7 @@ fn rm06_pull_rebase_stops_on_the_conflict() {
     let out = run(&tmp, &d, &format!("{}key:r;state;dump", palette("pull with")));
     let st = states(&out);
     assert!(st[0].contains("repo_state=rebasing conflicted=1"), "{out}");
+    assert!(st[0].contains("Rebase stopped on 1 conflict — resolve it, then Continue") && !st[0].contains("ERROR"), "{out}");
     assert!(screens(&out)[0].contains("REBASING"), "banner: {out}");
     wf::expect_rebase_stopped(&d, &s).unwrap();
 }
@@ -223,8 +222,9 @@ fn rm06_resolve_and_continue_the_stopped_pull() {
     wf::expect_rebased(&d, &s).unwrap();
 }
 
-/// RM-07: p with an uncommitted edit in the file the pull changes: refused with git's
-/// reason, the error mark; nothing changed.
+/// RM-07: p with an uncommitted edit in the file the pull changes: refused — the dialog
+/// says why, names the file and offers Stash and Pull / Discard and Pull; nothing changed
+/// yet. s (Stash and Pull) pulls and puts the edit back.
 /// Workflow: RM-07
 #[gitti_test::test]
 fn rm07_pull_into_a_dirty_tree_is_refused() {
@@ -232,14 +232,15 @@ fn rm07_pull_into_a_dirty_tree_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let d = work(&tmp);
     let s = wf::fixture(&d);
-    let out = run(&tmp, &d, "key:p;state");
-    let st = states(&out);
-    // TODO (B11, "pull refused because of local changes gives git's raw message"): the
-    // apps should explain it and offer a way out (stash first), as Switch does; today the
-    // status is git's message. Assert the plain words once that is done.
-    assert!(st[0].contains("status=\"ERROR Pull failed:") && st[0].contains(wf::REASON), "{out}");
-    assert!(st[0].contains("unstaged=1 staged=0 repo_state=clean"), "{out}");
+    let out = run(&tmp, &d, "key:p;dump;state");
+    let screen = screens(&out)[0];
+    assert!(screen.contains("Pull refused: uncommitted changes in the way") && screen.contains("a.txt"), "{out}");
+    assert!(screen.contains(wf::WAY) && screen.contains("Discard and Pull"), "{out}");
     wf::expect_refused(&d, &s).unwrap();
+    let out = run(&tmp, &d, "key:p;key:s;state");
+    let st = states(&out);
+    assert!(st[0].contains("unstaged=1 staged=0 repo_state=clean") && !st[0].contains("ERROR"), "{out}");
+    wf::expect_stashed_and_pulled(&d, &s).unwrap();
 }
 
 /// RM-12: Pull from… → upstream fast-forwards `main` (its upstream stays origin).
