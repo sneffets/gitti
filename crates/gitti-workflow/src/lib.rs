@@ -13,7 +13,7 @@
 //!   terminal `git`);
 //! - [`expect`]: [`Expect`], the repository afterwards read with few git processes, and
 //!   [`Checks`] collecting the mismatches;
-//! - the workflows, one module each in their area's module ([`st`], [`cm`], [`cp`], [`rs`], [`tg`], …): a
+//! - the workflows, one module each in their area's module ([`st`], [`cm`], [`cp`], [`rv`], [`rs`], [`tg`], …): a
 //!   `fixture(dir)`, the step constants the drivers need, and `expect…(dir)` functions
 //!   returning `Err(text)` with every mismatch.
 //!
@@ -33,6 +33,7 @@ pub mod git;
 pub mod lf;
 pub mod rm;
 pub mod rs;
+pub mod rv;
 pub mod sm;
 pub mod st;
 pub mod tg;

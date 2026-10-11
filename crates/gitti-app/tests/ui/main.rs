@@ -35,6 +35,7 @@ mod tooltips;
 mod wf_branches;
 mod wf_commit;
 mod wf_modules;
+mod wf_pick;
 mod wf_pilot;
 mod wf_remotes;
 mod wf_reset;
@@ -74,6 +75,7 @@ const SUITES: &[(&str, fn())] = &[
     ("wf_tags", wf_tags::main),
     ("wf_remotes", wf_remotes::main),
     ("wf_modules", wf_modules::main),
+    ("wf_pick", wf_pick::main),
 ];
 
 fn main() {

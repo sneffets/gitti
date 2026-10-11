@@ -278,35 +278,36 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| CP-01 | **Cherry-pick one commit** | select a commit of `feat`; Cherry-pick | new commit on `main` with its change, author and message | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | — | — |
-| CP-02 | Cherry-pick with `-x` | Cherry-pick with Options…, record origin | message ends with "(cherry picked from commit …)" | `repo_ops::merge_and_cherry_pick_options` | — | ~`merge_editor::prepared_message_next_to_the_users_text` |
+| CP-01 | **Cherry-pick one commit** | select a commit of `feat`; Cherry-pick | new commit on `main` with its change, author and message | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | `wf_pick::cp01_pick_one_commit` | `wf_pick::cp01_pick_one_commit` |
+| CP-02 | Cherry-pick with `-x` | Cherry-pick with Options…, record origin | message ends with "(cherry picked from commit …)" | `repo_ops::merge_and_cherry_pick_options` | `wf_pick::cp02_pick_with_record_origin` | `wf_pick::cp02_pick_with_record_origin`, ~`merge_editor::prepared_message_next_to_the_users_text` |
 | CP-03 | Cherry-pick without committing | `-n` (and `-x`); then Commit | change staged; box gets git's prepared message; commit drops `MERGE_MSG` | `conflicts::cherry_pick_no_commit_record_origin_prepares_the_message` | `commit::prepared_message_after_cherry_pick` | `merge_editor::prepared_message_after_cherry_pick_no_commit`, `merge_editor::prepared_message_next_to_the_users_text`, `merge_editor::keep_mine_survives_a_restart` |
-| CP-04 | Conflicting pick → resolve → Continue | conflict; resolve; Continue | commit with the picked author; box message used when edited | ~`conflicts::continue_a_cherry_pick_sequence_with_the_edited_message` | ~`commit::continue_with_the_edited_message` | ~`merge_editor::continue_with_the_edited_message` |
-| CP-05 | Conflicting pick → Abort | conflict; Abort | HEAD and files as before | — | — | — |
-| CP-06 | Pick a merge commit | Cherry-pick on a merge | picks against the first parent (`-m 1`) | — | — | — |
-| CP-07 | Several commits in sequence | pick A..C; second conflicts; resolve; Continue | the rest picked; state clean | `conflicts::continue_a_cherry_pick_sequence_with_the_edited_message`, `conflicts::a_sequence_committed_by_hand_still_continues` | ~`commit::continue_with_the_edited_message` (sequence started on the command line) | ~`merge_editor::continue_with_the_edited_message` (same) |
-| CP-08 | Pick several selected commits from the app | select three commits; Cherry-pick | picked oldest first | — | — | — |
-| CP-09 | **Pick a commit that is already applied** | pick `A` twice | the app says it is empty and offers Skip / Commit Empty / Abort | `op_safety::an_empty_pick_is_explained_and_skipped` | ~`op_safety::empty_pick_skip` | ~`op_safety::an_empty_pick_offers_skip` |
-| CP-10 | Conflict resolved to the HEAD side | resolution equals HEAD; Continue | "nothing left of this commit": Skip offered; never stuck | — | — | — |
-| CP-11 | Conflicting `-x` with a custom comment char | `core.commentChar=;` | `; Conflicts:` lines dropped, origin line kept | `conflicts::conflicting_cherry_pick_strips_the_configured_comment_char` | — | — |
+| CP-04 | Conflicting pick → resolve → Continue | conflict; resolve (take theirs); Continue | commit with the picked author; box message used when edited | `wf_pick::cp04_conflicting_pick_resolve_and_continue`, ~`conflicts::continue_a_cherry_pick_sequence_with_the_edited_message` | `wf_pick::cp04_take_theirs`, `wf_pick::cp04_continue_commits_the_resolution`, ~`commit::continue_with_the_edited_message` | `wf_pick::cp04_take_theirs`, `wf_pick::cp04_continue_commits_the_resolution`, ~`merge_editor::continue_with_the_edited_message` |
+| CP-05 | Conflicting pick → Abort | conflict (said plainly, banner with Continue / Skip / Abort); Abort | HEAD and files as before | `wf_pick::cp05_conflicting_pick_abort` | `wf_pick::cp05_conflicting_pick_stops_then_abort` | `wf_pick::cp05_conflicting_pick_stops_then_abort` |
+| CP-06 | Pick a merge commit | Cherry-pick on a merge | picks against the first parent (`-m 1`): one ordinary commit | `wf_pick::cp06_pick_a_merge_commit` | `wf_pick::cp06_pick_a_merge_commit` | `wf_pick::cp06_pick_a_merge_commit` |
+| CP-07 | Several commits in sequence | mark A..C; Cherry-pick Marked Commits…; the second conflicts (where, in the status); resolve; Continue | the rest picked; state clean | `wf_pick::cp07_marked_sequence_stops_resolve_and_continue`, `conflicts::continue_a_cherry_pick_sequence_with_the_edited_message`, `conflicts::a_sequence_committed_by_hand_still_continues` | `wf_pick::cp07_marked_sequence_stops_at_the_second`, `wf_pick::cp07_resolve_and_continue_picks_the_rest`, ~`commit::continue_with_the_edited_message` (sequence started on the command line) | `wf_pick::cp07_marked_sequence_stops_at_the_second`, `wf_pick::cp07_resolve_and_continue_picks_the_rest`, ~`merge_editor::continue_with_the_edited_message` (same) |
+| CP-08 | Pick several selected commits from the app | mark three commits (gitti: click, ⌘- / shift-click; gitty: space); Cherry-pick Marked Commits… (menu bar, palette, the marked commit's menu) | the dialog lists them oldest first; picked oldest first in one sequence; marks cleared | `wf_pick::cp08_pick_several_marked_commits_oldest_first` | `wf_pick::cp08_pick_three_marked_commits` | `wf_pick::cp08_pick_three_marked_commits` |
+| CP-09 | **Pick a commit that is already applied** | pick `A` twice | the app says it is empty and offers Skip / Commit Empty / Abort | `op_safety::an_empty_pick_is_explained_and_skipped`, `wf_pick::cp09_pick_a_commit_twice_then_skip` | `wf_pick::cp09_pick_it_again_then_skip`, ~`op_safety::empty_pick_skip` | `wf_pick::cp09_pick_it_again_then_skip`, ~`op_safety::an_empty_pick_offers_skip` |
+| CP-10 | Conflict resolved to the HEAD side | resolution equals HEAD; Continue | "nothing left of this commit": Skip offered; never stuck | `wf_pick::cp10_conflict_resolved_to_head_then_skip` | `wf_pick::cp10_conflict_resolved_to_head_then_skip` | `wf_pick::cp10_conflict_resolved_to_head_then_skip` |
+| CP-11 | Conflicting `-x` with a custom comment char | `core.commentChar=;` | `; Conflicts:` lines dropped, origin line kept | `conflicts::conflicting_cherry_pick_strips_the_configured_comment_char` | `wf_pick::cp11_conflicting_pick_with_record_origin_and_comment_char` | `wf_pick::cp11_conflicting_pick_with_record_origin_and_comment_char` |
 | CP-12 | **Pick, then merge the source branch** | pick `A` from `feat` onto `main`; later merge `feat` | merges cleanly; both `A` and its copy in history | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` |
 | CP-13 | Pick, change the same lines on main, merge the source | pick `A`; edit A's lines on `main`; merge `feat` | conflict exactly on those lines (expected); other files merged | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` |
 | CP-14 | Pick with a different resolution, merge the source | pick `A` with a conflict resolved differently; merge `feat` | conflict again on those lines (git can't know); resolvable | — | — | — |
 | CP-15 | Pick, revert the pick, merge the source | pick `A`; revert it; merge `feat` | `A`'s change is back after the merge (git's three-way result) and the diff shows it | — | — | — |
-| CP-16 | Pick into a dirty tree | local change in a file the pick changes | refused in plain words; nothing changed | — | — | — |
-| CP-17 | Pick HEAD | Cherry-pick on HEAD | greyed with the reason; no git | `availability::changes_stashes_and_selection_turn_them_on` (unit) | ~`menus::unavailable_commands` | ~`palette::palette_and_menu_grey_what_cannot_act_with_the_reason` |
-| CP-18 | Pick a lost commit from the reflog | reflog entry → Cherry-pick | its change on HEAD | — | — | — |
+| CP-16 | Pick into a dirty tree | local change in a file the pick changes | refused in plain words naming the file, ways out offered; nothing changed | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` |
+| CP-17 | Pick HEAD | Cherry-pick on HEAD (also HEAD among marked commits) | greyed with the reason; no git | `availability::changes_stashes_and_selection_turn_them_on` (unit) | `wf_pick::cp17_pick_head_is_greyed`, ~`menus::unavailable_commands` | `wf_pick::cp17_pick_head_is_greyed`, ~`palette::palette_and_menu_grey_what_cannot_act_with_the_reason` |
+| CP-18 | Pick a lost commit from the reflog | reflog entry → Cherry-pick | its change on HEAD | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` |
 
 ## RV — Revert
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| RV-01 | **Revert a commit** | Revert on a commit | a new commit undoing it ("Revert …") | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | — | — |
-| RV-02 | Revert a merge commit | Revert on a merge | reverted against the first parent | — | — | — |
-| RV-03 | Revert conflict → Continue with an edited message | conflict; resolve; edit box; Continue | the edited message | `conflicts::continue_a_revert_with_the_edited_message` | — | — |
-| RV-04 | Revert conflict → Abort | conflict; Abort | back to before | — | — | — |
-| RV-05 | Revert the revert | revert `A`, then revert that | `A`'s change back | — | — | — |
-| RV-06 | Revert a change already undone | revert gives nothing | empty: Skip / Abort offered, never stuck | — | — | — |
+| RV-01 | **Revert a commit** | Revert on a commit | a new commit undoing it ("Revert …") | `repo_ops::cherry_pick_revert_reset_and_conflict_state`, `wf_pick::rv05_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` |
+| RV-02 | Revert a merge commit | Revert on a merge | reverted against the first parent | `wf_pick::rv02_revert_a_merge_commit` | `wf_pick::rv02_revert_a_merge_commit` | `wf_pick::rv02_revert_a_merge_commit` |
+| RV-03 | Revert conflict → Continue with an edited message | conflict; resolve; edit box; Continue | the edited message | `conflicts::continue_a_revert_with_the_edited_message` | `wf_pick::rv03_revert_conflict_continue_with_an_edited_message` | `wf_pick::rv03_revert_conflict_continue_with_an_edited_message` |
+| RV-04 | Revert conflict → Abort | conflict; Abort | back to before | `wf_pick::rv04_revert_conflict_abort` | `wf_pick::rv04_revert_conflict_abort` | `wf_pick::rv04_revert_conflict_abort` |
+| RV-05 | Revert the revert | revert `A`, then revert that | `A`'s change back | `wf_pick::rv05_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` |
+| RV-06 | Revert a change already undone | revert gives nothing | alone: nothing changed, said in plain words (git leaves no state); in a sequence: stops, Skip / Commit Empty / Abort offered — never stuck | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` |
+| RV-07 | Revert several selected commits | mark three commits; Revert Marked Commits… | the dialog says newest first; reverted newest first in one sequence | `wf_pick::rv07_revert_several_marked_commits_newest_first` | `wf_pick::rv07_revert_three_marked_commits` | `wf_pick::rv07_revert_three_marked_commits` |
 
 ## RB — Rebase
 
@@ -509,8 +510,8 @@ layer (partial `~` and `n/a` don't count as covered).
 | SH stash | 19 | 13 | 6 | 7 |
 | BR branches | 19 | 19 | 19 | 18 |
 | MG merge | 26 | 20 | 9 | 11 |
-| CP cherry-pick | 18 | 9 | 3 | 3 |
-| RV revert | 6 | 2 | 0 | 0 |
+| CP cherry-pick | 18 | 16 | 16 | 16 |
+| RV revert | 7 | 7 | 7 | 7 |
 | RB rebase | 9 | 4 | 1 | 1 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
@@ -526,7 +527,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **265** | **205** | **142** | **147** |
+| **Total** | **266** | **217** | **162** | **167** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

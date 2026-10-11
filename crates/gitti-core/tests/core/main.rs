@@ -48,6 +48,7 @@ mod wf_branches;
 mod wf_catalog;
 mod wf_commit;
 mod wf_modules;
+mod wf_pick;
 mod wf_pilot;
 mod wf_remotes;
 mod wf_reset;
