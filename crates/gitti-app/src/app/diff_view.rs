@@ -1210,7 +1210,7 @@ impl GittiApp {
     /// For the list scrolled to `scroll_y`: the file / hunk header rows that have scrolled
     /// out above the top while their content is still visible, and the rows where that
     /// file / hunk ends (first row after it).
-    fn sticky_rows(
+    pub(super) fn sticky_rows(
         &self,
         scroll_y: Pixels,
         row_h: Pixels,

@@ -31,6 +31,7 @@ pub fn main() {
     let merge_repo = make_merge_repo(&tmp.path().join("merge"));
     let tests: &[(&str, Scenario)] = &[
         ("diff_page_keys", diff_page_keys),
+        ("diff_page_keys_under_the_sticky_rows", diff_page_keys_under_the_sticky_rows),
         ("commit_list_wheel", commit_list_wheel),
         ("commit_list_keys", commit_list_keys),
         ("commit_list_reload", commit_list_reload),
@@ -66,6 +67,9 @@ pub fn main() {
         }
         if name == "sticky_path_in_tree" {
             return make_nested_repo(&tmp.path().join("nested"));
+        }
+        if name == "diff_page_keys_under_the_sticky_rows" {
+            return make_nested_repo(&tmp.path().join("sticky"));
         }
         if matches!(
             name,
@@ -496,7 +500,9 @@ fn diff_page_keys(ui: &mut Ui) {
         let s = ui.scroll();
         let moved = s.diff_y - before;
         let drawn = drawn_offset(&p, "diff-row", "diff-list", row_h);
-        if sign * moved < page - 3. * row_h || sign * moved > page + 0.5 {
+        // A page less the row kept in view, a partly shown row and up to two rows under
+        // the sticky file / hunk rows (`diff_page_keys_under_the_sticky_rows`).
+        if sign * moved < page - 4. * row_h || sign * moved > page + 0.5 {
             ui.fail(format!(
                 "{key}: moved {moved} px, the page is {page} px (offset {before} → {})",
                 s.diff_y
@@ -517,6 +523,48 @@ fn diff_page_keys(ui: &mut Ui) {
         ui.fail(format!("Home: offset {y}"));
     }
     ui.expect_no_git(git_before, "page keys in the diff");
+}
+
+/// The rows of a frame around the sticky rows: the first diff row drawn wholly below
+/// them (or below the list's top edge without them) and the last one drawn wholly
+/// inside the list; whether the sticky file row is shown.
+fn shown_rows(p: &[Probe]) -> Option<(usize, usize, bool)> {
+    let list = find(p, "diff-list")?.visible()?;
+    let sticky = ["sticky-file", "sticky-hunk"].map(|n| find(p, n).and_then(Probe::visible));
+    let covered = sticky.iter().flatten().map(bottom).fold(top(&list), f32::max);
+    let rows = p.iter().filter(|q| q.kind() == "diff-row" && q.visible().is_some());
+    let first = rows.clone().filter(|q| top(&q.bounds) >= covered - 0.5).filter_map(Probe::index).min()?;
+    let last = rows.filter(|q| bottom(&q.bounds) <= bottom(&list) + 0.5).filter_map(Probe::index).max()?;
+    Some((first, last, sticky[0].is_some()))
+}
+
+/// PgDn / PgUp in a long hunk while the sticky file and hunk rows cover the top of the
+/// diff: no row is skipped under them — after PgDn the last row shown before is the
+/// first one shown below the sticky rows, after PgUp the first one shown below them
+/// before is the last one shown.
+fn diff_page_keys_under_the_sticky_rows(ui: &mut Ui) {
+    ui.step("select:0");
+    ui.step("focusdiff");
+    // Into the long hunk (the commit box may shrink on the first scroll).
+    ui.key_ff("pagedown", DIFF_KINDS);
+    for key in ["pagedown", "pagedown", "pageup", "pageup"] {
+        let Some((first, last, sticky)) = shown_rows(&ui.frame()) else {
+            return ui.fail(format!("{key}: no rows shown"));
+        };
+        if !sticky {
+            return ui.fail(format!("{key}: no sticky file row at rows {first}..={last}"));
+        }
+        let p = ui.key_ff(key, DIFF_KINDS);
+        let Some((first2, last2, _)) = shown_rows(&p) else {
+            return ui.fail(format!("{key}: no rows shown after it"));
+        };
+        let ok = if key == "pagedown" { first2 == last } else { last2 == first };
+        if !ok {
+            ui.fail(format!(
+                "{key}: rows {first}..={last} shown below the sticky rows, then {first2}..={last2}"
+            ));
+        }
+    }
 }
 
 /// `src/app/long.rs` with 120 changed lines in the working directory.

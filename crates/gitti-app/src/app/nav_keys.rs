@@ -102,18 +102,43 @@ impl GittiApp {
     }
 
     /// Diff: scrolls (gitti's diff has no line cursor) — a row, a page less a row, half a
-    /// page, to the top / end.
+    /// page, to the top / end. A page keeps one row of the last one in view, also where
+    /// the sticky file / hunk rows cover the top of the list: PgDn puts the last row shown
+    /// wholly right below them, PgUp brings the first row shown wholly below them to the
+    /// bottom — no row is skipped under them.
     fn diff_nav(&mut self, nav: Nav, cx: &mut Context<Self>) {
         let row = self.settings.diff_row_h();
         let view = self.diff_viewport_h.get();
-        let page = (view - row).max(row);
         let half = (view / 2.).max(row);
         let (_, y) = self.diff_scroll_y();
+        // What the sticky rows cover at the top when the list is scrolled to `at`.
+        let covered = |at: Pixels| {
+            let (file, hunk, _, _) = self.sticky_rows(at, row);
+            row * (file.is_some() as u8 + hunk.is_some() as u8) as f32
+        };
         let to = match nav {
             Nav::LineUp => y - row,
             Nav::LineDown => y + row,
-            Nav::PageUp => y - page,
-            Nav::PageDown => y + page,
+            // The first row wholly below the sticky rows becomes the last one wholly shown.
+            Nav::PageUp => {
+                let first = ((y + covered(y)) / row - 0.01).ceil();
+                let to = row * (first + 1. - view / row - 0.01).ceil();
+                to.min(y - row)
+            }
+            // The last row wholly shown becomes the first one wholly below the sticky rows
+            // (at most two rows: `c` = 2 always fits).
+            Nav::PageDown => {
+                let last = ((y + view) / row + 0.01).floor() - 1.;
+                let mut to = row * (last - 2.);
+                for c in [0., 1.] {
+                    let at = row * (last - c);
+                    if covered(at) <= row * c + px(0.5) {
+                        to = at;
+                        break;
+                    }
+                }
+                to.max(y + row)
+            }
             Nav::HalfPageUp => y - half,
             Nav::HalfPageDown => y + half,
             Nav::First => px(0.),
