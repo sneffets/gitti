@@ -1216,6 +1216,7 @@ mod tests {
     /// `rsync -t`, `unzip`) is not taken as read; whole-second stamps (a coarse file
     /// system) count as before a read only when they are 2 s older. The per-folder watch's
     /// catch-up after setting up (Linux) goes by the same stamp.
+    /// Workflow: EX-20
     #[gitti_test::test]
     fn an_old_modification_time_is_not_taken_as_read() {
         let dir = tempfile::tempdir().unwrap();

@@ -48,6 +48,7 @@ fn merging() -> tempfile::TempDir {
 
 /// During the merge: z (Stash) says it can't; S asks about a.txt's conflict markers
 /// (esc: nothing staged); the diff menu's stash entries are greyed.
+/// Workflow: MG-19, SH-16
 #[gitti_test::test]
 fn during_a_merge_stash_waits_and_stage_all_asks() {
     let dir = merging();
@@ -68,6 +69,7 @@ fn during_a_merge_stash_waits_and_stage_all_asks() {
 
 /// A merge refused for an uncommitted change of b.txt offers Stash and Merge: it merges
 /// (stopping on a.txt) and keeps the change in a stash.
+/// Workflow: MG-16
 #[gitti_test::test]
 fn a_blocked_merge_offers_ways_out() {
     let dir = diverged();
@@ -84,6 +86,7 @@ fn a_blocked_merge_offers_ways_out() {
 
 /// Picking a commit main already has stops with nothing to commit: Continue offers Skip
 /// and Commit Empty; s skips, the pick is over.
+/// Workflow: CP-09
 #[gitti_test::test]
 fn an_empty_pick_offers_skip() {
     let dir = import(&[
@@ -103,6 +106,7 @@ fn an_empty_pick_offers_skip() {
 
 /// With untracked files hidden by the config, S stages the listed changes only and says
 /// so.
+/// Workflow: IG-05
 #[gitti_test::test]
 fn stage_all_leaves_hidden_untracked_files_out() {
     let dir = two_file_repo();
@@ -117,6 +121,7 @@ fn stage_all_leaves_hidden_untracked_files_out() {
 }
 
 /// A stage from a diff the file no longer has is refused in plain words.
+/// Workflow: EX-17
 #[gitti_test::test]
 fn a_stale_stage_is_refused_plainly() {
     let dir = two_file_repo();
@@ -127,6 +132,7 @@ fn a_stale_stage_is_refused_plainly() {
 }
 
 /// A file whose lines only changed their line ending: the note says so.
+/// Workflow: EX-04
 #[gitti_test::test]
 fn line_ending_only_changes_are_said() {
     let dir = fixture(&[("w.txt", "a\r\nb\r\n")], &[("w.txt", "a\nb\n")]);

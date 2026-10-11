@@ -145,13 +145,13 @@ working tree or the index while the app shows an older state.
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
 | EX-01 | A shown file is saved by an editor | app shows `a`'s diff; another program writes `a` | only `a` re-read; the diff shows the new content | `linux_env::watcher_reports_edits_but_not_our_own_reads`, `watch::worktree_changes_need_only_their_paths` (unit) | `speed::watcher_rereads_only_what_changed` | `speed::outside_changes_refresh_only_what_they_touched` |
-| EX-02 | Whole file LF → CRLF (no autocrlf) | an editor converts `a` to CRLF; stage one changed line; discard another | the diff says the line endings changed (visible); the staged line reaches the index with CRLF, others untouched; discard restores LF | ~`staging::non_utf8_lines_stage_unstage_discard_byte_exact` | — | — |
+| EX-02 | Whole file LF → CRLF (no autocrlf) | an editor converts `a` to CRLF; stage one changed line; discard another | the diff says the line endings changed (visible); the staged line reaches the index with CRLF, others untouched; discard restores LF | ~`staging::non_utf8_lines_stage_unstage_discard_byte_exact`, ~`eol_note::line_endings_and_bom` (unit) | — | — |
 | EX-03 | Only some lines get CRLF | an editor rewrites 2 of 10 lines with CRLF | only those 2 lines show as changed (marked as line-ending change); staging one keeps the other unstaged | — | — | — |
-| EX-04 | CRLF file → LF | committed CRLF, editor saves LF | every line changed, marked; Stage All gives an LF index | — | — | — |
+| EX-04 | CRLF file → LF | committed CRLF, editor saves LF | every line changed, marked; Stage All gives an LF index | ~`eol_note::line_endings_and_bom` (unit) | ~`op_safety::merge_stop_stash_and_stage_all` | ~`op_safety::line_ending_only_changes_are_said` |
 | EX-05 | `core.autocrlf=true` working tree | CRLF on disk, LF in the index; stage / unstage / discard lines | index stays LF; a discard writes CRLF back | `staging::line_staging_with_autocrlf_and_untracked_crlf_file` | — | — |
 | EX-06 | `eol=crlf` / `text` attribute | file converted by attributes; stage / discard / stash lines | index LF, working tree CRLF, both right | ~`stash::stash_lines_with_eol_conversion` | — | — |
 | EX-07 | `.gitattributes` added that renormalizes | commit has CRLF; add `* text=auto` | files show as modified (renormalization); Stage All gives what `git add --renormalize` gives; the app says why they changed | — | — | — |
-| EX-08 | BOM added / removed | an editor adds a UTF-8 byte order mark | line 1 shows as changed and the BOM is visible; stage / discard exact | — | — | — |
+| EX-08 | BOM added / removed | an editor adds a UTF-8 byte order mark | line 1 shows as changed and the BOM is visible; stage / discard exact | ~`eol_note::line_endings_and_bom` (unit) | — | — |
 | EX-09 | Code page changed | a UTF-8 file re-saved as Windows-1252 | changed lines decoded, encoding named; a staged line moves its exact bytes | ~`non_utf8::eight_bit_lines_stage_unstage_discard_exactly` | ~`speed::non_utf8_line_stages_exactly` | ~`staging::latin1_line_stages_exactly` |
 | EX-10 | Re-saved as UTF-16 | a text file becomes UTF-16 (binary for git) | listed as binary, whole-file stage only; with a `diff` attribute lines stage exactly | ~`unix_fs::text_becomes_binary`, `non_utf8::utf16_lines_stage_unstage_discard_exactly` | — | — |
 | EX-11 | Trailing newline added / removed | an editor adds or drops the last newline | "no newline" handled on both sides; partial stage right | `unix_fs::no_eol_added_or_removed`, `staging::no_newline_at_eof`, `unix_fs::no_eol_both_sides_stage_and_unstage_one_side` | — | — |
@@ -159,11 +159,11 @@ working tree or the index while the app shows an older state.
 | EX-13 | File replaced by a symlink (and back) | a tool swaps a file for a link | type change listed once per side; operations act on the whole change | `unix_fs::file_to_symlink_type_change`, `unix_fs::symlink_to_file_type_change` | — | — |
 | EX-14 | File replaced by a folder (and back) | a build replaces `out` (file) by `out/` | deleted + untracked shown; stage / discard bring either state back | `unix_fs::file_replaced_by_directory`, `unix_fs::directory_replaced_by_file`, `unix_fs::directory_replaced_by_file_discard_in_steps` | — | — |
 | EX-15 | File deleted while shown | the diff of `a` is shown; `a` is deleted; user stages a line of the old view | refused in plain words (or the view updated first); index unchanged | — | — | — |
-| EX-16 | Discard from a stale view | `a` edited after it was shown; user discards a hunk of the old view | refused in plain words ("changed since it was shown"); nothing lost; view re-read | — | — | — |
-| EX-17 | Stage from a stale view | `a` edited after it was shown; user stages lines of the old view | stages exactly what was shown (or refuses, as stash does); view re-read and consistent | — | — | — |
-| EX-18 | Index changed by a terminal `git add` | user stages the same hunk from the old view | no double change; plain-words error or no-op; view re-read | — | — | — |
+| EX-16 | Discard from a stale view | `a` edited after it was shown; user discards a hunk of the old view | refused in plain words ("changed since it was shown"); nothing lost; view re-read | `op_safety::a_stale_view_stages_and_discards_nothing` | — | — |
+| EX-17 | Stage from a stale view | `a` edited after it was shown; user stages lines of the old view | stages exactly what was shown (or refuses, as stash does); view re-read and consistent | `op_safety::a_stale_view_stages_and_discards_nothing` | `op_safety::hidden_untracked_and_stale_stage` | `op_safety::a_stale_stage_is_refused_plainly` |
+| EX-18 | Index changed by a terminal `git add` | user stages the same hunk from the old view | no double change; plain-words error or no-op; view re-read | `op_safety::a_changed_index_is_noticed_too` | — | — |
 | EX-19 | Edit lands while a stage runs | a write to the staged file during the operation | the final view equals the disk (no lost update) | — | ~`speed::refresh_racing_a_stage_shows_no_old_state` | — |
-| EX-20 | File replaced with an older mtime | `cp -p` / sync client / unzip writes `a` with an old timestamp | the change still shows without a manual refresh | — | — | — |
+| EX-20 | File replaced with an older mtime | `cp -p` / sync client / unzip writes `a` with an old timestamp | the change still shows without a manual refresh | `watch::an_old_modification_time_is_not_taken_as_read` (unit) | — | — |
 | EX-21 | Another git holds `index.lock` | briefly (an editor's git) / left by a crash | our write waits; a stale lock is offered for removal | `runner::write_waits_for_a_lock_released_meanwhile`, `runner::lasting_lock_fails_then_old_one_is_stale_and_removable` | — | `cancel::stale_index_lock_is_offered_for_removal` |
 | EX-22 | Commit / branch made outside | a terminal commit or branch | history updated in place, selection kept | `repo_shapes::history_updates_reuse_what_did_not_change` | `scroll::commit_list_reload`, `speed::working_state_does_not_wait_for_the_history` | `speed::outside_ref_changes_update_the_history_in_place` |
 | EX-23 | Tracked file made unreadable | `chmod 000` on a modified file | refresh works; the file listed without a diff | `unix_fs::unreadable_tracked_file_does_not_break_the_refresh`, `unix_fs::unreadable_directory_with_tracked_files` | — | — |
@@ -214,9 +214,9 @@ working tree or the index while the app shows an older state.
 | SH-13 | Apply that conflicts, resolve | apply conflicts; take the stash's side | resolved, no operation state left | `repo_ops::conflict_from_stash_apply` | — | — |
 | SH-14 | Branch from a stash | Create Branch from Stash… | branch at the stash's base, stash applied and dropped | `sidebar_ops::stash_branch_checks_out_a_branch_with_the_stash` | `menus::sidebar_menus` | `menus::sidebar_menus_drop_a_stash_and_the_stashes_header` |
 | SH-15 | Look into a stash | select the stash row | its diff incl. untracked files; open a version | `history_diffs::stash_rows_in_history_and_stash_diff`, `navigate::stash_versions_include_untracked_files` | — | — |
-| SH-16 | Stash while a merge is in progress | merge with conflicts resolved; Stash Changes | refused with the reason (a stash would end the merge) | — | — | — |
+| SH-16 | Stash while a merge is in progress | merge with conflicts resolved; Stash Changes | refused with the reason (a stash would end the merge) | `op_safety::no_stash_during_a_merge` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
 | SH-17 | Pop with the index restored | staged + unstaged stashed; pop restoring the index | staged part staged again (`--index`) | — | — | — |
-| SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | — | — | — |
+| SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | `op_safety::stash_commands_act_on_the_chosen_stash` | — | — |
 | SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | — | — | — |
 
 ## BR — Branches
@@ -260,10 +260,10 @@ working tree or the index while the app shows an older state.
 | MG-13 | Merge preview in the graph | during a merge | working row is the pending merge, dashed edge to `MERGE_HEAD` | `merge_preview::merge_head_makes_the_worktree_row_the_pending_merge`, `merge_preview::unreachable_merge_head_and_octopus` | `layout::merge_preview_graph` | `views::merge_preview_dashes_the_pending_merge` |
 | MG-14 | Long conflict markers | `conflict-marker-size=10` | the editor and the "still has markers" check use the size | `conflicts::conflict_marker_size_attribute`, `merge_session::marker_size_attribute` (unit) | — | — |
 | MG-15 | Conflict in a non-UTF-8 / CRLF file | Latin-1 conflict; autocrlf CRLF conflict | written back byte for byte in the working-tree form | `non_utf8::merge_editor_writes_non_utf8_files_exactly`, `non_utf8::merge_editor_writes_the_working_tree_form` | — | `merge_editor::merge_editor_saves_a_latin1_file_exactly` |
-| MG-16 | Merge into a dirty tree (overlapping) | local change in a file the merge changes | git refuses; the app says what blocks and offers a way out (stash first); nothing changed | — | — | — |
+| MG-16 | Merge into a dirty tree (overlapping) | local change in a file the merge changes | git refuses; the app says what blocks and offers a way out (stash first); nothing changed | — | `op_safety::blocked_merge_stash_and_merge` | `op_safety::a_blocked_merge_offers_ways_out` |
 | MG-17 | Merge into a dirty tree (not overlapping) | local change elsewhere; conflicting merge; abort | the local change survives merge and abort | — | — | — |
-| MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | — | — | — |
-| MG-19 | Stage All with markers left | a conflicted file still has `<<<<<<<`; Stage All | asks first like Mark Resolved does | — | — | — |
+| MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | `op_safety::unstage_all_keeps_a_merge_and_its_conflicts` | — | — |
+| MG-19 | Stage All with markers left | a conflicted file still has `<<<<<<<`; Stage All | asks first like Mark Resolved does | `op_safety::conflict_markers_left_are_found_before_stage_all` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
 | MG-20 | Merge in a linked worktree | conflict in a linked worktree | state from its own git dir; main worktree clean | `conflicts::merge_conflict_in_a_linked_worktree` | — | — |
 | MG-21 | Submodule pointer conflict | both sides moved the pointer | listed as a conflict; resolving picks a commit | `submodules::conflicting_pointers` | — | — |
 | MG-22 | Binary conflict | both sides changed a binary | no merge editor; take ours / theirs | — | — | — |
@@ -282,7 +282,7 @@ working tree or the index while the app shows an older state.
 | CP-06 | Pick a merge commit | Cherry-pick on a merge | picks against the first parent (`-m 1`) | — | — | — |
 | CP-07 | Several commits in sequence | pick A..C; second conflicts; resolve; Continue | the rest picked; state clean | `conflicts::continue_a_cherry_pick_sequence_with_the_edited_message`, `conflicts::a_sequence_committed_by_hand_still_continues` | ~`commit::continue_with_the_edited_message` (sequence started on the command line) | ~`merge_editor::continue_with_the_edited_message` (same) |
 | CP-08 | Pick several selected commits from the app | select three commits; Cherry-pick | picked oldest first | — | — | — |
-| CP-09 | **Pick a commit that is already applied** | pick `A` twice | the app says it is empty and offers Skip / Commit Empty / Abort | — | — | — |
+| CP-09 | **Pick a commit that is already applied** | pick `A` twice | the app says it is empty and offers Skip / Commit Empty / Abort | `op_safety::an_empty_pick_is_explained_and_skipped` | ~`op_safety::empty_pick_skip` | ~`op_safety::an_empty_pick_offers_skip` |
 | CP-10 | Conflict resolved to the HEAD side | resolution equals HEAD; Continue | "nothing left of this commit": Skip offered; never stuck | — | — | — |
 | CP-11 | Conflicting `-x` with a custom comment char | `core.commentChar=;` | `; Conflicts:` lines dropped, origin line kept | `conflicts::conflicting_cherry_pick_strips_the_configured_comment_char` | — | — |
 | CP-12 | **Pick, then merge the source branch** | pick `A` from `feat` onto `main`; later merge `feat` | merges cleanly; both `A` and its copy in history | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` |
@@ -434,7 +434,7 @@ working tree or the index while the app shows an older state.
 | IG-02 | Ignore a tracked file | Stop tracking (`rm --cached`) | file kept on disk, untracked then ignored | `repo_setup::tracked_files_stay_tracked_unless_untracked` | `menus::gitignore_dialog` | `repo_cmds::ignore_a_tracked_file_and_info_exclude` |
 | IG-03 | Folder `.gitignore` / `info/exclude` | target a folder's file | pattern relative to that folder | `repo_setup::folder_gitignore_patterns_apply_inside_the_folder`, `repo_setup::info_exclude_target` | `menus::folder_rule_files` | `repo_cmds::ignore_into_a_folder_gitignore` |
 | IG-04 | `status.showUntrackedFiles` | `no` / `normal` | hidden said so; folder entry stages / discards whole | `config_safety::show_untracked_files_config_is_honoured`, `config_safety::untracked_folder_entry_stages_and_discards_as_a_whole` | `config_safety::hidden_untracked_note` | `config_safety::hidden_untracked_files_are_said_to_be_hidden` |
-| IG-05 | Stage All with hidden untracked files | `showUntrackedFiles=no`, a hidden new file; Stage All | the hidden file is not staged without saying so | — | — | — |
+| IG-05 | Stage All with hidden untracked files | `showUntrackedFiles=no`, a hidden new file; Stage All | the hidden file is not staged without saying so | `op_safety::stage_all_leaves_hidden_untracked_files_out` | `op_safety::hidden_untracked_and_stale_stage` | `op_safety::stage_all_leaves_hidden_untracked_files_out` |
 | IG-06 | Negation and global excludes | `!keep.log` in a nested `.gitignore`; `core.excludesFile` | as git decides | — | — | — |
 
 ## RN — Renames
@@ -498,12 +498,12 @@ layer (partial `~` and `n/a` don't count as covered).
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
 | ST staging | 21 | 14 | 11 | 9 |
-| EX external changes | 24 | 9 | 2 | 4 |
+| EX external changes | 24 | 13 | 3 | 5 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
-| SH stash | 19 | 11 | 5 | 6 |
+| SH stash | 19 | 13 | 6 | 7 |
 | BR branches | 17 | 8 | 5 | 9 |
-| MG merge | 24 | 16 | 5 | 7 |
-| CP cherry-pick | 18 | 8 | 3 | 3 |
+| MG merge | 24 | 18 | 7 | 9 |
+| CP cherry-pick | 18 | 9 | 3 | 3 |
 | RV revert | 6 | 2 | 0 | 0 |
 | RB rebase | 9 | 4 | 1 | 1 |
 | RS reset / restore | 9 | 7 | 2 | 3 |
@@ -514,13 +514,13 @@ layer (partial `~` and `n/a` don't count as covered).
 | LF LFS | 6 | 6 | 4 | 5 |
 | DC discard | 9 | 6 | 3 | 4 |
 | RL recovery | 4 | 1 | 1 | 1 |
-| IG ignore | 6 | 4 | 4 | 4 |
+| IG ignore | 6 | 5 | 5 | 5 |
 | RN renames | 5 | 2 | 1 | 1 |
 | BN binary | 3 | 3 | 1 | 1 |
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **259** | **166** | **96** | **108** |
+| **Total** | **259** | **176** | **101** | **113** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

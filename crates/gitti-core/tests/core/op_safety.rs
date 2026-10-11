@@ -31,6 +31,7 @@ fn exists(p: &Path, name: &str) -> bool {
     fx::git_dir(p).join(name).exists()
 }
 
+/// Workflow: MG-18
 #[gitti_test::test]
 fn unstage_all_keeps_a_merge_and_its_conflicts() {
     let dir = tempfile::tempdir().unwrap();
@@ -101,6 +102,7 @@ fn changed_since_shown(e: &anyhow::Error) -> bool {
 
 /// The file changed on disk after its diff was shown: staging or discarding its lines
 /// is refused with a plain message, nothing is applied.
+/// Workflow: EX-16, EX-17
 #[gitti_test::test]
 fn a_stale_view_stages_and_discards_nothing() {
     use gitti_core::patch::{PatchMode, Selection};
@@ -127,6 +129,7 @@ fn a_stale_view_stages_and_discards_nothing() {
 
 /// The index changed after the diffs were shown (staged / unstaged elsewhere): a stage
 /// from the old unstaged diff and an unstage from the old staged diff are refused.
+/// Workflow: EX-18
 #[gitti_test::test]
 fn a_changed_index_is_noticed_too() {
     use gitti_core::patch::{PatchMode, Selection};
@@ -183,6 +186,7 @@ fn a_refused_patch_reads_plainly() {
 /// A stash pushed elsewhere after the list was shown shifts the positions: the stash
 /// commands still act on the stash the user chose (found by its commit); one dropped
 /// elsewhere is refused, nothing else is touched.
+/// Workflow: SH-18
 #[gitti_test::test]
 fn stash_commands_act_on_the_chosen_stash() {
     let dir = tempfile::tempdir().unwrap();
@@ -207,6 +211,7 @@ fn stash_commands_act_on_the_chosen_stash() {
 
 /// No stash while a merge is in progress: the core refuses too (both apps grey the
 /// commands), MERGE_HEAD and the staged result stay.
+/// Workflow: SH-16
 #[gitti_test::test]
 fn no_stash_during_a_merge() {
     let dir = tempfile::tempdir().unwrap();
@@ -225,6 +230,7 @@ fn no_stash_during_a_merge() {
 
 /// `status.showUntrackedFiles=no`: Stage All stages the listed (tracked) changes only and
 /// says the hidden untracked files stayed out.
+/// Workflow: IG-05
 #[gitti_test::test]
 fn stage_all_leaves_hidden_untracked_files_out() {
     use gitti_core::status::UntrackedFiles;
@@ -246,6 +252,7 @@ fn stage_all_leaves_hidden_untracked_files_out() {
 
 /// Stage All asks first while conflicted files still hold conflict markers: those are
 /// found (one check-attr for all), a resolved one is not.
+/// Workflow: MG-19
 #[gitti_test::test]
 fn conflict_markers_left_are_found_before_stage_all() {
     let dir = tempfile::tempdir().unwrap();
@@ -274,6 +281,7 @@ fn already_applied(p: &Path) {
 }
 
 /// A pick that changes nothing: EmptyPick (pick and Continue), then Skip leaves it out.
+/// Workflow: CP-09
 #[gitti_test::test]
 fn an_empty_pick_is_explained_and_skipped() {
     use gitti_core::skip::EmptyPick;

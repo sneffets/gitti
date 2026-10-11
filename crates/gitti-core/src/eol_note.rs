@@ -89,6 +89,7 @@ mod tests {
         crate::diff::parse_unified_bytes(text).remove(0)
     }
 
+    /// Workflow: EX-02, EX-04, EX-08
     #[gitti_test::test]
     fn line_endings_and_bom() {
         let d = diff(b"diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,3 +1,3 @@\n-x\r\n-y\r\n+x\n+y\n z\n");

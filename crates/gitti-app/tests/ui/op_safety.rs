@@ -65,6 +65,7 @@ fn merge(ui: &mut Ui, branch: &str) {
 /// Merge feat: a stop, said plainly (no error, no error mark); Stash Changes says why it
 /// can't; Stage All asks about a.txt's markers (Cancel: nothing staged); the diff menu's
 /// stash entries are greyed. The line-ending change of w.txt has its note row.
+/// Workflow: EX-04, MG-19, SH-16
 fn merge_stop_stash_and_stage_all(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let probes = ui.check("worktree");
@@ -120,6 +121,7 @@ fn merge_stop_stash_and_stage_all(ui: &mut Ui) {
 
 /// Picking `same` stops with nothing to commit (on the command line): the banner offers
 /// Skip; Continue asks, Skip This Commit ends the pick.
+/// Workflow: CP-09
 fn empty_pick_skip(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let out = std::process::Command::new("git").args(["cherry-pick", "same"]).current_dir(&dir).output().unwrap();
@@ -145,6 +147,7 @@ fn empty_pick_skip(ui: &mut Ui) {
 
 /// b.txt changed (line 5): merging `clean` is refused; the question's Stash and Merge
 /// merges and puts the change back.
+/// Workflow: MG-16
 fn blocked_merge_stash_and_merge(ui: &mut Ui) {
     let dir = ui.repo.clone();
     std::fs::write(dir.join("b.txt"), "1\n2\n3\n4\nFIVE\n").unwrap();
@@ -165,6 +168,7 @@ fn blocked_merge_stash_and_merge(ui: &mut Ui) {
 
 /// Untracked files hidden by the config stay out of Stage All (said in the status bar);
 /// a hunk staged from a diff the file no longer has is refused, nothing staged.
+/// Workflow: EX-17, IG-05
 fn hidden_untracked_and_stale_stage(ui: &mut Ui) {
     let dir = ui.repo.clone();
     std::fs::write(dir.join("b.txt"), "1\n2\nTHREE\n4\n5\n").unwrap();
