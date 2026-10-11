@@ -11,6 +11,7 @@ pub mod change_search;
 pub mod clone_source;
 pub mod commit_cache;
 pub mod commit_files;
+pub mod commit_message;
 pub mod commit_search;
 pub mod commits;
 pub mod compare;

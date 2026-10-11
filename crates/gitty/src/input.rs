@@ -127,6 +127,10 @@ impl App {
                 KeyCode::Enter if ctrl || alt => self.commit(),
                 KeyCode::Tab | KeyCode::BackTab => self.focus = Focus::Detail,
                 KeyCode::Char('c') if ctrl => self.request_quit(),
+                // Earlier messages in an untouched box (`app/commit_box.rs`); else the
+                // cursor moves.
+                KeyCode::Up if !ctrl && !alt && self.recall_key(true) => {}
+                KeyCode::Down if !ctrl && !alt && self.recall_key(false) => {}
                 _ => {
                     let before = self.message.text();
                     self.message.handle_key(key);
@@ -938,6 +942,8 @@ impl App {
                     self.use_prepared_message();
                 } else if a.prepared_keep.contains(pos) && a.message.width > 0 {
                     self.keep_my_message();
+                } else if a.sign_off.contains(pos) && a.message.width > 0 {
+                    self.toggle_sign_off();
                 } else if a.message.contains(pos) {
                     self.focus = Focus::Message;
                 } else if a.log.contains(pos) {

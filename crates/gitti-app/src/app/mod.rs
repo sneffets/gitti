@@ -4,6 +4,7 @@
 //! `menus` (context menus and the operations behind them).
 
 mod change_search;
+mod commit_box;
 mod commit_list;
 mod commit_flow;
 mod compare;
@@ -277,6 +278,8 @@ pub struct GittiApp {
     /// The prepared message the user answered "Keep Mine" for: its note stays hidden.
     prepared_dismissed: Option<String>,
     amend: bool,
+    /// Template, Sign Off, earlier messages (`commit_box`).
+    commit_box: commit_box::CommitBox,
     /// The message was typed in since its draft was last written (`commit_flow`);
     /// the pending debounced write.
     draft_dirty: bool,
@@ -551,7 +554,7 @@ impl GittiApp {
                 InputEvent::Change => {
                     this.update_spell_of(SpellTarget::Message, cx);
                     this.draft_changed(cx);
-                    let blank = this.message.read(cx).value().trim().is_empty();
+                    let blank = this.message_counts_as_blank(cx);
                     if blank != this.message_was_blank.get() {
                         cx.notify();
                     }
@@ -637,6 +640,7 @@ impl GittiApp {
             prepared: None,
             prepared_dismissed: None,
             amend: false,
+            commit_box: Default::default(),
             draft_dirty: false,
             draft_save: None,
             amend_draft: None,
@@ -914,6 +918,7 @@ impl GittiApp {
                             this.refresh_queued = Some(this.refresh_queued.unwrap_or(false));
                         }
                         let prepared = s.prepared_message.take();
+                        this.commit_box.template = s.commit_template.take();
                         this.errors.succeeded("Refresh");
                         this.apply_snapshot(s, cx);
                         this.sync_prepared_message(prepared, window, cx);
@@ -2596,6 +2601,10 @@ impl GittiApp {
         {
             self.message.update(cx, |m, cx| m.set_value(msg, window, cx));
         }
+        if !self.amend {
+            // An empty box starts again with git's message or the commit template.
+            self.sync_box_start(window, cx);
+        }
         cx.notify();
     }
 
@@ -3555,6 +3564,7 @@ impl Render for GittiApp {
         let root = self.custom_command_actions(root, cx);
         let root = self.spell_actions(root, cx);
         let root = self.toolbar_actions(root, cx);
+        let root = self.commit_box_actions(root, cx);
         if self.repo.is_none() {
             return self.render_no_repo(root, window, cx);
         }

@@ -49,6 +49,12 @@ pub struct DraftState {
 impl App {
     pub fn commit(&mut self) {
         let msg = self.message.text();
+        // The commit template unedited: refused as `git commit` refuses it.
+        if let Some(why) = self.template_refusal(&msg) {
+            self.set_error(why);
+            self.focus = Focus::Message;
+            return;
+        }
         let plan = gitti_core::ops::plan_commit(
             self.repo_state,
             self.working.conflicted.len(),
@@ -63,8 +69,10 @@ impl App {
                 // Concludes the merge with git's prepared message (MERGE_MSG).
                 self.focus = Focus::Detail;
                 self.merge_prefill = None;
-                self.run_op("Commit", true, After::ClearMessage, |r| {
-                    let out = r.continue_operation()?;
+                self.commit_box.committing = None;
+                let opts = self.commit_options();
+                self.run_op("Commit", true, After::ClearMessage, move |r| {
+                    let out = r.continue_operation_with(opts)?;
                     gitti_core::store::clear_draft(r.workdir());
                     Ok(out)
                 });
@@ -90,8 +98,10 @@ impl App {
     pub fn continue_operation(&mut self) {
         let msg = self.continue_message();
         let after = if msg.is_some() { After::ClearMessage } else { After::Nothing };
+        self.commit_box.committing = msg.clone().map(Some);
+        let opts = self.commit_options();
         self.run_op("Continue", true, after, move |r| {
-            let out = r.continue_with(msg.as_deref());
+            let out = r.continue_with_options(msg.as_deref(), opts);
             let committed = match &out {
                 Ok(_) => msg.is_some(),
                 Err(e) => e.is::<gitti_core::ops::MessageCommitted>(),
@@ -118,6 +128,9 @@ impl App {
         } else if self.message.text().trim().is_empty() {
             self.set_error("Enter a commit message first (c)".into());
             self.focus = Focus::Message;
+        } else if let Some(why) = self.template_refusal(&self.message.text()) {
+            self.set_error(why);
+            self.focus = Focus::Message;
         } else {
             self.run_commit(kind);
         }
@@ -127,8 +140,10 @@ impl App {
         let msg = self.message.text();
         self.focus = Focus::Detail;
         let label = if kind == CommitKind::Amend { "Amend" } else { "Commit" };
+        self.commit_box.committing = Some(None);
+        let opts = self.commit_options();
         self.run_op(label, true, After::ClearMessage, move |r| {
-            let out = r.commit_as(&msg, kind)?;
+            let out = r.commit_with(&msg, kind, opts)?;
             gitti_core::store::clear_draft(r.workdir());
             if kind == CommitKind::Amend {
                 gitti_core::store::clear_amend_draft(r.workdir());
@@ -162,6 +177,7 @@ impl App {
     /// A commit / amend / merge conclusion succeeded (`After::ClearMessage`): its message
     /// is no draft any more.
     pub(super) fn committed(&mut self) {
+        self.note_committed_message();
         self.draft.edited = None;
         // HEAD moved: an amend draft was for the commit before.
         self.draft.amend = None;
@@ -174,6 +190,10 @@ impl App {
     /// The message box was typed in: the draft (while amending the amend draft) is written
     /// once typing pauses.
     pub fn message_edited(&mut self) {
+        if self.message.text().trim().is_empty() {
+            // Typed away: what comes next is no template.
+            self.note_box_text("");
+        }
         self.draft.edited = Some(Instant::now());
         if !std::mem::replace(&mut self.draft.timer, true) {
             spawn(&self.tx, || std::thread::sleep(DRAFT_DELAY), |_| Msg::DraftDue);
@@ -242,9 +262,10 @@ impl App {
             &self.tx,
             move || {
                 let draft = gitti_core::store::load_draft(&workdir);
-                (draft, gitti_core::store::load_amend_draft(&workdir))
+                let sign_off = gitti_core::commit_message::load_sign_off(&workdir);
+                (draft, gitti_core::store::load_amend_draft(&workdir), sign_off)
             },
-            |(draft, amend)| Msg::Draft(draft, amend),
+            |(draft, amend, sign_off)| Msg::Draft(draft, amend, sign_off),
         );
     }
 
@@ -264,6 +285,8 @@ impl App {
         let untouched =
             current.trim().is_empty() || self.merge_prefill.as_deref() == Some(current.as_str());
         if untouched && !self.amend {
+            // A draft of the template: its comment lines tell (`cleanup_for`).
+            self.note_box_text("");
             self.message.set_text(&draft.message);
             self.merge_prefill = None;
             if self.prepared_dismissed.is_none() {
@@ -277,8 +300,21 @@ impl App {
     /// A refresh read the message git left for the next commit: into an empty box (or
     /// over an older prefill nobody edited), out again with git's file if untouched.
     pub(super) fn sync_prepared_message(&mut self, prepared: Option<String>) {
+        if prepared.is_none() && self.prepared_dismissed.take().is_some() {
+            // git's message went (committed, aborted): Keep Mine has nothing to hide.
+            gitti_core::store::save_kept_prepared(self.repo.workdir(), None);
+        }
+        self.prepared = prepared;
+        self.sync_box_start();
+    }
+
+    /// What an empty box starts with — git's prepared message, else the commit template
+    /// (`app/commit_box.rs`) — goes in, an untouched copy follows it or goes
+    /// ([`gitti_core::ops::sync_prefill`]).
+    pub(super) fn sync_box_start(&mut self) {
+        let start = self.prepared.clone().or_else(|| self.template_start());
         let sync = gitti_core::ops::sync_prefill(
-            prepared.as_deref(),
+            start.as_deref(),
             self.merge_prefill.as_deref(),
             &self.message.text(),
             self.amend,
@@ -286,20 +322,21 @@ impl App {
         match sync {
             PrefillSync::Keep => {}
             PrefillSync::Fill(m) => {
+                self.note_box_text(&m);
                 self.message.set_text(&m);
+                if self.prepared.is_none() {
+                    // The template: the cursor where the subject goes, as git's editor.
+                    self.message.set_position(0, usize::MAX);
+                }
                 self.merge_prefill = Some(m);
             }
             PrefillSync::Clear => {
+                self.note_box_text("");
                 self.message = TextEdit::multi();
                 self.merge_prefill = None;
             }
             PrefillSync::Forget => self.merge_prefill = None,
         }
-        if prepared.is_none() && self.prepared_dismissed.take().is_some() {
-            // git's message went (committed, aborted): Keep Mine has nothing to hide.
-            gitti_core::store::save_kept_prepared(self.repo.workdir(), None);
-        }
-        self.prepared = prepared;
     }
 
     /// git's prepared message, when it differs from the user's text in the box (the
@@ -325,6 +362,7 @@ impl App {
     /// Use It: git's prepared message replaces the box's text (and the stored draft).
     pub fn use_prepared_message(&mut self) {
         let Some(m) = self.prepared_differs().map(str::to_string) else { return };
+        self.note_box_text("");
         self.message.set_text(&m);
         self.merge_prefill = Some(m);
         // The draft the box held goes: git's message is no draft.

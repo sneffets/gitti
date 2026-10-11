@@ -150,6 +150,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("StageTrackedAndCommit", "Stage Tracked Files and Commit"),
     both("CreateEmptyCommit", "Create Empty Commit"),
     both("ToggleAmend", "Toggle Amend"),
+    both("ToggleSignOff", "Sign Off Commits"),
+    both("RecentMessages", "Recent Commit Messages…"),
     both("GoToWorkingDirectory", "Go to Working Directory"),
     both("StageAll", "Stage All"),
     both("UnstageAll", "Unstage All"),

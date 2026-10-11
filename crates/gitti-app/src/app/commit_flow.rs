@@ -50,6 +50,14 @@ impl GittiApp {
     /// say why not, or ask what to do with nothing staged.
     pub fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let msg = self.message.read(cx).value().to_string();
+        // The commit template unedited: refused as `git commit` refuses it.
+        if !self.amend
+            && let Some(why) = self.template_refusal(&msg)
+        {
+            self.set_error(why);
+            cx.notify();
+            return;
+        }
         let plan = gitti_core::ops::plan_commit(
             self.repo_state,
             self.working.conflicted.len(),
@@ -62,13 +70,14 @@ impl GittiApp {
             CommitPlan::Blocked(why) => self.set_error(why),
             CommitPlan::ConcludeMerge => {
                 // Concludes the merge with git's prepared message (MERGE_MSG).
+                let opts = self.commit_options();
                 self.run_op(
                     "Committing",
                     true,
                     window,
                     cx,
-                    |r| {
-                        let out = r.continue_operation()?;
+                    move |r| {
+                        let out = r.continue_operation_with(opts)?;
                         gitti_core::store::clear_draft(r.workdir());
                         Ok(out)
                     },
@@ -99,13 +108,15 @@ impl GittiApp {
     pub(super) fn continue_operation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let msg = self.continue_message(cx);
         let used = msg.is_some();
+        let opts = self.commit_options();
+        let committed_msg = msg.clone();
         self.run_op(
             "Continue",
             true,
             window,
             cx,
             move |r| {
-                let out = r.continue_with(msg.as_deref());
+                let out = r.continue_with_options(msg.as_deref(), opts);
                 let committed = match &out {
                     Ok(_) => used,
                     Err(e) => e.is::<gitti_core::ops::MessageCommitted>(),
@@ -119,6 +130,9 @@ impl GittiApp {
             },
             move |this, out, window, cx| {
                 if used {
+                    if let Some(m) = &committed_msg {
+                        this.note_committed_message(m);
+                    }
                     this.message_committed(window, cx);
                 }
                 this.set_info(super::last_line(&out, "Continue done"));
@@ -152,6 +166,9 @@ impl GittiApp {
         } else if msg.trim().is_empty() {
             self.set_error("Commit message is empty".into());
             self.message.update(cx, |m, cx| m.focus(window, cx));
+        } else if let Some(why) = self.template_refusal(&msg).filter(|_| !self.amend) {
+            self.set_error(why);
+            self.message.update(cx, |m, cx| m.focus(window, cx));
         } else {
             self.run_commit(kind, window, cx);
         }
@@ -164,13 +181,15 @@ impl GittiApp {
             CommitKind::Amend => "Amending",
             _ => "Committing",
         };
+        let opts = self.commit_options();
+        let committed = msg.clone();
         self.run_op(
             label,
             true,
             window,
             cx,
             move |r| {
-                let out = r.commit_as(&msg, kind)?;
+                let out = r.commit_with(&msg, kind, opts)?;
                 // Here, not in `committed`: a tab closed meanwhile keeps no stale draft.
                 gitti_core::store::clear_draft(r.workdir());
                 if kind == CommitKind::Amend {
@@ -178,7 +197,10 @@ impl GittiApp {
                 }
                 Ok(out)
             },
-            |this, out, window, cx| {
+            move |this, out, window, cx| {
+                // As committed (cleaned up, signed off): HEAD's message, in-process.
+                let head = this.repo.as_ref().and_then(|r| r.head_message().ok());
+                this.note_committed_message(head.as_deref().unwrap_or(&committed));
                 this.message.update(cx, |m, cx| m.set_value("", window, cx));
                 this.merge_prefill = None;
                 this.amend = false;
@@ -227,6 +249,10 @@ impl GittiApp {
     pub(super) fn draft_changed(&mut self, cx: &mut Context<Self>) {
         if self.repo.is_none() {
             return;
+        }
+        if self.message.read(cx).value().trim().is_empty() {
+            // Typed away: what comes next is no template.
+            self.note_box_text("");
         }
         self.draft_dirty = true;
         // Replacing the task drops (cancels) the previous wait: a debounce.
@@ -289,10 +315,12 @@ impl GittiApp {
         let Some(repo) = self.repo.clone() else { return };
         let task = cx.background_executor().spawn(async move {
             let w = repo.workdir();
-            (gitti_core::store::load_draft(w), gitti_core::store::load_amend_draft(w))
+            let sign_off = gitti_core::commit_message::load_sign_off(w);
+            (gitti_core::store::load_draft(w), gitti_core::store::load_amend_draft(w), sign_off)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (draft, amend) = task.await;
+            let (draft, amend, sign_off) = task.await;
+            this.update(cx, |this, cx| this.set_sign_off_loaded(sign_off, cx)).ok();
             if amend.is_some() {
                 this.update(cx, |this, _| {
                     if this.amend_draft.is_none() {
@@ -307,6 +335,8 @@ impl GittiApp {
                 let untouched =
                     current.trim().is_empty() || this.merge_prefill.as_deref() == Some(&current);
                 if untouched && !this.amend {
+                    // A draft of the template: its comment lines tell (`cleanup_for`).
+                    this.note_box_text("");
                     this.message.update(cx, |m, cx| m.set_value(draft.message, window, cx));
                     this.merge_prefill = None;
                     if this.prepared_dismissed.is_none() {
@@ -331,25 +361,6 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current = self.message.read(cx).value().to_string();
-        let sync = gitti_core::ops::sync_prefill(
-            prepared.as_deref(),
-            self.merge_prefill.as_deref(),
-            &current,
-            self.amend,
-        );
-        match sync {
-            PrefillSync::Keep => {}
-            PrefillSync::Fill(m) => {
-                self.message.update(cx, |e, cx| e.set_value(m.clone(), window, cx));
-                self.merge_prefill = Some(m);
-            }
-            PrefillSync::Clear => {
-                self.message.update(cx, |e, cx| e.set_value("", window, cx));
-                self.merge_prefill = None;
-            }
-            PrefillSync::Forget => self.merge_prefill = None,
-        }
         if prepared.is_none()
             && self.prepared_dismissed.take().is_some()
             && let Some(repo) = &self.repo
@@ -358,6 +369,35 @@ impl GittiApp {
             gitti_core::store::save_kept_prepared(repo.workdir(), None);
         }
         self.prepared = prepared;
+        self.sync_box_start(window, cx);
+    }
+
+    /// What an empty box starts with — git's prepared message, else the commit template
+    /// (`commit_box`) — goes in, an untouched copy follows it or goes
+    /// ([`gitti_core::ops::sync_prefill`]).
+    pub(super) fn sync_box_start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let start = self.prepared.clone().or_else(|| self.template_start());
+        let current = self.message.read(cx).value().to_string();
+        let sync = gitti_core::ops::sync_prefill(
+            start.as_deref(),
+            self.merge_prefill.as_deref(),
+            &current,
+            self.amend,
+        );
+        match sync {
+            PrefillSync::Keep => {}
+            PrefillSync::Fill(m) => {
+                self.note_box_text(&m);
+                self.message.update(cx, |e, cx| e.set_value(m.clone(), window, cx));
+                self.merge_prefill = Some(m);
+            }
+            PrefillSync::Clear => {
+                self.note_box_text("");
+                self.message.update(cx, |e, cx| e.set_value("", window, cx));
+                self.merge_prefill = None;
+            }
+            PrefillSync::Forget => self.merge_prefill = None,
+        }
     }
 
     /// git's prepared message differs from the user's text in the box (the palette offers
@@ -372,6 +412,7 @@ impl GittiApp {
     /// "Use It": git's prepared message replaces the box's text (and the stored draft).
     pub(super) fn use_prepared_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(m) = self.prepared_differs(cx) else { return };
+        self.note_box_text("");
         self.message.update(cx, |e, cx| e.set_value(m.clone(), window, cx));
         self.merge_prefill = Some(m);
         // The draft the box held goes: git's message is no draft.

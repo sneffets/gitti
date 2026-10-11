@@ -160,6 +160,8 @@ pub struct RepoSnapshot {
     /// [`Repo::prepared_message`]): after a merge, a cherry-pick / revert (also with
     /// `--no-commit`) or `merge --squash`.
     pub prepared_message: Option<String>,
+    /// `commit.template` ([`Repo::commit_template`]): an empty box starts with it.
+    pub commit_template: Option<crate::commit_message::CommitTemplate>,
     /// Every worktree, main first (cached, see [`Repo::worktrees`]); just the main one in
     /// a repository without linked worktrees.
     pub worktrees: Vec<crate::worktree::Worktree>,
@@ -1118,10 +1120,13 @@ impl Repo {
             // Two small files in the git dir, read whatever the state: `cherry-pick -n`
             // and `merge --squash` leave a message without any *_HEAD.
             let prepared_message = self.prepared_message();
+            // In-process: the config and one small file.
+            let commit_template = self.commit_template();
             Ok(RepoSnapshot {
                 working,
                 conflict_sides,
                 prepared_message,
+                commit_template,
                 head: self.head()?,
                 refs: self.refs()?,
                 remotes: joined(remotes)?,
@@ -1392,12 +1397,30 @@ impl Repo {
     }
 
     /// Commits as `kind` says: the staged changes, an amend, everything after `add -A`
-    /// (Stage All and Commit), or an empty commit.
+    /// (Stage All and Commit), or an empty commit. Without Sign Off; the commit
+    /// template's checks and cleanup apply ([`Repo::commit_with`]).
     pub fn commit_as(&self, message: &str, kind: crate::ops::CommitKind) -> Result<String> {
+        self.commit_with(message, kind, crate::commit_message::CommitOptions::default())
+    }
+
+    /// [`Repo::commit_as`] with the message cleaned up as `cleanup` says — `whitespace`
+    /// unless it is the commit template being edited
+    /// ([`crate::commit_message::CommitTemplate::cleanup_for`]), not git's default `strip`
+    /// (or a configured `commit.cleanup`): the message is what the user typed, a line like
+    /// `#123 fix` is not a comment.
+    pub(crate) fn commit_cleaned(
+        &self,
+        message: &str,
+        kind: crate::ops::CommitKind,
+        cleanup: crate::commit_message::Cleanup,
+        opts: crate::commit_message::CommitOptions,
+    ) -> Result<String> {
         use crate::ops::CommitKind;
-        // `whitespace`, not git's default `strip` (or a configured `commit.cleanup`): the
-        // message is what the user typed, a line like `#123 fix` is not a comment.
-        let mut args = vec!["commit", "--cleanup=whitespace", "-F", "-"];
+        let cleanup = format!("--cleanup={}", cleanup.flag());
+        let mut args = vec!["commit", cleanup.as_str(), "-F", "-"];
+        if opts.sign_off {
+            args.push("--signoff");
+        }
         match kind {
             CommitKind::Staged => {}
             CommitKind::Amend => args.push("--amend"),

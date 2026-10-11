@@ -7,6 +7,7 @@ mod support;
 
 mod cancel;
 mod change_search;
+mod commit_box;
 mod config_safety;
 mod custom_commands;
 mod fs_paths;
