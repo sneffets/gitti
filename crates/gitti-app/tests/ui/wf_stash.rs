@@ -77,6 +77,7 @@ pub fn main() {
         ("sh17_pop_with_index_refused", sh17_pop_with_index_refused),
         ("sh18_drop_after_a_terminal_stash", sh18_drop_after_a_terminal_stash),
         ("sh19_pop_blocked_by_an_untracked_file", sh19_pop_blocked_by_an_untracked_file),
+        ("sh20_branch_from_a_stash_blocked_by_an_untracked_file", sh20_branch_from_a_stash_blocked_by_an_untracked_file),
         ("wt08_pop_in_another_worktree", wt08_pop_in_another_worktree),
     ];
     common::run(tests, |name| {
@@ -117,6 +118,7 @@ pub fn main() {
                 sh::untracked_in_the_way::fixture(&dir);
                 (Box::new(()), dir)
             }
+            "sh20" => (Box::new(sh::branch_blocked::fixture(&dir)), dir),
             "wt08" => {
                 let work = dir.join("work");
                 let s = sh::pop_in_other_worktree::fixture(&work);
@@ -508,6 +510,57 @@ fn sh19_pop_blocked_by_an_untracked_file(ui: &mut Ui) {
         fail!(ui, "after the refused pop: stashes {}, unstaged {:?}", st.stashes, st.unstaged);
     }
     expect(ui, wf::expect_refused(&dir));
+}
+
+/// SH-20: the stash's menu ▸ Create Branch from Stash… (the dialog says what it does)
+/// with the stash's untracked x.txt in the way: refused in plain words naming x.txt,
+/// nothing changed; with x.txt moved away the branch is created at the stash's base.
+/// Workflow: SH-20
+fn sh20_branch_from_a_stash_blocked_by_an_untracked_file(ui: &mut Ui) {
+    use sh::branch_blocked as wf;
+    let s: wf::Setup = setup();
+    let dir = ui.workdir();
+    let create = |ui: &mut Ui| {
+        if !stash_menu(ui, 0, "Create Branch from Stash…") {
+            return false;
+        }
+        ui.quick("menu:Create Branch from Stash…");
+        match ui.modal() {
+            Some((t, _)) if t == "Create branch from stash@{0}" => {}
+            other => {
+                fail!(ui, "Create Branch from Stash… dialog: {other:?}");
+                return false;
+            }
+        }
+        if message(ui) != stash::BRANCH_DIALOG_TEXT {
+            fail!(ui, "the dialog's text: {:?}", message(ui));
+        }
+        ui.quick(&format!("field:0={}", wf::BRANCH));
+        ui.step("modalok");
+        true
+    };
+    if !create(ui) {
+        return;
+    }
+    let want = stash::branch_untracked_refusal("stash@{0}", &["x.txt".into()]);
+    match ui.status() {
+        Some((t, true)) if t == want => {}
+        other => fail!(ui, "status after the refused branch: {other:?}"),
+    }
+    let st = ui.ui_state();
+    if st.stashes != 1 || st.branch.as_deref() != Some("main") {
+        fail!(ui, "after the refused branch: stashes {}, branch {:?}", st.stashes, st.branch);
+    }
+    expect(ui, wf::expect_refused(&dir, &s));
+    wf::move_away(&dir);
+    if !create(ui) {
+        return;
+    }
+    let st = ui.ui_state();
+    if st.stashes != 0 || st.branch.as_deref() != Some(wf::BRANCH) {
+        fail!(ui, "after the branch: stashes {}, branch {:?}, status {:?}", st.stashes, st.branch, st.status);
+    }
+    expect(ui, wf::expect_branched(&dir, &s));
 }
 
 /// WT-08: the linked worktree's tab lists the stash made in the main worktree; Pop Latest

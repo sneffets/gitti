@@ -273,6 +273,32 @@ fn sh19_pop_blocked_by_an_untracked_file() {
     wf::expect_refused(d).unwrap();
 }
 
+/// SH-20: the stash's menu ▸ Create Branch from Stash… (b; the dialog says what it does)
+/// with the stash's untracked x.txt in the way: refused in plain words naming x.txt,
+/// nothing changed; with x.txt moved away (a second run) the branch is created at the
+/// stash's base.
+/// Workflow: SH-20
+#[gitti_test::test]
+fn sh20_branch_from_a_stash_blocked_by_an_untracked_file() {
+    use sh::branch_blocked as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    let s = wf::fixture(d);
+    let keys = format!("{LAST_STASH_MENU}key:b;type:{};", wf::BRANCH);
+    let out = gitty(d, &format!("{keys}dump;key:enter;state"));
+    let sc = screens(&out);
+    assert!(sc[0].contains("┌ Create branch from stash@{0} "), "{out}");
+    let text = dialog_text(sc[0]);
+    assert!(text.contains("Creates a new branch at the commit the stash was made on"), "{text}");
+    let st = states(&out)[0];
+    assert!(status_of(st).contains("Not created: stash@{0} brings back an untracked file — x.txt"), "{out}");
+    wf::expect_refused(d, &s).unwrap();
+    wf::move_away(d);
+    let out = gitty(d, &format!("{keys}key:enter;state"));
+    assert!(!status_of(states(&out)[0]).contains("Not created"), "{out}");
+    wf::expect_branched(d, &s).unwrap();
+}
+
 /// WT-08: gitty in the linked worktree lists the stash made in the main worktree; its
 /// menu ▸ Pop applies it there.
 /// Workflow: WT-08

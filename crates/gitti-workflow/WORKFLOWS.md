@@ -218,6 +218,7 @@ working tree or the index while the app shows an older state.
 | SH-17 | Pop with the index restored | staged + unstaged stashed; Pop with Index… (asks, naming what is staged again) | staged part staged again (`--index`); when it doesn't apply to the index git refuses: nothing changed, said with the ways out | `wf_stash::sh17_pop_restoring_the_index`, `wf_stash::sh17_pop_with_the_index_refused_changes_nothing`, `wf_stash::sh17_pop_with_the_index_that_conflicts_says_the_index_is_not_restored`, `wf_stash::sh17_nothing_staged_in_the_stash_is_said` | `wf_stash::sh17_pop_with_index_from_the_stash_menu`, `wf_stash::sh17_pop_with_index_refused` | `wf_stash::sh17_pop_with_index_from_the_stash_menu`, `wf_stash::sh17_pop_with_index_refused` |
 | SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | `op_safety::stash_commands_act_on_the_chosen_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` |
 | SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | `wf_stash::sh19_pop_blocked_by_an_untracked_file`, `wf_stash::sh19_what_is_in_the_way` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` |
+| SH-20 | Branch from a stash, blocked | the stash has `x`; an untracked `x` exists (or a file the stash changes has local changes); Create Branch from Stash… | refused in plain words before anything changes (git alone would create and check out the branch, then stop half applied); still on `main`, no new branch, stash kept; with `x` moved away the branch is created at the stash's base | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file`, `wf_stash::sh20_branch_from_a_stash_blocked_by_local_changes`, `wf_stash::sh20_what_blocks_a_branch_from_a_stash` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` |
 
 ## BR — Branches
 
@@ -507,7 +508,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | ST staging | 21 | 16 | 19 | 15 |
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
-| SH stash | 19 | 18 | 17 | 17 |
+| SH stash | 20 | 19 | 18 | 18 |
 | BR branches | 19 | 19 | 19 | 18 |
 | MG merge | 26 | 25 | 21 | 22 |
 | CP cherry-pick | 18 | 16 | 16 | 16 |
@@ -527,7 +528,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 4 | 2 | 1 |
 | NU non-UTF-8 | 5 | 5 | 2 | 2 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **266** | **242** | **209** | **209** |
+| **Total** | **267** | **243** | **210** | **210** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

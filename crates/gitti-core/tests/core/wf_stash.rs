@@ -224,6 +224,83 @@ fn sh19_what_is_in_the_way() {
     assert!(repo.stash_untracked_in_the_way(list[1].id).unwrap().is_empty());
 }
 
+/// SH-20: Create Branch from Stash with the stash's untracked x.txt in the way is refused
+/// before anything changes (git alone would create and check out the branch, apply a.txt
+/// and then stop); once x.txt is moved away the branch is created at the stash's base.
+/// Workflow: SH-20
+#[gitti_test::test]
+fn sh20_branch_from_a_stash_blocked_by_an_untracked_file() {
+    use sh::branch_blocked as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let s = wf::fixture(dir);
+    let repo = Repo::open(dir).unwrap();
+    let target = repo.stashes().unwrap()[0].target();
+    let err = format!("{:#}", repo.stash_branch(wf::BRANCH, target).unwrap_err());
+    assert_eq!(err, stash::branch_untracked_refusal("stash@{0}", &["x.txt".into()]));
+    assert!(err.contains("— x.txt — and it is in the way"), "{err}");
+    wf::expect_refused(dir, &s).unwrap();
+    wf::move_away(dir);
+    repo.stash_branch(wf::BRANCH, target).unwrap();
+    wf::expect_branched(dir, &s).unwrap();
+}
+
+/// SH-20: Create Branch from Stash over an uncommitted edit of a file the stash changes is
+/// refused before anything changes (git alone would check the branch out and then refuse
+/// to apply the stash).
+/// Workflow: SH-20
+#[gitti_test::test]
+fn sh20_branch_from_a_stash_blocked_by_local_changes() {
+    use sh::branch_blocked as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let s = wf::fixture_local(dir);
+    let repo = Repo::open(dir).unwrap();
+    let target = repo.stashes().unwrap()[0].target();
+    let err = format!("{:#}", repo.stash_branch(wf::BRANCH, target).unwrap_err());
+    assert_eq!(err, stash::branch_local_refusal("stash@{0}", &["a.txt".into()]));
+    wf::expect_refused_local(dir, &s).unwrap();
+}
+
+/// SH-20: what blocks a branch from a stash, and what doesn't: an untracked file of the
+/// stash that HEAD tracks, the base commit lacks and that is unchanged goes away with the
+/// checkout (no obstacle) — but blocks once it has changes; one the base commit has blocks
+/// although nothing is there now; changes to files the stash doesn't touch come along; an
+/// existing branch name and an operation in progress are refused.
+/// Workflow: SH-20
+#[gitti_test::test]
+fn sh20_what_blocks_a_branch_from_a_stash() {
+    use gitti_workflow::{Fixture, del, put};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let mut fx = Fixture::new();
+    let i = fx.commit("main", "init", &[put("a.txt", "a\n"), put("c.txt", "c\n"), put("old.txt", "old\n")]);
+    fx.commit("main", "later", &[put("x.txt", "x committed\n"), del("old.txt")]);
+    fx.stash(i, "On main: old", &[], &[], &[put("old.txt", "old, untracked\n")]);
+    fx.stash(i, "On main: x", &[], &[put("a.txt", "a staged\n")], &[put("x.txt", "x untracked\n")]);
+    fx.write("c.txt", "c edited\n");
+    fx.build(dir);
+    let repo = Repo::open(dir).unwrap();
+    let list = repo.stashes().unwrap();
+    let (x, old) = (list[0].target(), list[1].target());
+    assert_eq!(repo.stash_branch_refusal("b", x).unwrap(), None);
+    assert_eq!(
+        repo.stash_branch_refusal("b", old).unwrap(),
+        Some(stash::branch_untracked_refusal("stash@{1}", &["old.txt".into()]))
+    );
+    let exists = repo.stash_branch_refusal("main", x).unwrap().unwrap();
+    assert!(exists.contains("a branch named main exists already"), "{exists}");
+    std::fs::write(dir.join("x.txt"), "x edited\n").unwrap();
+    assert_eq!(
+        repo.stash_branch_refusal("b", x).unwrap(),
+        Some(stash::branch_untracked_refusal("stash@{0}", &["x.txt".into()]))
+    );
+    let head = std::fs::read_to_string(dir.join(".git/refs/heads/main")).unwrap();
+    std::fs::write(dir.join(".git/MERGE_HEAD"), head).unwrap();
+    let during = repo.stash_branch_refusal("b", x).unwrap().unwrap();
+    assert!(during.starts_with("Not created: a merge is in progress."), "{during}");
+}
+
 /// WT-08: a stash made in the main worktree is in the linked worktree's list (shared)
 /// and pops there; the main worktree stays as it was.
 /// Workflow: WT-08
