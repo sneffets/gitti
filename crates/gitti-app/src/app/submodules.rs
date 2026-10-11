@@ -20,7 +20,7 @@ use gitti_core::submodule::{
     HISTORY_LIMIT, SubRow, Submodule, SubmoduleCommit, SubmoduleState, out_of_date, short_id,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -69,9 +69,9 @@ fn item(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
@@ -96,7 +96,7 @@ fn remote_update_label(sm: &Submodule) -> String {
 }
 
 /// "Check Out Commit in Submodule…" in a submodule's menus.
-fn checkout_commit_item(app: &AppHandle, sm: &Submodule) -> PopupMenuItem {
+fn checkout_commit_item(app: &AppHandle, sm: &Submodule) -> super::menus::Entry {
     let p = sm.path.clone();
     item("Check Out Commit in Submodule…", app, move |this, w, cx| {
         this.checkout_commit_picker(&p, w, cx)

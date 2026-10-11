@@ -13,7 +13,7 @@ use std::rc::Rc;
 use gitti_core::branch_cleanup::{self, BranchSet, Mode};
 use gitti_core::branch_order::{self, BranchOrder, BranchSort, Sorting};
 use gitti_core::{RefInfo, RefKind};
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
 use super::GittiApp;
@@ -44,9 +44,9 @@ fn item(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }

@@ -34,6 +34,7 @@ pub fn main() {
     let tests: &[(&str, Scenario)] = &[
         ("sort_and_pin", sort_and_pin),
         ("clean_up_and_delete", clean_up_and_delete),
+        ("menu_step_refuses_greyed", menu_step_refuses_greyed),
     ];
     common::run(tests, |name| fixture(&base().join(name)));
 }
@@ -171,4 +172,28 @@ fn clean_up_and_delete(ui: &mut Ui) {
     if branches(ui) != "main" {
         fail!(ui, "with Force: {}", branches(ui));
     }
+}
+
+/// `menu:LABEL` refuses a greyed entry — a click on it does nothing, so a test must not
+/// choose it by accident: the step fails with the reason. `testing::menu_entries` says
+/// which entries are greyed.
+fn menu_step_refuses_greyed(ui: &mut Ui) {
+    testing::menu_entries();
+    ui.click_on("side:ref-refs/heads/main", MouseButton::Right);
+    let entries = testing::menu_entries();
+    let state = |l: &str| entries.iter().find(|(x, _)| x == l).map(|(_, on)| *on);
+    // (A greyed entry says why: "Checkout main (checked out here)".)
+    let checkout = "Checkout main (checked out here)";
+    if state(checkout) != Some(false) || state("Rename…") != Some(true) {
+        fail!(ui, "the current branch's menu: {entries:?}");
+    }
+    let ws = ui.ws.clone();
+    ui.cx
+        .update_window(ui.window, |_, window, cx| testing::step(&ws, &format!("menu:{checkout}"), window, cx))
+        .unwrap();
+    let errors = testing::take_step_errors();
+    if !errors.iter().any(|e| e.contains(&format!("{checkout:?} is greyed"))) {
+        fail!(ui, "menu: on a greyed entry: {errors:?}");
+    }
+    ui.settle();
 }

@@ -19,7 +19,7 @@ use std::rc::Rc;
 use gitti_core::patch::PatchMode;
 use gitti_core::rows::{Folder, discard_question, file_name, file_order, files_word};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::*;
 
@@ -37,9 +37,9 @@ fn entry(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }

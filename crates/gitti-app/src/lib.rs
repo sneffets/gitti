@@ -462,6 +462,17 @@ pub mod testing {
         crate::app::take_menu_labels()
     }
 
+    /// [`menu_labels`] with whether each entry is enabled (`false`: greyed).
+    pub fn menu_entries() -> Vec<(String, bool)> {
+        crate::app::take_menu_entries()
+    }
+
+    /// Script steps that failed since the last call (e.g. `menu:LABEL` on a greyed or
+    /// missing entry); the harness fails the scenario on them.
+    pub fn take_step_errors() -> Vec<String> {
+        crate::script::take_step_errors()
+    }
+
     /// Runs one `GITTI_SCRIPT` step (`cmd:arg`) in the main window, synchronously.
     /// `sleep`, `win`, `layout` and `check` are the test's business.
     pub fn step(ws: &Entity<Workspace>, step: &str, window: &mut Window, cx: &mut App) {

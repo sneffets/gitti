@@ -23,7 +23,10 @@
 //! from its right / bottom edge), `clickrel:DX,DY`
 //! (relative to the last click, e.g. a context menu item), `menu:LABEL` (choose the entry
 //! LABEL — exactly as shown — of the context menu opened last, e.g. after
-//! `rclickon:commit-row:3`; entries made with `menus::menu_action`), `layout` (probes of the next frame
+//! `rclickon:commit-row:3`; entries made with `menus::menu_action`; a greyed or missing
+//! entry is a step error, [`take_step_errors`]), `menuitems` (print the context-menu
+//! entries built since the last `menuitems`, `menuitem: LABEL`, greyed ones with
+//! ` [disabled]`), `layout` (probes of the next frame
 //! as JSON lines, see `probe.rs`), `check` (layout invariants, `layout_check.rs`), `quit`.
 //! Dialogs: `field:N=TEXT` (type into field N), `choice:N` (its Nth fill-in button),
 //! `checkbox:N` (flip checkbox N; `check:N` with an argument is an alias, `check` alone is
@@ -55,6 +58,23 @@ use gpui_kit::*;
 
 use crate::app::GittiApp;
 use crate::workspace::Workspace;
+
+thread_local! {
+    /// Steps that could not do what they say (a greyed menu entry), since the last
+    /// [`take_step_errors`].
+    static STEP_ERRORS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A step failed: printed (`[script] …`) and kept for the headless tests, which fail on it.
+fn step_error(msg: String) {
+    eprintln!("[script] {msg}");
+    STEP_ERRORS.with(|e| e.borrow_mut().push(msg));
+}
+
+/// The step errors since the last call (`testing::take_step_errors`).
+pub(crate) fn take_step_errors() -> Vec<String> {
+    STEP_ERRORS.with(|e| std::mem::take(&mut *e.borrow_mut()))
+}
 
 pub fn run(script: String, window: AnyWindowHandle, ws: Entity<Workspace>, cx: &mut App) {
     // Nothing a script triggers opens windows on the user's desktop (editor, Finder, …).
@@ -385,7 +405,13 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
                 window.dispatch_keystroke(k, cx);
             }
             if let Err(e) = crate::app::run_menu_entry(arg, window, cx) {
-                eprintln!("[script] menu: {e}");
+                step_error(format!("menu: {e}"));
+            }
+        }
+        "menuitems" => {
+            for (label, enabled) in crate::app::take_menu_entries() {
+                let off = if enabled { "" } else { " [disabled]" };
+                eprintln!("menuitem: {label}{off}");
             }
         }
         "select" => {
