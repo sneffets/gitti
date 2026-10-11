@@ -56,8 +56,8 @@ fn outside_changes_refresh_only_what_they_touched() {
     let d = dir.path();
     let head = rev(d, "HEAD");
     let script = format!(
-        "cmds;write:b.rs=fn main() {{}}\\n;sleep:250;wait;cmds;\
-         write:.git/refs/heads/outside={head}\\n;sleep:250;wait;cmds"
+        "cmds;write:b.rs=fn main() {{}}\\n;watched:b.rs;cmds;\
+         write:.git/refs/heads/outside={head}\\n;watched;cmds"
     );
     let out = gitty(d, &script);
     let blocks = cmds(&out);
@@ -110,8 +110,8 @@ fn outside_ref_changes_update_the_history_in_place() {
     let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let head = rev(d, "HEAD");
     let script = format!(
-        "state;write:.git/refs/heads/main={id}\\n;write:fresh.txt=fresh\\n;sleep:250;wait;state;\
-         write:.git/refs/heads/side={head}\\n;sleep:250;wait;state"
+        "state;write:.git/refs/heads/main={id}\\n;write:fresh.txt=fresh\\n;watched:fresh.txt;state;\
+         write:.git/refs/heads/side={head}\\n;watched;state"
     );
     let out = gitty(d, &script);
     let s = states(&out);

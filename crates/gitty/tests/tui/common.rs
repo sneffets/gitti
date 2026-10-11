@@ -22,10 +22,7 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
 pub fn repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    git(d, &["init", "-q", "-b", "main"]);
-    git(d, &["config", "user.name", "Tester"]);
-    git(d, &["config", "user.email", "t@example.com"]);
-    git(d, &["config", "core.autocrlf", "false"]);
+    crate::support::init(d);
     std::fs::write(d.join("a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\n").unwrap();
     git(d, &["add", "."]);
     git(d, &["commit", "-qm", "Initial commit"]);
@@ -97,10 +94,7 @@ pub fn conflicted_repo() -> tempfile::TempDir {
 pub fn long_conflicted_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    git(d, &["init", "-q", "-b", "main"]);
-    git(d, &["config", "user.name", "Tester"]);
-    git(d, &["config", "user.email", "t@example.com"]);
-    git(d, &["config", "core.autocrlf", "false"]);
+    crate::support::init(d);
     let file = |swap: &dyn Fn(usize) -> Option<String>| -> String {
         (1..=120)
             .map(|i| swap(i).unwrap_or_else(|| format!("line {i}\n")))

@@ -28,7 +28,7 @@ fn esc_cancels_a_hanging_fetch() {
     );
     let start = Instant::now();
     // Esc cancels once the busy label shows (`BUSY_SHOW_DELAY`, 250 ms).
-    let out = gitty(d, "press:f;sleep:320;press:esc;wait;state");
+    let out = gitty(d, "press:f;until:⟳ Fetch;press:esc;wait;state");
     let took = start.elapsed();
     assert!(took < Duration::from_secs(15), "took {took:?}\n{out}");
     assert!(out.contains("Fetch cancelled"), "{out}");
@@ -169,9 +169,15 @@ fn prompt_of_a_gone_helper_closes() {
     let dir = repo();
     let d = dir.path();
     let ssh = d.join(".git/fake-ssh");
+    // ssh gives up once the dialog is open (the script writes `.git/go` then; at most 5 s).
+    let go = d.join(".git/go");
     std::fs::write(
         &ssh,
-        "\"$SSH_ASKPASS\" 'Password: ' >/dev/null &\nsleep 0.1\nexit 255\n",
+        format!(
+            "\"$SSH_ASKPASS\" 'Password: ' >/dev/null &\ni=0\n\
+             while [ ! -e '{}' ] && [ $i -lt 250 ]; do sleep 0.02; i=$((i+1)); done\nexit 255\n",
+            go.display()
+        ),
     )
     .unwrap();
     // `ssh.variant`: git runs the command once (without it first `-G` to probe the
@@ -183,7 +189,7 @@ fn prompt_of_a_gone_helper_closes() {
             ssh.display()
         ),
     );
-    let out = gitty(d, "key:f;state;closed;wait;state");
+    let out = gitty(d, "key:f;state;write:.git/go=;closed;wait;state");
     let st = crate::support::states(&out);
     assert!(st[0].contains("modal=Ask"), "{out}");
     assert!(!st[1].contains("modal="), "{out}");

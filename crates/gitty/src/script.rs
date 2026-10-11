@@ -2,7 +2,10 @@
 //! into an in-memory terminal (`GITTY_SIZE=WxH`, default 160x45) instead of the real one.
 //!
 //! Steps: `wait` (until no job is running), `sleep:MS`, `closed` (until no dialog is open —
-//! one that closes by itself; at most 5 s), `key:SPEC` (e.g. `j`, `S`, `enter`,
+//! one that closes by itself; at most 5 s), `until:TEXT` (until the screen shows TEXT — a
+//! running operation's progress, instead of a guessed sleep; at most 5 s), `watched` /
+//! `watched:PATH` (until the file watcher reports a change — of PATH, a path relative to the
+//! work tree — after a `write:`, then as `wait`; at most 5 s), `key:SPEC` (e.g. `j`, `S`, `enter`,
 //! `esc`, `tab`, `space`, `ctrl-p`, `alt-down`, `shift-up`, `f5`), `press:SPEC` (a key
 //! without waiting for the jobs it starts — e.g. Esc on a running operation), `type:TEXT`,
 //! `click:X,Y`, `rclick:X,Y`, `pressclick:X,Y` (a left click without waiting for the jobs
@@ -100,6 +103,36 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                     pump(app, &rx, Duration::from_millis(10));
                 }
                 term.draw(|f| crate::ui::draw(f, app))?;
+            }
+            "watched" => {
+                let until = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < until {
+                    if let Ok(msg) = rx.recv_timeout(Duration::from_millis(10)) {
+                        let fs = match &msg {
+                            Msg::Fs(change) => {
+                                arg.is_empty()
+                                    || change.rescan.is_some()
+                                    || change.paths.iter().any(|(p, _)| p.ends_with(arg))
+                            }
+                            _ => false,
+                        };
+                        app.handle(msg);
+                        if fs {
+                            break;
+                        }
+                    }
+                }
+                settle(app, &rx, &mut term, Duration::from_secs(20))?;
+            }
+            "until" => {
+                let until = Instant::now() + Duration::from_secs(5);
+                loop {
+                    term.draw(|f| crate::ui::draw(f, app))?;
+                    if screen_text(term.backend().buffer()).contains(arg) || Instant::now() >= until {
+                        break;
+                    }
+                    pump(app, &rx, Duration::from_millis(10));
+                }
             }
             "key" => {
                 app.on_event(Event::Key(parse_key(arg)?));

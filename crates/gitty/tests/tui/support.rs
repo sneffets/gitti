@@ -8,27 +8,33 @@ use std::process::{Command, Stdio};
 
 use crate::common::git;
 
-/// A fresh repository (`main`, test identity) without commits.
+/// A fresh repository (`main`, test identity) without commits: one git process.
 pub fn empty_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let d = dir.path();
-    git(d, &["init", "-q", "-b", "main"]);
-    git(d, &["config", "user.name", "Tester"]);
-    git(d, &["config", "user.email", "t@example.com"]);
-    git(d, &["config", "core.autocrlf", "false"]);
+    init(dir.path());
     dir
+}
+
+/// The commit `branch` points at, read from the ref files (no git); empty while it
+/// doesn't exist.
+fn branch_tip(dir: &Path, branch: &str) -> String {
+    let git_dir = dir.join(".git");
+    let refname = format!("refs/heads/{branch}");
+    if let Ok(id) = std::fs::read_to_string(git_dir.join(&refname)) {
+        return id.trim().to_string();
+    }
+    let packed = std::fs::read_to_string(git_dir.join("packed-refs")).unwrap_or_default();
+    packed
+        .lines()
+        .find_map(|l| l.split_once(' ').filter(|(_, name)| *name == refname).map(|(id, _)| id.to_string()))
+        .unwrap_or_default()
 }
 
 /// Appends `n` commits to `branch` in one `git fast-import` (fast even for hundreds):
 /// commit `i` is titled `{prefix} {i}` and writes `{file}` = "`{prefix} {i}`". The working
 /// tree is reset to the result when `branch` is checked out.
 pub fn add_commits(dir: &Path, branch: &str, prefix: &str, file: &str, n: usize) {
-    let parent = Command::new("git")
-        .args(["rev-parse", "--verify", "-q", branch])
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    let parent = String::from_utf8_lossy(&parent.stdout).trim().to_string();
+    let parent = branch_tip(dir, branch);
     let mut s = String::new();
     for i in 1..=n {
         let msg = format!("{prefix} {i}\n");
@@ -56,8 +62,8 @@ pub fn add_commits(dir: &Path, branch: &str, prefix: &str, file: &str, n: usize)
         .unwrap();
     child.stdin.take().unwrap().write_all(s.as_bytes()).unwrap();
     assert!(child.wait().unwrap().success());
-    let head = git(dir, &["symbolic-ref", "--short", "HEAD"]);
-    if head.trim() == branch {
+    let head = std::fs::read_to_string(dir.join(".git/HEAD")).unwrap();
+    if head.trim() == format!("ref: refs/heads/{branch}") {
         git(dir, &["reset", "-q", "--hard"]);
     }
 }
@@ -222,8 +228,10 @@ pub fn body(screen: &str) -> Vec<&str> {
 
 // ---------------------------------------------------------------------- cheap fixtures
 
-/// Identity and line endings, written straight into `.git/config` (no `git config` runs).
-const CONFIG: &str = "[user]\n\tname = Tester\n\temail = t@example.com\n[core]\n\tautocrlf = false\n";
+/// Identity and line endings, written straight into `.git/config` (no `git config` runs);
+/// no `git maintenance run --auto` after every commit, fetch and merge (a process each).
+const CONFIG: &str = "[user]\n\tname = Tester\n\temail = t@example.com\n[core]\n\tautocrlf = false\n\
+                      [maintenance]\n\tauto = false\n";
 
 /// `git init` (branch `main`) with the test identity: one git process.
 pub fn init(dir: &Path) {
