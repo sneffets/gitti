@@ -143,6 +143,21 @@ fn switching_and_resetting_to_colliding_paths_say_so() {
     assert!(!out.contains("can't be held"), "{out}");
 }
 
+/// A rebase onto a branch with paths this file system can't hold says so after where the
+/// branch is now, like a switch or a reset.
+#[gitti_test::test]
+fn rebasing_onto_colliding_paths_says_so() {
+    let mut h = History::new();
+    let root = h.commit("main", &[], "init", &[("a.txt", f("a\n"))]);
+    h.commit("side", &[root], "case pair", &[("net/xt_TCPMSS.h", f("upper\n")), ("net/xt_tcpmss.h", f("lower\n"))]);
+    h.commit("main", &[root], "own", &[("b.txt", f("b\n"))]);
+    let (_tmp, dir) = repo_with(&h);
+    let repo = open(&dir, case_insensitive(), Os::Other);
+    let out = repo.rebase("side").unwrap();
+    let done = gitti_core::rebase_note::finished(Some("main"), "side", 1);
+    assert!(out.starts_with(&format!("{done} 2 paths of this checkout can't be held")), "{out}");
+}
+
 /// Workflow: FS-01
 #[gitti_test::test]
 fn hiding_with_skip_worktree_and_showing_again() {

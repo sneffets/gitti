@@ -72,6 +72,7 @@ pub mod redact;
 pub mod renormalize;
 pub mod reflog;
 pub mod reach;
+pub mod rebase_note;
 pub mod restore;
 pub mod ref_badges;
 pub mod repo;
