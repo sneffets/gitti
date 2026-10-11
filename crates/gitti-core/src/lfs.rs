@@ -266,27 +266,47 @@ pub const ENV_NO_GIT_LFS: &str = "GITTI_TEST_NO_GIT_LFS";
 
 impl LfsCaps {
     /// The process-wide probe; the first call runs `git lfs version` (not logged).
+    /// A probe that failed for a passing reason (git couldn't start for lack of file
+    /// descriptors, was killed, its output cut) isn't kept — "not installed" would stick
+    /// for the session: this call says missing, the next one asks again.
     pub fn get() -> &'static LfsCaps {
         static CAPS: OnceLock<LfsCaps> = OnceLock::new();
-        CAPS.get_or_init(|| {
-            if std::env::var_os(ENV_NO_GIT_LFS).is_some_and(|v| v == "1") {
-                return LfsCaps { version: None };
-            }
-            let git = crate::git_cli::Git::new(std::env::temp_dir());
-            let version = git
-                .run(&["lfs", "version"])
-                .ok()
-                .map(|o| {
-                    o.stdout_str()
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_string()
+        static PROBING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static NOT_NOW: LfsCaps = LfsCaps { version: None };
+        if let Some(caps) = CAPS.get() {
+            return caps;
+        }
+        let _probing = PROBING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(caps) = CAPS.get() {
+            return caps;
+        }
+        if std::env::var_os(ENV_NO_GIT_LFS).is_some_and(|v| v == "1") {
+            return CAPS.get_or_init(|| LfsCaps { version: None });
+        }
+        let git = crate::git_cli::Git::new(std::env::temp_dir());
+        match Self::from_probe(git.run(&["lfs", "version"]).map(|o| o.stdout_str())) {
+            Some(caps) => CAPS.get_or_init(|| caps),
+            None => &NOT_NOW,
+        }
+    }
+
+    /// The capabilities `git lfs version`'s result says, `None` when it failed for a
+    /// passing reason. git without git-lfs answers "'lfs' is not a git command" (exit 1).
+    pub fn from_probe(out: Result<String, crate::git_cli::GitError>) -> Option<LfsCaps> {
+        use crate::git_cli::GitError;
+        match out {
+            Ok(text) => {
+                let first = text.lines().next().unwrap_or("").trim().to_string();
+                Some(LfsCaps {
+                    version: Some(first).filter(|v| v.starts_with("git-lfs")),
                 })
-                .filter(|v| v.starts_with("git-lfs"));
-            LfsCaps { version }
-        })
+            }
+            Err(GitError::Failed { code, .. }) if code > 0 => Some(LfsCaps { version: None }),
+            Err(GitError::Spawn(io)) if io.kind() == std::io::ErrorKind::NotFound => {
+                Some(LfsCaps { version: None })
+            }
+            Err(_) => None,
+        }
     }
 
     pub fn installed(&self) -> bool {
@@ -820,6 +840,21 @@ mod tests {
     use super::*;
 
     const OID: &str = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
+
+    /// "git-lfs is missing" is kept only when git says so; a passing failure (killed,
+    /// cut, no file descriptors) is asked again.
+    #[gitti_test::test]
+    fn passing_lfs_probe_failures_are_not_kept() {
+        use crate::git_cli::GitError;
+        let failed = |code| Err(GitError::Failed { args: "lfs version".into(), code, stderr: String::new() });
+        let version = |out| LfsCaps::from_probe(out).map(|c| c.version);
+        assert_eq!(version(Ok("git-lfs/3.5.1 (GitHub)\n".into())), Some(Some("git-lfs/3.5.1 (GitHub)".into())));
+        assert_eq!(version(failed(1)), Some(None), "'lfs' is not a git command");
+        assert_eq!(version(failed(-9)), None, "killed");
+        assert_eq!(version(Err(GitError::OutputCut { args: "lfs version".into() })), None);
+        assert_eq!(version(Err(GitError::Spawn(std::io::Error::from(std::io::ErrorKind::Other)))), None);
+        assert_eq!(version(Err(GitError::Spawn(std::io::Error::from(std::io::ErrorKind::NotFound)))), Some(None));
+    }
 
     fn ptr(extra: &str) -> String {
         format!("version {SPEC_V1}\n{extra}oid sha256:{OID}\nsize 12345\n")

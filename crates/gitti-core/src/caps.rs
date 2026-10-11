@@ -76,12 +76,39 @@ pub struct GitCaps {
 impl GitCaps {
     /// The process-wide capabilities; the first call runs `git --version` (not logged in
     /// any repository's command log).
+    /// A probe that failed for a passing reason (no file descriptors left, git killed,
+    /// its output cut) isn't kept: the next call asks again, this one gets "unknown".
     pub fn get() -> &'static GitCaps {
         static CAPS: OnceLock<GitCaps> = OnceLock::new();
-        CAPS.get_or_init(|| {
-            let git = crate::git_cli::Git::new(std::env::temp_dir());
-            Self::from_probe(git.run(&["--version"]).map(|o| o.stdout_str()))
-        })
+        static PROBING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static UNKNOWN: GitCaps = GitCaps {
+            version: None,
+            probe: String::new(),
+            missing: false,
+        };
+        if let Some(caps) = CAPS.get() {
+            return caps;
+        }
+        let _probing = PROBING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(caps) = CAPS.get() {
+            return caps;
+        }
+        let git = crate::git_cli::Git::new(std::env::temp_dir());
+        let out = git.run(&["--version"]).map(|o| o.stdout_str());
+        if !Self::lasting(&out) {
+            return &UNKNOWN;
+        }
+        CAPS.get_or_init(|| Self::from_probe(out))
+    }
+
+    /// Whether the result of `git --version` holds for the whole process: an answer, or
+    /// no git at all — not a passing failure.
+    pub fn lasting(out: &Result<String, crate::git_cli::GitError>) -> bool {
+        match out {
+            Ok(_) => true,
+            Err(crate::git_cli::GitError::Spawn(io)) => io.kind() == std::io::ErrorKind::NotFound,
+            Err(_) => false,
+        }
     }
 
     /// Capabilities from the result of `git --version`.
@@ -198,6 +225,18 @@ fn short(v: GitVersion) -> String {
 mod tests {
     use super::*;
     use crate::git_cli::GitError;
+
+    /// Only an answer or a missing git is kept for the process; a passing failure is
+    /// asked again.
+    #[gitti_test::test]
+    fn passing_probe_failures_are_not_kept() {
+        let io = |kind| Err(GitError::Spawn(std::io::Error::from(kind)));
+        assert!(GitCaps::lasting(&Ok("git version 2.50.0".into())));
+        assert!(GitCaps::lasting(&io(std::io::ErrorKind::NotFound)));
+        assert!(!GitCaps::lasting(&io(std::io::ErrorKind::Other)));
+        assert!(!GitCaps::lasting(&Err(GitError::OutputCut { args: "--version".into() })));
+        assert!(!GitCaps::lasting(&Err(GitError::Failed { args: "--version".into(), code: -9, stderr: String::new() })));
+    }
 
     #[gitti_test::test]
     fn versions() {

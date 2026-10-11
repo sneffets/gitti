@@ -323,7 +323,11 @@ impl Repo {
         args.extend(["--always", "--stdin"].map(String::from));
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let text = self.git().run_stdin(&args, Some(input.as_bytes()))?.stdout_str();
-        Ok(split_pair_output(&text, pairs.len()))
+        // `--always` prints every pair's header: a missing one is output that ended early,
+        // never a comparison without changes (that would be cached as one).
+        split_pair_output(&text, pairs.len()).ok_or_else(|| {
+            anyhow::anyhow!("git diff-tree reported fewer comparisons than the {} asked for", pairs.len())
+        })
     }
 
     /// "Load anyway" in compare mode: file `file` of `data` (a placeholder of a
@@ -438,8 +442,9 @@ impl Repo {
 const UNTRACKED_LIMIT: usize = 200;
 
 /// Splits `diff-tree --stdin` output of `n` tree pairs at their `<old> <new>` header
-/// lines (diff lines never start with a hex digit: they carry a prefix).
-fn split_pair_output(text: &str, n: usize) -> Vec<Vec<FileDiff>> {
+/// lines (diff lines never start with a hex digit: they carry a prefix); `None` when
+/// fewer than `n` headers came.
+fn split_pair_output(text: &str, n: usize) -> Option<Vec<Vec<FileDiff>>> {
     let is_header = |l: &str| {
         let mut parts = l.split(' ');
         matches!((parts.next(), parts.next(), parts.next()), (Some(a), Some(b), None)
@@ -453,8 +458,11 @@ fn split_pair_output(text: &str, n: usize) -> Vec<Vec<FileDiff>> {
             c.push_str(line);
         }
     }
-    chunks.resize(n, String::new());
-    chunks.iter().map(|c| parse_unified(c)).collect()
+    if chunks.len() < n {
+        return None;
+    }
+    chunks.truncate(n);
+    Some(chunks.iter().map(|c| parse_unified(c)).collect())
 }
 
 #[cfg(test)]

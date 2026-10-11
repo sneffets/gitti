@@ -84,7 +84,19 @@ impl Repo {
             &["cat-file", "--batch"]
         };
         let res = self.git().run_raw(args, Some(batch.as_bytes()))?;
-        for (&i, bytes) in batch_idx.iter().zip(parse_batch(&res.stdout, end as u8)) {
+        let parsed = parse_batch(&res.stdout, end as u8);
+        // git answers every request (a missing object too): fewer answers, or a git that
+        // failed, is output that ended early — an error, not files that don't exist.
+        if res.code != 0 || parsed.len() < batch_idx.len() {
+            anyhow::bail!(
+                "git cat-file answered {} of {} requests (exit code {}){}",
+                parsed.len(),
+                batch_idx.len(),
+                res.code,
+                Some(res.stderr.trim()).filter(|e| !e.is_empty()).map(|e| format!(": {e}")).unwrap_or_default()
+            );
+        }
+        for (&i, bytes) in batch_idx.iter().zip(parsed) {
             out[i] = bytes;
         }
         Ok(out)

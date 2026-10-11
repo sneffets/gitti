@@ -30,6 +30,7 @@ pub mod editor;
 pub mod eol_note;
 pub mod error_mark;
 pub mod ext_tool;
+pub mod fault;
 pub mod fd_limit;
 pub mod folder_tree;
 pub mod fs_paths;

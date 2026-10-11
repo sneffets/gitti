@@ -262,6 +262,11 @@ impl Repo {
             &hex,
         ]);
         let out = self.git().run_utf8(&args)?;
+        // git prints all six fields for a commit it found; fewer is output that ended
+        // early — not a verdict ("verifier not available" for a signature that is fine).
+        if out.stdout.iter().filter(|&&b| b == 0).count() < 5 {
+            anyhow::bail!("git log reported no signature check for commit {hex}");
+        }
         // Decoded per field: %GS etc. come from gpg's status output (UTF-8), %GG is gpg's
         // human-readable output in the system code page on Windows.
         let mut parts = out.stdout.splitn(6, |&b| b == 0);
