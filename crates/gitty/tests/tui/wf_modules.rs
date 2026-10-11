@@ -7,7 +7,7 @@
 use crate::common::*;
 use crate::support::*;
 
-use gitti_workflow::wt;
+use gitti_workflow::{sm, wt};
 
 /// A screen's text without line breaks and frame (dialog text is word-wrapped).
 fn flat(screen: &str) -> String {
@@ -51,4 +51,82 @@ fn wt07_track_a_remote_branch_in_a_new_worktree() {
     assert!(ask.contains("work-topic"), "the folder named after the branch: {}", sc[0]);
     assert!(!states(&out)[0].contains("ERROR"), "{out}");
     wf::expect_added(&d, &s).unwrap();
+}
+
+/// SM-05: the submodule (the sidebar's last row), m, d: the confirmation names the local
+/// work that is lost and says the removal is staged; y removes it.
+/// Workflow: SM-05
+#[gitti_test::test]
+fn sm05_remove_a_submodule_with_local_work() {
+    use sm::remove_submodule as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("work");
+    wf::fixture(&d);
+    let out = gitty(&d, "press:backtab;press:G;press:m;items;press:d;dump;state");
+    let ask = flat(screens(&out)[0]);
+    assert!(items(&out).contains(&"Remove Submodule…"), "{out}");
+    assert!(ask.contains("This local work is lost: • libs/lib: untracked files"), "{ask}");
+    assert!(ask.contains("staged") && ask.contains("Remove Anyway"), "{ask}");
+    wf::expect_untouched(&d).unwrap();
+    let out = gitty(&d, "press:backtab;press:G;press:m;press:d;key:y;state;dump");
+    let st = states(&out);
+    assert!(st[0].contains("staged=2") && !st[0].contains("ERROR"), "{out}");
+    assert!(!screens(&out)[0].contains("SUBMODULES"), "{out}");
+    wf::expect_removed(&d).unwrap();
+}
+
+/// SM-06: the submodule's menu, k: a picker of its commits; `lib one` typed, ⏎ checks it
+/// out (after the confirmation naming what is at risk, if anything): the pointer change
+/// shows in the superproject.
+/// Workflow: SM-06
+#[gitti_test::test]
+fn sm06_check_out_a_commit_in_a_submodule() {
+    use sm::checkout_commit_in_submodule as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("work");
+    let s = wf::fixture(&d);
+    let out = gitty(&d, &format!("press:backtab;press:G;press:m;key:k;items;{}key:enter;dump;state", presses(sm::LIB_ONE)));
+    assert!(items(&out).iter().any(|i| i.ends_with(sm::LIB_TWO)), "{out}");
+    let st = states(&out);
+    assert!(!st[0].contains("ERROR") && st[0].contains("unstaged=1"), "{out}");
+    wf::expect_checked_out(&d, &s).unwrap();
+}
+
+/// SM-07, inside the submodule: its menu's Open asks, y restarts gitty there (a scripted
+/// run ends with the `(reopen …)` line); in it S stages the change, c, the message, alt-⏎ commits.
+/// Workflow: SM-07
+#[gitti_test::test]
+fn sm07_commit_inside_a_submodule() {
+    use sm::commit_in_submodule as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("work");
+    let s = wf::fixture(&d);
+    let out = gitty(&d, "press:backtab;press:G;press:m;key:o;state;key:y");
+    assert!(states(&out)[0].contains("modal=Confirm \"Open the submodule?\""), "asks first: {out}");
+    let reopen = format!("(reopen {})", gitti_core::paths::canonical(&sm::sub(&d)).display());
+    assert!(out.lines().any(|l| l == reopen), "{out}");
+    let out = gitty(&sm::sub(&d), &format!("key:S;state;press:c;{}key:alt-enter;state", presses(wf::LIB_THREE)));
+    let st = states(&out);
+    assert!(st[0].contains("unstaged=0 staged=1"), "{out}");
+    assert!(st[1].contains("unstaged=0 staged=0 repo_state=clean") && !st[1].contains("ERROR"), "{out}");
+    wf::expect_committed(&d, &s).unwrap();
+}
+
+/// SM-07, in the superproject (from the state after the commit inside the submodule):
+/// the pointer change shows the new commit; S stages it, c, the message, alt-⏎ records
+/// it.
+/// Workflow: SM-07
+#[gitti_test::test]
+fn sm07_record_the_submodule_commit_in_the_superproject() {
+    use sm::commit_in_submodule as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("work");
+    let s = wf::fixture_committed(&d);
+    let out = gitty(&d, &format!("press:enter;dump;key:S;state;press:c;{}key:alt-enter;state", presses(wf::UPDATE_LIB)));
+    let screen = screens(&out)[0];
+    assert!(screen.contains("Submodule libs/lib") && screen.contains(wf::LIB_THREE), "{out}");
+    let st = states(&out);
+    assert!(st[0].contains("unstaged=0 staged=1"), "{out}");
+    assert!(st[1].contains("unstaged=0 staged=0 repo_state=clean") && !st[1].contains("ERROR"), "{out}");
+    wf::expect_recorded(&d, &s).unwrap();
 }

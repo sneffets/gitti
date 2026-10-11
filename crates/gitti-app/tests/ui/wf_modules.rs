@@ -11,11 +11,11 @@ use crate::common;
 
 use std::any::Any;
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use common::*;
 use gitti_app::testing_menus as menus;
-use gitti_workflow::wt;
+use gitti_workflow::{sm, wt};
 
 macro_rules! fail {
     ($ui:expr, $($arg:tt)*) => {{
@@ -41,14 +41,20 @@ fn setup<T: 'static>() -> T {
 pub fn main() {
     let tmp = common::setup();
     let base = gitti_core::paths::canonical(tmp.path());
-    let tests: &[(&str, Scenario)] = &[(
-        "wt07_track_a_remote_branch_in_a_new_worktree",
-        wt07_track_a_remote_branch_in_a_new_worktree,
-    )];
+    let tests: &[(&str, Scenario)] = &[
+        ("wt07_track_a_remote_branch_in_a_new_worktree", wt07_track_a_remote_branch_in_a_new_worktree),
+        ("sm08_plain_clone_leaves_the_submodule_uninitialised", sm08_plain_clone_leaves_the_submodule_uninitialised),
+        ("sm08_recursive_clone_asks_then_checks_it_out", sm08_recursive_clone_asks_then_checks_it_out),
+    ];
     common::run(tests, |name| {
         let dir: PathBuf = base.join(name);
         match &name[..4] {
             "wt07" => keep(wt::track_remote_branch::fixture(&dir)),
+            // The window opens on an empty folder; the clone goes next to it.
+            "sm08" => {
+                std::fs::create_dir_all(&dir).unwrap();
+                keep((sm::clone_with_submodules::fixture(&dir), dir.clone()));
+            }
             other => panic!("no fixture for {other}"),
         }
         dir
@@ -101,4 +107,69 @@ fn wt07_track_a_remote_branch_in_a_new_worktree(ui: &mut Ui) {
         fail!(ui, "the new tab's branch: {:?}", ui.ui_state().branch);
     }
     expect(ui, wf::expect_added(&dir, &s));
+}
+
+/// Clone Repository… of the SM-08 superproject into `<work>-clone` next to the folder the
+/// window shows (`work`), `recurse` = the "Also clone the submodules" checkbox (on by default).
+/// The clone's folder.
+fn clone_super(ui: &mut Ui, work: &Path, recurse: bool) -> PathBuf {
+    let url = gitti_workflow::rm::url_of(&sm::clone_with_submodules::super_remote(work));
+    let name = format!("{}-clone", work.file_name().unwrap().to_string_lossy());
+    ui.quick("action:gitti::CloneRepository");
+    ui.quick(&format!("field:0={url}"));
+    ui.quick(&format!("field:1={}", work.parent().unwrap().display()));
+    ui.quick(&format!("field:2={name}"));
+    if !recurse {
+        ui.quick("checkbox:0");
+    }
+    ui.step("modalok");
+    work.with_file_name(name)
+}
+
+/// SM-08, a plain clone (the submodules checkbox off): opened in a new tab, the submodule
+/// listed as not initialised, nothing to commit.
+/// Workflow: SM-08
+fn sm08_plain_clone_leaves_the_submodule_uninitialised(ui: &mut Ui) {
+    let (s, work): (sm::Super, PathBuf) = setup();
+    let clone = clone_super(ui, &work, false);
+    no_error(ui, "Clone");
+    if ui.tabs() != (2, 1) || ui.workdir() != clone {
+        fail!(ui, "the clone isn't open in a new tab: tabs {:?}, {}", ui.tabs(), ui.workdir().display());
+    }
+    if ui.modal().is_some() {
+        fail!(ui, "a dialog after a plain clone: {:?}", ui.modal());
+    }
+    let ws = ui.ws.clone();
+    let subs = ui.cx.update(|cx| testing::submodules(&ws, cx));
+    if subs.len() != 1 || !subs[0].starts_with(sm::PATH) || !subs[0].contains("not initialised") {
+        fail!(ui, "the submodule after a plain clone: {subs:?}");
+    }
+    if !ui.working().is_empty() {
+        fail!(ui, "changes after a plain clone: {:?}", ui.working());
+    }
+    expect(ui, sm::clone_with_submodules::expect_plain(&clone, &s));
+}
+
+/// SM-08, a recursive clone: git refuses the submodule's local path; the clone opens
+/// with the question whether to allow it for this one update; allowed, the submodule is
+/// checked out at the recorded commit.
+/// Workflow: SM-08
+fn sm08_recursive_clone_asks_then_checks_it_out(ui: &mut Ui) {
+    let (s, work): (sm::Super, PathBuf) = setup();
+    let clone = clone_super(ui, &work, true);
+    if ui.tabs() != (2, 1) || ui.workdir() != clone {
+        fail!(ui, "the clone isn't open in a new tab: tabs {:?}, {}", ui.tabs(), ui.workdir().display());
+    }
+    match ui.modal() {
+        Some((t, _)) if t == "Clone Submodules From Local Paths?" => {}
+        other => return fail!(ui, "no question about the local submodule: {other:?} {:?}", ui.status()),
+    }
+    ui.step("modalok");
+    no_error(ui, "Update Submodules");
+    let ws = ui.ws.clone();
+    let subs = ui.cx.update(|cx| testing::submodules(&ws, cx));
+    if subs.len() != 1 || !subs[0].starts_with(sm::PATH) || subs[0].contains("not initialised") {
+        fail!(ui, "the submodule after the update: {subs:?}");
+    }
+    expect(ui, sm::clone_with_submodules::expect_recursive(&clone, &s));
 }

@@ -387,10 +387,10 @@ working tree or the index while the app shows an older state.
 | SM-02 | Pointer change staged as one unit | new commits in the submodule; stage | the pointer, shown as commit summaries | `submodules::pointer_change_is_a_commit_summary_staged_as_one_unit` | `submodules::pointer_diff_rows` | `submodules::submodule_pointer_change_shows_commits_and_stages_as_one_unit` |
 | SM-03 | Pull moves the pointer → Update | pull; Update Submodules | checked out at the recorded commit | `submodules::pull_that_moves_the_pointer_makes_it_out_of_date`, `submodules::update_and_sync_nested_paths`, `submodules::update_to_the_remote_branch` | `submodules::sidebar_banner_update` | `submodules::submodule_out_of_date_badge_and_update_from_the_palette` |
 | SM-04 | Add a submodule | Add Submodule… (URL, local path) | staged with `.gitmodules`; file transport asked | `submodules::add_submodule_stages_it_with_its_default_path_and_branch`, `submodules::add_submodule_from_a_local_path_asks_for_the_file_transport` | `submodules::add_local_path_asks` | `submodules::add_a_submodule_from_the_palette`, `submodules::add_a_submodule_from_a_local_path_asks_first` |
-| SM-05 | Remove a submodule | Remove… with local work | warned; cleaned up | `submodules::remove_submodule_warns_about_local_work_and_cleans_up`, `submodules::remove_nested_and_uninitialised_submodules` | `submodules::stage2_nested_remote_remove` | — |
-| SM-06 | Check out a commit in a submodule | Check Out Commit in Submodule… | detached there; pointer change in the parent | `submodules::check_out_a_commit_in_the_submodule_records_it`, `submodules::submodule_checkout_risks_nested_and_uninitialised` | `submodules::checkout_commit` | — |
-| SM-07 | Commit inside a submodule | commit in its own repository | the parent sees the new pointer | — | `submodules::own_commit_is_seen` | — |
-| SM-08 | Clone: uninitialised vs recursive | plain / recursive clone | states right | `submodules::uninitialised_after_plain_clone_and_recursive_clone` | — | `submodules::uninitialised_submodule_copies_the_recorded_sha` |
+| SM-05 | Remove a submodule | Remove… with local work | warned; cleaned up | `submodules::remove_submodule_warns_about_local_work_and_cleans_up`, `submodules::remove_nested_and_uninitialised_submodules`, `wf_modules::sm05_remove_a_submodule_with_local_work` | `submodules::stage2_nested_remote_remove` | `wf_modules::sm05_remove_a_submodule_with_local_work` |
+| SM-06 | Check out a commit in a submodule | Check Out Commit in Submodule… | detached there; pointer change in the parent | `submodules::check_out_a_commit_in_the_submodule_records_it`, `submodules::submodule_checkout_risks_nested_and_uninitialised`, `wf_modules::sm06_check_out_a_commit_in_a_submodule` | `submodules::checkout_commit` | `wf_modules::sm06_check_out_a_commit_in_a_submodule` |
+| SM-07 | Commit inside a submodule | commit in its own repository | the parent sees the new pointer | `wf_modules::sm07_commit_inside_a_submodule` | `submodules::own_commit_is_seen` | `wf_modules::sm07_commit_inside_a_submodule`, `wf_modules::sm07_record_the_submodule_commit_in_the_superproject` |
+| SM-08 | Clone: uninitialised vs recursive | plain / recursive clone | states right | `submodules::uninitialised_after_plain_clone_and_recursive_clone` | `wf_modules::sm08_plain_clone_leaves_the_submodule_uninitialised`, `wf_modules::sm08_recursive_clone_asks_then_checks_it_out` | `submodules::uninitialised_submodule_copies_the_recorded_sha` |
 
 ## LF — Git LFS
 
@@ -510,7 +510,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | TG tags | 6 | 4 | 2 | 4 |
 | RM remotes | 18 | 17 | 16 | 18 |
 | WT worktrees | 8 | 7 | 7 | 7 |
-| SM submodules | 8 | 7 | 7 | 5 |
+| SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 4 | 5 |
 | DC discard | 9 | 6 | 3 | 4 |
 | RL recovery | 4 | 1 | 1 | 1 |
@@ -520,7 +520,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **259** | **163** | **92** | **109** |
+| **Total** | **259** | **164** | **93** | **112** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
