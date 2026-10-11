@@ -117,23 +117,23 @@ it.
 |---|---|---|---|---|---|---|
 | ST-01 | Stage one of two hunks | a file changed in two places; stage hunk 1 | index has hunk 1 only; working tree unchanged; hunk 2 still unstaged | `staging::stage_one_of_two_hunks` | `speed::stage_hunk_is_quick` | `staging::stage_a_hunk_and_unstage_a_file_with_path_limited_git` |
 | ST-02 | Stage single lines | select one `+` and one `-` line of a hunk; stage | unselected `+` dropped, unselected `-` kept as context; exact index content | `staging::stage_single_lines_and_unstage_again`, `patch::stage_only_added_line` (unit) | `speed::stage_lines_is_quick` | `staging::stage_a_single_line_and_discard_lines_after_asking` |
-| ST-03 | Unstage lines while another hunk stays staged | hunk 1 staged, part of hunk 2 staged; unstage lines of hunk 2 | hunk 1 stays staged, only the selected lines leave the index | `staging::unstage_lines_in_second_hunk_with_first_hunk_staged` | ~`speed::staging_keys` | — |
-| ST-04 | Partial stage of a new file | untracked file; stage some lines | index has a new file with only those lines; rest untracked-side | `staging::partial_stage_of_untracked_file` | — | — |
-| ST-05 | Partial unstage of an added file | new file staged; unstage some lines | added file stays in the index without those lines | `staging::partial_unstage_of_added_file` | — | — |
-| ST-06 | Partial stage of a deletion | tracked file deleted; stage some removed lines | index keeps the file minus those lines (not deleted) | `staging::partial_stage_of_deleted_file` | — | — |
+| ST-03 | Unstage lines while another hunk stays staged | hunk 1 staged, part of hunk 2 staged; unstage lines of hunk 2 | hunk 1 stays staged, only the selected lines leave the index | `wf_staging::st03_unstage_lines_beside_a_staged_hunk`, `staging::unstage_lines_in_second_hunk_with_first_hunk_staged` | `wf_staging::st03_unstage_lines_beside_a_staged_hunk`, ~`speed::staging_keys` | `wf_staging::st03_unstage_lines_beside_a_staged_hunk` |
+| ST-04 | Partial stage of a new file | untracked file; stage some lines | index has a new file with only those lines; rest untracked-side | `wf_staging::st04_partial_stage_of_a_new_file`, `staging::partial_stage_of_untracked_file` | `wf_staging::st04_partial_stage_of_a_new_file` | `wf_staging::st04_partial_stage_of_a_new_file` |
+| ST-05 | Partial unstage of an added file | new file staged; unstage some lines | added file stays in the index without those lines | `wf_staging::st05_partial_unstage_of_an_added_file`, `staging::partial_unstage_of_added_file` | `wf_staging::st05_partial_unstage_of_an_added_file` | `wf_staging::st05_partial_unstage_of_an_added_file` |
+| ST-06 | Partial stage of a deletion | tracked file deleted; stage some removed lines | index keeps the file minus those lines (not deleted) | `wf_staging::st06_partial_stage_of_a_deletion`, `staging::partial_stage_of_deleted_file` | `wf_staging::st06_partial_stage_of_a_deletion` | `wf_staging::st06_partial_stage_of_a_deletion` |
 | ST-07 | Stage / unstage whole files | modified, untracked, deleted, a name with glob characters | each moves as a whole, literal paths only | `staging::working_state_after_whole_files_match_a_full_read`, `unix_fs::whole_file_operations_take_paths_literally` | `speed::stage_and_unstage_files_are_quick` | ~`staging::stage_a_hunk_and_unstage_a_file_with_path_limited_git` |
-| ST-08 | Stage All / Unstage All | keys and section headers | everything moves; confirmations where they apply | ~`staging::discard_all_keeps_staged_changes` | `speed::staging_keys` | `staging::stage_all_unstage_all_discard_all_with_confirmations`, `staging::section_headers_stage_unstage_and_discard_all` |
-| ST-09 | Stage a group | unstaged section grouped (tracked / untracked); stage one group | one `git add` of the group's paths, the other group stays | — | `speed::unstaged_groups_fold_and_stage_cheaply` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
-| ST-10 | Stage with ignore-whitespace | `-w` view on; stage a hunk with whitespace-only neighbours | only the visible change staged (selection mapped onto the exact diff) | `staging::stage_hunk_while_ignoring_whitespace`, `non_utf8::ignore_whitespace_maps_lines_that_are_not_utf8` | — | — |
-| ST-11 | Stage with expanded context | reveal hidden lines / whole file; select and stage | patch still exact | `staging::stage_and_unstage_lines_with_expanded_context` | — | ~`scroll::expanders_whole_file_and_changes_only_without_git` |
-| ST-12 | Stage with minimal context | context lines set to 0 | hunks still apply | `staging::staging_works_with_minimal_context` | ~`keys::view_keys` | ~`menus::view_toggles_context_lines_and_history_order` |
+| ST-08 | Stage All / Unstage All | keys and section headers | everything moves; confirmations where they apply | `wf_staging::st08_stage_all_then_unstage_all`, ~`staging::discard_all_keeps_staged_changes` | `speed::staging_keys` | `staging::stage_all_unstage_all_discard_all_with_confirmations`, `staging::section_headers_stage_unstage_and_discard_all` |
+| ST-09 | Stage a group | unstaged section grouped (tracked / untracked); stage one group | one `git add` of the group's paths, the other group stays | `wf_staging::st09_stage_a_group` | `speed::unstaged_groups_fold_and_stage_cheaply` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
+| ST-10 | Stage with ignore-whitespace | `-w` view on; stage a hunk with whitespace-only neighbours | only the visible change staged (selection mapped onto the exact diff) | `wf_staging::st10_stage_ignoring_whitespace`, `staging::stage_hunk_while_ignoring_whitespace`, `non_utf8::ignore_whitespace_maps_lines_that_are_not_utf8` | `wf_staging::st10_stage_ignoring_whitespace` | `wf_staging::st10_stage_ignoring_whitespace` |
+| ST-11 | Stage with expanded context | reveal hidden lines / whole file; select and stage | patch still exact | `staging::stage_and_unstage_lines_with_expanded_context` | `wf_staging::st11_stage_with_expanded_context` | ~`scroll::expanders_whole_file_and_changes_only_without_git` |
+| ST-12 | Stage with minimal context | context lines set to 0 | hunks still apply | `wf_staging::st12_stage_with_minimal_context`, `staging::staging_works_with_minimal_context` | `wf_staging::st12_stage_with_minimal_context`, ~`keys::view_keys` | `wf_staging::st12_stage_with_minimal_context`, ~`menus::view_toggles_context_lines_and_history_order` |
 | ST-13 | **Split a change into two commits** | two files changed; stage a hunk of `a` and a line of `b`; commit "first"; stage the rest; commit "second" | two commits holding exactly those changes; tree clean | `wf_pilot::st13_split_a_change_into_two_commits`, ~`staging::commit_via_cli` | `wf_pilot::st13_split_a_change_into_two_commits` | `wf_pilot::st13_split_a_change_into_two_commits`, `wf_pilot::st13_split_a_change_second_commit` |
 | ST-14 | Stage inside a file tab | file tab of the working directory active; stage hunk / lines / file | tab stays and its mark follows; empty tab falls back | n/a | `speed::staging_in_a_file_tab_updates_the_tabs` | n/a |
 | ST-15 | Keys during a running stage | press stage-all while a stage runs | runs after it, not refused | n/a | `speed::key_during_an_operation_waits_for_it` | `staging::keys_pressed_during_a_stage_run_after_it` |
 | ST-16 | Refresh racing a stage | a full refresh starts before a stage ends | never shows the older state, not even one frame | n/a | `speed::refresh_racing_a_stage_shows_no_old_state` | — |
 | ST-17 | View kept across staging | scrolled into a file; stage a hunk / the whole file | rows above stay; whole file → next file on top | n/a | `scroll::diff_stays_on_refresh_and_stage`, `scroll::diff_stage_whole_file_shows_the_next` | `scroll::scroll_position_is_kept_across_staging_and_refresh`, `scroll::staging_a_whole_file_moves_to_the_next_file` |
 | ST-18 | Path-limited re-read equals a full read | after hunk / line / file operations | the cheap re-read gives what a full read gives | `staging::working_state_after_hunks_and_lines_match_a_full_read`, `staging::working_state_after_takes_directories` | ~`speed::staging_keys` | `speed::staging_runs_path_limited_git_and_its_own_writes_refresh_nothing` |
-| ST-19 | Staging under a hostile global config | noprefix, mnemonicprefix, colour, textconv, external diff, … | stage / unstage / discard unaffected | `hostile_config::stage_hunk_lines_unstage_and_discard`, `hostile_config::untracked_deleted_and_trailing_whitespace` | — | — |
+| ST-19 | Staging under a hostile global config | noprefix, mnemonicprefix, colour, textconv, external diff, … | stage / unstage / discard unaffected | `wf_staging::st19_staging_under_a_hostile_global_config`, `hostile_config::stage_hunk_lines_unstage_and_discard`, `hostile_config::untracked_deleted_and_trailing_whitespace` | `wf_staging::st19_staging_under_a_hostile_global_config` | — |
 | ST-20 | Random line selections | random files and selections (fixed seeds) | byte-exact against a model | `non_utf8::random_byte_lines_stage_exactly` | n/a | n/a |
 | ST-21 | Stage a line in a Unicode / wrapped line | wrapped CJK / RTL line; select one row; stage | the whole line staged exactly | — | `render_linux::unicode_staging` | `unicode::staging_copying_and_committing_unicode` |
 
@@ -414,13 +414,13 @@ working tree or the index while the app shows an older state.
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
 | DC-01 | Discard one line | select a line; discard (asks) | only that line goes back | `staging::discard_single_line` | `speed::staging_keys` | `staging::stage_a_single_line_and_discard_lines_after_asking` |
-| DC-02 | Discard a hunk | discard the hunk (asks) | the hunk restored, others stay | ~`hostile_config::stage_hunk_lines_unstage_and_discard` | — | — |
+| DC-02 | Discard a hunk | discard the hunk (asks) | the hunk restored, others stay | `wf_staging::dc02_discard_a_hunk`, ~`hostile_config::stage_hunk_lines_unstage_and_discard` | `wf_staging::dc02_discard_a_hunk` | `wf_staging::dc02_discard_a_hunk` |
 | DC-03 | Discard All keeps staged work | staged + unstaged; Discard All | unstaged gone (untracked too), staged stays | `staging::discard_all_keeps_staged_changes` | `speed::staging_keys` | `staging::stage_all_unstage_all_discard_all_with_confirmations` |
 | DC-04 | Discard thousands of untracked files | `target/` with 1 000 files | one go; ignored file stays | `discard::discard_all_deletes_thousands_of_untracked_files_in_one_go` | — | — |
 | DC-05 | Discard with a nested repository | untracked folder that is a repository | kept and named unless asked | `discard::nested_repository_is_kept_and_named_unless_asked`, `discard::untracked_folder_entry_keeps_a_repository_inside` | `menus::discard_all_nested_repository` | `staging::discard_all_keeps_a_nested_repository_unless_asked` |
 | DC-06 | A file can't be deleted | read-only folder | the others go; error names the file | `discard::a_file_that_cannot_be_deleted_does_not_stop_the_others`, `unix_fs::read_only_directory` | — | — |
-| DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | — | — | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
-| DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | ~`staging::working_state_after_whole_files_match_a_full_read` | — | — |
+| DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | `wf_staging::dc07_discard_a_group` | `wf_staging::dc07_discard_a_group` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
+| DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file`, ~`staging::working_state_after_whole_files_match_a_full_read` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` |
 | DC-09 | Discard lines of a read-only file | 0444 file | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | — | — |
 
 ## RL — Undo and recovery
@@ -468,7 +468,7 @@ working tree or the index while the app shows an older state.
 | BG-01 | A commit with a huge diff | merge of 1 700 files | shows after one load | — | `speed::huge_commit_shows_after_one_load` | — |
 | BG-02 | Very long lines | 200 KB lines | diff and stage byte-exact | `unix_fs::very_long_lines` | — | — |
 | BG-03 | Long history | 5 000+ commits | compact rows, partial history first | `repo_shapes::very_long_linear_history`, `repo_shapes::history_rows_are_compact`, `repo_shapes::partial_history_is_the_newest_slice_of_the_full_one` | — | — |
-| BG-04 | Stage a group of > 200 paths | 250 untracked files; stage the group | all staged (chunked `git add`) | — | — | — |
+| BG-04 | Stage a group of > 200 paths | 250 untracked files; stage the group | all staged (chunked `git add`) | `wf_staging::bg04_stage_a_group_of_250_paths` | `wf_staging::bg04_stage_a_group_of_250_paths` | `wf_staging::bg04_stage_a_group_of_250_paths` |
 | BG-05 | Watcher with thousands of folders | — | no loop, ignored trees unwatched | `linux_env::watcher_handles_thousands_of_directories`, `linux_env::watcher_leaves_ignored_trees_unwatched` | n/a | n/a |
 
 ## NU — Non-UTF-8 names and content
@@ -503,7 +503,7 @@ layer (partial `~` and `n/a` don't count as covered).
 
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
-| ST staging | 21 | 14 | 11 | 9 |
+| ST staging | 21 | 16 | 19 | 15 |
 | EX external changes | 24 | 14 | 3 | 5 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 13 | 6 | 7 |
@@ -518,15 +518,15 @@ layer (partial `~` and `n/a` don't count as covered).
 | WT worktrees | 8 | 7 | 7 | 7 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
-| DC discard | 9 | 6 | 3 | 4 |
+| DC discard | 9 | 9 | 6 | 6 |
 | RL recovery | 4 | 2 | 2 | 2 |
 | IG ignore | 6 | 5 | 5 | 5 |
 | RN renames | 5 | 2 | 1 | 1 |
 | BN binary | 3 | 3 | 1 | 1 |
-| BG big / many | 5 | 3 | 1 | 0 |
+| BG big / many | 5 | 4 | 2 | 1 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **265** | **205** | **142** | **147** |
+| **Total** | **265** | **211** | **154** | **156** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

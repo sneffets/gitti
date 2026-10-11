@@ -51,6 +51,7 @@ mod wf_modules;
 mod wf_pilot;
 mod wf_remotes;
 mod wf_reset;
+mod wf_staging;
 mod wf_tags;
 mod worktrees;
 

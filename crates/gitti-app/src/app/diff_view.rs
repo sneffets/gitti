@@ -1893,6 +1893,7 @@ impl GittiApp {
                 el = el
                     .child(
                         Button::new(("discard-file", ix))
+                            .probe(format!("file-discard:{ix}"))
                             .label("Discard")
                             .xsmall()
                             .ghost()
@@ -2099,6 +2100,7 @@ impl GittiApp {
                 el = el
                     .child(
                         Button::new(("discard-hunk", ix))
+                            .probe(format!("hunk-discard:{ix}"))
                             .label(if n_sel > 0 {
                                 format!("Discard {n_sel} Line{plural}")
                             } else {
