@@ -31,6 +31,7 @@ mod submodules;
 mod subtrees;
 mod toolbar;
 mod tooltips;
+mod wf_modules;
 mod wf_pilot;
 mod wf_remotes;
 mod worktrees;
@@ -62,6 +63,7 @@ const SUITES: &[(&str, fn())] = &[
     ("branches", branches::main),
     ("wf_pilot", wf_pilot::main),
     ("wf_remotes", wf_remotes::main),
+    ("wf_modules", wf_modules::main),
 ];
 
 fn main() {

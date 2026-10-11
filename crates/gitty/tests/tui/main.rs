@@ -35,5 +35,6 @@ mod submodules;
 mod subtrees;
 mod unicode;
 mod views;
+mod wf_modules;
 mod wf_pilot;
 mod wf_remotes;

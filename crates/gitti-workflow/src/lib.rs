@@ -30,6 +30,7 @@ pub mod fixture;
 pub mod git;
 pub mod rm;
 pub mod st;
+pub mod wt;
 
 pub use expect::{Checks, Expect, OpState};
 pub use fixture::{Fixture, Ids, Mark, del, exec, link, put, put_bytes};

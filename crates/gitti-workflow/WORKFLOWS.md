@@ -372,11 +372,11 @@ working tree or the index while the app shows an older state.
 |---|---|---|---|---|---|---|
 | WT-01 | Add, list, lock, remove, prune | Add Worktree… (new / existing / detached) | as git lists; opened in a tab | `worktrees::add_list_lock_remove_prune` | `worktrees::add_open_remove`, `worktrees::live_plan` | `repo_cmds::add_worktree_says_what_happens` |
 | WT-02 | Remove a dirty worktree / with its branch | Remove… also delete branch | Force Remove asked; unmerged branch kept until Force Delete | `worktrees::remove_with_branch` | `worktrees::detached_and_dirty_remove`, `worktrees::remove_with_branch` | `repo_cmds::remove_a_worktree_with_its_branch` |
-| WT-03 | Stage and commit in a linked worktree | tab on the linked worktree | works; refs shared with main | `worktrees::repo_opened_in_a_linked_worktree` | `worktrees::linked_tab_works` | — |
+| WT-03 | Stage and commit in a linked worktree | tab on the linked worktree | works; refs shared with main | `worktrees::repo_opened_in_a_linked_worktree`, `wf_modules::wt03_stage_and_commit_in_a_linked_worktree` | `worktrees::linked_tab_works` | `wf_modules::wt03_stage_and_commit_in_a_linked_worktree` |
 | WT-04 | Sparse worktree | Add with folders | only those folders; clean status | `worktrees::sparse_worktree` | `worktrees::log_marks_and_sparse`, `worktrees::folder_picker` | `repo_cmds::add_a_sparse_worktree` |
 | WT-05 | Move / repair / remove own | move; repair after a manual move; remove from its own tab | tab follows / main tab takes over | `worktrees::move_worktree`, `worktrees::repair_worktrees_moved_by_hand` | `worktrees::move_and_repair`, `worktrees::remove_from_own_tab` | `repo_cmds::remove_or_move_the_worktree_gitty_runs_in` |
 | WT-06 | Worktree marks | dirty / unpushed worktrees | marks per entry | `tab_marks::other_worktrees_get_their_own_marks` | `worktrees::sidebar_marks` | `views::worktree_entries_carry_the_marks` |
-| WT-07 | Track a remote branch in a new worktree | type `origin/feat` | local branch tracking it | `worktrees::plan_add_tracks_a_remote_branch` | — | — |
+| WT-07 | Track a remote branch in a new worktree | type `origin/feat` | local branch tracking it | `worktrees::plan_add_tracks_a_remote_branch`, `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` | `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` | `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` |
 | WT-08 | Stash made in one worktree, popped in another | stash in A; pop in B | the shared stash list; applied in B | — | — | — |
 
 ## SM — Submodules
@@ -509,7 +509,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | RS reset / restore | 9 | 7 | 2 | 3 |
 | TG tags | 6 | 4 | 2 | 4 |
 | RM remotes | 18 | 17 | 16 | 18 |
-| WT worktrees | 8 | 7 | 6 | 5 |
+| WT worktrees | 8 | 7 | 7 | 7 |
 | SM submodules | 8 | 7 | 7 | 5 |
 | LF LFS | 6 | 6 | 4 | 5 |
 | DC discard | 9 | 6 | 3 | 4 |
@@ -520,7 +520,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **259** | **163** | **91** | **107** |
+| **Total** | **259** | **163** | **92** | **109** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

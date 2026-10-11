@@ -43,6 +43,7 @@ mod switching;
 mod tab_marks;
 mod unix_fs;
 mod wf_catalog;
+mod wf_modules;
 mod wf_pilot;
 mod wf_remotes;
 mod worktrees;
