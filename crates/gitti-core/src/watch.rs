@@ -906,10 +906,14 @@ fn slash_path(rel: &Path) -> Option<String> {
     Some(parts?.join("/"))
 }
 
+/// `p` changed at or after `since` — by [`changed_stamp`] (an old modification time
+/// written after `since` still counts) and with [`changed_before`]'s slack for whole-second
+/// stamps.
 fn changed_since(p: &Path, since: SystemTime) -> bool {
     std::fs::symlink_metadata(p)
-        .and_then(|m| m.modified())
-        .is_ok_and(|m| m >= since)
+        .ok()
+        .and_then(|m| changed_stamp(&m))
+        .is_some_and(|m| !changed_before(m, since))
 }
 
 /// The components of `rel`.
@@ -1210,7 +1214,8 @@ mod tests {
 
     /// A file written after the read started but with an old modification time (`cp -p`,
     /// `rsync -t`, `unzip`) is not taken as read; whole-second stamps (a coarse file
-    /// system) count as before a read only when they are 2 s older.
+    /// system) count as before a read only when they are 2 s older. The per-folder watch's
+    /// catch-up after setting up (Linux) goes by the same stamp.
     #[gitti_test::test]
     fn an_old_modification_time_is_not_taken_as_read() {
         let dir = tempfile::tempdir().unwrap();
@@ -1218,12 +1223,16 @@ mod tests {
         let mut f = WatchFilter::default();
         f.read_started(false);
         std::thread::sleep(Duration::from_millis(20));
+        let since = SystemTime::now();
         let file = std::fs::File::create(d.join("old.txt")).unwrap();
         let old = SystemTime::now() - Duration::from_secs(3600);
         file.set_modified(old).unwrap();
         drop(file);
         let at = Instant::now();
         assert_eq!(f.needs(&change(d, &[("old.txt", wt("old.txt"))], at), || None), paths(&["old.txt"]));
+        // The per-folder watch's catch-up (Linux) finds it too.
+        assert!(changed_since(&d.join("old.txt"), since));
+        assert!(!changed_since(&d.join("old.txt"), SystemTime::now() + Duration::from_secs(5)));
         f.paths_read(&["p.txt".into()], SystemTime::now() - Duration::from_secs(1));
         let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
         assert!(changed_before(t0 + Duration::from_millis(400), t0 + Duration::from_millis(500)));
