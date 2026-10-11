@@ -2648,10 +2648,28 @@ impl App {
         if self.defer_while_busy(|app| app.stage_all()) {
             return;
         }
+        // Conflicted files with markers left: ask first, as Mark Resolved does.
+        let conflicted: Vec<&str> = self.working.conflicted.iter().map(|f| f.path()).collect();
+        let markers = if conflicted.is_empty() {
+            Vec::new()
+        } else {
+            self.repo.with_conflict_markers(&conflicted)
+        };
+        if !markers.is_empty() {
+            let (title, detail, ok) = gitti_core::stage_all::markers_prompt(&markers);
+            self.modal = Some(Modal::confirm(title, detail, ok, |app: &mut App| app.stage_all_now()));
+            return;
+        }
+        self.stage_all_now();
+    }
+
+    /// Stage All, asked already: what the list shows (`gitti_core::stage_all`).
+    fn stage_all_now(&mut self) {
+        let untracked = self.working.status.untracked_files;
         // Paths this file system can't hold: asks first (`app/fs_paths.rs`).
         let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
-        self.guard_fs_stage(paths, |app, only| match only {
-            None => app.git_op("Stage all", None, |r| r.stage_all()),
+        self.guard_fs_stage(paths, move |app, only| match only {
+            None => app.work_op_noted("Stage all", None, move |r| r.stage_all_shown(untracked)),
             Some(list) => {
                 let paths = list.clone();
                 app.git_op("Stage all", Some(paths), move |r| r.stage_path_list(&list))

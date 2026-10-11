@@ -77,6 +77,7 @@ pub mod sidebar_menus;
 pub mod signature;
 pub mod signing_keys;
 pub mod spell;
+pub mod stage_all;
 mod stamp_cache;
 pub mod startup;
 pub mod stash;

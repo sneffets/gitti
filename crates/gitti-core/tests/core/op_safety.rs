@@ -204,3 +204,60 @@ fn stash_commands_act_on_the_chosen_stash() {
     assert_eq!(fx::git(p, &["stash", "list", "--format=%gs"]), "On main: second");
     assert_eq!(fx::git(p, &["status", "--porcelain"]), "", "nothing applied");
 }
+
+/// No stash while a merge is in progress: the core refuses too (both apps grey the
+/// commands), MERGE_HEAD and the staged result stay.
+#[gitti_test::test]
+fn no_stash_during_a_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    diverged(p);
+    fx::git_fails(p, &["merge", "feature"]);
+    fs::write(p.join("a.txt"), "resolved\n").unwrap();
+    fx::git(p, &["add", "a.txt"]);
+    let r = Repo::open(p).unwrap();
+    let e = r.stash_save("", false).unwrap_err();
+    assert!(format!("{e:#}").starts_with("Not stashed: a merge is in progress."), "{e:#}");
+    assert!(exists(p, "MERGE_HEAD"));
+    assert_eq!(r.stashes().unwrap().len(), 0);
+    assert_eq!(fx::git(p, &["show", ":a.txt"]), "resolved");
+}
+
+/// `status.showUntrackedFiles=no`: Stage All stages the listed (tracked) changes only and
+/// says the hidden untracked files stayed out.
+#[gitti_test::test]
+fn stage_all_leaves_hidden_untracked_files_out() {
+    use gitti_core::status::UntrackedFiles;
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    five_lines(p);
+    fx::config(p, "[status]\n\tshowUntrackedFiles = no\n");
+    fs::write(p.join("secret.txt"), "not shown\n").unwrap();
+    let r = Repo::open(p).unwrap();
+    let ws = r.working_state().unwrap();
+    assert_eq!(ws.status.untracked_files, UntrackedFiles::No);
+    let note = r.stage_all_shown(ws.status.untracked_files).unwrap();
+    assert_eq!(note.as_deref(), Some(gitti_core::stage_all::HIDDEN_UNTRACKED_NOTE));
+    assert_eq!(fx::git(p, &["diff", "--cached", "--name-only"]), "a.txt");
+    // Shown (the default): everything, as before.
+    assert_eq!(r.stage_all_shown(UntrackedFiles::All).unwrap(), None);
+    assert_eq!(fx::git(p, &["diff", "--cached", "--name-only"]), "a.txt\nsecret.txt");
+}
+
+/// Stage All asks first while conflicted files still hold conflict markers: those are
+/// found (one check-attr for all), a resolved one is not.
+#[gitti_test::test]
+fn conflict_markers_left_are_found_before_stage_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    diverged(p);
+    fs::write(p.join("b.txt"), "b local\n").unwrap();
+    fx::git(p, &["commit", "-qam", "b on main"]);
+    fx::git_fails(p, &["merge", "feature"]);
+    let r = Repo::open(p).unwrap();
+    assert_eq!(r.with_conflict_markers(&["a.txt", "b.txt"]), ["a.txt", "b.txt"]);
+    fs::write(p.join("b.txt"), "b merged\n").unwrap();
+    assert_eq!(r.with_conflict_markers(&["a.txt", "b.txt"]), ["a.txt"]);
+    let (title, ..) = gitti_core::stage_all::markers_prompt(&["a.txt".into()]);
+    assert_eq!(title, "a.txt still contains conflict markers");
+}

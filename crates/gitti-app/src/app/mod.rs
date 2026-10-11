@@ -2757,17 +2757,35 @@ impl GittiApp {
             return;
         }
         if stage {
-            let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
-            self.guard_fs_stage(paths, window, cx, |this, only, w, cx| match only {
-                None => this.work_op("Staging", None, w, cx, |r| r.stage_all()),
-                Some(list) => {
-                    let paths = list.clone();
-                    this.work_op("Staging", Some(paths), w, cx, move |r| r.stage_path_list(&list))
-                }
-            });
+            // Conflicted files with markers left: ask first, as Mark Resolved does.
+            let conflicted: Vec<&str> = self.working.conflicted.iter().map(|f| f.path()).collect();
+            let markers = match &self.repo {
+                Some(r) if !conflicted.is_empty() => r.with_conflict_markers(&conflicted),
+                _ => Vec::new(),
+            };
+            if !markers.is_empty() {
+                let (title, detail, ok) = gitti_core::stage_all::markers_prompt(&markers);
+                return self.confirm(title, Some(detail), ok, window, cx, |this, w, cx| {
+                    this.stage_everything_now(w, cx)
+                });
+            }
+            self.stage_everything_now(window, cx);
         } else {
             self.work_op("Unstaging", None, window, cx, |r| r.unstage_all());
         }
+    }
+
+    /// Stage All, asked already: what the list shows (`gitti_core::stage_all`).
+    fn stage_everything_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let untracked = self.working.status.untracked_files;
+        let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
+        self.guard_fs_stage(paths, window, cx, move |this, only, w, cx| match only {
+            None => this.work_op_noted("Staging", None, w, cx, move |r| r.stage_all_shown(untracked)),
+            Some(list) => {
+                let paths = list.clone();
+                this.work_op("Staging", Some(paths), w, cx, move |r| r.stage_path_list(&list))
+            }
+        });
     }
 
     /// While an operation runs, queues a key action for when it is done (`true`).
