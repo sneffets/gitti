@@ -51,13 +51,8 @@ fn palette_by_ctrl_p_and_f1_runs_the_best_match() {
 /// The item rows of a picker dump: the lines inside the popup frame (`│ … │`) after the
 /// query line, without the frame.
 fn picker_rows(screen: &str) -> Vec<String> {
-    screen
-        .lines()
-        .filter_map(|l| {
-            let a = l.find('│')?;
-            let b = l.rfind('│')?;
-            (b > a).then(|| l[a + '│'.len_utf8()..b].to_string())
-        })
+    box_rows(screen)
+        .into_iter()
         .filter(|r| !r.trim().is_empty() && !r.trim_start().starts_with('›'))
         .collect()
 }
@@ -187,12 +182,7 @@ fn output_window_goes_to_its_ends() {
         "press::;type:log --format=%s;key:enter;cmds;press:G;dump;press:g;dump;press:end;press:home;\
          press:end;dump;press:k;dump;press:space;press:j;dump;press:pageup;dump;cmds",
     );
-    let inside = |s: &str| -> Vec<String> {
-        s.lines()
-            .filter_map(|l| l.split_once("│ ").and_then(|(_, r)| r.split('│').next()))
-            .map(|r| r.trim().to_string())
-            .collect()
-    };
+    let inside = |s: &str| -> Vec<String> { box_rows(s).iter().map(|r| r.trim().to_string()).collect() };
     let s = screens(&out);
     let at_end = inside(s[0]);
     assert_eq!(at_end.last().map(String::as_str), Some("c 1"), "{out}");

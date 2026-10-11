@@ -497,8 +497,9 @@ pub fn check(buf: &Buffer, app: &App) -> Vec<String> {
     if app.modal.is_none() {
         for sep in [a.sep_sidebar, a.sep_list].into_iter().flatten() {
             for y in a.body.y..a.body.bottom() {
+                // The line, or a blank where a focused pane's title bar reaches over it.
                 let sym = buf[(sep, y)].symbol();
-                if sym != " " {
+                if sym != crate::ui::SEPARATOR && sym != " " {
                     out.push(format!("{sep},{y}: {sym:?} on the pane separator"));
                 }
             }

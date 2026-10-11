@@ -79,6 +79,31 @@ pub fn screens(out: &str) -> Vec<&str> {
     out.split("=== dump ===\n").skip(1).collect()
 }
 
+/// The rows inside the first dialog box of `screen` (from below its `┌…┐` line to above
+/// its `└…┘` line), without the box's side borders. Pane separators (also `│`) left and
+/// right of the box stay out. Columns are characters (no wide ones before the box).
+pub fn box_rows(screen: &str) -> Vec<String> {
+    let lines: Vec<Vec<char>> = screen.lines().map(|l| l.chars().collect()).collect();
+    let Some((top, left)) = lines
+        .iter()
+        .enumerate()
+        .find_map(|(y, l)| l.iter().position(|&c| c == '┌').map(|x| (y, x)))
+    else {
+        return Vec::new();
+    };
+    let right = lines[top][left..].iter().position(|&c| c == '┐').map_or(lines[top].len(), |r| left + r);
+    lines[top + 1..]
+        .iter()
+        .take_while(|l| l.get(left) != Some(&'└'))
+        .map(|l| l.get(left + 1..right.min(l.len())).unwrap_or_default().iter().collect())
+        .collect()
+}
+
+/// The column (in characters) where `what` starts in `line`.
+pub fn col_of(line: &str, what: &str) -> Option<usize> {
+    line.find(what).map(|b| line[..b].chars().count())
+}
+
 /// A merge with one conflict (line 2) and one change only theirs made (line 4).
 pub fn conflicted_repo() -> tempfile::TempDir {
     let dir = repo();

@@ -195,7 +195,7 @@ fn commit_message_keys_commit_and_amend() {
     assert!(st[5].contains(r#"modal=Confirm "Nothing to commit""#), "{out}");
     // The message box: the line ending in the message (the commit list shows it too).
     let s = screens(&out);
-    let in_box = |s: &str| s.lines().any(|l| l.trim_end().ends_with("   Hello there"));
+    let in_box = |s: &str| s.lines().any(|l| l.trim_end().ends_with("│  Hello there"));
     assert!(s[0].contains("☑ amend") && in_box(s[0]), "{out}");
     assert!(s[1].contains("☐ amend") && !in_box(s[1]), "{out}");
     assert!(st[6].contains("Amend — "), "{out}");
@@ -286,7 +286,7 @@ fn commit_message_draft_survives_a_restart_until_committed() {
     let config = tempfile::tempdir().unwrap();
     let run = |script: &str| gitty_with(d, config.path(), "120x30", script);
     // The message box's line (the commit list shows a subject too, not at the line end).
-    let in_box = |out: &str| screens(out)[0].lines().any(|l| l.trim_end().ends_with("   Draft one"));
+    let in_box = |out: &str| screens(out)[0].lines().any(|l| l.trim_end().ends_with("│  Draft one"));
     // Typed, then quit with q: the draft is written on the way out, not only debounced.
     let out = run(&format!("press:c;{}press:esc;press:q", presses("Draft one")));
     assert!(out.contains("(quit)"), "{out}");
@@ -325,7 +325,7 @@ fn amend_draft_comes_back_for_its_commit() {
     let run = |script: &str| gitty_with(d, config.path(), "120x30", script);
     let (db, workdir) = (config.path().join("gitti.db"), gitti_core::paths::canonical(d));
     let in_box = |out: &str, text: &str| {
-        screens(out)[0].lines().any(|l| l.trim_end().ends_with(&format!("   {text}")))
+        screens(out)[0].lines().any(|l| l.trim_end().ends_with(&format!("│  {text}")))
     };
     let head = rev(d, "HEAD");
     let out = run(&format!("wait;press:A;press:c;press:ctrl-u;{}press:esc;press:q", presses("Init, edited")));

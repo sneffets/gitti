@@ -266,7 +266,9 @@ fn narrow_panes_never_draw_into_their_neighbours() {
     let config = tempfile::tempdir().unwrap();
     let out = gitty_with(d, config.path(), "70x30", "dump;check");
     let row = screens(&out)[0].lines().nth(2).unwrap();
-    assert!(row.chars().skip(31).take(3).all(|c| c == ' '), "'No changes' runs into the detail pane: {row:?}\n{out}");
+    // Column 31 is the separator line, the detail pane starts at 32.
+    let near: String = row.chars().skip(31).take(3).collect();
+    assert_eq!(near, "│  ", "'No changes' runs into the detail pane: {row:?}\n{out}");
     write_files(d, &[("new.txt", "a\nb\n"), ("r.txt", "changed\n")]);
     let tour = "check;press:enter;check;press:j;check;press:esc;press:L;check;press:j;check;\
                 press:tab;check;resize:45x12;check;resize:140x16;check;resize:200x8;check";
@@ -339,10 +341,10 @@ fn pane_separators_drag_and_are_kept_as_fractions() {
     // 120 columns: sidebar separator 26 → 30 (25 %); the log (L) and its title bar (row
     // 19 of 30) dragged up to row 14.
     let out = gitty_with(a.path(), config.path(), "120x30", "drag:26,5,30,5;dump;press:L;drag:0,19,0,14");
-    assert_eq!(screens(&out)[0].lines().nth(1).unwrap_or_default().find("Commits"), Some(32), "{out}");
+    assert_eq!(col_of(screens(&out)[0].lines().nth(1).unwrap_or_default(), "Commits"), Some(32), "{out}");
     let out = gitty_with(b.path(), config.path(), "240x30", "dump");
     let screen = screens(&out)[0];
-    assert_eq!(screen.lines().nth(1).unwrap_or_default().find("Commits"), Some(62), "{out}");
+    assert_eq!(col_of(screen.lines().nth(1).unwrap_or_default(), "Commits"), Some(62), "{out}");
     assert_eq!(screen.lines().position(|l| l.contains("Git Command Log")), Some(14), "{out}");
 }
 
@@ -862,4 +864,33 @@ fn diff_cursor_never_hides_under_the_sticky_file_header() {
     let lines: Vec<&str> = screens(&out)[0].lines().collect();
     let sticky = lines.iter().position(|l| l.contains("▾ M big.txt")).unwrap_or_else(|| panic!("no sticky header: {out}"));
     assert!(lines[sticky + 1].contains("+ LINE "), "{out}");
+}
+
+/// The pane separators are thin lines (`│`) in a quiet grey, in the focus frame's colour
+/// next to the focused pane; the focused pane's title bar reaches over the top cell
+/// of the separator to its right.
+#[gitti_test::test]
+fn pane_separators_are_thin_lines_coloured_by_focus() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    // 120x30: separators at columns 26 (sidebar | commits) and 68 (commits | detail).
+    let out = gitty(dir.path(), "dump;cells:1;cells:5;press:tab;cells:1;cells:5");
+    let screen = screens(&out)[0];
+    for row in screen.lines().skip(2).take(20) {
+        let chars: Vec<char> = row.chars().collect();
+        assert_eq!((chars.get(26), chars.get(68)), (Some(&'│'), Some(&'│')), "{row:?}\n{out}");
+    }
+    let b = cell_blocks(&out);
+    assert_eq!(b.len(), 4, "{out}");
+    let (line, frame) = ("Rgb(73, 81, 91)", "Rgb(84, 118, 156)");
+    let (sidebar_bg, list_bg) = ("Rgb(39, 47, 55)", "Rgb(47, 55, 65)");
+    // Commits focused: both its separators in the frame colour, on the left pane's
+    // background; its title bar covers the top cell of the right one.
+    assert_eq!(run_at(&b[1], 26), (frame.into(), sidebar_bg.into(), "│".into()), "{out}");
+    assert_eq!(run_at(&b[1], 68), (frame.into(), list_bg.into(), "│".into()), "{out}");
+    assert_eq!(run_at(&b[0], 26).2, "│", "{out}");
+    assert_eq!((run_at(&b[0], 68).1.as_str(), run_at(&b[0], 67).1.as_str()), (frame, frame), "{out}");
+    // Detail focused: the sidebar's separator back in the quiet grey.
+    assert_eq!(run_at(&b[3], 26), (line.into(), sidebar_bg.into(), "│".into()), "{out}");
+    assert_eq!(run_at(&b[3], 68), (frame.into(), list_bg.into(), "│".into()), "{out}");
+    assert_eq!(run_at(&b[2], 68).2, "│", "{out}");
 }

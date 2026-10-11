@@ -160,7 +160,7 @@ fn diff_cursor_jumps_line_selection_and_folding() {
     assert_no_git(&cmds(&out)[1..], "diff keys", &out);
     // In the message box q is a letter; ctrl-c quits from there too.
     assert_eq!(s.len(), 3, "{out}");
-    assert!(s[2].lines().any(|l| l.trim_end().ends_with("   q")), "{out}");
+    assert!(s[2].lines().any(|l| l.trim_end().ends_with("│  q")), "{out}");
     assert!(out.trim_end().ends_with("(quit)"), "{out}");
 }
 

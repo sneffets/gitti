@@ -306,8 +306,8 @@ fn draw_panes(f: &mut Frame, body: Rect, app: &mut App, p: &Palette) {
         w.clamp(20.min(rest), rest.saturating_sub(20).max(20.min(rest)))
     };
     let detail_w = rest.saturating_sub(list_w + u16::from(list_w > 0 && list_w < rest));
-    // The separators next to the focused pane are drawn in a dimmed accent, so together
-    // with its title bar the active pane is framed.
+    // The separators are thin lines; next to the focused pane they are drawn in a dimmed
+    // accent, so together with its title bar the active pane is framed.
     let side_focus = app.focus == Focus::Sidebar;
     let list_focus = app.focus == Focus::Commits;
     let detail_focus = matches!(app.focus, Focus::Detail | Focus::Message);
@@ -318,7 +318,8 @@ fn draw_panes(f: &mut Frame, body: Rect, app: &mut App, p: &Palette) {
     app.areas.sep_list = None;
     if show_sidebar {
         let active = side_focus || (list_focus && list_w > 0);
-        separator(f.buffer_mut(), Rect::new(x, body.y, 1, body.height), active, &p);
+        let left = Neighbour { bg: p.bg_sidebar, focused: side_focus };
+        separator(f.buffer_mut(), Rect::new(x, body.y, 1, body.height), active, left, &p);
         x += 1;
     }
     let list = Rect::new(x, body.y, list_w, body.height);
@@ -326,7 +327,8 @@ fn draw_panes(f: &mut Frame, body: Rect, app: &mut App, p: &Palette) {
     if list_w > 0 && detail_w > 0 {
         app.areas.sep_list = Some(x);
         let active = list_focus || detail_focus;
-        separator(f.buffer_mut(), Rect::new(x, body.y, 1, body.height), active, &p);
+        let left = Neighbour { bg: p.bg_list, focused: list_focus };
+        separator(f.buffer_mut(), Rect::new(x, body.y, 1, body.height), active, left, &p);
         x += 1;
     }
     let detail = Rect::new(x, body.y, detail_w, body.height);
@@ -398,9 +400,42 @@ pub fn list_fraction(app: &App, show_sidebar: bool) -> f32 {
     }
 }
 
-fn separator(buf: &mut Buffer, area: Rect, active: bool, p: &Palette) {
-    let bg = if active { active_frame(p) } else { p.border };
-    buf.set_style(area, Style::new().bg(bg));
+/// Glyph of a pane separator: a thin vertical line.
+pub const SEPARATOR: &str = "│";
+
+/// The pane left of a separator: the separator's cells take its background, so only the
+/// line itself stands out.
+#[derive(Clone, Copy)]
+struct Neighbour {
+    bg: Color,
+    focused: bool,
+}
+
+/// A pane separator: a thin line in a quiet grey (`active`: next to the focused pane, in
+/// the focus frame's colour). Its top cell sits in the title bar row: the line
+/// runs up between the title bars; next to a focused left pane that pane's title bar
+/// reaches up to the right pane's instead.
+fn separator(buf: &mut Buffer, area: Rect, active: bool, left: Neighbour, p: &Palette) {
+    if area.height == 0 {
+        return;
+    }
+    let fg = if active { active_frame(p) } else { separator_line(p) };
+    let line = Style::new().fg(fg).bg(left.bg);
+    for y in area.top()..area.bottom() {
+        buf[(area.x, y)].set_symbol(SEPARATOR).set_style(line);
+    }
+    let top = &mut buf[(area.x, area.y)];
+    if left.focused {
+        top.set_symbol(" ").set_style(Style::new().bg(active_frame(p)));
+    } else {
+        top.set_style(Style::new().bg(p.bg_section));
+    }
+}
+
+/// Colour of a separator line away from the focus: a quiet grey a little lighter than the
+/// panes (the border colour itself, darker than them, is lost in a line this thin).
+fn separator_line(p: &Palette) -> Color {
+    blend(p.text_faint, p.border, 0.5)
 }
 
 /// Frame colour of the focused pane: the accent, darkened.
