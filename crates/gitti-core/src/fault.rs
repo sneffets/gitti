@@ -60,6 +60,7 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     fn add(&mut self, fault: Fault) {
         match fault {
             Fault::SlowReader(d) => self.reader_delay = self.reader_delay.max(d),
@@ -78,7 +79,6 @@ impl Plan {
 /// An injected rule; removed when dropped.
 #[must_use = "the rule is removed when this is dropped"]
 pub struct Injection {
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     id: u64,
 }
 
@@ -146,6 +146,7 @@ pub fn parse_spec(spec: &str) -> Result<Vec<(String, Fault, usize)>, String> {
 }
 
 /// The git subcommand of `args` (after the `-c key=value` pairs), else `program`'s name.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 fn command_name(program: &str, args: &[&str]) -> String {
     let name = Path::new(program)
         .file_stem()
