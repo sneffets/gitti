@@ -108,6 +108,9 @@ impl GittiApp {
 
     /// `d`: discards the selected unstaged lines (asks first).
     fn discard_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.has_line_selection(Src::Unstaged) && self.marks_action(PatchMode::Discard, window, cx) {
+            return;
+        }
         let Some(sel) = self.line_sel.clone().filter(|s| s.src == Src::Unstaged) else {
             self.set_info(if self.shown_compare().is_some() {
                 "A comparison is read-only — discard in the working directory (row 0)"

@@ -80,6 +80,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("RunCustomCommand", "Run Custom Command…"),
     both("CustomCommands", "Custom Commands…"),
     both("ToggleWrap", "Wrap Lines"),
+    both("ToggleChangesTree", "Changes as Tree"),
     both("ToggleWhitespace", "Ignore Whitespace"),
     both("MoreContext", "More Context Lines"),
     both("LessContext", "Fewer Context Lines"),

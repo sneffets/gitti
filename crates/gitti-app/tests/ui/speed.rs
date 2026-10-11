@@ -22,6 +22,7 @@ pub fn main() {
         ("staging_in_a_file_tab_updates_the_tabs", staging_in_a_file_tab_updates_the_tabs),
         ("staging_keys", staging_keys),
         ("unstaged_groups_fold_and_stage_cheaply", unstaged_groups_fold_and_stage_cheaply),
+        ("changes_as_tree_and_marked_files", changes_as_tree_and_marked_files),
         ("watcher_rereads_only_what_changed", watcher_rereads_only_what_changed),
         ("prefetch_is_one_git_process", prefetch_is_one_git_process),
         ("file_tabs_and_more_lines_run_no_git", file_tabs_and_more_lines_run_no_git),
@@ -36,6 +37,14 @@ pub fn main() {
     common::run(tests, |name| {
         counter.set(counter.get() + 1);
         let dir = make_repo(&base.join(format!("repo{}", counter.get())));
+        if name == "changes_as_tree_and_marked_files" {
+            // Untracked files in folders (no git: just files).
+            for f in ["src/app/a.rs", "src/app/b.rs", "docs/x.md"] {
+                let p = dir.join(f);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, format!("{f}\n")).unwrap();
+            }
+        }
         if name == "non_utf8_line_stages_exactly" {
             // big.txt as committed (`line {i} `) with one Latin-1 line: one hunk.
             let mut big = Vec::new();
@@ -541,6 +550,127 @@ fn unstaged_groups_fold_and_stage_cheaply(ui: &mut Ui) {
     // No untracked file left: no group headers.
     if ui.metrics().diff_rows.contains(&"group") {
         ui.fail("group headers without untracked files".into());
+    }
+}
+
+/// The tree of the working directory: switching it and folding a folder run no git and
+/// switching back gives the flat rows again; a folder's Stage is one `git add` of exactly
+/// its files plus a path-limited re-read. Marked files (⌘-click, shift-click on file
+/// headers): `s` stages them, `u` unstages them, Esc clears the marks.
+fn changes_as_tree_and_marked_files(ui: &mut Ui) {
+    worktree(ui);
+    let flat = ui.metrics().diff_rows;
+    let n = ui.n_git();
+    ui.step("action:gitti::ToggleChangesTree");
+    ui.no_git_since(n, "switching to the tree");
+    // Folder rows keep the layout's invariants (inside the list, no overlap).
+    ui.check("tree view");
+    let rows = ui.metrics().diff_rows;
+    // Untracked: docs/, src/app/ (one row for the chain).
+    let folders = rows.iter().filter(|k| **k == "folder").count();
+    if folders != 2 {
+        ui.fail(format!("expected two folder rows: {rows:?}"));
+        return;
+    }
+    // Off again: exactly the flat rows.
+    ui.step("action:gitti::ToggleChangesTree");
+    let back = ui.metrics().diff_rows;
+    if back != flat {
+        ui.fail(format!("the list after the tree differs: {flat:?} → {back:?}"));
+    }
+    ui.step("action:gitti::ToggleChangesTree");
+    let marks = |ui: &mut Ui| {
+        let ws = ui.ws.clone();
+        ui.cx.update(|cx| testing::marks(&ws, cx))
+    };
+    // The file header probes shown, top to bottom.
+    let file_rows = |ui: &mut Ui| -> Vec<String> {
+        let mut v: Vec<(usize, String)> = ui
+            .frame()
+            .iter()
+            .filter(|p| p.name.starts_with("diff-row:") && p.name.ends_with(":file") && p.visible().is_some())
+            .filter_map(|p| Some((p.name.split(':').nth(1)?.parse().ok()?, p.name.clone())))
+            .collect();
+        v.sort();
+        v.dedup();
+        v.into_iter().map(|(_, n)| n).collect()
+    };
+    // Fold big.txt (a plain click on its header folds) so the other headers are on screen.
+    let files = file_rows(ui);
+    let Some(big) = files.first().cloned() else {
+        ui.fail("no file header shown".into());
+        return;
+    };
+    ui.click_on(&big, MouseButton::Left);
+    let n = ui.n_git();
+    ui.click_on("folder:unstaged/src/app", MouseButton::Left);
+    ui.no_git_since(n, "folding a folder");
+    if ui.metrics().diff_rows.len() >= rows.len() {
+        ui.fail("the folder did not fold".into());
+    }
+    let n = ui.n_git();
+    let t = Instant::now();
+    ui.click_on("folder-stage:unstaged/src/app", MouseButton::Left);
+    let wall = t.elapsed();
+    let cmds = ui.git_since(n);
+    expect_cheap(ui, "stage folder", &cmds, wall);
+    if cmds.first().map(String::as_str) != Some("add -A -- src/app/a.rs src/app/b.rs") {
+        ui.fail(format!("stage folder: expected `git add -A -- src/app/a.rs src/app/b.rs` first: {cmds:?}"));
+    }
+    expect_state(ui, "stage folder", &["S src/app/a.rs 1", "S src/app/b.rs 1", "U docs/x.md 1"], &["U src/app/a.rs 1"]);
+
+    // Shown in order: big.txt, docs/ x.md, new.txt (untracked), then the staged files.
+    let files = file_rows(ui);
+    if files.len() < 3 {
+        ui.fail(format!("expected file rows: {files:?}"));
+        return;
+    }
+    // ⌘-click the first header, shift-click the third: the three of them.
+    let n = ui.n_git();
+    ui.click_on_with(&files[0], MouseButton::Left, Modifiers::secondary_key());
+    ui.click_on_with(&files[2], MouseButton::Left, Modifiers::shift());
+    ui.no_git_since(n, "marking files");
+    let marked = marks(ui);
+    if marked != ["unstaged:big.txt", "unstaged:docs/x.md", "unstaged:new.txt"] {
+        ui.fail(format!("marks after ⌘-click + shift-click: {marked:?}"));
+    }
+    ui.quick("focusdiff");
+    let n = ui.n_git();
+    ui.stroke("s");
+    ui.settle();
+    let cmds = ui.git_since(n);
+    if !cmds.first().is_some_and(|c| c == "add -A -- big.txt docs/x.md new.txt") {
+        ui.fail(format!("s with marked files: expected one `git add` of them first: {cmds:?}"));
+    }
+    expect_state(ui, "stage marked", &["S big.txt 16", "S docs/x.md 1", "S new.txt 1"], &["U big.txt 16"]);
+    // Staged: their marks went (marks are per section).
+    let left = marks(ui);
+    if !left.is_empty() {
+        ui.fail(format!("marks of staged files stayed: {left:?}"));
+    }
+    // ⌘-click a staged file, Esc clears the mark, ⌘-click again, u unstages it.
+    let files = file_rows(ui);
+    // The staged section is the last one.
+    let Some(first) = files.last().cloned() else {
+        ui.fail("no staged file header".into());
+        return;
+    };
+    ui.click_on_with(&first, MouseButton::Left, Modifiers::secondary_key());
+    if marks(ui).len() != 1 {
+        let m = marks(ui);
+        ui.fail(format!("⌘-click marked {m:?}"));
+    }
+    ui.stroke("escape");
+    if !marks(ui).is_empty() {
+        ui.fail("Esc did not clear the marks".into());
+    }
+    ui.click_on_with(&first, MouseButton::Left, Modifiers::secondary_key());
+    let n = ui.n_git();
+    ui.stroke("u");
+    ui.settle();
+    let cmds = ui.git_since(n);
+    if !cmds.first().is_some_and(|c| c.starts_with("restore --staged -- ")) {
+        ui.fail(format!("u with a marked file: expected `git restore --staged` first: {cmds:?}"));
     }
 }
 

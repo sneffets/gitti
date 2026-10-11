@@ -620,6 +620,12 @@ pub mod testing {
         app.read(cx).script_working()
     }
 
+    /// The active tab's marked files (`unstaged:path`, …), sorted.
+    pub fn marks(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_marks()
+    }
+
     /// Rows of the active tab's history and how it was loaded (`HistoryLoad`).
     pub fn history(ws: &Entity<Workspace>, cx: &App) -> (usize, String) {
         let app = ws.read(cx).active_app().expect("a repository tab");
@@ -1399,6 +1405,8 @@ actions!(
         CleanUpMergedBranches,
     ]
 );
+// View ▸ Show Changes as Tree; handler in `app/file_marks.rs`.
+actions!(gitti, [ToggleChangesTree]);
 
 // Repository ▸ Run Custom Command… / Custom Commands…; handlers in `app/custom_commands.rs`.
 actions!(gitti, [RunCustomCommand, CustomCommands]);
@@ -1591,6 +1599,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("More Context Lines", MoreContext),
                 MenuItem::action("Fewer Context Lines", LessContext),
                 MenuItem::action("Show Whole File", ShowWholeFile),
+                MenuItem::action("Show Changes as Tree", ToggleChangesTree),
                 MenuItem::separator(),
                 MenuItem::action("Bigger Font", ZoomIn),
                 MenuItem::action("Smaller Font", ZoomOut),

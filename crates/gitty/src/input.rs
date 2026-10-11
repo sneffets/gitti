@@ -500,7 +500,12 @@ impl App {
                     self.hscroll = self.hscroll.saturating_sub(8);
                 }
             }
-            KeyCode::Char(' ') if wt => self.toggle_line(),
+            // On a file / folder row: marks it (several files at once); on a line: selects it.
+            KeyCode::Char(' ') if wt => {
+                if !self.mark_at_cursor() {
+                    self.toggle_line()
+                }
+            }
             KeyCode::Enter if Some(self.diff_cursor) == self.signature_header_line() => {
                 self.show_signature()
             }
@@ -532,6 +537,7 @@ impl App {
                     self.toggle_file()
                 }
                 Some(DiffRow::Group(_)) => self.toggle_group(),
+                Some(DiffRow::Folder { .. }) => self.toggle_folder(),
                 Some(&DiffRow::Expand { src, file, gap }) => {
                     self.show_more_lines(src, file, Some(gap), gitti_core::context::Reveal::More)
                 }
@@ -543,6 +549,7 @@ impl App {
             // Changes Only"), ends compare mode, then back to the list.
             KeyCode::Esc => {
                 if self.line_sel.take().is_none()
+                    && !self.clear_marks()
                     && !self.show_changes_only(None)
                     && !self.end_compare()
                 {

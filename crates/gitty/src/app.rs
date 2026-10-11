@@ -44,6 +44,7 @@ mod context_lines;
 mod custom_commands;
 mod ext_tools;
 mod file_list;
+mod file_marks;
 mod from_commit;
 mod fs_paths;
 mod keybar;
@@ -500,6 +501,14 @@ pub struct App {
     /// A terminal is being started (detection, macOS `open`).
     pub terminal_job: bool,
     pub rows: Vec<DiffRow>,
+    /// The folder rows of `rows` (tree view of the working directory; empty when flat).
+    pub folders: gitti_core::rows::Folders,
+    /// Files marked for an action on several (space on a file / folder row).
+    pub marks: gitti_core::rows::FileMarks,
+    /// The working directory's changes as a tree (setting `changes_as_tree`).
+    pub changes_tree: bool,
+    /// Marked files still to open in a terminal editor, one after the other.
+    pub open_queue: Vec<String>,
     pub expansion: Expansion,
     /// Line totals of the working-directory sections / groups, summed when the rows
     /// are rebuilt (not per frame).
@@ -804,6 +813,10 @@ impl App {
             change: Default::default(),
             reflog: Default::default(),
             rows: Vec::new(),
+            folders: Default::default(),
+            marks: Default::default(),
+            changes_tree: settings.changes_as_tree,
+            open_queue: Vec::new(),
             expansion: Expansion::default(),
             worktree_totals: Default::default(),
             diff_cursor: 0,
@@ -933,6 +946,7 @@ impl App {
             show_main_worktree_alone: self.main_worktree_alone,
             branch_sort: self.branches.sort,
             remote_branch_sort: self.branches.remote_sort,
+            changes_as_tree: self.changes_tree,
         }
     }
 
@@ -994,6 +1008,10 @@ impl App {
             self.branches.sort = s.branch_sort;
             self.branches.remote_sort = s.remote_branch_sort;
             self.rebuild_sidebar();
+        }
+        if self.changes_tree != s.changes_as_tree {
+            self.changes_tree = s.changes_as_tree;
+            self.rebuild_rows();
         }
         self.log_reads = s.log_show_reads;
         self.merge_single = s.merge_single_view;
@@ -1395,13 +1413,14 @@ impl App {
             _ => String::new(),
         };
         format!(
-            "focus={:?} selected={} [{sel}] cursor={} {row} sel_lines={lines} unstaged={} staged={} \
+            "focus={:?} selected={} [{sel}] cursor={} {row} sel_lines={lines} marked={} unstaged={} staged={} \
              history_rows={} history_load={:?} status={status:?} \
              commit_offset={} diff_offset={} hscroll={} side_cursor={} side_offset={} \
              log_first={log_first} log_follow={} top={}{list}{}{}{}",
             self.focus,
             self.selected,
             self.diff_cursor,
+            self.marks.len(),
             self.working.unstaged.len(),
             self.working.staged.len(),
             self.history.commits.len(),
@@ -2086,10 +2105,21 @@ impl App {
             None => gitti_core::rows::NoteWrap::None,
         };
         self.commit_fs = self.shown_commit_fs();
+        self.folders = Default::default();
         self.rows = match &self.detail {
             Detail::Worktree => {
                 self.worktree_totals = gitti_core::rows::WorktreeTotals::of(&self.working);
-                gitti_core::rows::build_worktree_rows_noted(&self.working, None, &self.expansion, wrap, &notes)
+                self.marks.retain(&self.working);
+                let (rows, folders) = gitti_core::rows::build_worktree_view(
+                    &self.working,
+                    None,
+                    &self.expansion,
+                    wrap,
+                    &notes,
+                    self.changes_tree,
+                );
+                self.folders = folders;
+                rows
             }
             Detail::Commit(cv) => {
                 let mut rows = vec![DiffRow::HeaderSpace; self.header.len()];
@@ -2691,8 +2721,6 @@ impl App {
         if entries.is_empty() {
             return;
         }
-        let plan = DiscardPlan::of(self.repo.workdir(), &entries);
-        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let n = entries.len();
         let (title, question, done) = match group {
             None => (
@@ -2711,9 +2739,25 @@ impl App {
                 "Untracked files deleted",
             ),
         };
+        self.discard_entries(entries, "Discard all", title, question, done);
+    }
+
+    /// The confirmation of discarding the unstaged changes of `entries` (several files: a
+    /// group, a folder, marked files): `question`, what happens to each kind of file, then
+    /// one discard; `done` starts the status line's report.
+    pub(crate) fn discard_entries(
+        &mut self,
+        entries: Vec<gitti_core::status::StatusEntry>,
+        label: &'static str,
+        title: &'static str,
+        question: String,
+        done: &'static str,
+    ) {
+        let plan = DiscardPlan::of(self.repo.workdir(), &entries);
+        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let run = move |app: &mut App, opts: DiscardOptions| {
             let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
-            app.work_op_noted("Discard all", paths, move |r| {
+            app.work_op_noted(label, paths, move |r| {
                 let report = r.discard_with(&entries.iter().collect::<Vec<_>>(), opts)?;
                 Ok(Some(gitti_core::discard::done_note(done, &report)))
             })
@@ -2774,8 +2818,13 @@ impl App {
             self.apply_selection(sel.src, sel.file, sel.to_selection(), mode);
             return;
         }
+        // Marked files: the action is theirs.
+        if !self.marks.is_empty() {
+            return self.marks_action(mode);
+        }
         let row = self.rows.get(self.diff_cursor).copied();
         match row {
+            Some(DiffRow::Folder { .. }) => self.folder_action(mode),
             Some(DiffRow::Group(group)) if want == Src::Unstaged => match mode {
                 PatchMode::Discard => self.discard_unstaged(Some(group)),
                 _ => self.stage_group(group),
@@ -3985,6 +4034,7 @@ impl App {
             }
             _ => {}
         }
+        items.extend(self.marks_menu_items());
         if matches!(self.detail, Detail::Worktree) {
             items.extend(self.worktree_items());
             items.push(MenuItem::separator());
@@ -3999,6 +4049,9 @@ impl App {
             items.push(MenuItem::new("Show Changes Only", move |app| {
                 app.show_changes_only(Some(file));
             }));
+        }
+        if matches!(self.detail, Detail::Worktree) {
+            items.push(self.tree_menu_item());
         }
         items.push(MenuItem::new("Expand All Files", |app| {
             app.set_all_expanded(true)
@@ -4254,6 +4307,7 @@ impl App {
         }
         items.extend(self.compare_palette_items());
         items.extend(self.stash_palette_items());
+        items.extend(self.file_marks_palette_items());
         // Last: on an equal match the everyday commands come first ("merge").
         items.extend(self.subtree_palette_items());
         items.extend(self.custom_palette_items());
@@ -4430,6 +4484,7 @@ impl App {
         }
         self.merge_check_disk();
         self.refresh(false);
+        self.open_next();
     }
 
     /// The copy entries (label, text) of the header line under the detail cursor: the

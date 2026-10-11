@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gitti_core::WorkingState;
-use gitti_core::rows::{FS_MARK, TabStage, WorktreeTab, build_worktree_rows_noted, worktree_tabs};
+use gitti_core::rows::{FS_MARK, TabStage, WorktreeTab, build_worktree_view, worktree_tabs};
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -49,15 +49,20 @@ impl GittiApp {
         {
             self.worktree_tab = None;
         }
-        self.with_note_wrap(|notes| {
-            build_worktree_rows_noted(
+        // Marks of files that left their section (staged, discarded, committed) go.
+        self.file_marks.retain(&self.working);
+        let (rows, folders) = self.with_note_wrap(|notes| {
+            build_worktree_view(
                 &self.working,
                 self.worktree_tab.as_deref(),
                 &self.expansion,
                 wrap,
                 notes,
+                self.settings.changes_as_tree,
             )
-        })
+        });
+        self.folders = folders;
+        rows
     }
 
     fn has_changes(&self, path: &str) -> bool {
