@@ -261,6 +261,30 @@ fn mg20_merge_conflict_in_a_linked_worktree() {
     wf::expect_concluded(&d, &s).unwrap();
 }
 
+/// MG-21: both sides moved a submodule's pointer: its header says submodule, its rows ours
+/// → theirs; its resolve menu explains and offers neither merge editor nor external merge
+/// tool; Take Theirs (t) records feat's commit, Continue Merging.
+/// Workflow: MG-21
+#[gitti_test::test]
+fn mg21_submodule_pointer_conflict_take_theirs() {
+    use mg::submodule as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture(&d);
+    wf::expect_stopped(&d, &s).unwrap();
+    let out = run(&d, &format!("{FIRST_CONFLICT}dump;press:enter;dump;key:t;state;{}state", palette("Continue Merging")));
+    let sc = screens(&out);
+    assert!(sc[0].contains("submodule, moved on both sides"), "{out}");
+    assert!(sc[0].contains(&format!("Submodule {}: {} → {}", wf::PATH, &s.lib_main[..7], &s.lib_feat[..7])), "{out}");
+    assert!(sc[0].contains(wf::LIB_FEAT) && sc[0].contains(wf::LIB_MAIN), "{out}");
+    assert!(sc[1].contains("Take Theirs — feat") && sc[1].contains("no merge editor"), "{out}");
+    assert!(!sc[1].contains("Open in Merge Editor") && !sc[1].contains("External Merge Tool"), "{out}");
+    let st = states(&out);
+    assert!(status_of(st[0]).contains("Recorded their commit"), "{out}");
+    assert!(st[1].contains("repo_state=clean conflicted=0"), "{out}");
+    no_error(st[1], &out);
+    wf::expect_concluded(&d, &s).unwrap();
+}
+
 /// MG-22: a binary conflict: its header says binary, its row the binary note; its resolve
 /// menu explains and offers no merge editor; Take Theirs (t), Continue Merging.
 /// Workflow: MG-22

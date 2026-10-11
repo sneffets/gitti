@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use gitti_core::Repo;
-use gitti_core::conflict::{ConflictAction, ConflictKind};
+use gitti_core::conflict::{ConflictAction, ConflictKind, ConflictShape};
 use gitti_core::local_changes::{LocalChanges, LocalChangesWay};
 use gitti_core::ops::{FastForward, MergeOptions};
 use gitti_workflow::mg;
@@ -101,6 +101,39 @@ fn mg17_dirty_tree_survives_a_conflicting_merge_and_its_abort() {
     wf::expect_aborted(&dir, &s).unwrap();
 }
 
+/// MG-21: both sides moved a submodule's pointer: the working state shows ours → theirs
+/// (with the commits between them, the submodule being checked out), no merge editor nor
+/// external merge tool; Take Theirs records feat's commit (git's checkout + add can't:
+/// add would record the submodule's checked-out commit, ours) and Continue concludes the
+/// merge.
+/// Workflow: MG-21
+#[gitti_test::test]
+fn mg21_submodule_pointer_conflict_take_theirs() {
+    use mg::submodule as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    wf::expect_stopped(&dir, &s).unwrap();
+    let repo = Repo::open(&dir).unwrap();
+    let w = repo.working_state().unwrap();
+    let file = &w.conflicted[0];
+    let diff = file.diff.as_ref().expect("a diff");
+    assert_eq!(ConflictShape::of(Some(diff)), ConflictShape::Submodule);
+    let sub = diff.submodule.as_ref().unwrap();
+    let id = |hex: &str| gitti_core::ObjectId::from_hex(hex.as_bytes()).unwrap();
+    assert_eq!((sub.old, sub.new), (Some(id(&s.lib_main)), Some(id(&s.lib_feat))));
+    let log = sub.log.as_ref().expect("the commits between ours and theirs");
+    assert_eq!((log.added[0].1.as_str(), log.removed[0].1.as_str()), (wf::LIB_FEAT, wf::LIB_MAIN));
+    assert!(repo.submodule_conflict(wf::PATH) && !repo.binary_conflict(wf::PATH));
+    let kind = ConflictKind::of(&file.entry).unwrap();
+    let actions: Vec<ConflictAction> =
+        kind.choices_for(&repo.conflict_sides(), ConflictShape::Submodule).iter().map(|c| c.action).collect();
+    assert_eq!(actions, [ConflictAction::TakeOurs, ConflictAction::TakeTheirs, ConflictAction::MarkResolved]);
+    let out = repo.resolve_conflict(&[wf::PATH.to_string()], ConflictAction::TakeTheirs).unwrap();
+    assert!(out.contains("Recorded their commit") && out.contains("update the submodule"), "{out}");
+    repo.continue_operation().unwrap();
+    wf::expect_concluded(&dir, &s).unwrap();
+}
+
 /// MG-22: a binary conflict: the working state shows it as a binary file (not "same as
 /// main"), its choices have no merge editor (which refuses it) but the sides first; Take
 /// Theirs and Continue conclude the merge with feat's bytes.
@@ -118,7 +151,7 @@ fn mg22_binary_conflict_take_theirs() {
     assert!(repo.binary_conflict(wf::FILE));
     let sides = repo.conflict_sides();
     let kind = ConflictKind::of(&file.entry).unwrap();
-    let actions: Vec<ConflictAction> = kind.choices_for(&sides, true).iter().map(|c| c.action).collect();
+    let actions: Vec<ConflictAction> = kind.choices_for(&sides, ConflictShape::Binary).iter().map(|c| c.action).collect();
     assert_eq!(actions[..2], [ConflictAction::TakeOurs, ConflictAction::TakeTheirs]);
     assert!(!actions.contains(&ConflictAction::MergeEditor), "{actions:?}");
     assert!(repo.merge_doc(wf::FILE).is_err(), "the merge editor refuses a binary file");
@@ -146,7 +179,7 @@ fn mg27_conflict_in_a_file_gitattributes_marks_binary() {
     assert!(file.diff.as_ref().is_some_and(|d| d.binary && d.hunks.is_empty()), "{:?}", file.diff);
     let kind = ConflictKind::of(&file.entry).unwrap();
     let actions: Vec<ConflictAction> =
-        kind.choices_for(&repo.conflict_sides(), true).iter().map(|c| c.action).collect();
+        kind.choices_for(&repo.conflict_sides(), ConflictShape::Binary).iter().map(|c| c.action).collect();
     assert!(!actions.contains(&ConflictAction::MergeEditor), "{actions:?}");
 
     // Each variant: (root .gitattributes, nested, info/attributes, core.attributesFile's

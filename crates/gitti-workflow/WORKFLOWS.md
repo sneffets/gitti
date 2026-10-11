@@ -267,7 +267,7 @@ working tree or the index while the app shows an older state.
 | MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | `op_safety::unstage_all_keeps_a_merge_and_its_conflicts` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::unstage_all_keeps_the_merge` |
 | MG-19 | Stage All with markers left | a conflicted file still has `<<<<<<<`; Stage All | asks first like Mark Resolved does | `op_safety::conflict_markers_left_are_found_before_stage_all` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
 | MG-20 | Merge in a linked worktree | conflict in a linked worktree; the app opened there; take theirs; Continue | state from its own git dir; concluded there; main worktree clean | `conflicts::merge_conflict_in_a_linked_worktree` | `wf_merge::mg20_merge_conflict_in_a_linked_worktree` | `wf_merge::mg20_merge_conflict_in_a_linked_worktree` |
-| MG-21 | Submodule pointer conflict | both sides moved the pointer | listed as a conflict; resolving picks a commit | `submodules::conflicting_pointers` | — | — |
+| MG-21 | Submodule pointer conflict | both sides moved the pointer (submodule checked out); take theirs; Continue | listed as a submodule conflict showing ours → theirs and the commits between; no merge editor / external merge tool; taking a side records that side's commit (the checkout stays) | `submodules::conflicting_pointers`, `wf_merge::mg21_submodule_pointer_conflict_take_theirs` | `wf_merge::mg21_submodule_pointer_conflict_take_theirs` | `wf_merge::mg21_submodule_pointer_conflict_take_theirs` |
 | MG-22 | Binary conflict | both sides changed a binary; take theirs; Continue | shown as a binary conflict (not "same as main"); no merge editor; take ours / theirs | `wf_merge::mg22_binary_conflict_take_theirs` | `wf_merge::mg22_binary_conflict_take_theirs` | `wf_merge::mg22_binary_conflict_take_theirs` |
 | MG-23 | Merge conflict in a SHA-256 repository | — | as in SHA-1 | `sha256::merge_conflict_worktrees_and_branch_ops` | — | — |
 | MG-24 | Resolve with an external merge tool | conflicted file → Open in External Merge Tool | the tool's result staged; status says no conflict is left | ~`ext_tool::describes_the_merge_outcome` (unit) | `ext_tools::merge_tool` | `ext_tools::merge_tool_from_the_resolve_menu` |
@@ -510,7 +510,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 18 | 17 | 17 |
 | BR branches | 19 | 19 | 19 | 18 |
-| MG merge | 27 | 26 | 22 | 23 |
+| MG merge | 27 | 26 | 23 | 24 |
 | CP cherry-pick | 18 | 16 | 16 | 16 |
 | RV revert | 7 | 7 | 7 | 7 |
 | RB rebase | 9 | 4 | 1 | 1 |
@@ -528,7 +528,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 4 | 2 | 1 |
 | NU non-UTF-8 | 5 | 5 | 2 | 2 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **267** | **243** | **210** | **210** |
+| **Total** | **267** | **243** | **211** | **211** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

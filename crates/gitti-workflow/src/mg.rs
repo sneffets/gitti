@@ -1,9 +1,10 @@
 //! MG — merge: a fast-forward, a merge commit always (with a message), squash then commit,
 //! fast-forward only on diverged branches, a clean three-way merge, conflicts resolved by
 //! taking a side / after both sides renamed a file / in a binary file / in a text file
-//! `.gitattributes` marks binary, abort, concluding with the commit box emptied or edited,
-//! unrelated histories, a merge into a dirty working tree (overlapping, not overlapping), a
-//! merge in a linked worktree; RN-05 (a merge across a rename) shares the module.
+//! `.gitattributes` marks binary / in a submodule's pointer, abort, concluding with the
+//! commit box emptied or edited, unrelated histories, a merge into a dirty working tree
+//! (overlapping, not overlapping), a merge in a linked worktree; RN-05 (a merge across a
+//! rename) shares the module.
 
 use crate::expect::{Checks, Commit, Expect, OpState, conflicted};
 
@@ -846,6 +847,97 @@ pub mod binary_attr {
         k.text("committed table", committed.as_deref(), Some(OURS));
         k.text("table on disk", e.file(FILE).as_deref(), Some(OURS));
         k.eq("status", e.status_lines(), Vec::<String>::new());
+        k.done()
+    }
+}
+
+/// **MG-21 — a submodule pointer conflict.** The submodule `lib` at [`PATH`] (its own
+/// repository, checked out at `main`'s commit): `main` moved it from [`LIB_ONE`] to
+/// [`LIB_MAIN`], `feat` to [`LIB_FEAT`]. The merge stops on the pointer ([`fixture`],
+/// [`expect_stopped`]). The apps show it as a submodule conflict — ours → theirs, no merge
+/// editor; the user takes theirs and continues: the merge records `feat`'s commit, the
+/// submodule's checkout stays at `main`'s, so it shows as changed ([`expect_concluded`]).
+pub mod submodule {
+    use std::fs;
+    use std::path::Path;
+
+    use super::{MERGE, conflicted, merge_commit, on};
+    use crate::expect::{Checks, Expect, OpState};
+    use crate::fixture::{Fixture, gitlink, put};
+    use crate::sm::pointer;
+
+    pub const TARGET: &str = "feat";
+    pub const PATH: &str = "libs/lib";
+    pub const LIB_ONE: &str = "lib one";
+    pub const LIB_MAIN: &str = "lib main";
+    pub const LIB_FEAT: &str = "lib feat";
+
+    pub struct Setup {
+        pub main: String,
+        pub feat: String,
+        pub lib_one: String,
+        pub lib_main: String,
+        pub lib_feat: String,
+    }
+
+    /// See the module docs; the merge stopped. Seven git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        // `lib` next to the superproject first (its ids go into the gitlinks), moved into
+        // its place after the merge stopped.
+        let lib_dir = dir.with_file_name(format!(
+            "{}-lib",
+            dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        ));
+        let mut l = Fixture::new();
+        let one = l.commit("main", LIB_ONE, &[put("l.txt", "1\n")]);
+        let lib_main = l.commit("main", LIB_MAIN, &[put("l.txt", "1\nmain\n")]);
+        let lib_feat = l.commit_from("feat", one, LIB_FEAT, &[put("l.txt", "1\nfeat\n")]);
+        let lib = l.build(&lib_dir);
+        let (one, lib_main, lib_feat) = (lib[one].to_string(), lib[lib_main].to_string(), lib[lib_feat].to_string());
+
+        let mut fx = Fixture::new();
+        let modules = format!("[submodule \"{PATH}\"]\n\tpath = {PATH}\n\turl = ../lib.git\n");
+        let init = fx.commit("main", "init", &[put("s.txt", "s\n"), put(".gitmodules", &modules), gitlink(PATH, &one)]);
+        let feat = fx.commit_from(TARGET, init, "Feat lib", &[gitlink(PATH, &lib_feat)]);
+        let main = fx.commit("main", "Main lib", &[gitlink(PATH, &lib_main)]);
+        fx.config(&format!("[submodule \"{PATH}\"]\n\tactive = true\n\turl = ../lib.git\n"));
+        fx.git_after_stops(&["merge", TARGET]);
+        let ids = fx.build(dir);
+        let checkout = dir.join(PATH);
+        let _ = fs::remove_dir(&checkout);
+        fs::rename(&lib_dir, &checkout).unwrap();
+        Setup {
+            main: ids[main].into(),
+            feat: ids[feat].into(),
+            lib_one: one,
+            lib_main,
+            lib_feat,
+        }
+    }
+
+    /// The merge stopped on the pointer only; the submodule checked out at `main`'s
+    /// commit. Two git processes.
+    pub fn expect_stopped(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-21 the stopped merge");
+        k.eq("state", e.state(), OpState::Merging);
+        k.eq("MERGE_HEAD", e.ref_id("MERGE_HEAD"), Some(s.feat.clone()));
+        k.eq("conflicted", conflicted(&e.status()), vec![PATH.to_string()]);
+        k.eq("submodule HEAD", Expect::new(&dir.join(PATH)).ref_id("HEAD"), Some(s.lib_main.clone()));
+        k.done()
+    }
+
+    /// After taking theirs and Continue: the merge commit records `feat`'s commit; the
+    /// submodule's checkout is still at `main`'s, so the superproject shows it changed.
+    /// Four git processes.
+    pub fn expect_concluded(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-21 after Take Theirs and Continue");
+        on(&mut k, &e, "main");
+        merge_commit(&mut k, &e, &[&s.main, &s.feat], MERGE);
+        k.eq("recorded pointer", pointer(dir, &format!("HEAD:{PATH}")), Some(s.lib_feat.clone()));
+        k.eq("submodule HEAD", Expect::new(&dir.join(PATH)).ref_id("HEAD"), Some(s.lib_main.clone()));
+        k.eq("status", e.status_lines(), vec![format!(" M {PATH}")]);
         k.done()
     }
 }

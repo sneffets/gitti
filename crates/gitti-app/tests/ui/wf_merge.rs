@@ -36,6 +36,7 @@ enum Setup {
     /// The main worktree's folder too.
     Worktree(mg::worktree::Setup, PathBuf),
     Binary(mg::binary::Setup),
+    Submodule(mg::submodule::Setup),
     BinaryAttr(mg::binary_attr::Setup),
     AcrossRename(mg::across_rename::Setup),
 }
@@ -70,6 +71,7 @@ pub fn main() {
         ("mg11_conclude_with_an_edited_message", mg11_conclude_with_an_edited_message),
         ("mg17_dirty_tree_survives_merge_and_abort", mg17_dirty_tree_survives_merge_and_abort),
         ("mg20_merge_conflict_in_a_linked_worktree", mg20_merge_conflict_in_a_linked_worktree),
+        ("mg21_submodule_pointer_conflict_take_theirs", mg21_submodule_pointer_conflict_take_theirs),
         ("mg22_binary_conflict_take_theirs", mg22_binary_conflict_take_theirs),
         ("mg27_conflict_in_a_file_gitattributes_marks_binary", mg27_conflict_in_a_file_gitattributes_marks_binary),
         ("rn05_merge_across_a_rename", rn05_merge_across_a_rename),
@@ -93,6 +95,9 @@ pub fn main() {
                 let s = mg::worktree::fixture(&dir);
                 let linked = s.linked.clone();
                 (Setup::Worktree(s, dir.clone()), Some(linked))
+            }
+            "mg21_submodule_pointer_conflict_take_theirs" => {
+                (Setup::Submodule(mg::submodule::fixture(&dir)), None)
             }
             "mg22_binary_conflict_take_theirs" => (Setup::Binary(mg::binary::fixture(&dir)), None),
             "mg27_conflict_in_a_file_gitattributes_marks_binary" => {
@@ -387,6 +392,42 @@ fn mg20_merge_conflict_in_a_linked_worktree(ui: &mut Ui) {
     info(ui, "after Continue");
     conflicts(ui, "clean", &[], "after Continue");
     expect(ui, wf::expect_concluded(&main, &s));
+}
+
+/// MG-21: both sides moved a submodule's pointer: its rows ours → theirs with the commits
+/// between; no Resolve Conflicts (merge editor) split button
+/// but Take Ours / Take Theirs buttons; Take Theirs records feat's commit and says the
+/// checkout is unchanged; Continue.
+/// Workflow: MG-21
+fn mg21_submodule_pointer_conflict_take_theirs(ui: &mut Ui) {
+    use mg::submodule as wf;
+    let Setup::Submodule(s) = setup() else { unreachable!() };
+    let dir = ui.workdir();
+    conflicts(ui, "merging", &[wf::PATH], "the stopped merge");
+    let p = ui.check("submodule conflict");
+    if p.iter().any(|q| q.kind() == "resolve-split") {
+        ui.fail("a submodule conflict offers the merge editor".into());
+    }
+    for want in ["TakeOurs", "TakeTheirs", "MarkResolved"] {
+        if !p.iter().any(|q| q.kind() == "conflict-choice" && q.detail() == want && q.visible().is_some()) {
+            fail!(ui, "no visible {want} button");
+        }
+    }
+    // ours → theirs, the commit that came in and the one that went away.
+    let rows = ui.ui_state().rows;
+    let sub = format!("submodule Conflicted {}", wf::PATH);
+    if rows.iter().filter(|r| **r == sub).count() != 3 {
+        fail!(ui, "not three submodule rows: {rows:?}");
+    }
+    conflict_button(ui, wf::PATH, "TakeTheirs");
+    let said = info(ui, "after Take Theirs");
+    if !said.contains("Recorded their commit") {
+        fail!(ui, "after Take Theirs: status {said:?}");
+    }
+    conflicts(ui, "merging", &[], "after Take Theirs");
+    ui.click_on("op-continue", MouseButton::Left);
+    info(ui, "after Continue");
+    expect(ui, wf::expect_concluded(&dir, &s));
 }
 
 /// MG-22: a binary conflict: its header says "binary", its row the binary note, no Resolve
