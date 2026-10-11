@@ -17,6 +17,10 @@
 //! ([`RestorePlan::lost`]; the apps ask for an explicit confirmation then). It refuses
 //! (with what to do) when git-lfs is missing but LFS files would be written: they would
 //! become pointer files instead of their content.
+//!
+//! Afterwards the apps re-read only the restored paths in the same background job, like
+//! after a stage ([`RestorePlan::reread`]); a restore that writes rule files (or the whole
+//! tree) gets the snapshot read instead.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -401,7 +405,47 @@ impl Repo {
     }
 }
 
+/// What the apps read again after a restore ran ([`RestorePlan::reread`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reread {
+    /// The working state of these paths only, in the restore's own background job (like a
+    /// stage / discard: [`Repo::working_state_after`]; a folder stands for everything
+    /// below it).
+    Paths(Vec<String>),
+    /// The snapshot (the whole working state and what the snapshot derives from the work
+    /// tree) — not the history: a restore moves no ref.
+    Snapshot,
+}
+
 impl RestorePlan {
+    /// What to read again after this restore ran. A restore writes and deletes files
+    /// under its paths only, in the work tree and (staged) the index, so re-reading those
+    /// paths is enough ([`Repo::working_state_after`] itself falls back to a whole read
+    /// where a rename shows up or an untracked folder folds) — except where a written or
+    /// deleted file changes what git reports elsewhere:
+    /// - the whole tree (`.`): every rule file may change, read everything;
+    /// - a `.gitattributes` anywhere: whether the repository uses Git LFS (the
+    ///   snapshot's LFS state) and the filters / eol of other files;
+    /// - a `.gitmodules` anywhere: the submodule list (the snapshot's);
+    /// - the top-level `.gitignore`: which files are untracked anywhere;
+    /// - a nested `.gitignore`: its folder is re-read too (what is ignored below it).
+    pub fn reread(&self) -> Reread {
+        if self.paths.iter().any(String::is_empty) {
+            return Reread::Snapshot;
+        }
+        let mut paths = self.paths.clone();
+        for f in self.written.iter().chain(&self.deleted) {
+            let (dir, name) = f.rsplit_once('/').unwrap_or(("", f.as_str()));
+            match name {
+                ".gitattributes" | ".gitmodules" => return Reread::Snapshot,
+                ".gitignore" if dir.is_empty() => return Reread::Snapshot,
+                ".gitignore" if !paths.iter().any(|p| under(dir, p)) => paths.push(dir.to_string()),
+                _ => {}
+            }
+        }
+        Reread::Paths(paths)
+    }
+
     /// Why it can't run (the dialog's OK stays disabled with this reason).
     pub fn blocked(&self) -> Option<String> {
         (self.lfs_files > 0 && !self.lfs_installed).then(|| {
@@ -624,6 +668,28 @@ mod tests {
         assert!(staged.contains("  d/a (staged)\n") && staged.contains("the working tree and the index"));
         assert_eq!(p.title(), "Restore d/ from 0000000");
         assert_eq!(p.done(true), "Restored d/ from 0000000 — staged, commit to keep it");
+    }
+
+    #[gitti_test::test]
+    fn rereads_its_paths_unless_rule_files_change() {
+        let mut p = plan();
+        assert_eq!(p.reread(), Reread::Paths(vec!["d".into()]));
+        // A nested `.gitignore`: its folder too (here inside `d` already).
+        p.written.push("d/e/.gitignore".into());
+        assert_eq!(p.reread(), Reread::Paths(vec!["d".into()]));
+        p.paths = vec!["x/.gitignore".into()];
+        p.written = vec!["x/.gitignore".into()];
+        p.deleted.clear();
+        assert_eq!(p.reread(), Reread::Paths(vec!["x/.gitignore".into(), "x".into()]));
+        for rules in [".gitignore", ".gitattributes", "x/.gitattributes", "x/.gitmodules"] {
+            p.paths = vec![rules.into()];
+            p.written.clear();
+            p.deleted = vec![rules.into()];
+            assert_eq!(p.reread(), Reread::Snapshot, "{rules}");
+        }
+        p.paths = vec!["".into()];
+        p.deleted = vec!["a".into()];
+        assert_eq!(p.reread(), Reread::Snapshot);
     }
 
     #[gitti_test::test]

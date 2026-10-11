@@ -114,7 +114,8 @@ pub struct WorkingState {
     pub staged: Vec<WorkFile>,
     /// The index paths this work tree's file system can't hold ([`crate::fs_paths`]); a
     /// full read gets them (cached while the index is unchanged), a path-limited one keeps
-    /// the previous ones.
+    /// the previous ones unless the index's paths changed there
+    /// ([`Repo::working_state_after`]).
     pub fs_paths: Arc<crate::fs_paths::PathReport>,
     /// Untracked folder entries that are git repositories of their own
     /// ([`crate::discard::is_nested_repo`]), sorted; their diff pane says so.
@@ -948,6 +949,20 @@ impl Repo {
             v.sort_by(|a, b| entry_order(&a.entry).cmp(&entry_order(&b.entry)));
             v
         };
+        // The index paths' file-system check (`fs_paths`) is kept from `prev` — unless the
+        // index gained or lost a path `prev` didn't list at all (a staged restore brings a
+        // file back or drops a clean one; a stage acts on listed paths only), or a touched
+        // path had an issue: then it is read again (in-process, cached per index).
+        let fs_paths = {
+            let listed: HashSet<&str> = prev.status.entries.iter().map(|e| e.path.as_str()).collect();
+            let new_path = part
+                .status
+                .entries
+                .iter()
+                .any(|e| matches!(e.index, Some('A' | 'D')) && !listed.contains(e.path.as_str()));
+            let had_issue = prev.fs_paths.issues.iter().any(|i| touched.contains(&i.path));
+            if new_path || had_issue { self.fs_paths() } else { prev.fs_paths.clone() }
+        };
         let mut entries: Vec<StatusEntry> = prev
             .status
             .entries
@@ -966,7 +981,7 @@ impl Repo {
             conflicted: merge(&prev.conflicted, part.conflicted),
             unstaged: merge(&prev.unstaged, part.unstaged),
             staged: merge(&prev.staged, part.staged),
-            fs_paths: prev.fs_paths.clone(),
+            fs_paths,
             nested_repos: {
                 let mut v: Vec<String> =
                     prev.nested_repos.iter().filter(|p| !touched.contains(p.as_str())).cloned().collect();

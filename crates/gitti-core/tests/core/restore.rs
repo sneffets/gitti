@@ -5,9 +5,9 @@ use std::fs;
 use std::path::Path;
 
 use gitti_core::diff::FileChange;
-use gitti_core::restore::{RestoreTarget, restore_target};
+use gitti_core::restore::{Reread, RestoreTarget, restore_target};
 use gitti_core::version_file::{DiffSource, version_sides};
-use gitti_core::{LogOrder, ObjectId, Repo};
+use gitti_core::{DiffOptions, LogOrder, ObjectId, Repo, WorkingState};
 
 use crate::fixture_kit::{E, History, append_config, f, repo_with, sh};
 
@@ -171,6 +171,58 @@ fn restore_the_version_before_a_commit() {
     });
     let why = restore_target(root, file("a.txt"), true).unwrap_err();
     assert!(why.contains("no parent"), "{why}");
+}
+
+/// What the apps show of a working state: each section's files with their status letters
+/// and diffs' line counts.
+fn shown(w: &WorkingState) -> Vec<String> {
+    let mut out = Vec::new();
+    for (sec, files) in [("C", &w.conflicted), ("U", &w.unstaged), ("S", &w.staged)] {
+        for f in files.iter() {
+            let lines = f.diff.as_ref().map_or(0, |d| d.hunks.iter().map(|h| h.lines.len()).sum::<usize>());
+            out.push(format!("{sec} {} {:?}{:?}{} {lines}", f.path(), f.entry.index, f.entry.worktree, f.entry.untracked));
+        }
+    }
+    out
+}
+
+/// After a restore, re-reading only the paths `RestorePlan::reread` names (one status
+/// and two diffs, no other git) gives what a whole read gives: a file over a local
+/// change, a folder with the index (a file back, one gone), the version before a rename
+/// with the index (a staged rename: the re-read falls back to a whole one by itself).
+#[gitti_test::test]
+fn restore_rereads_only_its_paths() {
+    let (_tmp, dir, c1, _) = fixture();
+    let repo = Repo::open(&dir).unwrap();
+    let opts = DiffOptions::default();
+    fs::write(dir.join("a.txt"), "local\n").unwrap();
+    fs::write(dir.join("ab"), "local\n").unwrap();
+    let mut prev = repo.working_state_with(&opts).unwrap();
+    for (paths, staged) in [(&["a.txt"][..], false), (&["d"], true), (&["old.md", "new.md"], true)] {
+        let plan = repo.restore_plan(&target(c1, paths)).unwrap();
+        repo.restore(&plan, staged).unwrap();
+        let Reread::Paths(reread) = plan.reread() else {
+            panic!("{paths:?}: no rule file, yet a snapshot");
+        };
+        let before = repo.command_log().snapshot().len();
+        let after = repo.working_state_after(&opts, &prev, &reread).unwrap();
+        let ran = repo.command_log().snapshot().len() - before;
+        let whole = repo.working_state_with(&opts).unwrap();
+        assert_eq!(shown(&after), shown(&whole), "{paths:?}");
+        assert_eq!(after.fs_paths.issues, whole.fs_paths.issues, "{paths:?}");
+        if paths.len() == 1 {
+            assert_eq!(ran, 3, "{paths:?}: status + two diffs of its paths");
+        }
+        prev = after;
+    }
+    // `ab`'s local change is still there (not one of the paths); the restore's are too.
+    let s = shown(&prev);
+    for want in [" ab ", " a.txt ", " d/y ", " d/z ", " old.md ", " new.md "] {
+        assert!(s.iter().any(|l| l.contains(want)), "{want}: {s:#?}");
+    }
+    // A rule file: the snapshot.
+    let plan = repo.restore_plan(&target(c1, &[".gitattributes"])).unwrap();
+    assert_eq!(plan.reread(), Reread::Snapshot);
 }
 
 /// Branches and tags containing a commit, from the loaded history without git (tags
