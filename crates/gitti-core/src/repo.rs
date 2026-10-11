@@ -1307,7 +1307,8 @@ impl Repo {
     fn untracked_in_process(&self, path: &str, deleted: bool) -> Result<InProcess> {
         let full = crate::paths::join_repo_path(&self.workdir, path);
         let meta = std::fs::symlink_metadata(&full)?;
-        if !meta.is_file() || meta.len() > UNTRACKED_PREVIEW_MAX_BYTES {
+        let link = meta.file_type().is_symlink();
+        if !link && (!meta.is_file() || meta.len() > UNTRACKED_PREVIEW_MAX_BYTES) {
             return Ok(InProcess::Done(None));
         }
         // Not for CRLF text with `core.autocrlf` (Git for Windows' default): git stores it
@@ -1315,6 +1316,13 @@ impl Repo {
         // trailing CR and a partial stage put CRLF into the index.
         if needs_quoting(path) {
             return Ok(InProcess::Git);
+        }
+        // A symlink: what `git add` records — the link (mode 120000) with its target as
+        // content, never what it points at (a folder, or nothing).
+        if link {
+            let target = link_target_bytes(&std::fs::read_link(&full)?);
+            let bytes = file_diff_bytes_mode(path, &target, "120000", deleted, self.object_hash);
+            return Ok(InProcess::Done(parse_unified_bytes(&bytes).into_iter().next()));
         }
         let data = std::fs::read(&full)?;
         if data.windows(2).any(|w| w == b"\r\n") && self.autocrlf() {
@@ -1701,6 +1709,25 @@ pub fn file_diff_bytes(
     hash: gix::hash::Kind,
 ) -> Vec<u8> {
     let mode = if executable { "100755" } else { "100644" };
+    file_diff_bytes_mode(path, data, mode, deleted, hash)
+}
+
+/// A symlink's target as git stores it: its bytes (unix), `/`-separated (Windows).
+fn link_target_bytes(target: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        target.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        target.to_string_lossy().replace('\\', "/").into_bytes()
+    }
+}
+
+/// [`file_diff_bytes`] of an entry of mode `mode` (`100644`, `100755`, `120000`: a
+/// symlink whose `data` is its target).
+fn file_diff_bytes_mode(path: &str, data: &[u8], mode: &str, deleted: bool, hash: gix::hash::Kind) -> Vec<u8> {
     let blob = gix::objs::compute_hash(hash, gix::objs::Kind::Blob, data)
         .map(|id| id.to_hex_with_len(7).to_string())
         .unwrap_or_else(|_| "0000000".into());
