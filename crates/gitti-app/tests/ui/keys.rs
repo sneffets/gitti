@@ -1193,7 +1193,7 @@ fn overlay_keys(ui: &mut Ui) {
     ui.key0("escape");
     // Stash dialog: z / ⌘⇧S; Esc cancels, Enter stashes.
     for key in ["z", "secondary-shift-s"] {
-        k0(ui, key, "stash dialog open, field focused", |s| s.modal.as_deref() == Some("Stash") && s.focus == "modal");
+        k0(ui, key, "stash dialog open, field focused", |s| s.modal.as_deref() == Some("Stash Changes") && s.focus == "modal");
         if key == "z" {
             k0(ui, "escape", "stash dialog closed", |s| s.modal.is_none() && s.focus == "list");
         }

@@ -3308,21 +3308,24 @@ impl GittiApp {
         self.drag_targets.point(area, line, byte)
     }
 
-    /// Script hook: the commit message editor (`field` = `None`) or the open dialog's
-    /// field: where its byte `byte` was laid out (inside the character) and its selected
+    /// Script hook: the commit message editor, a field or the text area of the open
+    /// dialog: where its byte `byte` was laid out (inside the character) and its selected
     /// text.
     pub fn script_input(
         &self,
-        field: Option<usize>,
+        input: crate::testing::InputBox,
         byte: usize,
         cx: &App,
     ) -> Option<(Option<Point<Pixels>>, String)> {
-        let (bounds, text) = match field {
-            None => {
-                let m = self.message.read(cx);
-                (m.range_to_bounds(&(byte..byte + 1)), m.selected_value())
-            }
-            Some(ix) => {
+        use crate::testing::InputBox;
+        let area = |a: &Entity<TextareaState>| {
+            let a = a.read(cx);
+            (a.range_to_bounds(&(byte..byte + 1)), a.selected_value())
+        };
+        let (bounds, text) = match input {
+            InputBox::Message => area(&self.message),
+            InputBox::DialogText => area(self.modal.as_ref()?.text_area()?),
+            InputBox::DialogField(ix) => {
                 let f = self.modal.as_ref()?.field_input(ix)?.read(cx);
                 (f.range_to_bounds(&(byte..byte + 1)), f.selected_value())
             }
