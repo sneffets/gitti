@@ -61,3 +61,17 @@ fn tree_folders_fold_mark_and_stage() {
     assert!(st[2].contains("unstaged=2 staged=2") && num(st[2], "marked") == 0, "{out}");
     assert!(has(&detail(sc[5]), "src/app/ (2)"), "the staged folder: {out}");
 }
+
+/// s on a folder row stages its files: the folder leaves the section and the cursor goes
+/// to the next file there — never onto the gap band that now has the folder's index.
+#[gitti_test::test]
+fn folder_action_keeps_the_cursor_on_a_real_row() {
+    let dir = tree_repo();
+    let tree = format!("press:ctrl-p;{}press:enter", presses("changes as tree"));
+    let script = format!("{tree};press:enter;press:j;press:j;state;key:s;state");
+    let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "120x40", &script);
+    let st = states(&out);
+    assert!(st[0].contains("Folder { src: Unstaged, folder: 0 }"), "{out}");
+    assert!(st[1].contains("unstaged=2 staged=2"), "staged: {out}");
+    assert!(!st[1].contains("Spacer") && st[1].contains("File { src: Unstaged"), "the cursor: {out}");
+}

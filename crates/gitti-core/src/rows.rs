@@ -993,6 +993,21 @@ pub fn neighbour_file_row(
         })
 }
 
+/// Where a cursor at `row` belongs after the rows were rebuilt (a folder or several files
+/// left the section): `row` itself unless it is a gap band ([`DiffRow::Spacer`]) or past
+/// the end — then the next row that isn't, else the last one before it that isn't.
+pub fn real_row_near(rows: &[DiffRow], row: usize) -> usize {
+    let real = |r: &DiffRow| *r != DiffRow::Spacer;
+    let row = row.min(rows.len().saturating_sub(1));
+    if rows.get(row).is_none_or(real) {
+        return row;
+    }
+    (row..rows.len())
+        .find(|&i| real(&rows[i]))
+        .or_else(|| (0..row).rev().find(|&i| real(&rows[i])))
+        .unwrap_or(row)
+}
+
 /// The expander row a key at row `row` acts on: the nearest `Expand` row of the file
 /// `row` belongs to (the next file's when `row` is between files), downwards first.
 pub fn expander_near(rows: &[DiffRow], row: usize) -> Option<usize> {
@@ -1074,6 +1089,17 @@ impl LineSel {
 mod tests {
     use super::*;
     use crate::diff::parse_unified;
+
+    #[gitti_test::test]
+    fn real_row_near_skips_gap_bands() {
+        let file = |file| DiffRow::File { src: Src::Unstaged, file };
+        let rows = [DiffRow::Section(Src::Unstaged), DiffRow::Spacer, file(0), DiffRow::Spacer, DiffRow::Spacer];
+        assert_eq!(real_row_near(&rows, 0), 0);
+        assert_eq!(real_row_near(&rows, 1), 2, "the next real row");
+        assert_eq!(real_row_near(&rows, 3), 2, "none after: the one before");
+        assert_eq!(real_row_near(&rows, 9), 2, "past the end");
+        assert_eq!(real_row_near(&[], 3), 0);
+    }
 
     #[gitti_test::test]
     fn rows_and_range_selection() {
