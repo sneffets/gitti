@@ -1426,13 +1426,44 @@ impl Repo {
         Ok(())
     }
 
+    /// Unstages everything and nothing else: a path-limited reset (`git reset -- :/`),
+    /// which — unlike a plain `git reset` — keeps a merge / cherry-pick / revert in progress
+    /// (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` stay, the next commit still
+    /// concludes it). Conflicted paths are left out: a reset would put HEAD's version in
+    /// their place and so mark them resolved.
     pub fn unstage_all(&self) -> Result<()> {
-        if self.has_head() {
-            self.git.run(&["reset", "-q"])?;
-        } else {
+        if !self.has_head() {
             self.git.run(&["rm", "--cached", "-r", "-q", "."])?;
+            return Ok(());
         }
+        let mut specs = b":/\0".to_vec();
+        for path in self.unmerged_index_paths()? {
+            specs.extend_from_slice(b":(top,exclude,literal)");
+            specs.extend_from_slice(&path);
+            specs.push(0);
+        }
+        self.git.run_stdin(
+            &["reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            Some(&specs),
+        )?;
         Ok(())
+    }
+
+    /// The conflicted paths of the index (in-process, no git), each once.
+    pub(crate) fn unmerged_index_paths(&self) -> Result<Vec<Vec<u8>>> {
+        let repo = self.gix()?;
+        let index = repo.index_or_empty().map_err(gx)?;
+        let mut paths: Vec<Vec<u8>> = Vec::new();
+        for e in index.entries() {
+            if e.stage_raw() == 0 {
+                continue;
+            }
+            let path = e.path(&index).to_vec();
+            if paths.last() != Some(&path) {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
     }
 
     /// Applies the selected part of `file` (a diff produced by [`Repo::working_state`]),
