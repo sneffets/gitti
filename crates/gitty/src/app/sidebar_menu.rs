@@ -304,12 +304,13 @@ impl App {
         }
         v.push(MenuItem::separator());
         let n = name.to_string();
+        let remotes: Vec<String> = self.remotes.iter().map(|r| r.name.clone()).collect();
         v.push(
             MenuItem::new("Delete Tag…", move |app| {
                 let n2 = n.clone();
                 app.modal = Some(Modal::confirm(
                     "Delete Tag",
-                    format!("Delete tag {n}?"),
+                    format!("Delete tag {n}?\n\n{}", gitti_core::tag::delete_note(&n, &remotes)),
                     "Delete",
                     move |app| {
                         app.run_op("Delete tag", true, After::Nothing, move |r| r.delete_tag(&n2))

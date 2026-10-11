@@ -26,6 +26,9 @@ pub struct TagDetails {
 pub struct AnnotatedTag {
     /// The tag object's id.
     pub id: String,
+    /// The tag object it tags when it is a tag of a tag (full id); `None`: it tags
+    /// [`TagDetails::target`] itself.
+    pub tag_of: Option<String>,
     /// `Name <mail>` (empty for the rare tag without a tagger).
     pub tagger: String,
     /// git's ISO date (`2026-10-10 12:00:00 +0200`).
@@ -53,6 +56,11 @@ impl TagDetails {
                 self.name
             );
         };
+        // A tag of a tag: the chain's first link, then where it ends.
+        let what = match &a.tag_of {
+            Some(t) => format!("tag {} → {what}", &t[..t.len().min(10)]),
+            None => what,
+        };
         let mut out = format!("Annotated tag {}\n\n", self.name);
         if !a.tagger.is_empty() {
             out.push_str(&format!("Tagger:    {}\n", a.tagger));
@@ -77,6 +85,63 @@ impl TagDetails {
     }
 }
 
+/// Why `name` can't be the name of a new tag, said in plain words before git runs (the
+/// Create Tag dialog keeps OK disabled with it): nothing typed, not a valid tag name
+/// (`git check-ref-format`; a leading `-` would be taken for an option), or a tag of that
+/// name exists already — `git tag` would refuse it. `refs` are the repository's refs as
+/// the app read them last. `None` = git can create it.
+pub fn new_tag_problem(name: &str, refs: &[crate::repo::RefInfo]) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Some("Enter a name for the tag".into());
+    }
+    if name.starts_with('-') {
+        return Some(format!("“{name}” can't be a tag name: it must not start with “-”"));
+    }
+    let full = format!("refs/tags/{name}");
+    if let Err(e) = gix::validate::reference::name(full.as_str().into()) {
+        let why = e.to_string();
+        let mut chars = why.chars();
+        let why = match chars.next() {
+            Some(c) => c.to_lowercase().chain(chars).collect::<String>(),
+            None => why,
+        };
+        return Some(format!("“{name}” can't be a tag name: {why}"));
+    }
+    refs.iter()
+        .find(|r| r.kind == crate::repo::RefKind::Tag && r.full_name == full)
+        .map(|r| {
+            format!(
+                "Tag {name} already exists (at {}). Choose another name — or delete {name} \
+                 first to put it here.",
+                r.target.to_hex_with_len(7)
+            )
+        })
+}
+
+/// What the Delete Tag dialog says: the tag goes in this repository only (the commit
+/// stays; tags have no reflog, so an annotated tag's message is gone); remotes keep theirs
+/// — their own Delete Tag on … entries remove it there — and while one has it a fetch can
+/// bring it back.
+pub fn delete_note(name: &str, remotes: &[String]) -> String {
+    let mut s = format!(
+        "Deletes {name} in this repository; the commit stays. Tags have no reflog: an \
+         annotated tag's message can't be brought back."
+    );
+    match remotes {
+        [] => {}
+        [one] => s.push_str(&format!(
+            "\n\nIf {one} has {name}, it keeps it — Delete Tag on {one}… removes it there; \
+             until then a fetch can bring it back."
+        )),
+        _ => s.push_str(&format!(
+            "\n\nRemotes that have {name} keep it — Delete Tag on <remote>… removes it there; \
+             until then a fetch can bring it back."
+        )),
+    }
+    s
+}
+
 impl Repo {
     /// The tag `name` (`refs/tags/<name>`): lightweight or annotated, the annotated one's
     /// tagger, date, message and verified signature. One `for-each-ref`, plus one
@@ -95,6 +160,8 @@ impl Repo {
             "%(contents:subject)",
             "%(contents:body)",
             "%(contents:signature)",
+            "%(type)",
+            "%(object)",
         ]
         .join("%00");
         let out = self
@@ -132,6 +199,7 @@ impl Repo {
             target_type,
             annotated: Some(AnnotatedTag {
                 id: get(1),
+                tag_of: (get(11) == "tag").then(|| get(12)),
                 tagger: get(4),
                 date: get(5),
                 message,
@@ -277,6 +345,7 @@ mod tests {
         assert!(d.starts_with("Lightweight tag v1") && d.contains("commit 0123456789 Fix it"), "{d}");
         t.annotated = Some(AnnotatedTag {
             id: "feed".into(),
+            tag_of: None,
             tagger: "Jane <j@x.org>".into(),
             date: "2026-10-10 12:00:00 +0200".into(),
             message: "Release 1\n\nLine two\nLine three".into(),
@@ -286,5 +355,34 @@ mod tests {
         assert!(d.starts_with("Annotated tag v1"), "{d}");
         assert!(d.contains("Tagger:    Jane <j@x.org>") && d.contains("Signature: not signed"), "{d}");
         assert!(d.ends_with("Release 1\n\nLine two\nLine three\n"), "{d}");
+        // A tag of a tag names the tag it tags, then where the chain ends.
+        t.annotated.as_mut().unwrap().tag_of = Some("abcdef0123456789".into());
+        let d = t.describe();
+        assert!(d.contains("Points at: tag abcdef0123 → commit 0123456789 Fix it\n"), "{d}");
+    }
+
+    #[gitti_test::test]
+    fn new_tag_names_refused_before_git() {
+        use crate::repo::{RefInfo, RefKind};
+        let id = gix::ObjectId::from_hex(b"1234567890123456789012345678901234567890").unwrap();
+        let r = |full: &str, kind| RefInfo {
+            full_name: full.into(),
+            short_name: full.rsplit('/').next().unwrap().into(),
+            kind,
+            target: id,
+        };
+        let refs = [r("refs/tags/v1", RefKind::Tag), r("refs/heads/v2", RefKind::LocalBranch)];
+        assert_eq!(new_tag_problem(" ", &refs).as_deref(), Some("Enter a name for the tag"));
+        assert_eq!(
+            new_tag_problem("v1", &refs).as_deref(),
+            Some("Tag v1 already exists (at 1234567). Choose another name — or delete v1 first to put it here.")
+        );
+        // A branch of the name doesn't block it (git allows it).
+        assert_eq!(new_tag_problem("v2", &refs), None);
+        assert_eq!(new_tag_problem("release/1.0", &refs), None);
+        for bad in ["-d", "a b", "a..b", "a~1", "x.lock", "a:b", "end/", "q?"] {
+            let why = new_tag_problem(bad, &refs).unwrap_or_else(|| panic!("{bad} accepted"));
+            assert!(why.starts_with(&format!("“{bad}” can't be a tag name: ")), "{why}");
+        }
     }
 }

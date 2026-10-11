@@ -951,11 +951,12 @@ pub(super) fn ref_menu(
             }
             menu = menu.separator().item({
                 let name = name.clone();
+                let remotes = remotes.to_vec();
                 item("Delete Tag…", app, move |this, w, cx| {
                     let name = name.clone();
                     this.confirm(
                         format!("Delete tag {name}?"),
-                        None,
+                        Some(gitti_core::tag::delete_note(&name, &remotes)),
                         "Delete",
                         w,
                         cx,
@@ -1501,6 +1502,12 @@ impl GittiApp {
             )
             .field("Tag name", "")
             .ok("Create");
+        // A name git would refuse (an existing tag, an invalid name) is refused here first.
+        let refs = self.refs.clone();
+        let spec = spec.live(move |res| ModalLive {
+            blocked: gitti_core::tag::new_tag_problem(res.values.first().map_or("", |v| v.as_str()), &refs),
+            ..Default::default()
+        });
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let name = res.values[0].trim().to_string();
             let message = res.text.unwrap_or_default();

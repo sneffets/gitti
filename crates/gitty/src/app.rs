@@ -31,7 +31,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::edit::TextEdit;
-use crate::modal::{MenuItem, Modal, PickItem};
+use crate::modal::{Live, MenuItem, Modal, PickItem};
 use crate::sidebar::{self, SideItem};
 use crate::theme::Palette;
 
@@ -3564,7 +3564,9 @@ impl App {
     /// editor): with one an annotated tag (`git tag -a`), without a lightweight one.
     pub fn create_tag_dialog(&mut self, rev: String) {
         let title = format!("Create tag at {}", short_rev(&rev));
-        self.modal = Some(Modal::input_checks(
+        // A name git would refuse (an existing tag, an invalid name) is refused here first.
+        let refs = self.refs.clone();
+        let modal = Modal::input_checks(
             title,
             vec![("Tag name", "")],
             vec![("Annotated — write a message next (git tag -a)", true)],
@@ -3588,7 +3590,13 @@ impl App {
                     move |app, text| create(app, name, text),
                 ));
             },
-        ));
+        )
+        .with_live(move |values, checks| Live {
+            ok_label: if checks.first().copied().unwrap_or(true) { "Next…" } else { "Create" }.into(),
+            blocked: gitti_core::tag::new_tag_problem(values.first().map_or("", |v| v.as_str()), &refs),
+            ..Default::default()
+        });
+        self.modal = Some(modal);
     }
 
     /// Show Tag: tag `name`'s details (lightweight or annotated: tagger, date, message,
