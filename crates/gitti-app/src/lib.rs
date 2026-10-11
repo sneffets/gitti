@@ -901,6 +901,11 @@ pub mod testing {
         ws.read(cx).script_app()?.read(cx).script_modal_message()
     }
 
+    /// The text in the open dialog's text area (Edit Commit Message…, a tag's message).
+    pub fn modal_area_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        ws.read(cx).script_app()?.read(cx).script_modal_area_text(cx)
+    }
+
     /// The text of the open text window (About, Start-up Timings, …).
     pub fn modal_viewer_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
         ws.read(cx).script_app()?.read(cx).script_modal_viewer_text(cx)

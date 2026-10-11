@@ -713,6 +713,12 @@ impl GittiApp {
         self.modal.as_ref()?.message.clone()
     }
 
+    /// Script hook: the text in the open dialog's text area (a message being edited).
+    pub fn script_modal_area_text(&self, cx: &App) -> Option<String> {
+        let m = self.modal.as_ref()?;
+        Some(m.text.as_ref()?.read(cx).value().to_string())
+    }
+
     /// Script hook: the text of the open text window.
     pub fn script_modal_viewer_text(&self, cx: &App) -> Option<String> {
         let m = self.modal.as_ref().filter(|m| m.viewer)?;
