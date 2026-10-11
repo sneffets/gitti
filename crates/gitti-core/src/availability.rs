@@ -277,9 +277,10 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             check(!f.github_remote, NO_GITHUB_REMOTE).or(check(!f.signing_keys, NO_KEY_MISSING))
         }
         // Stash.
-        "StashChanges" | "StashIncludingUntracked" | "StashSelection" => {
-            check(f.unborn, UNBORN).or(check(changes == 0, NO_CHANGES))
-        }
+        // `git stash` would end a merge / cherry-pick half-done (`stash::refusal_during`).
+        "StashChanges" | "StashIncludingUntracked" | "StashSelection" => check(f.unborn, UNBORN)
+            .or(check(changes == 0, NO_CHANGES))
+            .or(busy_op),
         "ApplyStash" | "PopStash" | "DropLatestStash" | "DropStash" | "RenameStash" => {
             check(f.stashes == 0, NO_STASHES)
         }
@@ -536,6 +537,19 @@ mod tests {
         };
         for a in ["MergeBranch", "RebaseCurrentOnto", "CherryPickCommit", "RevertCommit", "Pull"] {
             assert_eq!(why_not(a, &merging), Some("a merge is in progress"), "{a}");
+        }
+        // A stash would end the operation half-done.
+        let busy = |state| RepoFacts { state, staged: 1, unstaged: 1, ..plain() };
+        for (state, why) in [
+            (RepoState::Merging, "a merge is in progress"),
+            (RepoState::CherryPicking, "a cherry-pick is in progress"),
+            (RepoState::Reverting, "a revert is in progress"),
+            (RepoState::Rebasing, "a rebase is in progress"),
+        ] {
+            for a in ["StashChanges", "StashIncludingUntracked", "StashSelection"] {
+                assert_eq!(why_not(a, &busy(state)), Some(why), "{a}");
+            }
+            assert_eq!(why_not("UnstageAll", &busy(state)), None, "keeps the operation");
         }
         // Committing concludes the merge.
         assert_eq!(why_not("Commit", &merging), None);

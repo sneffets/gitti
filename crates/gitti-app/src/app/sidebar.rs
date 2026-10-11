@@ -349,6 +349,7 @@ impl GittiApp {
     fn stash_row(&self, si: usize, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let st = &self.stashes[si];
         let index = st.index;
+        let target = st.target();
         let app = cx.entity().downgrade();
         let row = self
             .history
@@ -376,7 +377,7 @@ impl GittiApp {
                     this.select_row(row, window, cx);
                 }
             }))
-            .context_menu(move |menu, _, _| super::menus::stash_menu(menu, &app, index))
+            .context_menu(move |menu, _, _| super::menus::stash_menu(menu, &app, target))
     }
 
     /// A worktree: folder icon (open for this tab's), folder name, its mark (uncommitted

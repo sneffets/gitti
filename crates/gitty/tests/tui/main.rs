@@ -20,6 +20,7 @@ mod linux;
 mod menus;
 mod merge_editor;
 mod navigation;
+mod op_safety;
 mod palette;
 mod progress;
 mod reflog;

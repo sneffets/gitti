@@ -562,8 +562,9 @@ fn draw_toolbar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!(
-                " {} — ctrl-p: Continue / Abort ",
-                app.repo_state.label().to_uppercase()
+                " {} — ctrl-p: Continue / {}Abort ",
+                app.repo_state.label().to_uppercase(),
+                if gitti_core::skip::can_skip(app.repo_state) { "Skip / " } else { "" }
             ),
             Style::new().fg(p.accent_text).bg(p.warning),
         ));
@@ -2814,6 +2815,8 @@ fn draw_diff_row(
                     gitti_core::commit_files::placeholder_note(d).unwrap_or_default()
                 }
                 (Some(d), _) if d.binary => "Binary file".to_string(),
+                // Line-ending / BOM-only changes, above the hunks.
+                (Some(d), _) if let Some(note) = gitti_core::eol_note::eol_note(d) => note,
                 (Some(d), _) if d.hunks.is_empty() => {
                     "No content changes (mode / rename only)".to_string()
                 }

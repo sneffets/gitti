@@ -54,6 +54,7 @@ mod lfs_fetch;
 mod lfs_health;
 mod op_cancel;
 mod op_output;
+mod op_stops;
 mod overwrite;
 pub mod reflog;
 mod remote_cmds;
@@ -1220,6 +1221,9 @@ impl App {
                             if let Some(u) = e.downcast_ref::<UnrelatedHistories>() {
                                 self.offer_unrelated_merge(u.clone());
                             }
+                            // Nothing to commit / refused for uncommitted changes: the
+                            // ways out (`app/op_stops.rs`).
+                            self.offer_ways_out(&e);
                             if let Some(lock) = stale {
                                 self.offer_stale_lock(&label, lock);
                             }
@@ -2753,10 +2757,28 @@ impl App {
         if self.defer_while_busy(|app| app.stage_all()) {
             return;
         }
+        // Conflicted files with markers left: ask first, as Mark Resolved does.
+        let conflicted: Vec<&str> = self.working.conflicted.iter().map(|f| f.path()).collect();
+        let markers = if conflicted.is_empty() {
+            Vec::new()
+        } else {
+            self.repo.with_conflict_markers(&conflicted)
+        };
+        if !markers.is_empty() {
+            let (title, detail, ok) = gitti_core::stage_all::markers_prompt(&markers);
+            self.modal = Some(Modal::confirm(title, detail, ok, |app: &mut App| app.stage_all_now()));
+            return;
+        }
+        self.stage_all_now();
+    }
+
+    /// Stage All, asked already: what the list shows (`gitti_core::stage_all`).
+    fn stage_all_now(&mut self) {
+        let untracked = self.working.status.untracked_files;
         // Paths this file system can't hold: asks first (`app/fs_paths.rs`).
         let paths: Vec<String> = self.working.unstaged.iter().map(|f| f.path().to_string()).collect();
-        self.guard_fs_stage(paths, |app, only| match only {
-            None => app.git_op("Stage all", None, |r| r.stage_all()),
+        self.guard_fs_stage(paths, move |app, only| match only {
+            None => app.work_op_noted("Stage all", None, move |r| r.stage_all_shown(untracked)),
             Some(list) => {
                 let paths = list.clone();
                 app.git_op("Stage all", Some(paths), move |r| r.stage_path_list(&list))
@@ -3811,7 +3833,8 @@ impl App {
         let short = sha[..7.min(sha.len())].to_string();
         let merge = c.parents.len() > 1;
         if let Some(n) = c.stash {
-            return Some((format!("stash@{{{n}}}"), sidebar_menu::stash_items(n)));
+            let stash = gitti_core::ops::StashRef { index: n, id: c.id };
+            return Some((format!("stash@{{{n}}}"), sidebar_menu::stash_items(stash)));
         }
         let head = self.current_branch().unwrap_or("HEAD").to_string();
         // Why the entries acting on the commit can't (HEAD itself, an operation git
@@ -4356,6 +4379,14 @@ impl App {
                     }));
                 }),
             );
+            if gitti_core::skip::can_skip(self.repo_state) {
+                items.insert(
+                    0,
+                    PickItem::new(gitti_core::skip::SKIP_LABEL, "leave the stopped commit out", |app: &mut App| {
+                        app.skip_operation()
+                    }),
+                );
+            }
             if !clean {
                 items.insert(
                     0,
@@ -4371,13 +4402,13 @@ impl App {
             }
         }
         for s in self.stashes.iter().take(9) {
-            let i = s.index;
+            let stash = s.target();
             items.push(PickItem::new(
                 format!("Apply {} — {}", s.name, s.message),
                 "",
                 move |app: &mut App| {
                     app.run_op("Apply stash", true, After::Nothing, move |r| {
-                        r.stash_apply(i, false)
+                        r.stash_apply(stash, false)
                     })
                 },
             ));

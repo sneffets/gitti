@@ -77,7 +77,7 @@ fn cp12_pick_then_merge_the_source_branch() {
 }
 
 /// CP-13: the merge of `feat` stops: gitty shows the merge in progress with one
-/// conflicted file and `b.txt` staged.
+/// conflicted file and `b.txt` staged, and says so in the status line (not as an error).
 /// Workflow: CP-13
 #[gitti_test::test]
 fn cp13_pick_edit_then_merge_conflicts_there() {
@@ -89,9 +89,9 @@ fn cp13_pick_edit_then_merge_conflicts_there() {
     let out = gitty(d, &script);
     let st = states(&out);
     assert!(st[0].contains("staged=1 repo_state=merging conflicted=1"), "{out}");
-    // TODO (catalog: suspected bug "merge conflict reported without git's message"): the
-    // status line should name the conflict; today it is "ERROR Merge failed: git merge
-    // --no-edit feat: git ended with exit code 1, without a message" (git prints the
-    // CONFLICT lines on stdout). Assert it once that is fixed.
+    // A stop on a conflict is a result, said plainly — not an error.
+    let said = "status=\"Merge — Merge stopped on 1 conflict — resolve it, then Continue (or Abort).\"";
+    assert!(st[0].contains(said), "the merge stop: {out}");
+    assert!(!out.contains("Merge failed"), "{out}");
     wf::expect(d, &s).unwrap();
 }

@@ -337,8 +337,19 @@ impl GittiApp {
 
     /// "Drop stash@{n}?" → `git stash drop`.
     fn drop_stash_at(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(st) = self.stashes.iter().find(|s| s.index == index) else {
-            self.set_info("No stashes");
+        match self.stashes.iter().find(|s| s.index == index).map(|s| s.target()) {
+            Some(stash) => self.drop_stash(stash, window, cx),
+            None => {
+                self.set_info("No stashes");
+                cx.notify();
+            }
+        }
+    }
+
+    /// "Drop stash@{n}?" for the stash chosen (found by its commit when the list moved).
+    fn drop_stash(&mut self, stash: gitti_core::ops::StashRef, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(st) = self.stashes.iter().find(|s| s.id == stash.id) else {
+            self.set_info("No such stash");
             cx.notify();
             return;
         };
@@ -349,7 +360,7 @@ impl GittiApp {
             "Drop",
             window,
             cx,
-            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(index)),
+            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(stash)),
         );
     }
 
@@ -358,9 +369,9 @@ impl GittiApp {
             .stashes
             .iter()
             .map(|st| {
-                let index = st.index;
+                let stash = st.target();
                 entry(st.message.clone(), st.name.clone(), move |t, w, cx| {
-                    t.drop_stash_at(index, w, cx)
+                    t.drop_stash(stash, w, cx)
                 })
             })
             .collect();
@@ -561,7 +572,7 @@ pub(super) fn worktree_tab_menu(
     let staged = this.work_file_index(Src::Staged, &path);
     let item = |label: &str, f: TabAction| {
         let app = app.clone();
-        PopupMenuItem::new(label.to_string()).on_click(move |_, window, cx| {
+        super::menus::menu_entry(label.to_string()).on_click(move |_, window, cx| {
             app.update(cx, |this, cx| f(this, window, cx)).ok();
         })
     };
@@ -613,11 +624,18 @@ pub(super) fn worktree_tab_menu(
         ));
     }
     {
+        // Greyed with the reason during a merge / rebase / cherry-pick / revert (a stash
+        // would end it half-done), as the diff menu's stash entries.
+        let busy = gitti_core::availability::in_progress(this.repo_state);
+        let label = match busy {
+            Some(why) => gitti_core::availability::with_reason("Stash File…", why),
+            None => "Stash File…".to_string(),
+        };
         let p = path.clone();
-        menu = menu.item(item(
-            "Stash File…",
-            Rc::new(move |t, w, cx| t.stash_paths_dialog(vec![p.clone()], w, cx)),
-        ));
+        menu = menu.item(
+            item(&label, Rc::new(move |t, w, cx| t.stash_paths_dialog(vec![p.clone()], w, cx)))
+                .disabled(busy.is_some()),
+        );
     }
     let p = path.clone();
     menu.separator()

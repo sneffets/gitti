@@ -720,6 +720,14 @@ impl GittiApp {
                     |t, w, cx| t.git_op("Abort", w, cx, |r| r.abort_operation()),
                 ),
             );
+            if gitti_core::skip::can_skip(self.repo_state) {
+                items.insert(
+                    0,
+                    item(gitti_core::skip::SKIP_LABEL, "leave the stopped commit out", |t, w, cx| {
+                        t.skip_operation(w, cx)
+                    }),
+                );
+            }
             items.insert(
                 0,
                 item(
@@ -756,18 +764,18 @@ impl GittiApp {
             );
         }
         for st in &self.stashes {
-            let index = st.index;
+            let stash = st.target();
             items.push(item(
                 format!("Apply Stash: {}", st.message),
                 st.name.clone(),
                 move |t, w, cx| {
-                    t.git_op("Stash apply", w, cx, move |r| r.stash_apply(index, false))
+                    t.git_op("Stash apply", w, cx, move |r| r.stash_apply(stash, false))
                 },
             ));
             items.push(item(
                 format!("Pop Stash: {}", st.message),
                 st.name.clone(),
-                move |t, w, cx| t.git_op("Stash pop", w, cx, move |r| r.stash_apply(index, true)),
+                move |t, w, cx| t.git_op("Stash pop", w, cx, move |r| r.stash_apply(stash, true)),
             ));
         }
         // Every entry standing for a menu action shows that action's keys (the column, from

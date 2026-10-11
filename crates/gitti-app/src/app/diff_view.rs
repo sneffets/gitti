@@ -1376,6 +1376,20 @@ impl GittiApp {
                     )
                     .into_any_element()
             }
+            // Line-ending / BOM-only changes, above the hunks.
+            DiffRow::Note { src, file }
+                if let Some(text) = self
+                    .file_diff(src, file)
+                    .filter(|d| !d.binary && !d.hunks.is_empty())
+                    .and_then(gitti_core::eol_note::eol_note) =>
+            {
+                base.pl(px(48.))
+                    .italic()
+                    .text_size(self.settings.diff_small())
+                    .text_color(p.text_muted)
+                    .child(div().id(("eol-note", ix)).probe(format!("eol-note:{ix}")).min_w_0().truncate().child(text))
+                    .into_any_element()
+            }
             DiffRow::Note { src, file } => {
                 let diff = self.file_diff(src, file);
                 // A binary placeholder: "Binary file (… MB)", nothing to load.

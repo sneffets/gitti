@@ -2,7 +2,7 @@
 //! behind their entries. The actual git work lives in `gitti_core::ops`.
 
 use gitti_core::ops::{CherryPickOptions, FastForward, MergeOptions, RemoteInfo, ResetMode};
-use gitti_core::ops::{UnrelatedHistories, UnrelatedRetry};
+use gitti_core::ops::{StashRef, UnrelatedHistories, UnrelatedRetry};
 use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget, SwitchWay};
 use gitti_core::worktree::BranchDeletion;
 use gitti_core::{RefInfo, RefKind};
@@ -1193,13 +1193,13 @@ pub(super) fn section_menu(
             .separator()
             .item(
                 item(why_label("Apply Latest Stash", none), app, |this, w, cx| {
-                    this.git_op("Stash apply", w, cx, |r| r.stash_apply(0, false))
+                    this.latest_stash(false, w, cx)
                 })
                 .disabled(none.is_some()),
             )
             .item(
                 item(why_label("Pop Latest Stash", none), app, |this, w, cx| {
-                    this.git_op("Stash pop", w, cx, |r| r.stash_apply(0, true))
+                    this.latest_stash(true, w, cx)
                 })
                 .disabled(none.is_some()),
             )
@@ -1249,18 +1249,19 @@ pub(super) fn section_menu(
 }
 
 /// A stash's menu (sidebar row, commit list row).
-pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, index: usize) -> PopupMenu {
+pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, stash: StashRef) -> PopupMenu {
+    let index = stash.index;
     menu.item(item("Apply", app, move |this, w, cx| {
-        this.git_op("Stash apply", w, cx, move |r| r.stash_apply(index, false))
+        this.git_op("Stash apply", w, cx, move |r| r.stash_apply(stash, false))
     }))
     .item(item("Pop", app, move |this, w, cx| {
-        this.git_op("Stash pop", w, cx, move |r| r.stash_apply(index, true))
+        this.git_op("Stash pop", w, cx, move |r| r.stash_apply(stash, true))
     }))
     .item(item("Create Branch from Stash…", app, move |this, w, cx| {
-        this.stash_branch_dialog(index, w, cx)
+        this.stash_branch_dialog(stash, w, cx)
     }))
     .item(item("Rename…", app, move |this, w, cx| {
-        this.rename_stash_dialog(index, w, cx)
+        this.rename_stash_dialog(stash, w, cx)
     }))
     .item(item("Copy Message", app, move |this, _, cx| {
         if let Some(s) = this.stashes.iter().find(|s| s.index == index) {
@@ -1275,7 +1276,7 @@ pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, index: usize) -> Popu
             "Drop",
             w,
             cx,
-            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(index)),
+            move |this, w, cx| this.git_op("Stash drop", w, cx, move |r| r.stash_drop(stash)),
         )
     }))
 }
@@ -1607,10 +1608,11 @@ impl GittiApp {
     /// stash was made on, checked out, the stash applied (and dropped when that worked).
     pub(super) fn stash_branch_dialog(
         &mut self,
-        index: usize,
+        stash: StashRef,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let index = stash.index;
         let spec = ModalSpec::new(format!("Create branch from stash@{{{index}}}"))
             .message(
                 "Checks the branch out at the commit the stash was made on and applies the \
@@ -1624,7 +1626,7 @@ impl GittiApp {
                 return;
             }
             this.git_op("Create branch from stash", w, cx, move |r| {
-                r.stash_branch(&name, index)
+                r.stash_branch(&name, stash)
             })
         });
     }

@@ -386,7 +386,7 @@ impl GittiApp {
         }
 
         let app = cx.entity().downgrade();
-        let stash = c.stash;
+        let stash = c.stash.map(|index| gitti_core::ops::StashRef { index, id: c.id });
         let helper = c.stash_helper;
         let sha = c.id.to_string();
         let (is_base, comparing) = (self.is_compare_base(ix), self.compare.mode.is_some());

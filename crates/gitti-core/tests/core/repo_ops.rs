@@ -54,7 +54,7 @@ fn branch_tag_stash_remote_ops() {
     let st = r.stashes().unwrap();
     assert_eq!(st.len(), 1);
     assert!(st[0].message.contains("wip"));
-    r.stash_apply(0, true).unwrap();
+    r.stash_apply(r.stashes().unwrap()[0].target(), true).unwrap();
     assert_eq!(read(&p, "a.txt"), "2\n");
     assert!(r.stashes().unwrap().is_empty());
 
@@ -86,7 +86,7 @@ fn cherry_pick_revert_reset_and_conflict_state() {
     assert_eq!(read(&p, "b.txt"), "b\n");
 
     // A conflicting merge: state detection, abort.
-    assert!(r.merge("c1").is_err());
+    assert!(r.merge("c1").unwrap().starts_with("Merge stopped on "), "a conflict: a stop, not a failure");
     assert_eq!(r.state(), RepoState::Merging);
     r.abort_operation().unwrap();
     assert_eq!(r.state(), RepoState::Clean);
@@ -156,7 +156,8 @@ fn conflict_from_stash_apply() {
     sh(&p, &["stash", "-q"]);
     fs::write(p.join("a.txt"), "committed\n").unwrap();
     sh(&p, &["commit", "-q", "-am", "c"]);
-    assert!(r.stash_apply(0, false).is_err());
+    let out = r.stash_apply(r.stashes().unwrap()[0].target(), false).unwrap();
+    assert!(out.starts_with("The stash was applied with 1 conflict"), "{out}");
     assert_eq!(r.state(), RepoState::Clean);
     assert_eq!(r.conflict_sides().theirs, "stash");
     let st = r.working_state().unwrap();
@@ -181,7 +182,7 @@ fn conflicts_from_a_merge_resolved_per_side() {
     h.commit("main", &[root], "main", &[("a.txt", f("main\n")), ("b.txt", f("b2\n"))]);
     let (_tmp, p, _) = repo_with(&h);
     let r = Repo::open(&p).unwrap();
-    assert!(r.merge("side").is_err());
+    assert!(r.merge("side").unwrap().starts_with("Merge stopped on "), "a conflict: a stop, not a failure");
     assert_eq!(r.working_state().unwrap().conflicted.len(), 2);
     let sides = r.conflict_sides();
     assert_eq!((sides.ours.as_str(), sides.theirs.as_str()), ("main", "side"));
@@ -204,7 +205,7 @@ fn merge_doc_from_conflict_stages() {
     h.commit("main", &[root], "main", &[("f.txt", f("HEAD-main\nsep\nA-main\nmid\nb\ntail\n"))]);
     let (_tmp, p, _) = repo_with(&h);
     let r = Repo::open(&p).unwrap();
-    assert!(r.merge("side").is_err());
+    assert!(r.merge("side").unwrap().starts_with("Merge stopped on "), "a conflict: a stop, not a failure");
 
     let doc = r.merge_doc("f.txt").unwrap();
     let kinds: Vec<_> = doc.chunks.iter().map(|c| c.kind).collect();
