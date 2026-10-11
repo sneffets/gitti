@@ -1,5 +1,7 @@
-//! Add Submodule with a local path: whether `git submodule add <url>` clones over git's
-//! `file` transport, whether git allows that, and the words for it.
+//! Submodules from a local path: whether `git submodule add <url>` clones over git's
+//! `file` transport, whether git allows that, and the words for it — for Add Submodule
+//! (asked before), and for Update Submodules / a clone's `--recurse-submodules`, whose
+//! URLs come from `.gitmodules` ([`FileRefused`], explained after git refused).
 //!
 //! Since git 2.38.1 (CVE-2022-39253) a submodule clone refuses the `file` transport unless
 //! `protocol.file.allow` (else `protocol.allow`) is `always` — the default `user` only
@@ -17,11 +19,17 @@
 //! The clone runs as its own `git clone`, outside this repository: its `.git/config`
 //! doesn't count, only the global / system config and the environment (checked with git
 //! 2.54: a local `protocol.file.allow = always` is refused, a global one allows).
+//!
+//! `-c` reaches the submodules' clones (git passes `GIT_CONFIG_PARAMETERS` on to them,
+//! nested ones included), which is how git's own advice for CVE-2022-39253 allows them.
+
+use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
 use crate::Repo;
 use crate::caps::{GitCaps, GitVersion};
+use crate::git_cli::{Git, GitError};
 
 /// The first git that refuses `file` for submodules by default.
 const FILE_REFUSED_SINCE: GitVersion = GitVersion::new(2, 38, 1);
@@ -95,6 +103,17 @@ impl AddContext {
             (Some(v), _) => format!("your git config (global / system): protocol.file.allow = {v}"),
             (None, Some(v)) => format!("your git config (global / system): protocol.allow = {v}"),
             (None, None) => "git's default since 2.38.1".into(),
+        }
+    }
+
+    /// The setting that refuses `file` even for what the user typed (a clone of a local
+    /// path), in words — git's default allows that.
+    pub fn setting_name(&self) -> String {
+        match (&self.env_allow, &self.file_allow, &self.allow) {
+            (Some(list), _, _) => format!("the environment variable GIT_ALLOW_PROTOCOL={list}"),
+            (None, Some(v), _) => format!("your git config's protocol.file.allow = {v}"),
+            (None, None, Some(v)) => format!("your git config's protocol.allow = {v}"),
+            (None, None, None) => "your git settings".into(),
         }
     }
 }
@@ -217,20 +236,160 @@ fn protocol_settings(out: &str) -> (Option<String>, Option<String>) {
     (file, all)
 }
 
+/// [`AddContext`] without the remote (`remote_url` = `None`): one `git config
+/// --show-scope` with `git`'s environment (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_COUNT`, …) —
+/// the one a submodule's clone runs with.
+pub fn file_context(git: &Git) -> AddContext {
+    let (file_allow, allow) = git
+        .run_raw(&["config", "--show-scope", "--get-regexp", r"^protocol\.(file\.)?allow$"], None)
+        .map(|o| protocol_settings(&o.stdout_str()))
+        .unwrap_or_default();
+    AddContext {
+        remote_url: None,
+        file_allow,
+        allow,
+        env_allow: git.env_var("GIT_ALLOW_PROTOCOL"),
+        refuses_by_default: GitCaps::get().at_least(FILE_REFUSED_SINCE),
+    }
+}
+
+/// The button that allows the `file` transport for one Update Submodules.
+pub const ALLOW_UPDATE: &str = "Allow for This Update";
+
+/// git refused to clone submodules from a local path during Update Submodules or a
+/// clone's `--recurse-submodules` (their URLs come from `.gitmodules`, so nobody was
+/// asked before): what, why, and whether [`ALLOW_FILE`] for one update can help. Carried
+/// as the update's error ([`Repo::update_submodules_with`]) and in a clone's outcome
+/// (`create::Cloned`), so the apps can offer [`ALLOW_UPDATE`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRefused {
+    /// The refused submodules: (path — relative to the repository where git's absolute
+    /// one lies inside it —, URL), in git's order, each once.
+    pub submodules: Vec<(String, String)>,
+    /// Which setting refuses, in words (see [`AddContext`]).
+    pub refused_by: String,
+    /// `GIT_ALLOW_PROTOCOL` refuses it: no setting overrides that, allowing can't help.
+    pub blocked: bool,
+    /// git's own output.
+    pub output: String,
+}
+
+impl FileRefused {
+    /// git's refusal in `output` (of a command in the repository at `workdir`), with
+    /// `ctx` for why; `None` when git refused nothing of the kind.
+    pub fn from_output(ctx: &AddContext, output: &str, workdir: &Path) -> Option<Self> {
+        explain_refusal(output)?;
+        let top = workdir.to_string_lossy().replace('\\', "/");
+        let top = top.trim_end_matches('/');
+        let mut submodules: Vec<(String, String)> = Vec::new();
+        // `fatal: clone of '<url>' into submodule path '<abs path>' failed`
+        for line in output.lines() {
+            let Some(rest) = line.trim().strip_prefix("fatal: clone of '") else {
+                continue;
+            };
+            let Some((url, rest)) = rest.split_once("' into submodule path '") else {
+                continue;
+            };
+            let Some(path) = rest.strip_suffix("' failed") else {
+                continue;
+            };
+            let path = path.replace('\\', "/");
+            let path = match path.strip_prefix(top).and_then(|p| p.strip_prefix('/')) {
+                Some(rel) => rel.to_string(),
+                None => path,
+            };
+            if !submodules.iter().any(|(p, _)| *p == path) {
+                submodules.push((path, url.to_string()));
+            }
+        }
+        Some(FileRefused {
+            submodules,
+            refused_by: ctx.refused_by(),
+            blocked: ctx.env_allow.is_some(),
+            output: output.trim().to_string(),
+        })
+    }
+
+    /// In plain words: which submodules git refused and why, what [`ALLOW_UPDATE`] does
+    /// (or, when blocked, what to change instead). `cloned`: after a clone, which is kept.
+    pub fn explain(&self, cloned: bool) -> String {
+        let which = match self.submodules.as_slice() {
+            [] => "the submodules".to_string(),
+            [(path, url)] => format!("the submodule {path} (from {url})"),
+            many => {
+                let list: Vec<String> = many.iter().map(|(p, u)| format!("{p} (from {u})")).collect();
+                format!("{} submodules: {}", many.len(), list.join(", "))
+            }
+        };
+        let first = if cloned {
+            format!(
+                "The repository is cloned, but git refused to clone {which} from a local path."
+            )
+        } else {
+            format!("git refused to clone {which} from a local path.")
+        };
+        let why = format!(
+            "Its \"file\" transport isn't allowed for submodules ({}) — a repository you \
+             clone could otherwise make git copy files of this machine.",
+            self.refused_by
+        );
+        let how = if self.blocked {
+            "No git setting overrides GIT_ALLOW_PROTOCOL: add \"file\" to it (or unset it) \
+             and start the app again, then Update Submodules."
+                .to_string()
+        } else {
+            format!(
+                "{ALLOW_UPDATE} runs \"git -c {ALLOW_FILE} submodule update --init \
+                 --recursive\" once; your git config stays as it is, so a later update \
+                 asks again. Only for a repository you trust. Without it the submodules \
+                 stay empty (not initialised)."
+            )
+        };
+        format!("{first} {why}\n\n{how}")
+    }
+}
+
+impl std::fmt::Display for FileRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\n\n{}", self.explain(false), self.output)
+    }
+}
+
+impl std::error::Error for FileRefused {}
+
+/// `err` of a submodule command in the repository of `git` as [`FileRefused`] when git
+/// refused the `file` transport (one `git config` to say why), else unchanged.
+pub(crate) fn refused_or(git: &Git, err: anyhow::Error) -> anyhow::Error {
+    let output = match err.downcast_ref::<GitError>() {
+        Some(GitError::Failed { stderr, .. }) => stderr.clone(),
+        _ => err.to_string(),
+    };
+    if explain_refusal(&output).is_none() {
+        return err;
+    }
+    let ctx = file_context(git);
+    match FileRefused::from_output(&ctx, &output, git.workdir()) {
+        Some(r) => anyhow::Error::new(r),
+        None => err,
+    }
+}
+
+/// After a clone whose submodules git refused (`create::Cloned::refused`), the user
+/// allowed them: `git -c protocol.file.allow=always submodule update --init --recursive`
+/// in the clone at `dir`, with `git`'s environment and log (no repository opened).
+pub fn update_cloned(git: &Git, dir: &Path) -> Result<String> {
+    let git = git.with_workdir(dir);
+    match git.run(&["-c", ALLOW_FILE, "submodule", "update", "--init", "--recursive"]) {
+        Ok(out) => Ok(format!("{}{}", out.stdout_str(), out.stderr)),
+        Err(e) => Err(refused_or(&git, e.into())),
+    }
+}
+
 impl Repo {
     /// [`AddContext`] of this repository: one `git config --show-scope` (it sees the
     /// environment git runs with — `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_COUNT`, … — as the
     /// add will), the default remote's URL in-process.
     pub fn submodule_add_context(&self) -> AddContext {
-        let refuses_by_default = GitCaps::get().at_least(FILE_REFUSED_SINCE);
-        let git = self.git();
-        let (file_allow, allow) = git
-            .run_raw(
-                &["config", "--show-scope", "--get-regexp", r"^protocol\.(file\.)?allow$"],
-                None,
-            )
-            .map(|o| protocol_settings(&o.stdout_str()))
-            .unwrap_or_default();
         let remote_url = self.gix().ok().and_then(|repo| {
             let config = repo.config_snapshot();
             let get = |key: &str| config.string(key).map(|v| v.to_string());
@@ -243,10 +402,7 @@ impl Repo {
         });
         AddContext {
             remote_url,
-            file_allow,
-            allow,
-            env_allow: git.env_var("GIT_ALLOW_PROTOCOL"),
-            refuses_by_default,
+            ..file_context(self.git())
         }
     }
 
@@ -343,5 +499,28 @@ mod tests {
         let env = AddContext { env_allow: Some("https".into()), ..never };
         assert_eq!(live_note(&env, "/srv/lib").map(|n| n.1), Some(true));
         assert!(explain_refusal("fatal: repository not found").is_none());
+    }
+
+    #[gitti_test::test]
+    fn refusal_names_the_submodules_once() {
+        let out = "Cloning into '/w/top/lib'...\nfatal: transport 'file' not allowed\n\
+                   fatal: clone of '/srv/lib' into submodule path '/w/top/lib' failed\n\
+                   Failed to clone 'lib'. Retry scheduled\n\
+                   fatal: clone of '/srv/lib' into submodule path '/w/top/lib' failed\n\
+                   fatal: clone of 'C:/r/x' into submodule path 'C:\\w\\top\\sub\\x' failed\n";
+        let ctx = AddContext { refuses_by_default: true, ..Default::default() };
+        let r = FileRefused::from_output(&ctx, out, Path::new("/w/top")).unwrap();
+        assert_eq!(r.submodules, [("lib".into(), "/srv/lib".into()), ("C:/w/top/sub/x".into(), "C:/r/x".into())]);
+        let win = FileRefused::from_output(&ctx, out, Path::new(r"C:\w\top")).unwrap();
+        assert_eq!(win.submodules[1].0, "sub/x");
+        let t = r.explain(false);
+        assert!(t.contains("2 submodules: lib (from /srv/lib)") && t.contains("git's default since 2.38.1"), "{t}");
+        assert!(t.contains(ALLOW_UPDATE) && t.contains(ALLOW_FILE), "{t}");
+        let env = AddContext { env_allow: Some("https".into()), ..ctx };
+        let b = FileRefused::from_output(&env, out, Path::new("/w/top")).unwrap();
+        assert!(b.blocked && b.explain(true).contains("No git setting overrides GIT_ALLOW_PROTOCOL"));
+        assert!(!b.explain(true).contains(ALLOW_UPDATE));
+        assert!(FileRefused::from_output(&env, "fatal: not found", Path::new("/w")).is_none());
+        assert_eq!(env.setting_name(), "the environment variable GIT_ALLOW_PROTOCOL=https");
     }
 }

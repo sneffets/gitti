@@ -618,12 +618,9 @@ impl GittiApp {
         let name = r.short_name.clone();
         let app = cx.entity().downgrade();
         let menu_ref = r.clone();
-        let remotes: Vec<String> = self.remotes.iter().map(|r| r.name.clone()).collect();
         let tracking = (r.kind == RefKind::LocalBranch)
             .then(|| self.tracking.iter().find(|t| t.branch == r.short_name))
             .flatten();
-        let upstream = tracking.and_then(|t| t.upstream.clone());
-        let head_branch = self.head.branch.clone();
         let pinned = self.is_pinned(&r.full_name);
         let track_label = tracking.filter(|t| t.upstream.is_some()).map(|t| {
             if t.gone {
@@ -715,52 +712,10 @@ impl GittiApp {
                     }
                 }),
             )
+            // The ref's menu, the same as on its badges in the commit list.
             .context_menu(move |menu, window, cx| {
-                let ctx = super::menus::RefMenuCtx {
-                    is_head,
-                    elsewhere: elsewhere.as_ref(),
-                    remotes: &remotes,
-                    upstream: upstream.clone(),
-                    head: head_branch.clone(),
-                };
-                let menu = super::menus::ref_menu(menu, &app, &menu_ref, &ctx, window, cx);
-                let menu = super::branch_list::pin_item(menu, &app, &menu_ref, pinned);
-                // A branch's custom commands: a remote branch by its name there, with its
-                // remote; a tag's.
-                let given = match menu_ref.kind {
-                    RefKind::LocalBranch => Some(super::custom_commands::Given {
-                        commit: Some(menu_ref.target.to_string()),
-                        branch: Some(menu_ref.short_name.clone()),
-                        ..Default::default()
-                    }),
-                    RefKind::RemoteBranch => {
-                        let (remote, branch) = gitti_core::custom_command::split_remote_branch(
-                            &menu_ref.short_name,
-                            &remotes,
-                        );
-                        Some(super::custom_commands::Given {
-                            commit: Some(menu_ref.target.to_string()),
-                            branch: Some(branch),
-                            remote,
-                            ..Default::default()
-                        })
-                    }
-                    // A tag's: the tag and its commit.
-                    RefKind::Tag => Some(super::custom_commands::Given {
-                        commit: Some(menu_ref.target.to_string()),
-                        tag: Some(menu_ref.short_name.clone()),
-                        ..Default::default()
-                    }),
-                    _ => None,
-                };
-                let kind = match menu_ref.kind {
-                    RefKind::Tag => gitti_core::custom_command::Menu::Tag,
-                    _ => gitti_core::custom_command::Menu::Branch,
-                };
-                match given {
-                    Some(g) => super::custom_commands::menu_items(menu, &app, kind, g, cx),
-                    None => menu,
-                }
+                let menu = super::menus::ref_context_menu(menu, &app, &menu_ref, window, cx);
+                super::branch_list::pin_item(menu, &app, &menu_ref, pinned)
             })
     }
 }

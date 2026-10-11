@@ -107,6 +107,7 @@ pub use reflog::ReflogState;
 pub use modal::AskRequest;
 pub use settings_view::{ShortcutLine, shortcut_lines};
 pub use repo_actions::AppEvent;
+pub use submodules::RetryUpdate;
 pub use spell_ui::SpellTarget;
 pub(crate) use spell_ui::take_last_editor_menu;
 use modal::Modal;

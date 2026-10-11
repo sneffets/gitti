@@ -411,6 +411,14 @@ impl Workspace {
                     app.update(cx, |a, cx| a.show_notice("Cloned", note, window, cx));
                 }
             }
+            AppEvent::OpenRepositoryRefused(path, note, refused) => {
+                this.open(path.clone(), window, cx);
+                if let Some(app) = this.active_app() {
+                    let retry = crate::app::RetryUpdate::Clone { note: note.clone() };
+                    let refused = refused.clone();
+                    app.update(cx, |a, cx| a.submodules_refused(refused, retry, window, cx));
+                }
+            }
             AppEvent::RepositoryRemoved(path) => {
                 let path = gitti_core::paths::canonical(path);
                 while let Some(ix) = this.tabs.iter().position(|t| t.path == path) {

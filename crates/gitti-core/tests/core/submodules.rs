@@ -516,6 +516,76 @@ fn add_submodule_from_a_local_path_asks_for_the_file_transport() {
     assert_eq!(after.matches("always").count(), 1, "only this add allowed it: {after}");
 }
 
+/// git's environment without this machine's config, `protocol.file.allow` = `value`
+/// (`user`: git's default for what the user typed, refused for submodules), plus `extra`.
+fn file_env(value: &str, extra: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut env = vec![
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "protocol.file.allow"),
+        ("GIT_CONFIG_VALUE_0", value),
+    ];
+    env.extend(FILE_PROTOCOL[3..].iter().copied());
+    env.extend(extra.iter().copied());
+    env.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
+
+/// Update Submodules where `.gitmodules` names local paths and git refuses the `file`
+/// transport for submodules: a typed `FileRefused` naming the submodule, its URL and the
+/// setting; allowed once it runs with `-c protocol.file.allow=always` (nested ones too)
+/// and writes no such setting.
+#[gitti_test::test]
+fn update_from_a_local_path_explains_and_allows_once() {
+    use gitti_core::submodule::add::FileRefused;
+    let fx = setup();
+    let git = open(&fx.sup).git().clone();
+    let plain = gitti_core::create::clone_repo(&git, &slash(&fx.sup), &fx.base.join("plain"), &mut |_| {}).unwrap();
+    let mut repo = Repo::open(&plain).unwrap();
+    repo.set_env(file_env("user", &[]));
+    let err = repo.update_submodules(&[]).unwrap_err();
+    let refused = err.downcast_ref::<FileRefused>().expect("typed refusal").clone();
+    assert_eq!(refused.submodules, vec![("libs/lib".to_string(), slash(&fx.lib))]);
+    assert!(!refused.blocked);
+    assert!(refused.refused_by.contains("protocol.file.allow = user"), "{refused:?}");
+    let text = refused.explain(false);
+    assert!(text.contains("the submodule libs/lib (from ") && text.contains("Allow for This Update"), "{text}");
+    assert!(err.to_string().contains("transport 'file' not allowed"), "git's own words kept");
+    assert_eq!(list(&repo)[0].state, SubmoduleState::Uninitialized);
+
+    repo.update_submodules_with(&[], false, true).unwrap();
+    let subs = list(&repo);
+    assert_eq!(subs.len(), 2, "the nested one too: {subs:#?}");
+    assert!(subs.iter().all(|s| s.state == SubmoduleState::UpToDate), "{subs:#?}");
+    let config = fs::read_to_string(plain.join(".git/config")).unwrap();
+    assert!(!config.contains("always"), "nothing written: {config}");
+}
+
+/// A clone with `--recurse-submodules` whose submodules git refuses: the clone is kept
+/// with what was refused (the apps offer the update); refused by `GIT_ALLOW_PROTOCOL`
+/// even the repository itself fails, naming it.
+#[gitti_test::test]
+fn recursive_clone_from_local_paths_keeps_the_clone() {
+    let fx = setup();
+    let mut git = open(&fx.sup).git().clone();
+    git.set_env(file_env("user", &[]));
+    let dest = fx.base.join("deep");
+    let c = gitti_core::create::clone_repo_outcome(&git, &slash(&fx.sup), &dest, true, &mut |_| {}).unwrap();
+    let refused = c.refused.expect("refused submodules");
+    assert_eq!(refused.submodules[0].0, "libs/lib");
+    assert!(refused.explain(true).starts_with("The repository is cloned"), "{}", refused.explain(true));
+    assert!(c.dir.join(".git").is_dir() && c.dir.join("s.txt").is_file());
+    gitti_core::submodule::add::update_cloned(&git, &c.dir).unwrap();
+    let subs = list(&open(&c.dir));
+    assert!(subs.len() == 2 && subs.iter().all(|s| s.state == SubmoduleState::UpToDate), "{subs:#?}");
+
+    git.set_env(file_env("always", &[("GIT_ALLOW_PROTOCOL", "https:ssh")]));
+    let err = gitti_core::create::clone_repo_outcome(&git, &slash(&fx.sup), &fx.base.join("env"), true, &mut |_| {})
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("GIT_ALLOW_PROTOCOL=https:ssh") && err.contains("local path"), "{err}");
+}
+
 /// `git status` calls of the nested-submodule kind (`--untracked-files=normal`) so far.
 fn nested_status_calls(repo: &Repo) -> usize {
     repo.command_log()

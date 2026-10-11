@@ -1030,6 +1030,7 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
     );
     app.areas.commits = content;
     app.badge_more.clear();
+    app.badge_refs.clear();
     // One or two text rows per commit (`ViewOpts::list_layout`; gitty's Auto stays
     // on one line: a terminal has few rows to spare).
     let two = app.opts.list_layout.two_lines(false);
@@ -1180,6 +1181,8 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
         let wt_spans = worktree_badges(&app.worktrees, c.id, bg, p);
         // The "+N": its column from the text start, its width, what it hides.
         let mut more: Option<(u16, u16, String)> = None;
+        // Each badge: its column from the text start, its width, its ref.
+        let mut refs_at: Vec<BadgeAt> = Vec::new();
         if let Some(refs) = history.refs_by_commit.get(&c.id) {
             // Room beside the subject's 16 columns (one line) or left of the date (two
             // lines), less the labels around them.
@@ -1191,7 +1194,9 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             };
             let others = Line::from(spans.clone()).width() + Line::from(wt_spans.clone()).width();
             let room = room.saturating_sub(others as u16);
-            let (b, hidden) = badges(refs, app.current_branch(), &app.worktrees, bg, p, room);
+            let (b, hidden, at) = badges(refs, app.current_branch(), &app.worktrees, bg, p, room);
+            let start = Line::from(spans.clone()).width() as u16;
+            refs_at = at.into_iter().map(|(x, w, r)| (start + x, w, r)).collect();
             spans.extend(b);
             // Where the "+N" (the last span so far) will be, from the row's text start.
             if let Some(hidden) = hidden {
@@ -1224,6 +1229,9 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             if let Some((at, mw, hidden)) = more {
                 more_hit(&mut app.badge_more, text_x, y2, badges_w, at, mw, hidden);
             }
+            for (at, bw, r) in refs_at {
+                more_hit(&mut app.badge_refs, text_x, y2, badges_w, at, bw, r);
+            }
             let bx = put(buf, text_x, y2, badges_w, spans);
             let aw = (text_x + avail).saturating_sub(bx);
             put(buf, bx, y2, aw, vec![Span::styled(fit_width(&meta.author, aw), muted)]);
@@ -1231,6 +1239,9 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
         }
         if let Some((at, mw, hidden)) = more {
             more_hit(&mut app.badge_more, x, y, text_w, at, mw, hidden);
+        }
+        for (at, bw, r) in refs_at {
+            more_hit(&mut app.badge_refs, x, y, text_w, at, bw, r);
         }
         spans.push(subject);
         put(buf, x, y, text_w, spans);
@@ -1246,12 +1257,12 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
     }
 }
 
-/// Records a row's "+N" for clicks: drawn from column `x` in a text `w` columns wide, at
-/// `at` from its start, `mw` wide (as far as it is shown).
-fn more_hit(hits: &mut Vec<(Rect, String)>, x: u16, y: u16, w: u16, at: u16, mw: u16, hidden: String) {
+/// Records a row's "+N" (or a ref badge) for clicks: drawn from column `x` in a text `w`
+/// columns wide, at `at` from its start, `mw` wide (as far as it is shown).
+fn more_hit<T>(hits: &mut Vec<(Rect, T)>, x: u16, y: u16, w: u16, at: u16, mw: u16, what: T) {
     let shown = mw.min(w.saturating_sub(at));
     if shown > 0 {
-        hits.push((Rect::new(x + at, y, shown, 1), hidden));
+        hits.push((Rect::new(x + at, y, shown, 1), what));
     }
 }
 
@@ -1393,12 +1404,16 @@ fn ref_badge(
     badge(&text, fg, b)
 }
 
+/// Where a row's ref badge is: column from the first badge, width, its ref.
+type BadgeAt = (u16, u16, RefInfo);
+
 /// A list badge's text is cut ("…") beyond this many columns (gitti: 11 ems).
 const LIST_BADGE_COLS: u16 = 20;
 
 /// A commit-list row's badges: current branch first, then locals, remotes, tags; at most
 /// `ref_badges::LIST_MAX` and as many as fit in `room` columns, the (first) tag always
-/// among them, the rest as "+N" (the last span) — and what it hides, on one line.
+/// among them, the rest as "+N" (the last span) — and what it hides, on one line, and
+/// where each badge is (column from the first, width, its ref).
 fn badges(
     refs: &[RefInfo],
     current: Option<&str>,
@@ -1406,7 +1421,7 @@ fn badges(
     bg: Color,
     p: &Palette,
     room: u16,
-) -> (Vec<Span<'static>>, Option<String>) {
+) -> (Vec<Span<'static>>, Option<String>, Vec<BadgeAt>) {
     use gitti_core::ref_badges;
     let sorted = badge_refs(refs, current);
     let cap = Some(LIST_BADGE_COLS);
@@ -1420,8 +1435,15 @@ fn badges(
         |n| format!("+{n} ").width() as f32,
     );
     let mut out = Vec::new();
+    // Where each badge is (column from the first, width) and its ref.
+    let mut at = Vec::new();
+    let mut x = 0u16;
     for r in &pick.shown {
-        out.push(ref_badge(r, current, worktrees, bg, p, cap));
+        let b = ref_badge(r, current, worktrees, bg, p, cap);
+        let w = b.content.width() as u16;
+        at.push((x, w, (*r).clone()));
+        x += w + 1;
+        out.push(b);
         out.push(Span::raw(" "));
     }
     if !pick.hidden.is_empty() {
@@ -1433,7 +1455,7 @@ fn badges(
     let hidden = pick
         .hidden_summary()
         .map(|s| s.replacen(":\n", ": ", 1).replace('\n', ", "));
-    (out, hidden)
+    (out, hidden, at)
 }
 
 /// The commit header's "Refs" lines: every ref of the commit (not only the list's few),
@@ -3908,6 +3930,15 @@ Menus, pickers and text windows
                   ctrl-n ctrl-p, typing filters); the wheel scrolls the list
   g G  home end   text windows (output, errors, help): top / end
 
+Dialogs
+  tab / ↓  shift-tab / ↑   next / previous field or checkbox    space  tick a checkbox
+  ⏎               the dialog's action (named in its bottom line)    esc  close it
+  ← →  home end   move in the field    ctrl-a ctrl-e  start / end of the field
+  ctrl-w ctrl-u ctrl-k  delete word / to the field's start / to its end
+  ctrl-n          the field's next suggestion (listed under it, e.g. remotes)
+  ctrl-o          choose the field's value from a list (named under it, e.g. a folder)
+  ctrl-d          the dialog's further action, named in its bottom line (e.g. Delete…)
+
 Commit message
   ctrl-s, alt-⏎   commit         esc  leave the message box
   ctrl-w ctrl-u   delete word / to line start
@@ -3952,6 +3983,27 @@ fn lighten(c: Color, lift: f32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::word_wrap;
+
+    /// The dialog keys are in the help, and none of them is a field editing key (the
+    /// field would never see it: the dialog takes it first).
+    #[gitti_test::test]
+    fn help_names_the_dialog_keys_and_fields_dont_use_them() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let help = super::help_text();
+        let dialogs = &help[help.find("\nDialogs\n").expect("a Dialogs section")..];
+        for (key, label) in [
+            (crate::modal::FILL_KEY, crate::modal::FILL_KEY_LABEL),
+            (crate::modal::PICK_KEY, crate::modal::PICK_KEY_LABEL),
+            ('d', "ctrl-d"),
+        ] {
+            assert!(dialogs.contains(&format!("\n  {label} ")), "{label} not in the help");
+            let mut field = crate::edit::TextEdit::single("ab");
+            assert!(
+                !field.handle_key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL)),
+                "{label} edits a field too"
+            );
+        }
+    }
 
     #[gitti_test::test]
     fn word_wrap_breaks_at_spaces_and_splits_long_words() {
