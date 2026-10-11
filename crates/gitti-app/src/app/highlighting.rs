@@ -85,20 +85,22 @@ impl GittiApp {
         let cache = self.hl_cache.clone();
         let commit_hl = self.commit_hl.clone();
         let task = cx.background_executor().spawn(async move {
-            let out = compute_highlights(&repo, jobs, &cache);
-            if let Some(key) = commit_key {
+            let (out, complete) = compute_highlights(&repo, jobs, &cache);
+            // Styles from the hunks alone (the files couldn't be read) are shown, not kept.
+            if complete && let Some(key) = commit_key {
                 commit_hl.lock().expect("commit hl").insert(key, Arc::new(out.clone()));
             }
-            if let Some(key) = compare_key {
+            if complete && let Some(key) = compare_key {
                 compare_hl.lock().expect("compare hl").insert(key, Arc::new(out.clone()));
             }
-            out
+            (out, complete)
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
+                let (result, complete) = result;
                 if this.hl_generation == generation {
-                    if let Some(w) = worktree {
+                    if complete && let Some(w) = worktree {
                         this.worktree_hl = Some((w, result.clone()));
                     }
                     this.highlights = result;
@@ -194,20 +196,24 @@ pub(super) fn prefetch_commit_highlights(
     if commit_hl.lock().expect("commit hl").get(&key).is_some() {
         return;
     }
-    let out = compute_highlights(repo, commit_jobs(data), cache);
-    commit_hl.lock().expect("commit hl").insert(key, Arc::new(out));
+    let (out, complete) = compute_highlights(repo, commit_jobs(data), cache);
+    if complete {
+        commit_hl.lock().expect("commit hl").insert(key, Arc::new(out));
+    }
 }
 
 /// Highlights of the working-state files at `paths` (all their diff sources), computed
 /// right away — for the result of a stage / unstage, so it shows with its colours.
+/// `None` when the files couldn't be read (the full highlight runs instead).
 pub(super) fn highlight_paths(
     repo: &Repo,
     working: &WorkingState,
     paths: &[String],
     cache: &SharedCache,
-) -> Highlights {
+) -> Option<Highlights> {
     let only: HashSet<&str> = paths.iter().map(String::as_str).collect();
-    compute_highlights(repo, worktree_jobs(working, Some(&only)), cache)
+    let (out, complete) = compute_highlights(repo, worktree_jobs(working, Some(&only)), cache);
+    complete.then_some(out)
 }
 
 /// Jobs for the working-directory view (only files at `only`'s paths when given).
@@ -280,9 +286,11 @@ fn compare_jobs(data: &CompareData) -> Vec<Job> {
     jobs
 }
 
-/// Highlights of a comparison, computed right away (prefetch).
-pub(super) fn compare_highlights(repo: &Repo, data: &CompareData, cache: &SharedCache) -> Highlights {
-    compute_highlights(repo, compare_jobs(data), cache)
+/// Highlights of a comparison, computed right away (prefetch); `None` when the files
+/// couldn't be read.
+pub(super) fn compare_highlights(repo: &Repo, data: &CompareData, cache: &SharedCache) -> Option<Highlights> {
+    let (out, complete) = compute_highlights(repo, compare_jobs(data), cache);
+    complete.then_some(out)
 }
 
 fn push_job(
@@ -318,16 +326,18 @@ fn push_job(
 
 /// Reads the file versions in one batch and highlights them (memoised per text). The file
 /// sides are highlighted in parallel: one commit easily has a dozen files whose old and new
-/// versions take ~5–20 ms each.
-fn compute_highlights(repo: &Repo, jobs: Vec<Job>, cache: &SharedCache) -> Highlights {
+/// versions take ~5–20 ms each. With whether the files were read: when the read failed
+/// the styles come from the hunks alone — shown, but never kept as the commit's.
+fn compute_highlights(repo: &Repo, jobs: Vec<Job>, cache: &SharedCache) -> (Highlights, bool) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let mut requests = Vec::new();
     for j in &jobs {
         requests.extend(j.old.clone());
         requests.extend(j.new.clone());
     }
-    let texts = repo.read_versions(&requests).unwrap_or_default();
-    let mut texts = texts.into_iter();
+    let texts = repo.read_versions(&requests);
+    let complete = texts.is_ok();
+    let mut texts = texts.unwrap_or_default().into_iter();
     // One task per file side: (job index, is new side, text).
     let mut tasks = Vec::new();
     for (i, j) in jobs.iter().enumerate() {
@@ -377,5 +387,49 @@ fn compute_highlights(repo: &Repo, jobs: Vec<Job>, cache: &SharedCache) -> Highl
             hl.old = styles;
         }
     }
-    out
+    (out, complete)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gitti_core::fault::{Fault, inject};
+
+    /// Highlights computed from the hunks alone — the file versions couldn't be read (git
+    /// killed, its output cut) — are shown but not kept as the commit's: the next time the
+    /// files are read again.
+    #[gitti_test::test]
+    fn highlights_of_a_failed_read_are_not_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let stream = "commit refs/heads/main\ncommitter T <t@example.com> 1700000000 +0000\ndata 2\nc\n\
+                      M 644 inline a.rs\ndata 13\nfn main() {}\n\n";
+        for (args, input) in [(&["init", "-q", "-b", "main"][..], None), (&["fast-import", "--quiet"][..], Some(stream))] {
+            let mut child = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            if let Some(input) = input {
+                use std::io::Write as _;
+                child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+            }
+            drop(child.stdin.take());
+            assert!(child.wait().unwrap().success(), "git {args:?}");
+        }
+        let repo = Repo::open(dir).unwrap();
+        let id = repo.head().unwrap().id.unwrap();
+        let opts = DiffOptions::default();
+        let data = repo.load_commit(id, None, &opts).unwrap();
+        let (cache, commit_hl) = (SharedCache::default(), SharedCommitHighlights::default());
+        let kept = || commit_hl.lock().unwrap().get(&(id, opts)).is_some();
+        {
+            let _kill = inject(dir, "cat-file", Fault::Kill, usize::MAX);
+            prefetch_commit_highlights(&repo, &data, opts, &cache, &commit_hl);
+        }
+        assert!(!kept(), "styles from a failed read were kept");
+        prefetch_commit_highlights(&repo, &data, opts, &cache, &commit_hl);
+        assert!(kept());
+    }
 }

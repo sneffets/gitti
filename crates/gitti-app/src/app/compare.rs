@@ -319,8 +319,8 @@ impl GittiApp {
                     if highlight
                         && let Some(key) = hl_key(&data, opts)
                         && compare_hl.lock().expect("hl").get(&key).is_none()
+                        && let Some(out) = highlighting::compare_highlights(&repo, &data, &hl_cache)
                     {
-                        let out = highlighting::compare_highlights(&repo, &data, &hl_cache);
                         compare_hl.lock().expect("hl").insert(key, Arc::new(out));
                     }
                 }

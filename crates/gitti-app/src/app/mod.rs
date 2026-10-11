@@ -2141,7 +2141,7 @@ impl GittiApp {
             };
             let styles = match (&working, &touched, cache) {
                 (Ok(w), Some(t), Some(cache)) => {
-                    Some(highlighting::highlight_paths(&repo, w, t, &cache))
+                    highlighting::highlight_paths(&repo, w, t, &cache)
                 }
                 _ => None,
             };
