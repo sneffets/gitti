@@ -1471,25 +1471,75 @@ fn header_ref_lines(
     cols: u16,
 ) -> Vec<Line<'static>> {
     let indent = first.content.width() as u16;
+    let mut lines = vec![vec![first]];
+    for (line, _, b, _) in header_ref_layout(refs, current, worktrees, bg, p, indent, cols) {
+        if line == lines.len() {
+            lines.push(vec![Span::raw(" ".repeat(indent as usize))]);
+        }
+        lines[line].push(b);
+        lines[line].push(Span::raw(" "));
+    }
+    lines.into_iter().map(Line::from).collect()
+}
+
+/// Where [`header_ref_lines`] puts each badge: its line (0 = the "Refs" line), column,
+/// the badge, its ref.
+fn header_ref_layout<'r>(
+    refs: &[&'r RefInfo],
+    current: Option<&str>,
+    worktrees: &[gitti_core::worktree::Worktree],
+    bg: Color,
+    p: &Palette,
+    indent: u16,
+    cols: u16,
+) -> Vec<(usize, u16, Span<'static>, &'r RefInfo)> {
     let avail = cols.saturating_sub(indent);
     let max = (cols > 0).then_some(avail.max(3));
-    let mut lines = Vec::new();
-    let mut spans = vec![first];
-    let mut used = 0u16;
-    for r in refs {
+    let mut out = Vec::new();
+    let (mut line, mut used) = (0, 0u16);
+    for &r in refs {
         let b = ref_badge(r, current, worktrees, bg, p, max);
         let w = b.content.width() as u16;
         if cols > 0 && used > 0 && used + w > avail {
-            lines.push(Line::from(std::mem::take(&mut spans)));
-            spans.push(Span::raw(" ".repeat(indent as usize)));
+            line += 1;
             used = 0;
         }
-        spans.push(b);
-        spans.push(Span::raw(" "));
+        out.push((line, indent + used, b, r));
         used += w + 1;
     }
-    lines.push(Line::from(spans));
-    lines
+    out
+}
+
+/// Width of a commit header line's label (`commit_header`'s `label`): 12 columns + 2.
+const HEADER_LABEL_W: u16 = 14;
+
+/// The ref whose badge is at column `col` of header line `line` (its "Refs" lines) of the
+/// shown commit — a right click there opens the ref's menu, as on its badge in the list.
+pub fn header_ref_at(app: &App, line: usize, col: u16) -> Option<RefInfo> {
+    let Detail::Commit(cv) = &app.detail else {
+        return None;
+    };
+    if cv.compare.is_some() {
+        return None;
+    }
+    let first = refs_line(cv);
+    let refs = app.history.refs_by_commit.get(&cv.details.id)?;
+    let refs = badge_refs(refs, app.current_branch());
+    let p = &app.pal;
+    let layout = header_ref_layout(
+        &refs,
+        app.current_branch(),
+        &app.worktrees,
+        p.bg_diff,
+        p,
+        HEADER_LABEL_W,
+        app.header_cols,
+    );
+    let line = line.checked_sub(first)?;
+    layout
+        .into_iter()
+        .find(|(l, c, b, _)| *l == line && (*c..*c + b.content.width() as u16).contains(&col))
+        .map(|(.., r)| r.clone())
 }
 
 pub fn format_time(secs: i64) -> String {
@@ -1549,6 +1599,12 @@ pub fn header_date(d: &gitti_core::CommitDetails) -> String {
 pub fn parents_line(cv: &CommitView) -> Option<usize> {
     (cv.compare.is_none() && !cv.details.parents.is_empty())
         .then(|| SIGNATURE_LINE + usize::from(cv.sig_kind.is_some()))
+}
+
+/// Index of the first "Refs" line in `commit_header` (after the parents and the stats
+/// line); its lines are there only when the commit has refs.
+pub fn refs_line(cv: &CommitView) -> usize {
+    SIGNATURE_LINE + usize::from(cv.sig_kind.is_some()) + usize::from(!cv.details.parents.is_empty()) + 1
 }
 
 /// Header lines of a commit (the summary block), drawn over `HeaderSpace` rows.
@@ -1668,6 +1724,7 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
     if let Some(refs) = app.history.refs_by_commit.get(&d.id) {
         let refs = badge_refs(refs, app.current_branch());
         if !refs.is_empty() {
+            debug_assert_eq!(out.len(), refs_line(cv));
             out.extend(header_ref_lines(
                 label("Refs"),
                 &refs,

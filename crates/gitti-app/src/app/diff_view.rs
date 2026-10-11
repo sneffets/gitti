@@ -902,12 +902,16 @@ impl GittiApp {
                 let can_copy =
                     self.text_sel.is_some_and(|t| !t.is_empty()) || self.line_sel.is_some();
                 let versions = self.version_menu_labels();
-                move |menu, _, cx| {
+                move |menu, window, cx| {
                     if super::signing_keys::take_signature_click() {
                         return super::signing_keys::signature_menu(menu, &app, cx);
                     }
                     if let Some(click) = super::header_ids::take_id_click() {
                         return super::header_ids::id_menu(menu, click);
+                    }
+                    // A badge of the header's "Refs" row: that ref's menu (as in the list).
+                    if let Some(r) = super::header_ids::take_ref_click() {
+                        return super::branch_list::ref_menu_pinnable(menu, &app, &r, window, cx);
                     }
                     let menu =
                         super::menus::diff_menu(menu, &app, &s, worktree, can_copy, &versions, cx);

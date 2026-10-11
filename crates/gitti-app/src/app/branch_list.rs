@@ -101,6 +101,21 @@ pub(super) fn pin_item(menu: PopupMenu, app: &AppHandle, r: &RefInfo, pinned: bo
     )
 }
 
+/// Ref `r`'s whole menu as its sidebar row has it ([`super::menus::ref_context_menu`],
+/// then "Pin to Top" for a branch) — for its badges in the commit list and the commit
+/// header. No git.
+pub(super) fn ref_menu_pinnable(
+    menu: PopupMenu,
+    app: &AppHandle,
+    r: &RefInfo,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let pinned = app.upgrade().is_some_and(|a| a.read(cx).is_pinned(&r.full_name));
+    let menu = super::menus::ref_context_menu(menu, app, r, window, cx);
+    pin_item(menu, app, r, pinned)
+}
+
 impl GittiApp {
     /// Sorts the branches again (refs, history, a choice or the pins changed).
     pub(super) fn update_branch_order(&mut self) {

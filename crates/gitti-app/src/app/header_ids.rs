@@ -4,7 +4,8 @@
 //! (`text_sel::Area::Header`, [`header_lines`]).
 //! The header lies inside the diff list, whose context menu opens on any right click in
 //! it: like the signature (`signing_keys::mark_signature_click`), an id marks the click in
-//! the capture phase and the diff's menu builder shows the id's menu instead.
+//! the capture phase and the diff's menu builder shows the id's menu instead. The same
+//! for the "Refs" row's badges (`commit_list::ref_badge`): their ref's menu.
 
 use gitti_core::ObjectId;
 use gitti_core::header_ids::{HeaderId, copy_entries};
@@ -37,6 +38,21 @@ pub(super) type IdClick = (ObjectId, HeaderId, usize);
 /// The right click on an id the menu being built is for, if any (forgets it).
 pub(super) fn take_id_click() -> Option<IdClick> {
     ID_CLICK.with(|c| c.take())
+}
+
+thread_local! {
+    static REF_CLICK: std::cell::RefCell<Option<gitti_core::RefInfo>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The right mouse button went down on ref `r`'s badge in the header's "Refs" row.
+pub(super) fn mark_ref_click(r: gitti_core::RefInfo) {
+    REF_CLICK.with(|c| *c.borrow_mut() = Some(r));
+}
+
+/// The ref whose header badge the menu being built is for, if any (forgets it).
+pub(super) fn take_ref_click() -> Option<gitti_core::RefInfo> {
+    REF_CLICK.with(|c| c.borrow_mut().take())
 }
 
 /// The id's context menu: copy it, full or short.
