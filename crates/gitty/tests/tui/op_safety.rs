@@ -88,10 +88,10 @@ fn during_a_merge_stash_waits_and_stage_all_asks() {
 fn unstage_all_keeps_the_merge() {
     let dir = merging();
     let d = dir.path();
-    let out = gitty(d, "state;press:U;state");
+    let out = gitty(d, "state;key:U;state");
     let st = states(&out);
-    assert!(st[0].contains("staged=1 "), "{out}");
-    assert!(st[1].contains("staged=0 ") && !st[1].contains("ERROR"), "{out}");
+    assert!(st[0].contains(" staged=1 "), "{out}");
+    assert!(st[1].contains(" staged=0 ") && !st[1].contains("ERROR"), "{out}");
     assert!(d.join(".git/MERGE_HEAD").exists(), "the merge stays: {out}");
     assert_eq!(git(d, &["ls-files", "-u", "--", "a.txt"]).lines().count(), 3, "a.txt stays conflicted: {out}");
     assert_eq!(std::fs::read_to_string(d.join("b.txt")).unwrap(), "ONE\n2\n3\n4\n5\n");
