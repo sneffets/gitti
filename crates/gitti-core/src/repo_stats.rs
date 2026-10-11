@@ -784,7 +784,7 @@ pub fn text(stats: &Stats, opts: &TextOptions) -> String {
                 String::new()
             };
             let which = if a.commits >= a.total {
-                format!("all {} commits{span}", count_text(a.total as u64))
+                format!("all {}{span}", counted(a.total, "commit", "commits"))
             } else {
                 format!(
                     "the newest {} of {} commits{span}",
