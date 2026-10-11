@@ -44,6 +44,8 @@ mod tab_marks;
 mod unix_fs;
 mod wf_catalog;
 mod wf_pilot;
+mod wf_reset;
+mod wf_tags;
 mod worktrees;
 
 /// The test repositories' settings — identity, no signing, contents as written whatever

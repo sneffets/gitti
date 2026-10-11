@@ -32,6 +32,8 @@ mod subtrees;
 mod toolbar;
 mod tooltips;
 mod wf_pilot;
+mod wf_reset;
+mod wf_tags;
 mod worktrees;
 
 use std::process::Command;
@@ -60,6 +62,8 @@ const SUITES: &[(&str, fn())] = &[
     ("reflog", reflog::main),
     ("branches", branches::main),
     ("wf_pilot", wf_pilot::main),
+    ("wf_reset", wf_reset::main),
+    ("wf_tags", wf_tags::main),
 ];
 
 fn main() {
