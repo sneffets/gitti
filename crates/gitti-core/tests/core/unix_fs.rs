@@ -1304,6 +1304,9 @@ fn read_only_file_discard_lines() {
     let d = fx.unstaged("ro.txt");
     fx.apply(&d, &lines(&d, &["X"]), PatchMode::Discard);
     assert_eq!(fx.read("ro.txt"), "a\nb\nY\n");
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = fs::metadata(fx.path("ro.txt")).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o444, "still read-only (git apply writes the index's mode)");
     let d = fx.unstaged("ro.txt");
     fx.apply(&d, &lines(&d, &["Y"]), PatchMode::Stage);
     assert_eq!(fx.index("ro.txt"), "a\nb\nY\n");

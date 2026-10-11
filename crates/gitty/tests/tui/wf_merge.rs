@@ -261,6 +261,60 @@ fn mg20_merge_conflict_in_a_linked_worktree() {
     wf::expect_concluded(&d, &s).unwrap();
 }
 
+/// MG-14: `conflict-marker-size=12`: Mark Resolved (r) on git's file asks (markers left);
+/// the merge editor (e) shows one conflict — the heading's `=======` is text — takes theirs
+/// (2), saves (s), closes (esc); Mark Resolved then stages without asking; Continue
+/// Merging.
+/// Workflow: MG-14
+#[gitti_test::test]
+fn mg14_long_conflict_markers() {
+    use mg::long_markers as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture(&d);
+    wf::expect_stopped(&d, &s).unwrap();
+    let out = run(
+        &d,
+        &format!(
+            "{FIRST_CONFLICT}press:enter;key:r;dump;press:esc;press:enter;key:e;dump;press:2;press:s;state;\
+             press:esc;press:enter;key:r;state;{}state",
+            palette("Continue Merging")
+        ),
+    );
+    let sc = screens(&out);
+    assert!(sc[0].contains("still contains conflict markers"), "{out}");
+    assert!(sc[1].contains("Conflict · unresolved") && sc[1].contains("Title"), "{out}");
+    let st = states(&out);
+    assert!(st[0].contains(&format!("Saved {}", wf::FILE)), "{out}");
+    assert!(st[1].contains("conflicted=0"), "Mark Resolved asked or failed: {out}");
+    assert!(st[2].contains("repo_state=clean conflicted=0"), "{out}");
+    no_error(st[2], &out);
+    wf::expect_concluded(&d, &s).unwrap();
+}
+
+/// MG-21: both sides moved a submodule's pointer: its header says submodule, its rows ours
+/// → theirs; its resolve menu explains and offers neither merge editor nor external merge
+/// tool; Take Theirs (t) records feat's commit, Continue Merging.
+/// Workflow: MG-21
+#[gitti_test::test]
+fn mg21_submodule_pointer_conflict_take_theirs() {
+    use mg::submodule as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture(&d);
+    wf::expect_stopped(&d, &s).unwrap();
+    let out = run(&d, &format!("{FIRST_CONFLICT}dump;press:enter;dump;key:t;state;{}state", palette("Continue Merging")));
+    let sc = screens(&out);
+    assert!(sc[0].contains("submodule, moved on both sides"), "{out}");
+    assert!(sc[0].contains(&format!("Submodule {}: {} → {}", wf::PATH, &s.lib_main[..7], &s.lib_feat[..7])), "{out}");
+    assert!(sc[0].contains(wf::LIB_FEAT) && sc[0].contains(wf::LIB_MAIN), "{out}");
+    assert!(sc[1].contains("Take Theirs — feat") && sc[1].contains("no merge editor"), "{out}");
+    assert!(!sc[1].contains("Open in Merge Editor") && !sc[1].contains("External Merge Tool"), "{out}");
+    let st = states(&out);
+    assert!(status_of(st[0]).contains("Recorded their commit"), "{out}");
+    assert!(st[1].contains("repo_state=clean conflicted=0"), "{out}");
+    no_error(st[1], &out);
+    wf::expect_concluded(&d, &s).unwrap();
+}
+
 /// MG-22: a binary conflict: its header says binary, its row the binary note; its resolve
 /// menu explains and offers no merge editor; Take Theirs (t), Continue Merging.
 /// Workflow: MG-22
@@ -275,6 +329,65 @@ fn mg22_binary_conflict_take_theirs() {
     assert!(sc[0].contains("binary, changed on both sides"), "{out}");
     assert!(sc[0].contains("Binary file changed on both sides"), "{out}");
     assert!(sc[1].contains("Take Theirs — feat") && sc[1].contains("no merge editor"), "{out}");
+    assert!(!sc[1].contains("Open in Merge Editor"), "{out}");
+    let st = states(&out)[0];
+    assert!(st.contains("repo_state=clean conflicted=0"), "{out}");
+    no_error(st, &out);
+    wf::expect_concluded(&d, &s).unwrap();
+}
+
+/// MG-23 (first half): MG-07's merge in a SHA-256 repository: a.txt in the merge editor
+/// (e, its stages read by 64-hex ids), ours (1), S saves, marks it resolved and closes;
+/// b.txt Take Theirs (t).
+/// Workflow: MG-23
+#[gitti_test::test]
+fn mg23_merge_conflict_in_a_sha256_repository() {
+    use mg::sides as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture_sha256(&d);
+    wf::expect_stopped(&d, &s).unwrap();
+    assert_eq!(s.main.len(), 64);
+    let out = run(&d, &format!("{FIRST_CONFLICT}press:enter;key:e;dump;press:1;key:S;state;press:enter;key:t;state"));
+    assert!(screens(&out)[0].contains("a main") && screens(&out)[0].contains("a feat"), "{out}");
+    let st = states(&out);
+    assert!(st[0].contains("repo_state=merging conflicted=1"), "{out}");
+    assert!(st[1].contains("repo_state=merging conflicted=0"), "{out}");
+    no_error(st[1], &out);
+    wf::expect_resolved(&d, &s).unwrap();
+}
+
+/// MG-23 (second half): both resolved in the SHA-256 repository; Continue Merging
+/// concludes the merge.
+/// Workflow: MG-23
+#[gitti_test::test]
+fn mg23_continue_in_a_sha256_repository() {
+    use mg::sides as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture_resolved_sha256(&d);
+    wf::expect_resolved(&d, &s).unwrap();
+    let out = run(&d, &format!("{}state", palette("Continue Merging")));
+    let st = states(&out)[0];
+    assert!(st.contains("repo_state=clean conflicted=0"), "{out}");
+    no_error(st, &out);
+    wf::expect_concluded(&d, &s).unwrap();
+}
+
+/// MG-27: a text file the nested .gitattributes marks `binary`: shown as a binary
+/// conflict (header, note); its resolve menu says why — .gitattributes — and offers no
+/// merge editor; Take Ours (o), Continue Merging.
+/// Workflow: MG-27
+#[gitti_test::test]
+fn mg27_conflict_in_a_file_gitattributes_marks_binary() {
+    use mg::binary_attr as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture(&d);
+    wf::expect_stopped(&d, &s).unwrap();
+    let out = run(&d, &format!("{FIRST_CONFLICT}dump;press:enter;dump;key:o;{}state", palette("Continue Merging")));
+    let sc = screens(&out);
+    // The header is cut at 120 columns.
+    assert!(sc[0].contains("data/table.csv  -0 +0  binary, changed on both"), "{out}");
+    assert!(sc[0].contains("Binary file changed on both sides"), "{out}");
+    assert!(sc[1].contains("Take Ours — main") && sc[1].contains(".gitattributes"), "{out}");
     assert!(!sc[1].contains("Open in Merge Editor"), "{out}");
     let st = states(&out)[0];
     assert!(st.contains("repo_state=clean conflicted=0"), "{out}");

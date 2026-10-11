@@ -1854,8 +1854,8 @@ impl GittiApp {
                 (src == Src::Conflicted).then(|| self.conflict_kind(file)).flatten(),
                 |d, kind| {
                     let sides = self.conflict_sides_or_default();
-                    let binary = self.conflict_binary(file);
-                    let tip = kind.explain_for(&sides, binary);
+                    let shape = self.conflict_shape(file);
+                    let tip = kind.explain_for(&sides, shape);
                     d.child(
                         div()
                             .id(("conflict-kind", ix))
@@ -1865,7 +1865,7 @@ impl GittiApp {
                             .font_weight(FontWeight::NORMAL)
                             .text_size(self.settings.diff_small())
                             .text_color(if kind.is_content() { p.text_muted } else { p.warning })
-                            .child(kind.short_for(&sides, binary))
+                            .child(kind.short_for(&sides, shape))
                             .tooltip(move |window, cx| {
                                 gpui_kit::component::tooltip::Tooltip::new(tip.clone())
                                     .build(window, cx)
@@ -1942,9 +1942,11 @@ impl GittiApp {
                 )
             }
             Src::Conflicted
-                if !self.conflict_kind(file).is_none_or(|k| k.is_content()) || self.conflict_binary(file) =>
+                if !self.conflict_kind(file).is_none_or(|k| k.is_content())
+                    || self.conflict_shape(file) != gitti_core::conflict::ConflictShape::Text =>
             {
-                // A file one side deleted / only one side has, or a binary one: a button per
+                // A file one side deleted / only one side has, a binary one or a submodule's
+                // pointer: a button per
                 // way out (keep, delete, restore; ours, theirs, mark resolved), the menu's
                 // words in the tooltip. The external merge tool stays in the diff's menu
                 // (room for the path).

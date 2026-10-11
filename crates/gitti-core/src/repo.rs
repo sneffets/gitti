@@ -1107,11 +1107,7 @@ impl Repo {
             if e.conflicted {
                 state.conflicted.push(WorkFile {
                     entry: e.clone(),
-                    diff: self
-                        .conflict_diff(&e.path, opts)
-                        .ok()
-                        .flatten()
-                        .or_else(|| self.conflict_placeholder(e)),
+                    diff: self.conflict_diff(&e.path, opts).ok().flatten(),
                     patch_diff: None,
                 });
                 continue;
@@ -1151,6 +1147,7 @@ impl Repo {
                 }
             }
         }
+        self.add_conflict_placeholders(&mut state.conflicted);
         // Untracked folders with a `.git`: one stat each (only folder entries).
         state.nested_repos = crate::discard::nested_repos(
             &self.workdir,
@@ -1534,7 +1531,22 @@ impl Repo {
         let patch = build_patch(file, sel, mode).ok_or_else(|| anyhow!("nothing selected"))?;
         // A stale view: refused, nothing applied (`apply_check`).
         self.check_shown(file, mode)?;
-        self.apply_patch_to(&patch, mode, Some(file.path()))
+        // `git apply` writes the file anew with the index's mode: a read-only file would
+        // come back writable. Discarding lines is an edit of the file: it stays read-only.
+        let full = crate::paths::join_repo_path(&self.workdir, file.path());
+        let read_only = mode == PatchMode::Discard
+            && std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_file() && m.permissions().readonly());
+        self.apply_patch_to(&patch, mode, Some(file.path()))?;
+        if read_only
+            && let Ok(m) = std::fs::symlink_metadata(&full)
+            && m.is_file()
+            && !m.permissions().readonly()
+        {
+            let mut perm = m.permissions();
+            perm.set_readonly(true);
+            std::fs::set_permissions(&full, perm)?;
+        }
+        Ok(())
     }
 
     pub fn apply_patch(&self, patch: &[u8], mode: PatchMode) -> Result<()> {

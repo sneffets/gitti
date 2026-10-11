@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use gitti_core::Repo;
-use gitti_core::conflict::{ConflictAction, ConflictKind};
+use gitti_core::conflict::{ConflictAction, ConflictKind, ConflictShape};
 use gitti_core::local_changes::{LocalChanges, LocalChangesWay};
 use gitti_core::ops::{FastForward, MergeOptions};
 use gitti_workflow::mg;
@@ -101,6 +101,68 @@ fn mg17_dirty_tree_survives_a_conflicting_merge_and_its_abort() {
     wf::expect_aborted(&dir, &s).unwrap();
 }
 
+/// MG-24: MG-07's merge: a.txt taken as ours, b.txt resolved in the external merge tool
+/// (a fake one taking theirs): git stages the tool's result, keeps the backup, and the
+/// outcome says no conflict is left; Continue concludes the merge. Unix only: `git
+/// mergetool` is a shell script of ~35 git processes, over the time limit on Windows.
+/// Workflow: MG-24
+#[cfg(unix)]
+#[gitti_test::test]
+fn mg24_external_merge_tool_resolves_the_last_conflict() {
+    use mg::sides as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    let mut config = std::fs::OpenOptions::new().append(true).open(dir.join(".git/config")).unwrap();
+    std::io::Write::write_all(
+        &mut config,
+        b"[merge]\n\ttool = fake\n[mergetool \"fake\"]\n\tcmd = cp \\\"$REMOTE\\\" \\\"$MERGED\\\"\n\ttrustExitCode = true\n\
+          [mergetool]\n\tkeepBackup = true\n",
+    )
+    .unwrap();
+    let repo = Repo::open(&dir).unwrap();
+    repo.resolve_conflict(&["a.txt".into()], ConflictAction::TakeOurs).unwrap();
+    let out = repo.resolve_conflict(&["b.txt".into()], ConflictAction::MergeTool).unwrap();
+    assert!(out.contains("fake resolved b.txt: git staged it") && out.contains("No conflicts left"), "{out}");
+    assert!(std::fs::read_to_string(dir.join("b.txt.orig")).unwrap().contains("<<<<<<<"), "git's backup");
+    std::fs::remove_file(dir.join("b.txt.orig")).unwrap();
+    wf::expect_resolved(&dir, &s).unwrap();
+    repo.continue_operation().unwrap();
+    wf::expect_concluded(&dir, &s).unwrap();
+}
+
+/// MG-21: both sides moved a submodule's pointer: the working state shows ours → theirs
+/// (with the commits between them, the submodule being checked out), no merge editor nor
+/// external merge tool; Take Theirs records feat's commit (git's checkout + add can't:
+/// add would record the submodule's checked-out commit, ours) and Continue concludes the
+/// merge.
+/// Workflow: MG-21
+#[gitti_test::test]
+fn mg21_submodule_pointer_conflict_take_theirs() {
+    use mg::submodule as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    wf::expect_stopped(&dir, &s).unwrap();
+    let repo = Repo::open(&dir).unwrap();
+    let w = repo.working_state().unwrap();
+    let file = &w.conflicted[0];
+    let diff = file.diff.as_ref().expect("a diff");
+    assert_eq!(ConflictShape::of(Some(diff)), ConflictShape::Submodule);
+    let sub = diff.submodule.as_ref().unwrap();
+    let id = |hex: &str| gitti_core::ObjectId::from_hex(hex.as_bytes()).unwrap();
+    assert_eq!((sub.old, sub.new), (Some(id(&s.lib_main)), Some(id(&s.lib_feat))));
+    let log = sub.log.as_ref().expect("the commits between ours and theirs");
+    assert_eq!((log.added[0].1.as_str(), log.removed[0].1.as_str()), (wf::LIB_FEAT, wf::LIB_MAIN));
+    assert!(repo.submodule_conflict(wf::PATH) && !repo.binary_conflict(wf::PATH));
+    let kind = ConflictKind::of(&file.entry).unwrap();
+    let actions: Vec<ConflictAction> =
+        kind.choices_for(&repo.conflict_sides(), ConflictShape::Submodule).iter().map(|c| c.action).collect();
+    assert_eq!(actions, [ConflictAction::TakeOurs, ConflictAction::TakeTheirs, ConflictAction::MarkResolved]);
+    let out = repo.resolve_conflict(&[wf::PATH.to_string()], ConflictAction::TakeTheirs).unwrap();
+    assert!(out.contains("Recorded their commit") && out.contains("update the submodule"), "{out}");
+    repo.continue_operation().unwrap();
+    wf::expect_concluded(&dir, &s).unwrap();
+}
+
 /// MG-22: a binary conflict: the working state shows it as a binary file (not "same as
 /// main"), its choices have no merge editor (which refuses it) but the sides first; Take
 /// Theirs and Continue conclude the merge with feat's bytes.
@@ -118,11 +180,70 @@ fn mg22_binary_conflict_take_theirs() {
     assert!(repo.binary_conflict(wf::FILE));
     let sides = repo.conflict_sides();
     let kind = ConflictKind::of(&file.entry).unwrap();
-    let actions: Vec<ConflictAction> = kind.choices_for(&sides, true).iter().map(|c| c.action).collect();
+    let actions: Vec<ConflictAction> = kind.choices_for(&sides, ConflictShape::Binary).iter().map(|c| c.action).collect();
     assert_eq!(actions[..2], [ConflictAction::TakeOurs, ConflictAction::TakeTheirs]);
     assert!(!actions.contains(&ConflictAction::MergeEditor), "{actions:?}");
     assert!(repo.merge_doc(wf::FILE).is_err(), "the merge editor refuses a binary file");
     repo.resolve_conflict(&[wf::FILE.to_string()], ConflictAction::TakeTheirs).unwrap();
+    repo.continue_operation().unwrap();
+    wf::expect_concluded(&dir, &s).unwrap();
+}
+
+/// MG-27: a text file the nested `.gitattributes` marks `binary`: git merged it as binary
+/// (no markers, ours on disk), and the working state shows it as a binary conflict with no
+/// merge editor. Detection follows every place git reads the `merge` attribute from and the
+/// config that picks the driver — each variant written over the stopped merge and asked
+/// again; `-diff -text` alone don't make git's merge binary. Take Ours and Continue
+/// conclude the merge.
+/// Workflow: MG-27
+#[gitti_test::test]
+fn mg27_conflict_in_a_file_gitattributes_marks_binary() {
+    use mg::binary_attr as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    wf::expect_stopped(&dir, &s).unwrap();
+    let repo = Repo::open(&dir).unwrap();
+    let w = repo.working_state().unwrap();
+    let file = &w.conflicted[0];
+    assert!(file.diff.as_ref().is_some_and(|d| d.binary && d.hunks.is_empty()), "{:?}", file.diff);
+    let kind = ConflictKind::of(&file.entry).unwrap();
+    let actions: Vec<ConflictAction> =
+        kind.choices_for(&repo.conflict_sides(), ConflictShape::Binary).iter().map(|c| c.action).collect();
+    assert!(!actions.contains(&ConflictAction::MergeEditor), "{actions:?}");
+
+    // Each variant: (root .gitattributes, nested, info/attributes, core.attributesFile's
+    // file, extra config) → merged as binary.
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
+    let config = std::fs::read_to_string(dir.join(".git/config")).unwrap();
+    let variants: [(&str, &str, &str, &str, &str, bool); 8] = [
+        ("", wf::RULE, "", "", "", true),
+        ("", "*.csv -merge\n", "", "", "", true),
+        ("", "", "data/*.csv merge=binary\n", "", "", true),
+        ("", "", "", "*.csv -merge\n", "", true),
+        ("[attr]nomerge -merge\ndata/*.csv nomerge\n", "", "", "", "", true),
+        ("", "*.csv -diff -text\n", "", "", "", false),
+        ("", "", "", "", "[merge]\n\tdefault = binary\n", true),
+        ("", "*.csv merge=binary\n", "", "", "[merge \"binary\"]\n\tdriver = false\n", false),
+    ];
+    std::fs::create_dir_all(dir.join(".git/info")).unwrap();
+    let global = dir.join(".git/global-attributes");
+    for (i, (root, nested, info, global_rules, extra, want)) in variants.into_iter().enumerate() {
+        write(".gitattributes", root);
+        write(wf::ATTRIBUTES, nested);
+        write(".git/info/attributes", info);
+        std::fs::write(&global, global_rules).unwrap();
+        let attributes_file = format!("[core]\n\tattributesFile = {}\n", global.display().to_string().replace('\\', "/"));
+        write(".git/config", &format!("{config}{attributes_file}{extra}"));
+        let repo = Repo::open(&dir).unwrap();
+        assert_eq!(repo.binary_conflict(wf::FILE), want, "variant {i}");
+    }
+    write(".gitattributes", "");
+    write(wf::ATTRIBUTES, wf::RULE);
+    write(".git/config", &config);
+    std::fs::remove_file(dir.join(".gitattributes")).unwrap();
+
+    let repo = Repo::open(&dir).unwrap();
+    repo.resolve_conflict(&[wf::FILE.to_string()], ConflictAction::TakeOurs).unwrap();
     repo.continue_operation().unwrap();
     wf::expect_concluded(&dir, &s).unwrap();
 }

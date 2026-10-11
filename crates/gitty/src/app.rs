@@ -3134,22 +3134,22 @@ impl App {
 
     /// The menu of conflicted file `file` (`None`: no such file): its kind's explanation and
     /// choices ([`gitti_core::conflict::ConflictKind::choices_for`]) — merge editor / ours /
-    /// theirs for a content conflict (no merge editor when binary), keep / delete for a
-    /// file one side deleted.
+    /// theirs for a content conflict (no merge editor when binary or a submodule's
+    /// pointer), keep / delete for a file one side deleted.
     fn resolve_menu_spec(&self, file: usize) -> Option<(String, Vec<MenuItem>)> {
-        use gitti_core::conflict::{ConflictAction as A, ConflictKind};
+        use gitti_core::conflict::{ConflictAction as A, ConflictKind, ConflictShape};
         let wf = self.working.conflicted.get(file)?;
         let path = wf.entry.path.clone();
         let kind = ConflictKind::of(&wf.entry).unwrap_or(ConflictKind::BothModified);
         let sides = self.conflict_sides_or_default();
-        // Binary sides: no merge editor, said why.
-        let binary = wf.diff.as_ref().is_some_and(|d| d.binary);
+        // Binary sides or a submodule's pointer: no merge editor, said why.
+        let shape = ConflictShape::of(wf.diff.as_ref());
         let mut items = Vec::new();
-        if !kind.is_content() || binary {
-            items.extend(MenuItem::notes(&kind.explain_for(&sides, binary), 60));
+        if !kind.is_content() || shape != ConflictShape::Text {
+            items.extend(MenuItem::notes(&kind.explain_for(&sides, shape), 60));
             items.push(MenuItem::separator());
         }
-        for c in kind.choices_for(&sides, binary) {
+        for c in kind.choices_for(&sides, shape) {
             let p = path.clone();
             let item = match c.action {
                 A::MergeEditor => {

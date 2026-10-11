@@ -227,6 +227,51 @@ fn merge_tool_from_the_resolve_menu() {
     assert!(!dir.path().join("a.txt.orig").exists(), "mergetool.keepBackup = false");
 }
 
+/// No merge tool set up: the resolve menu's Open in External Merge Tool (x) opens the
+/// set-up dialog first; tab to the merge tool's field, ctrl-n fills in the user's own tool,
+/// Enter writes it (global) and the tool resolves the file right after. Unix only (see
+/// above).
+/// Workflow: MG-25
+#[cfg(unix)]
+#[gitti_test::test]
+fn merge_tool_set_up_on_the_way() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", "base\n")] },
+        Commit { branch: "feat", from: Some(1), merge: None, msg: "feat", files: &[("a.txt", "feat\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "main", files: &[("a.txt", "main\n")] },
+    ]);
+    let merged = std::process::Command::new("git")
+        .args(["merge", "-q", "feat"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(!merged.status.success(), "the merge conflicts");
+    add_config(
+        dir.path(),
+        "[mergetool \"fake\"]\n\tcmd = cp \\\"$REMOTE\\\" \\\"$MERGED\\\"\n\ttrustExitCode = true\n\
+         [mergetool]\n\tkeepBackup = false\n",
+    );
+    let config = tempfile::tempdir().unwrap();
+    let out = run_in(
+        dir.path(),
+        config.path(),
+        &[],
+        // TODO: the dialog opened for the merge tool starts in the diff tool's field (both
+        // apps) — tab to the merge tool's (open point in WORKFLOWS.md).
+        "press:enter;press:j;press:enter;key:x;dump;press:tab;press:ctrl-n;dump;key:enter;state",
+    );
+    let screens = out.split("focus=").next().unwrap_or_default();
+    assert!(screens.contains(gitti_core::tool_setup::DIALOG_TITLE), "{out}");
+    assert!(screens.contains("Choose a merge tool"), "OK waits for a tool: {out}");
+    assert!(screens.contains("merge.tool = fake"), "what it writes: {out}");
+    let state = states(&out).last().copied().unwrap_or_default();
+    assert!(state.contains("fake resolved a.txt: git staged it"), "{state}");
+    assert!(state.contains("Wrote merge.tool = fake"), "{state}");
+    assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), "feat\n");
+    let global = std::fs::read_to_string(config.path().join("global.gitconfig")).unwrap_or_default();
+    assert!(global.contains("tool = fake"), "{global}");
+}
+
 /// A terminal merge tool (a fake `vim`) gets gitty's terminal; the file is resolved and
 /// staged, git's backup kept. Unix only (see above).
 /// Workflow: MG-26

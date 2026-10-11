@@ -261,19 +261,20 @@ working tree or the index while the app shows an older state.
 | MG-11 | Conclude with the box emptied / edited | empty box, or an edited message | git's message without `# Conflicts:` lines / the edited one | `conflicts::continue_concludes_a_merge_without_conflict_comments_or_with_the_edited_message` | `wf_merge::mg11_conclude_with_the_box_emptied`, `wf_merge::mg11_conclude_with_an_edited_message` | `merge_editor::merge_concluded_with_the_box_emptied` |
 | MG-12 | Unrelated histories | merge a branch with its own root | refused, "Merge anyway" offered and works | `conflicts::unrelated_histories_merge_and_pull` | `menus::merge_unrelated_histories` | `wf_merge::mg12_unrelated_histories_merge_anyway`, ~`repo_cmds::pull_with_unrelated_histories_offers_merge_anyway` |
 | MG-13 | Merge preview in the graph | during a merge | working row is the pending merge, dashed edge to `MERGE_HEAD` | `merge_preview::merge_head_makes_the_worktree_row_the_pending_merge`, `merge_preview::unreachable_merge_head_and_octopus` | `layout::merge_preview_graph` | `views::merge_preview_dashes_the_pending_merge` |
-| MG-14 | Long conflict markers | `conflict-marker-size=10` | the editor and the "still has markers" check use the size | `conflicts::conflict_marker_size_attribute`, `merge_session::marker_size_attribute` (unit) | — | — |
-| MG-15 | Conflict in a non-UTF-8 / CRLF file | Latin-1 conflict; autocrlf CRLF conflict | written back byte for byte in the working-tree form | `non_utf8::merge_editor_writes_non_utf8_files_exactly`, `non_utf8::merge_editor_writes_the_working_tree_form` | — | `merge_editor::merge_editor_saves_a_latin1_file_exactly` |
+| MG-14 | Long conflict markers | `conflict-marker-size=12`, a `=======` heading in the text; Mark Resolved (asks); merge editor: theirs, save; Mark Resolved; Continue | the editor and the "still has markers" check use the size (the heading is text) | `conflicts::conflict_marker_size_attribute`, `merge_session::marker_size_attribute` (unit) | `wf_merge::mg14_long_conflict_markers` | `wf_merge::mg14_long_conflict_markers` |
+| MG-15 | Conflict in a non-UTF-8 / CRLF file | Latin-1 conflict; autocrlf CRLF conflict | written back byte for byte in the working-tree form | `non_utf8::merge_editor_writes_non_utf8_files_exactly`, `non_utf8::merge_editor_writes_the_working_tree_form` | `wf_merge::mg15_latin1_and_crlf_conflicts_saved_exactly` | `merge_editor::merge_editor_saves_a_latin1_file_exactly` |
 | MG-16 | Merge into a dirty tree (overlapping) | local change in a file the merge changes | git refuses; the app says what blocks and offers a way out (stash first); nothing changed | `wf_merge::mg16_merge_into_an_overlapping_dirty_tree_stash_and_merge` | `op_safety::blocked_merge_stash_and_merge` | `op_safety::a_blocked_merge_offers_ways_out` |
 | MG-17 | Merge into a dirty tree (not overlapping) | local change elsewhere; conflicting merge; abort | the local change survives merge and abort | `wf_merge::mg17_dirty_tree_survives_a_conflicting_merge_and_its_abort` | `wf_merge::mg17_dirty_tree_survives_merge_and_abort` | `wf_merge::mg17_dirty_tree_survives_merge_and_abort` |
 | MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | `op_safety::unstage_all_keeps_a_merge_and_its_conflicts` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::unstage_all_keeps_the_merge` |
 | MG-19 | Stage All with markers left | a conflicted file still has `<<<<<<<`; Stage All | asks first like Mark Resolved does | `op_safety::conflict_markers_left_are_found_before_stage_all` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
 | MG-20 | Merge in a linked worktree | conflict in a linked worktree; the app opened there; take theirs; Continue | state from its own git dir; concluded there; main worktree clean | `conflicts::merge_conflict_in_a_linked_worktree` | `wf_merge::mg20_merge_conflict_in_a_linked_worktree` | `wf_merge::mg20_merge_conflict_in_a_linked_worktree` |
-| MG-21 | Submodule pointer conflict | both sides moved the pointer | listed as a conflict; resolving picks a commit | `submodules::conflicting_pointers` | — | — |
+| MG-21 | Submodule pointer conflict | both sides moved the pointer (submodule checked out); take theirs; Continue | listed as a submodule conflict showing ours → theirs and the commits between; no merge editor / external merge tool; taking a side records that side's commit (the checkout stays) | `submodules::conflicting_pointers`, `wf_merge::mg21_submodule_pointer_conflict_take_theirs` | `wf_merge::mg21_submodule_pointer_conflict_take_theirs` | `wf_merge::mg21_submodule_pointer_conflict_take_theirs` |
 | MG-22 | Binary conflict | both sides changed a binary; take theirs; Continue | shown as a binary conflict (not "same as main"); no merge editor; take ours / theirs | `wf_merge::mg22_binary_conflict_take_theirs` | `wf_merge::mg22_binary_conflict_take_theirs` | `wf_merge::mg22_binary_conflict_take_theirs` |
-| MG-23 | Merge conflict in a SHA-256 repository | — | as in SHA-1 | `sha256::merge_conflict_worktrees_and_branch_ops` | — | — |
-| MG-24 | Resolve with an external merge tool | conflicted file → Open in External Merge Tool | the tool's result staged; status says no conflict is left | ~`ext_tool::describes_the_merge_outcome` (unit) | `ext_tools::merge_tool` | `ext_tools::merge_tool_from_the_resolve_menu` |
-| MG-25 | First external merge tool, set up on the way | no merge tool set; Open in External Merge Tool; choose one in the set-up dialog (this repository) | the dialog lists git's tools (own first, installed, missing); the choice written to the named config file; the tool resolves the file right after | `ext_tools::without_a_tool_the_choices_come_first_then_the_chosen_tool_runs` | `ext_tools::merge_tool_set_up_first` | ~`ext_tools::set_up_dialog_then_the_diff_tool_runs` (diff tool) |
+| MG-23 | Merge conflict in a SHA-256 repository | MG-07 in a SHA-256 repository (the merge editor for one file, a side for the other); Continue | as in SHA-1 | `sha256::merge_conflict_worktrees_and_branch_ops` | `wf_merge::mg23_merge_conflict_in_a_sha256_repository` | `wf_merge::mg23_merge_conflict_in_a_sha256_repository`, `wf_merge::mg23_continue_in_a_sha256_repository` |
+| MG-24 | Resolve with an external merge tool | conflicted file → Open in External Merge Tool | the tool's result staged; status says no conflict is left | `wf_merge::mg24_external_merge_tool_resolves_the_last_conflict`, ~`ext_tool::describes_the_merge_outcome` (unit) | `ext_tools::merge_tool` | `ext_tools::merge_tool_from_the_resolve_menu` |
+| MG-25 | First external merge tool, set up on the way | no merge tool set; Open in External Merge Tool; choose one in the set-up dialog (this repository) | the dialog lists git's tools (own first, installed, missing); the choice written to the named config file; the tool resolves the file right after | `ext_tools::without_a_tool_the_choices_come_first_then_the_chosen_tool_runs` | `ext_tools::merge_tool_set_up_first` | `ext_tools::merge_tool_set_up_on_the_way`, ~`ext_tools::set_up_dialog_then_the_diff_tool_runs` (diff tool) |
 | MG-26 | Resolve with a terminal merge tool | `merge.tool` runs vim; Open in External Merge Tool | gitty hands the tool its terminal; the file resolved and staged, backup kept; gitti refuses with the reason | `ext_tools::terminal_merge_tool_resolves_the_file` | n/a | `ext_tools::terminal_merge_tool_gets_the_terminal` |
+| MG-27 | Conflict in a file `.gitattributes` marks binary | a text file `binary` by a nested `.gitattributes` (also `-merge`, `merge=binary`, a macro, `info/attributes`, `core.attributesFile`, `merge.default`), both sides changed it; take ours; Continue | git left ours without markers; shown as a binary conflict, no merge editor, the menu says why; `-diff` / `-text` alone or a driver of the user's named `binary` don't count | `wf_merge::mg27_conflict_in_a_file_gitattributes_marks_binary` | `wf_merge::mg27_conflict_in_a_file_gitattributes_marks_binary` | `wf_merge::mg27_conflict_in_a_file_gitattributes_marks_binary` |
 
 ## CP — Cherry-pick
 
@@ -418,12 +419,12 @@ working tree or the index while the app shows an older state.
 | DC-01 | Discard one line | select a line; discard (asks) | only that line goes back | `staging::discard_single_line`, `staging::replaced_block_lines_stay_in_place`, `staging::uneven_blocks_and_hidden_whitespace_keep_lines_in_place`, `staging::crlf_last_line_without_newline_gets_crlf` | `speed::staging_keys` | `staging::stage_a_single_line_and_discard_lines_after_asking` |
 | DC-02 | Discard a hunk | discard the hunk (asks) | the hunk restored, others stay | `wf_staging::dc02_discard_a_hunk`, ~`hostile_config::stage_hunk_lines_unstage_and_discard` | `wf_staging::dc02_discard_a_hunk` | `wf_staging::dc02_discard_a_hunk` |
 | DC-03 | Discard All keeps staged work | staged + unstaged; Discard All | unstaged gone (untracked too), staged stays | `staging::discard_all_keeps_staged_changes` | `speed::staging_keys` | `staging::stage_all_unstage_all_discard_all_with_confirmations` |
-| DC-04 | Discard thousands of untracked files | `target/` with 1 000 files | one go; ignored file stays | `discard::discard_all_deletes_thousands_of_untracked_files_in_one_go` | — | — |
+| DC-04 | Discard thousands of untracked files | `target/` with 1 000 files | one go; ignored file stays | `discard::discard_all_deletes_thousands_of_untracked_files_in_one_go` | `wf_discard::dc04_discard_thousands_of_untracked_files` | `wf_discard::dc04_discard_thousands_of_untracked_files` |
 | DC-05 | Discard with a nested repository | untracked folder that is a repository | kept and named unless asked | `discard::nested_repository_is_kept_and_named_unless_asked`, `discard::untracked_folder_entry_keeps_a_repository_inside` | `menus::discard_all_nested_repository` | `staging::discard_all_keeps_a_nested_repository_unless_asked` |
-| DC-06 | A file can't be deleted | read-only folder | the others go; error names the file | `discard::a_file_that_cannot_be_deleted_does_not_stop_the_others`, `unix_fs::read_only_directory` | — | — |
+| DC-06 | A file can't be deleted | read-only folder (unix) | the others go; error names the file | `discard::a_file_that_cannot_be_deleted_does_not_stop_the_others`, `unix_fs::read_only_directory` | `wf_discard::dc06_a_file_that_cannot_be_deleted` | `wf_discard::dc06_a_file_that_cannot_be_deleted` |
 | DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | `wf_staging::dc07_discard_a_group` | `wf_staging::dc07_discard_a_group` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
 | DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file`, ~`staging::working_state_after_whole_files_match_a_full_read` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` |
-| DC-09 | Discard lines of a read-only file | 0444 file | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | — | — |
+| DC-09 | Discard lines of a read-only file | 0444 file (unix) | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | `wf_discard::dc09_discard_lines_of_a_read_only_file` | `wf_discard::dc09_discard_lines_of_a_read_only_file` |
 
 ## RL — Undo and recovery
 
@@ -510,7 +511,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
 | SH stash | 20 | 19 | 18 | 19 |
 | BR branches | 19 | 19 | 19 | 18 |
-| MG merge | 26 | 25 | 21 | 22 |
+| MG merge | 27 | 27 | 26 | 27 |
 | CP cherry-pick | 18 | 18 | 18 | 18 |
 | RV revert | 7 | 7 | 7 | 7 |
 | RB rebase | 9 | 9 | 9 | 9 |
@@ -520,7 +521,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
-| DC discard | 9 | 9 | 6 | 6 |
+| DC discard | 9 | 9 | 9 | 9 |
 | RL recovery | 4 | 4 | 4 | 4 |
 | IG ignore | 6 | 6 | 6 | 6 |
 | RN renames | 5 | 5 | 5 | 5 |
@@ -528,7 +529,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 5 | 5 | 5 | 5 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **267** | **256** | **240** | **241** |
+| **Total** | **268** | **258** | **248** | **249** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -544,3 +545,4 @@ at the step; once fixed, the assertion goes in and the entry goes.
 | RB-01, RB-03 (both apps) | Whether a rebase asks first differs: gitti's Rebase Current Branch onto… picker and the commit list's ref menu ask ("Rebase feat onto main? Rewrites the commits of the current branch."), gitti's sidebar branch menu and gitty (palette, branch menus) start it at once. A design choice: ask everywhere — and then say what follows (the commits get new ids; a branch pushed before needs a force push) — or nowhere. | gitti `wf_history::rb03_rebase_from_the_sidebar_stops_then_abort`, gitty `wf_history::rb01_rebase_onto_main_from_the_palette` |
 | CM-20 (all) | With `i18n.commitEncoding` set to a legacy encoding (ISO-8859-1, …), git takes the message the apps pass on stdin (UTF-8) as being in that encoding: the commit gets an `encoding ISO-8859-1` header over UTF-8 bytes. gitti shows it right (valid UTF-8 is taken as is), git log with a UTF-8 output encoding — any other clone, any forge — shows mojibake; CJK or emoji can't be in Latin-1 at all. Ways out: encode the message into the configured encoding where it fits (refuse or fall back to UTF-8 where it doesn't), or commit with `-c i18n.commitEncoding=UTF-8`. | gitti `wf_shapes::cm20_unicode_messages` |
 | NU-04 (all) | A file whose name isn't UTF-8 is listed (U+FFFD in its name) and its hunks / lines are refused in plain words, but a whole-file stage / unstage / discard passes the lossy name to git, which answers with its pathspec error (the core test `unix_fs::non_utf8_name_stages` is ignored for it). Paths are strings app-wide; the cheap step is a plain refusal for these files too. | gitti / gitty `wf_shapes::nu04_a_name_that_is_not_utf8` |
+| MG-25 (gitti, gitty) | The external tool set-up dialog opened from Open in External Merge Tool starts in the diff tool's field, so the first "Installed" fill (ctrl-n in gitty) sets diff.tool; the merge tool's field should have the focus when a merge tool is what is needed. The test tabs to it. | gitty `ext_tools::merge_tool_set_up_on_the_way` |
