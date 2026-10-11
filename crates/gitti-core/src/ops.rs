@@ -673,10 +673,24 @@ impl Repo {
         let mut out = String::new();
         for p in paths {
             let stages = self.git().run(&["ls-files", "-u", "--", p])?.stdout_str();
-            let present = stages
-                .lines()
-                .any(|l| l.split_whitespace().nth(2) == Some(stage));
-            if present {
+            // `<mode> <id> <stage>\t<path>` per stage.
+            let side = stages.lines().find_map(|l| {
+                let mut f = l.split_whitespace();
+                let (mode, id) = (f.next()?, f.next()?);
+                (f.next() == Some(stage)).then_some((mode, id))
+            });
+            if let Some(("160000", id)) = side {
+                // A submodule pointer: record that side's commit. `checkout` can't write a
+                // gitlink and `add` would record the submodule's checked-out commit.
+                let info = format!("160000,{id},{p}");
+                out += &self.out(&["update-index", "--cacheinfo", &info])?;
+                out += &format!(
+                    "Recorded {} commit {} for the submodule {p}; its checkout is unchanged — \
+                     update the submodule to check that commit out.\n",
+                    if ours { "our" } else { "their" },
+                    &id[..id.len().min(7)]
+                );
+            } else if side.is_some() {
                 let flag = if ours { "--ours" } else { "--theirs" };
                 out += &self.out(&["checkout", flag, "--", p])?;
                 out += &self.out(&["add", "--", p])?;

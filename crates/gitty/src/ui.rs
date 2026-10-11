@@ -2545,9 +2545,9 @@ fn draw_diff_row(
                 .and_then(|w| gitti_core::conflict::ConflictKind::of(&w.entry))
             {
                 let fg = if kind.is_content() { p.text_muted } else { p.warning };
-                let binary = wf.and_then(|w| w.diff.as_ref()).is_some_and(|d| d.binary);
+                let shape = gitti_core::conflict::ConflictShape::of(wf.and_then(|w| w.diff.as_ref()));
                 spans.push(Span::styled(
-                    format!("  {}", kind.short_for(&app.conflict_sides_or_default(), binary)),
+                    format!("  {}", kind.short_for(&app.conflict_sides_or_default(), shape)),
                     Style::new().fg(fg),
                 ));
             }

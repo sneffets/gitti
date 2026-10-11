@@ -83,6 +83,31 @@ pub struct ConflictChoice {
     pub detail: String,
 }
 
+/// What a content conflict's sides are, which decides its texts and its ways out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ConflictShape {
+    /// Text git merged with markers: the merge editor applies.
+    #[default]
+    Text,
+    /// Binary, by content or by `.gitattributes` ([`Repo::binary_conflict`]): git left
+    /// ours, no markers.
+    Binary,
+    /// A submodule pointer (gitlink) both sides moved to different commits: git doesn't
+    /// merge it here; its diff shows ours → theirs ([`Repo::add_conflict_placeholders`]).
+    Submodule,
+}
+
+impl ConflictShape {
+    /// The shape of a conflicted file from its diff in the working state.
+    pub fn of(diff: Option<&crate::diff::FileDiff>) -> Self {
+        match diff {
+            Some(d) if d.submodule.is_some() => Self::Submodule,
+            Some(d) if d.binary => Self::Binary,
+            _ => Self::Text,
+        }
+    }
+}
+
 impl ConflictKind {
     /// The kind of a conflicted status entry (`None`: not conflicted).
     pub fn of(entry: &StatusEntry) -> Option<Self> {
@@ -134,22 +159,37 @@ impl ConflictKind {
         }
     }
 
-    /// [`Self::short`] of a file whose sides are `binary` ([`Repo::binary_conflict`]).
-    pub fn short_for(self, sides: &ConflictSides, binary: bool) -> String {
-        match self {
-            Self::BothModified if binary => "binary, changed on both sides".into(),
-            Self::BothAdded if binary => "binary, added on both sides".into(),
+    /// [`Self::short`] of a file of `shape` ([`ConflictShape`]).
+    pub fn short_for(self, sides: &ConflictSides, shape: ConflictShape) -> String {
+        use ConflictShape as S;
+        match (self, shape) {
+            (Self::BothModified, S::Binary) => "binary, changed on both sides".into(),
+            (Self::BothAdded, S::Binary) => "binary, added on both sides".into(),
+            (Self::BothModified, S::Submodule) => "submodule, moved on both sides".into(),
+            (Self::BothAdded, S::Submodule) => "submodule, added on both sides".into(),
             _ => self.short(sides),
         }
     }
 
-    /// [`Self::explain`] of a file whose sides are `binary` ([`Repo::binary_conflict`]):
-    /// a content conflict says there is no merge editor for it and what to do instead.
-    pub fn explain_for(self, sides: &ConflictSides, binary: bool) -> String {
-        if !(binary && self.is_content()) {
+    /// [`Self::explain`] of a file of `shape`: a binary or submodule content conflict says
+    /// there is no merge editor for it and what to do instead.
+    pub fn explain_for(self, sides: &ConflictSides, shape: ConflictShape) -> String {
+        if !self.is_content() || shape == ConflictShape::Text {
             return self.explain(sides);
         }
         let (o, t) = (&sides.ours, &sides.theirs);
+        if shape == ConflictShape::Submodule {
+            return format!(
+                "{o} and {t} both {} this submodule at different commits (the diff shows \
+                 {o}'s commit → {t}'s). git doesn't merge submodule commits here, so there is \
+                 no merge editor for it: take one side's commit, or check out the commit you \
+                 want inside the submodule (e.g. a merge of both, made there) and mark it \
+                 resolved, which records the submodule's checked-out commit. Taking a side \
+                 records its commit and leaves the submodule's checkout as it is: update the \
+                 submodule afterwards to check that commit out.",
+                if self == Self::BothAdded { "added" } else { "moved" }
+            );
+        }
         format!(
             "{o} and {t} both {} this binary file (binary by its contents, or by \
              .gitattributes: -merge, merge=binary or the binary macro). git doesn't combine \
@@ -201,19 +241,37 @@ impl ConflictKind {
 
     /// The ways to resolve it, the usual one first.
     pub fn choices(self, sides: &ConflictSides) -> Vec<ConflictChoice> {
-        self.choices_for(sides, false)
+        self.choices_for(sides, ConflictShape::Text)
     }
 
-    /// [`Self::choices`] of a file whose sides are `binary` ([`Repo::binary_conflict`]):
-    /// a content conflict then offers no merge editor (git can't combine binary contents,
-    /// nor can it) — take a side first, the external merge tool, or stage the file as it is
-    /// (e.g. after replacing it in another program).
-    pub fn choices_for(self, sides: &ConflictSides, binary: bool) -> Vec<ConflictChoice> {
+    /// [`Self::choices`] of a file of `shape`: a binary content conflict offers no merge
+    /// editor (git can't combine binary contents, nor can it) — take a side first, the
+    /// external merge tool, or stage the file as it is (e.g. after replacing it in another
+    /// program); a submodule's neither the merge editor nor the external merge tool (git
+    /// mergetool asks about a submodule in the terminal) — take a side's commit, or record
+    /// the commit checked out in the submodule.
+    pub fn choices_for(self, sides: &ConflictSides, shape: ConflictShape) -> Vec<ConflictChoice> {
+        use ConflictAction as A;
         let mut choices = self.all_choices(sides);
-        if binary && self.is_content() {
-            choices.retain(|c| c.action != ConflictAction::MergeEditor);
-            // The sides first: the usual way out of a binary conflict.
-            choices.sort_by_key(|c| !matches!(c.action, ConflictAction::TakeOurs | ConflictAction::TakeTheirs));
+        if shape != ConflictShape::Text && self.is_content() {
+            choices.retain(|c| {
+                c.action != A::MergeEditor
+                    && (shape != ConflictShape::Submodule || c.action != A::MergeTool)
+            });
+            // The sides first: the usual way out of a binary or submodule conflict.
+            choices.sort_by_key(|c| !matches!(c.action, A::TakeOurs | A::TakeTheirs));
+            if shape == ConflictShape::Submodule {
+                for c in &mut choices {
+                    c.detail = match c.action {
+                        A::TakeOurs => format!("Record {}'s commit for the submodule", sides.ours),
+                        A::TakeTheirs => format!("Record {}'s commit for the submodule", sides.theirs),
+                        A::MarkResolved => {
+                            "Record the commit checked out in the submodule (git add)".into()
+                        }
+                        _ => std::mem::take(&mut c.detail),
+                    };
+                }
+            }
         }
         choices
     }
@@ -320,6 +378,14 @@ pub fn merge_attr_is_binary(
     name == "binary" && !user_driver(name)
 }
 
+/// What a conflicted path's index stages hold ([`Repo::conflict_stages`]).
+enum Stages {
+    Text,
+    Binary,
+    /// Ours and theirs are both submodule commits.
+    Gitlinks { ours: gix::ObjectId, theirs: gix::ObjectId },
+}
+
 /// What a conflicted file's diff (against HEAD) shows when it has none: the file is not
 /// in the working directory (`exists` false), or is as HEAD (ours) has it.
 pub fn no_diff_note(sides: &ConflictSides, exists: bool) -> String {
@@ -379,35 +445,49 @@ impl Repo {
     }
 
     /// Whether git merges the conflicted `path` as binary: a side is binary by content
-    /// ([`Self::binary_by_content`]) or the file by its attributes ([`Self::merged_as_binary`]).
+    /// ([`Self::conflict_stages`]) or the file by its attributes ([`Self::merged_as_binary`]).
     /// git then leaves the checked-out side's version without markers, and the apps offer
     /// no merge editor for it.
     pub fn binary_conflict(&self, path: &str) -> bool {
-        self.binary_by_content(&[path])[0] || !self.merged_as_binary(&[path]).is_empty()
+        matches!(self.conflict_stages(&[path])[0], Stages::Binary)
+            || !self.merged_as_binary(&[path]).is_empty()
     }
 
-    /// For each of the conflicted `paths`, whether a side is binary — a NUL byte in the
-    /// first 8000 bytes of its base, ours or theirs, as git decides before it merges.
-    /// In-process (the index stages and their blobs, the index read once), no git.
-    fn binary_by_content(&self, paths: &[&str]) -> Vec<bool> {
+    /// Whether the conflicted `path` is a submodule pointer both sides moved (ours and
+    /// theirs are submodule commits). In-process.
+    pub fn submodule_conflict(&self, path: &str) -> bool {
+        matches!(self.conflict_stages(&[path])[0], Stages::Gitlinks { .. })
+    }
+
+    /// What the index stages of each conflicted path in `paths` hold: ours and theirs both
+    /// submodule commits (gitlinks), or a binary side — a NUL byte in the first 8000 bytes
+    /// of its base, ours or theirs, as git decides before it merges. In-process (the index
+    /// read once, the stages' blobs), no git.
+    fn conflict_stages(&self, paths: &[&str]) -> Vec<Stages> {
         use gix::bstr::ByteSlice;
-        use gix::index::entry::Stage;
-        let none = || vec![false; paths.len()];
+        use gix::index::entry::{Mode, Stage};
+        let none = || paths.iter().map(|_| Stages::Text).collect();
         let Ok(repo) = self.gix() else {
             return none();
         };
         let Ok(index) = repo.index_or_empty() else {
             return none();
         };
-        let binary = |path: &str| {
-            [Stage::Base, Stage::Ours, Stage::Theirs].into_iter().any(|stage| {
-                index
-                    .entry_by_path_and_stage(path.as_bytes().as_bstr(), stage)
+        let stages = |path: &str| {
+            let entry = |stage| index.entry_by_path_and_stage(path.as_bytes().as_bstr(), stage);
+            let gitlink = |stage| entry(stage).filter(|e| e.mode == Mode::COMMIT).map(|e| e.id);
+            if let (Some(ours), Some(theirs)) = (gitlink(Stage::Ours), gitlink(Stage::Theirs)) {
+                return Stages::Gitlinks { ours, theirs };
+            }
+            let binary = [Stage::Base, Stage::Ours, Stage::Theirs].into_iter().any(|stage| {
+                entry(stage)
+                    .filter(|e| e.mode != Mode::COMMIT)
                     .and_then(|e| repo.find_object(e.id).ok())
                     .is_some_and(|o| o.data.iter().take(8000).any(|b| *b == 0))
-            })
+            });
+            if binary { Stages::Binary } else { Stages::Text }
         };
-        paths.iter().map(|p| binary(p)).collect()
+        paths.iter().map(|p| stages(p)).collect()
     }
 
     /// Those of `paths` git merges as binary by their attributes ([`merge_attr_is_binary`]):
@@ -445,47 +525,62 @@ impl Repo {
             .collect()
     }
 
-    /// Gives each conflicted file of `files` whose diff against HEAD shows nothing (the
-    /// working directory has ours) a binary file's placeholder diff when git merged it as
-    /// binary ([`Self::binary_conflict`]; one `git check-attr` for all whose content is
-    /// text, none without such files), so the apps say so and offer no merge editor.
+    /// Gives the conflicted files of `files` whose shape the diff against HEAD doesn't
+    /// show their own diff ([`ConflictShape::of`]), so the apps say what they are and offer
+    /// no merge editor: a submodule pointer both sides moved shows ours → theirs (and the
+    /// commits between them when the submodule is checked out); a file git merged as binary
+    /// ([`Self::binary_conflict`]) whose diff shows nothing (the working directory has
+    /// ours) a binary file's placeholder. The index read once in-process; one `git
+    /// check-attr` for the text files among those with nothing to show, none without them.
     pub(crate) fn add_conflict_placeholders(&self, files: &mut [crate::WorkFile]) {
-        let empty: Vec<usize> = (0..files.len())
-            .filter(|&i| {
-                files[i].diff.is_none()
-                    && ConflictKind::of(&files[i].entry).is_some_and(ConflictKind::is_content)
-            })
+        let content: Vec<usize> = (0..files.len())
+            .filter(|&i| ConflictKind::of(&files[i].entry).is_some_and(ConflictKind::is_content))
             .collect();
-        if empty.is_empty() {
+        if content.is_empty() {
             return;
         }
-        let paths: Vec<&str> = empty.iter().map(|&i| files[i].entry.path.as_str()).collect();
-        let by_content = self.binary_by_content(&paths);
-        let text: Vec<&str> =
-            paths.iter().zip(&by_content).filter(|(_, b)| !**b).map(|(p, _)| *p).collect();
+        let paths: Vec<&str> = content.iter().map(|&i| files[i].entry.path.as_str()).collect();
+        let stages = self.conflict_stages(&paths);
+        // Text with nothing to show: binary by attributes?
+        let text: Vec<&str> = content
+            .iter()
+            .zip(&stages)
+            .filter(|&(&i, s)| matches!(s, Stages::Text) && files[i].diff.is_none())
+            .map(|(&i, _)| files[i].entry.path.as_str())
+            .collect();
         let by_attributes =
             if text.is_empty() { Default::default() } else { self.merged_as_binary(&text) };
-        let binary: Vec<usize> = empty
-            .iter()
-            .zip(&by_content)
-            .filter(|&(&i, &b)| b || by_attributes.contains(&files[i].entry.path))
-            .map(|(&i, _)| i)
-            .collect();
-        for i in binary {
-            let path = files[i].entry.path.clone();
-            files[i].diff = Some(crate::diff::FileDiff {
+        for (i, st) in content.into_iter().zip(stages) {
+            let f = &mut files[i];
+            // `Some`: the pointers; `None`: binary.
+            let submodule = match st {
+                Stages::Gitlinks { ours, theirs } => Some(crate::submodule::SubmoduleDiff {
+                    old: Some(ours),
+                    new: Some(theirs),
+                    ..Default::default()
+                }),
+                Stages::Binary if f.diff.is_none() => None,
+                Stages::Text if f.diff.is_none() && by_attributes.contains(&f.entry.path) => None,
+                _ => continue,
+            };
+            let gitlinks = submodule.is_some();
+            let path = f.entry.path.clone();
+            f.diff = Some(crate::diff::FileDiff {
                 old_path: Some(path.clone()),
                 new_path: Some(path),
                 change: crate::diff::FileChange::Modified,
-                binary: true,
+                binary: !gitlinks,
                 header: Vec::new(),
                 hunks: Vec::new(),
-                submodule: None,
+                submodule,
                 too_large: None,
                 encoding: Default::default(),
                 lossy_name: false,
                 lfs: None,
             });
+            if gitlinks {
+                crate::submodule::fill_logs(self.workdir(), std::slice::from_mut(f.diff.as_mut().unwrap()));
+            }
         }
     }
 
@@ -565,16 +660,27 @@ mod tests {
                 .all(|c| c.action != ConflictAction::MergeEditor && c.action != ConflictAction::Keep)
         );
         // A binary content conflict: the sides first, no merge editor; other kinds as they are.
-        let binary: Vec<ConflictAction> =
-            ConflictKind::BothModified.choices_for(&s, true).into_iter().map(|c| c.action).collect();
+        let actions = |k: ConflictKind, shape| -> Vec<ConflictAction> {
+            k.choices_for(&s, shape).into_iter().map(|c| c.action).collect()
+        };
+        use ConflictShape as S;
         assert_eq!(
-            binary,
+            actions(ConflictKind::BothModified, S::Binary),
             [ConflictAction::TakeOurs, ConflictAction::TakeTheirs, ConflictAction::MergeTool, ConflictAction::MarkResolved]
         );
-        assert_eq!(ConflictKind::DeletedByThem.choices_for(&s, true), ConflictKind::DeletedByThem.choices(&s));
-        assert_eq!(ConflictKind::BothModified.short_for(&s, true), "binary, changed on both sides");
-        assert!(ConflictKind::BothModified.explain_for(&s, true).contains("no merge editor"));
-        assert_eq!(ConflictKind::DeletedByThem.explain_for(&s, true), ConflictKind::DeletedByThem.explain(&s));
+        assert_eq!(ConflictKind::DeletedByThem.choices_for(&s, S::Binary), ConflictKind::DeletedByThem.choices(&s));
+        assert_eq!(ConflictKind::BothModified.short_for(&s, S::Binary), "binary, changed on both sides");
+        assert!(ConflictKind::BothModified.explain_for(&s, S::Binary).contains("no merge editor"));
+        assert_eq!(ConflictKind::DeletedByThem.explain_for(&s, S::Binary), ConflictKind::DeletedByThem.explain(&s));
+        // A submodule's pointer: the sides' commits, or the checked-out one; no merge editor
+        // nor external merge tool.
+        let sub = ConflictKind::BothModified.choices_for(&s, S::Submodule);
+        let got: Vec<_> = sub.iter().map(|c| c.action).collect();
+        assert_eq!(got, [ConflictAction::TakeOurs, ConflictAction::TakeTheirs, ConflictAction::MarkResolved]);
+        assert_eq!(sub[1].detail, "Record feature's commit for the submodule");
+        assert_eq!(ConflictKind::BothModified.short_for(&s, S::Submodule), "submodule, moved on both sides");
+        let explained = ConflictKind::BothModified.explain_for(&s, S::Submodule);
+        assert!(explained.contains("main's commit → feature's") && explained.contains("update the submodule"), "{explained}");
         assert_eq!(ConflictKind::DeletedByThem.short(&s), "deleted by feature, changed by main");
         assert!(ConflictKind::AddedByThem.explain(&s).starts_with("Only feature has"));
     }

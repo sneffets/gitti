@@ -775,6 +775,13 @@ impl Repo {
         if !self.unmerged_paths()?.contains(path) {
             bail!("{path} has no conflict to merge");
         }
+        if self.submodule_conflict(path) {
+            bail!(
+                "{path} is a submodule whose commit both sides changed: git mergetool would only \
+                 ask in a terminal which side's commit to take. Take ours / theirs instead, or \
+                 check out the commit you want inside the submodule and mark it resolved."
+            );
+        }
         let file = crate::paths::join_repo_path(self.workdir(), path);
         let orig = PathBuf::from(format!("{}.orig", file.display()));
         Ok(MergeWatch {

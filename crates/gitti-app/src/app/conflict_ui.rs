@@ -1,9 +1,10 @@
 //! The kind of a conflicted file ([`gitti_core::conflict`]) in the working directory's
 //! diff: a few words in its header (the whole explanation in the tooltip) and its own
 //! ways to resolve — keep / delete for a file one side deleted, the merge editor and
-//! ours / theirs for a content conflict, ours / theirs (no merge editor) for a binary one.
+//! ours / theirs for a content conflict, ours / theirs (no merge editor) for a binary one
+//! or a submodule's pointer.
 
-use gitti_core::conflict::{ConflictAction, ConflictChoice, ConflictKind};
+use gitti_core::conflict::{ConflictAction, ConflictChoice, ConflictKind, ConflictShape};
 use gitti_core::ops::ConflictSides;
 use gitti_core::rows::Src;
 use gpui_kit::*;
@@ -24,16 +25,16 @@ impl GittiApp {
         ConflictKind::of(&self.working.conflicted.get(file)?.entry)
     }
 
-    /// Whether conflicted file `file`'s sides are binary (its diff is a binary file's,
-    /// [`gitti_core::Repo::binary_conflict`]): no merge editor for it.
-    pub(super) fn conflict_binary(&self, file: usize) -> bool {
-        self.file_diff(Src::Conflicted, file).is_some_and(|d| d.binary)
+    /// What conflicted file `file`'s sides are (from its diff, [`ConflictShape::of`]): no
+    /// merge editor for a binary file or a submodule pointer.
+    pub(super) fn conflict_shape(&self, file: usize) -> ConflictShape {
+        ConflictShape::of(self.file_diff(Src::Conflicted, file))
     }
 
     /// Conflicted file `file`'s ways to resolve, the usual one first.
     pub(super) fn conflict_choices(&self, file: usize) -> Vec<ConflictChoice> {
         let kind = self.conflict_kind(file).unwrap_or(ConflictKind::BothModified);
-        kind.choices_for(&self.conflict_sides_or_default(), self.conflict_binary(file))
+        kind.choices_for(&self.conflict_sides_or_default(), self.conflict_shape(file))
     }
 
     /// The note of conflicted file `file` when its diff shows nothing.
