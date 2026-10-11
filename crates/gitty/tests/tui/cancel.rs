@@ -174,10 +174,12 @@ fn prompt_of_a_gone_helper_closes() {
         "\"$SSH_ASKPASS\" 'Password: ' >/dev/null &\nsleep 0.1\nexit 255\n",
     )
     .unwrap();
+    // `ssh.variant`: git runs the command once (without it first `-G` to probe the
+    // variant — a second prompt that raced with the first one's close).
     crate::support::add_config(
         d,
         &format!(
-            "[core]\n\tsshCommand = sh '{}'\n[remote \"origin\"]\n\turl = ssh://host/r.git\n",
+            "[core]\n\tsshCommand = sh '{}'\n[ssh]\n\tvariant = simple\n[remote \"origin\"]\n\turl = ssh://host/r.git\n",
             ssh.display()
         ),
     );
@@ -185,4 +187,26 @@ fn prompt_of_a_gone_helper_closes() {
     let st = crate::support::states(&out);
     assert!(st[0].contains("modal=Ask"), "{out}");
     assert!(!st[1].contains("modal="), "{out}");
+}
+
+/// The program that asks is gone before its helper even starts (ssh gives up at once; on a
+/// loaded machine the helper's start takes longer): the helper ends instead of asking, or
+/// its dialog closes by itself — none stays open.
+#[cfg(unix)]
+#[gitti_test::test]
+fn prompt_of_a_helper_orphaned_before_it_started_closes() {
+    let dir = repo();
+    let d = dir.path();
+    let ssh = d.join(".git/fake-ssh");
+    std::fs::write(&ssh, "\"$SSH_ASKPASS\" 'Password: ' >/dev/null &\nexit 255\n").unwrap();
+    crate::support::add_config(
+        d,
+        &format!(
+            "[core]\n\tsshCommand = sh '{}'\n[ssh]\n\tvariant = simple\n[remote \"origin\"]\n\turl = ssh://host/r.git\n",
+            ssh.display()
+        ),
+    );
+    let out = gitty(d, "key:f;closed;wait;state");
+    let st = crate::support::states(&out);
+    assert!(st[0].contains("Fetch failed") && !st[0].contains("modal="), "{out}");
 }
