@@ -103,6 +103,25 @@ impl GittiApp {
         }
     }
 
+    /// The shown diff's lines as `+text` / `-text` / ` text` (tests: is it current?).
+    pub fn script_line_texts(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter_map(|r| match *r {
+                DiffRow::Line { src, file, hunk, line, .. } => {
+                    let l = self.file_diff(src, file)?.hunks.get(hunk)?.lines.get(line)?;
+                    let mark = match l.kind {
+                        gitti_core::diff::LineKind::Added => '+',
+                        gitti_core::diff::LineKind::Removed => '-',
+                        _ => ' ',
+                    };
+                    Some(format!("{mark}{}", l.text))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// `kind src path [line kind]`, e.g. `line Unstaged big.txt Added`, `section Staged`,
     /// `group untracked`.
     fn describe_row(&self, row: &DiffRow) -> String {

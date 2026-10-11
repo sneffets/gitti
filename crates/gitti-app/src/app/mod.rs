@@ -216,6 +216,13 @@ pub struct GittiApp {
     tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the tab's hollow mark).
     unpushed: Option<gitti_core::tab_marks::Unpushed>,
+    /// The working state the shown rows were built from (working-directory view).
+    rows_for: Option<Arc<WorkingState>>,
+    /// The file watcher's first report arrived (its watches are in place; with a
+    /// recursive OS watch it asks for one more read of what it couldn't see before).
+    watch_ready: bool,
+    /// The first full read waits for the watcher's first report (`watching.rs`).
+    first_read_pending: bool,
     /// A read of this repository's other worktrees' marks, started by this tab, runs
     /// (`tab_marks.rs`; the marks are in the app-wide store).
     worktree_marks_loading: bool,
@@ -630,6 +637,9 @@ impl GittiApp {
             tracking: Vec::new(),
             unpushed: None,
             worktree_marks_loading: false,
+            watch_ready: false,
+            rows_for: None,
+            first_read_pending: false,
             identity: (None, None),
             conflict_sides: None,
             worktrees: Vec::new(),
@@ -788,7 +798,20 @@ impl GittiApp {
         self.restore_draft(window, cx);
         self.start_watcher(window, cx);
         self.load_quick_history(window, cx);
-        self.refresh(true, window, cx);
+        self.first_read(window, cx);
+    }
+
+    /// The tab comes to the front: what it shows is what it has read — a working-directory
+    /// view built from an older working state is built again (no git; its watcher kept
+    /// the state current in the background), and the view is drawn anew.
+    pub fn brought_to_front(&mut self, cx: &mut Context<Self>) {
+        let stale = matches!(self.detail, Detail::Worktree)
+            && !self.rows_for.as_ref().is_some_and(|w| Arc::ptr_eq(w, &self.working));
+        if stale {
+            self.rebuild_rows();
+            self.schedule_highlight(cx);
+        }
+        cx.notify();
     }
 
     /// A restored tab's turn to read its repository; whether that started now
@@ -1150,6 +1173,7 @@ impl GittiApp {
         }
         let anchor = self.worktree_anchor(prev);
         self.rows = Arc::new(self.worktree_rows(self.wrap()));
+        self.rows_for = Some(self.working.clone());
         if let Some(a) = anchor {
             self.follow_worktree_anchor(&a, prev);
         }
@@ -1188,6 +1212,7 @@ impl GittiApp {
         let wrap = self.wrap();
         let before = self.rows.clone();
         self.commit_fs = self.shown_commit_fs();
+        self.rows_for = matches!(self.detail, Detail::Worktree).then(|| self.working.clone());
         self.rows = Arc::new(match &self.detail {
             Detail::Worktree => self.worktree_rows(wrap),
             Detail::Commit(cv) => {
@@ -3250,6 +3275,8 @@ impl GittiApp {
             && self.paths_queued.is_none()
             && !self.change_search.busy()
             && !self.worktree_marks_loading
+            // The watcher's first report (and the re-read it may ask for) is handled.
+            && (self._watcher.is_none() || self.watch_ready)
     }
 
     pub fn script_workdir(&self) -> PathBuf {

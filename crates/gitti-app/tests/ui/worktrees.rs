@@ -50,6 +50,8 @@ pub fn main() {
         ("live_plan", live_plan),
         ("sidebar_marks", sidebar_marks),
         ("tabs_and_sidebars_agree", tabs_and_sidebars_agree),
+        ("background_tabs_stay_current", background_tabs_stay_current),
+        ("shown_file_changes_in_the_background", shown_file_changes_in_the_background),
         // Last: it switches the shared setting off (and on again).
         ("main_worktree_alone", main_worktree_alone),
     ];
@@ -1213,4 +1215,92 @@ fn tabs_and_sidebars_agree(ui: &mut Ui) {
     check(ui, "tab a's worktree clean again", ["●", "", "", "●"]);
     std::fs::write(dirs[1].join("new.txt"), "x\n").unwrap();
     check(ui, "a change in tab b's worktree", ["●", "", "●", "●"]);
+}
+
+/// Worktree tabs in the background stay current (their file watchers): changes there —
+/// several in a row, also to the file the tab shows — are in the tab's mark at once and,
+/// when it comes to the front, in its file list and diff without any other click (no git
+/// on the switch itself).
+fn background_tabs_stay_current(ui: &mut Ui) {
+    let repo = base().join("background_tabs_stay_current");
+    let a = base().join("background_tabs_stay_current-a");
+    let b = base().join("background_tabs_stay_current-b");
+    for d in [&a, &b] {
+        git(&repo, &["worktree", "add", "-q", "--detach", d.to_str().unwrap(), "HEAD"]);
+    }
+    ui.step(&format!("open:{}", a.display()));
+    ui.step(&format!("open:{}", b.display()));
+    let ws = ui.ws.clone();
+    let lines = |ui: &mut Ui| ui.cx.update(|cx| testing::line_texts(&ws, cx));
+    let marks = |ui: &mut Ui| ui.cx.update(|cx| testing::tab_marks(&ws, cx));
+    // Tab a (index 1) in the background has read `want`.
+    let tab_a_has = |ui: &mut Ui, want: &str| {
+        let (l, idle) = ui.cx.update(|cx| testing::tab_line_texts(&ws, 1, cx));
+        idle && l.iter().any(|l| l == want)
+    };
+    // One change, then two more in a row (also a new file).
+    std::fs::write(a.join("f0.txt"), "first\n").unwrap();
+    if !ui.wait_real(1500, |ui| marks(ui)[1].0 == "●" && tab_a_has(ui, "+first")) {
+        fail!(ui, "a change in a background tab's worktree: marks {:?}", marks(ui));
+    }
+    std::fs::write(a.join("f0.txt"), "second\n").unwrap();
+    std::fs::write(a.join("new.txt"), "n\n").unwrap();
+    if !ui.wait_real(1500, |ui| tab_a_has(ui, "+second") && tab_a_has(ui, "+n")) {
+        fail!(ui, "two more changes in the background tab: marks {:?}", marks(ui));
+    }
+    // To the front: shown at once, no git for the switch (each tab logs its own
+    // repository's commands).
+    let a_git = |ui: &mut Ui| ui.cx.update(|cx| testing::tab_git_commands(&ws, 1, cx));
+    // Its watcher's late duplicates (the folder's own event) settle first: 400 ms quiet.
+    let mut last = (a_git(ui).len(), std::time::Instant::now());
+    ui.wait_real(1500, |ui| {
+        let n = a_git(ui).len();
+        if n != last.0 {
+            last = (n, std::time::Instant::now());
+        }
+        last.1.elapsed() > std::time::Duration::from_millis(400)
+    });
+    let n = a_git(ui).len();
+    ui.step("tab:1");
+    let ran = a_git(ui)[n..].to_vec();
+    let w = working(ui);
+    if !w.iter().any(|l| l.starts_with("U f0.txt")) || !w.iter().any(|l| l.starts_with("U new.txt")) {
+        fail!(ui, "tab a in front: working {w:?}");
+    }
+    let shown = lines(ui);
+    if !shown.contains(&"+second".to_string()) || shown.contains(&"+first".to_string()) {
+        fail!(ui, "tab a in front: shown diff {shown:?}");
+    }
+    if ran.iter().any(|c| c.starts_with("status") || c.starts_with("diff")) {
+        fail!(ui, "switching tabs read the working state: {ran:?}");
+    }
+}
+
+/// The file a tab shows changes while the tab is in the background: in front again, the
+/// diff shows the new content at once.
+fn shown_file_changes_in_the_background(ui: &mut Ui) {
+    let repo = base().join("shown_file_changes_in_the_background");
+    let a = base().join("shown_file_changes_in_the_background-a");
+    git(&repo, &["worktree", "add", "-q", "--detach", a.to_str().unwrap(), "HEAD"]);
+    std::fs::write(a.join("f0.txt"), "second\n").unwrap();
+    ui.step(&format!("open:{}", a.display()));
+    let ws = ui.ws.clone();
+    let shown = |ui: &mut Ui| ui.cx.update(|cx| testing::line_texts(&ws, cx));
+    if !shown(ui).contains(&"+second".to_string()) {
+        fail!(ui, "tab a: diff {:?}", shown(ui));
+    }
+    ui.step("tab:0");
+    std::fs::write(a.join("f0.txt"), "third\n").unwrap();
+    let read = ui.wait_real(1500, |ui| {
+        let (l, idle) = ui.cx.update(|cx| testing::tab_line_texts(&ws, 1, cx));
+        idle && l.iter().any(|l| l == "+third")
+    });
+    if !read {
+        ui.fail("the shown file changed in the background: not read".into());
+    }
+    ui.step("tab:1");
+    let now = shown(ui);
+    if !now.contains(&"+third".to_string()) || now.contains(&"+second".to_string()) {
+        fail!(ui, "in front again: diff {now:?}");
+    }
 }

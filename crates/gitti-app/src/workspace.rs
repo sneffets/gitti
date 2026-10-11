@@ -593,6 +593,11 @@ impl Workspace {
             .collect()
     }
 
+    /// Tab `ix`'s app, for tests.
+    pub fn script_tab_app(&self, ix: usize) -> Option<Entity<GittiApp>> {
+        self.tabs.get(ix).map(|t| t.app.clone())
+    }
+
     /// Per tab: its WORKTREES section's marks, for tests.
     pub fn script_sidebar_marks(&self, cx: &App) -> Vec<Vec<String>> {
         self.tabs.iter().map(|t| t.app.read(cx).script_worktree_marks(cx)).collect()
@@ -637,6 +642,7 @@ impl Workspace {
             a.reload_settings(cx);
             // A restored tab shown before its turn reads its repository now.
             a.load_if_deferred(window, cx);
+            a.brought_to_front(cx);
             a.focus_list(window, cx);
         });
         let title = format!("{} — gitti", app.read(cx).title());

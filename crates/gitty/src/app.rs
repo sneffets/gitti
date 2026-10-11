@@ -121,6 +121,9 @@ pub enum Msg {
     Tick,
     /// The commit message draft's write may be due (`app/commit_flow.rs`).
     DraftDue,
+    /// The first read waited this long for the file watcher's first report: it goes
+    /// ahead without (`app/watching.rs`).
+    FirstReadDue,
     /// The commit message draft stored for this worktree, read at start (and Sign Off).
     Draft(Option<gitti_core::store::Draft>, Option<gitti_core::store::AmendDraft>, bool),
     /// The user's own earlier commit messages, read at this HEAD (`app/commit_box.rs`).
@@ -442,6 +445,12 @@ pub struct App {
     /// and the WORKTREES entries both read it. A read of the others runs.
     pub marks: gitti_core::tab_marks::MarksStore,
     worktree_marks_loading: bool,
+    /// The file watcher's first report arrived (watches in place; with a recursive OS
+    /// watch it asks for one more read) — or there is no watcher. Scripted steps wait for
+    /// it.
+    pub watch_ready: bool,
+    /// The first full read waits for the watcher's first report (`app/watching.rs`).
+    pub(super) first_read_pending: bool,
     pub identity: (Option<String>, Option<String>),
     pub conflict_sides: Option<ConflictSides>,
     pub loaded: bool,
@@ -765,6 +774,8 @@ impl App {
             unpushed: None,
             marks: Default::default(),
             worktree_marks_loading: false,
+            watch_ready: true,
+            first_read_pending: false,
             identity: (None, None),
             conflict_sides: None,
             loaded: false,
@@ -884,7 +895,7 @@ impl App {
             move || repo.history_newest(order, 500),
             Msg::QuickHistory,
         );
-        self.refresh(true);
+        self.first_read();
         self.load_draft();
         // A git older than the supported minimum: said once, stays until the next action.
         if let Some(warning) = gitti_core::caps::GitCaps::get().warning() {
@@ -1211,6 +1222,7 @@ impl App {
             }
             Msg::Tick => {}
             Msg::DraftDue => self.draft_due(),
+            Msg::FirstReadDue => self.first_read_due(),
             Msg::Draft(draft, amend, sign_off) => {
                 self.commit_box.sign_off = sign_off;
                 self.restore_draft(draft, amend)
@@ -1328,6 +1340,7 @@ impl App {
             && !self.paths_in_flight
             && self.paths_queued.is_none()
             && self.loads_in_flight == 0
+            && self.watch_ready
             && self.busy.is_none()
             && !self.detail_running
             && !self.detail_pending

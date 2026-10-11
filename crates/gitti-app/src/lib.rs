@@ -600,6 +600,12 @@ pub mod testing {
         app.read(cx).script_git_commands()
     }
 
+    /// Tab `ix`'s git commands (each tab has its repository's own log).
+    pub fn tab_git_commands(ws: &Entity<Workspace>, ix: usize, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).script_tab_app(ix).expect("a repository tab");
+        app.read(cx).script_git_commands()
+    }
+
     pub use crate::app::{ChangeSearchState, ReflogState};
 
     /// The active tab's reflog view: open, title, entries, selection, the shown commit.
@@ -1104,6 +1110,19 @@ pub mod testing {
     pub fn state(ws: &Entity<Workspace>, window: &Window, cx: &App) -> UiState {
         let app = ws.read(cx).active_app().expect("a repository tab");
         app.read(cx).script_state(window, cx)
+    }
+
+    /// The active tab's shown diff lines (`+text`, `-text`, ` text`).
+    pub fn line_texts(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_line_texts()
+    }
+
+    /// Tab `ix`'s diff lines (also a tab in the background) and whether it is idle.
+    pub fn tab_line_texts(ws: &Entity<Workspace>, ix: usize, cx: &App) -> (Vec<String>, bool) {
+        let app = ws.read(cx).script_tab_app(ix).expect("a repository tab");
+        let app = app.read(cx);
+        (app.script_line_texts(), app.script_idle())
     }
 
     /// (number of repository tabs, active tab).
