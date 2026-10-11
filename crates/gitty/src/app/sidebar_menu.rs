@@ -201,6 +201,7 @@ impl App {
                 ));
             }));
         }
+        v.push(self.pin_item(RefKind::LocalBranch, name));
         let n = name.to_string();
         v.push(MenuItem::new("Copy Name", move |app| app.copy(n)).key('y'));
         v
@@ -271,6 +272,7 @@ impl App {
             })
             .key('d'),
         );
+        v.push(self.pin_item(RefKind::RemoteBranch, full));
         let n = full.to_string();
         v.push(MenuItem::new("Copy Name", move |app| app.copy(n)).key('y'));
         v
@@ -456,11 +458,18 @@ impl App {
                 .key('b')
                 .unless(self.why_not("CreateBranch")),
                 MenuItem::new("Switch Branch…", |app| app.switch_branch_picker()).key('s'),
-            ],
+            ]
+            .into_iter()
+            .chain(self.delete_menu_items())
+            .chain(self.sort_menu_items(false))
+            .collect(),
             "remotes" => vec![
                 MenuItem::new("Add Remote…", |app| app.add_remote_dialog()).key('a'),
                 MenuItem::new("Fetch All", |app| app.fetch()).same_as('f', Command::Fetch),
-            ],
+            ]
+            .into_iter()
+            .chain(self.sort_menu_items(true))
+            .collect(),
             "tags" => {
                 let mut v = vec![
                     MenuItem::new("Create Tag at HEAD…", |app| app.create_tag_dialog("HEAD".into()))

@@ -151,6 +151,11 @@ pub struct SharedSettings {
     /// The sidebar's WORKTREES section also without linked worktrees: the main worktree
     /// (the repository's folder) alone, for its menu (`worktree::section_shown`).
     pub show_main_worktree_alone: bool,
+    /// The sidebar's local branches: by name, last commit date or recently checked out
+    /// (`branch_order`).
+    pub branch_sort: crate::branch_order::BranchSort,
+    /// The sidebar's remote branches: by name or last commit date.
+    pub remote_branch_sort: crate::branch_order::BranchSort,
 }
 
 impl Default for SharedSettings {
@@ -171,6 +176,8 @@ impl Default for SharedSettings {
             intraline_strength: crate::intraline::DEFAULT_STRENGTH,
             commit_list_layout: crate::list_layout::CommitListLayout::Auto,
             show_main_worktree_alone: true,
+            branch_sort: crate::branch_order::BranchSort::Name,
+            remote_branch_sort: crate::branch_order::BranchSort::Name,
         }
     }
 }

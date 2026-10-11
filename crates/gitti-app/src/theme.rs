@@ -249,6 +249,9 @@ pub struct Settings {
     /// The sidebar's WORKTREES section with the main worktree alone (shared with gitty,
     /// `gitti_core::worktree::section_shown`).
     pub show_main_worktree_alone: bool,
+    /// The sidebar's branch order (shared with gitty, `gitti_core::branch_order`).
+    pub branch_sort: gitti_core::branch_order::BranchSort,
+    pub remote_branch_sort: gitti_core::branch_order::BranchSort,
     /// Pane sizes as fractions, shared with gitty (`gitti_core::store::PaneLayout`).
     pub pane_sidebar: f32,
     pub pane_list: f32,
@@ -277,6 +280,8 @@ impl Default for Settings {
             intraline_strength: gitti_core::intraline::DEFAULT_STRENGTH,
             commit_list_layout: gitti_core::list_layout::CommitListLayout::Auto,
             show_main_worktree_alone: true,
+            branch_sort: gitti_core::branch_order::BranchSort::Name,
+            remote_branch_sort: gitti_core::branch_order::BranchSort::Name,
             pane_sidebar: 0.,
             pane_list: 0.,
             pane_log: 0.,

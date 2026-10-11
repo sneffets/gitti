@@ -6,6 +6,8 @@ pub mod allowed_signers;
 pub mod askpass;
 pub mod availability;
 pub mod blobs;
+pub mod branch_cleanup;
+pub mod branch_order;
 pub mod caps;
 pub mod change_search;
 pub mod clone_source;

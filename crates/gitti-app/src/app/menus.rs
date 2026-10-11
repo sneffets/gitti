@@ -977,15 +977,19 @@ pub(super) fn section_menu(
     key: &str,
     remotes: &[String],
     stashes: usize,
+    sorts: (gitti_core::branch_order::BranchSort, gitti_core::branch_order::BranchSort),
 ) -> PopupMenu {
     match key {
-        "remotes" => menu
-            .item(item("Add Remote…", app, |this, w, cx| {
-                this.add_remote_dialog(w, cx)
-            }))
-            .item(item("Fetch All", app, |this, w, cx| {
-                this.git_op("Fetch", w, cx, |r| r.fetch())
-            })),
+        "remotes" => {
+            let menu = menu
+                .item(item("Add Remote…", app, |this, w, cx| {
+                    this.add_remote_dialog(w, cx)
+                }))
+                .item(item("Fetch All", app, |this, w, cx| {
+                    this.git_op("Fetch", w, cx, |r| r.fetch())
+                }));
+            super::branch_list::sort_items(menu, app, true, sorts.1)
+        }
         "stashes" => {
             let none = (stashes == 0).then_some(gitti_core::availability::NO_STASHES);
             menu.item(command_item("Stash Changes…", "StashChanges", app, |this, w, cx| {
@@ -1017,13 +1021,17 @@ pub(super) fn section_menu(
                 .disabled(none.is_some()),
             )
         }
-        "branches" => menu
-            .item(command_item("Create Branch at HEAD…", "CreateBranch", app, |this, w, cx| {
-                this.create_branch_dialog("HEAD".into(), "HEAD".into(), w, cx)
-            }))
-            .item(item("Switch Branch…", app, |this, w, cx| {
-                this.open_branch_switcher(w, cx)
-            })),
+        "branches" => {
+            let menu = menu
+                .item(command_item("Create Branch at HEAD…", "CreateBranch", app, |this, w, cx| {
+                    this.create_branch_dialog("HEAD".into(), "HEAD".into(), w, cx)
+                }))
+                .item(item("Switch Branch…", app, |this, w, cx| {
+                    this.open_branch_switcher(w, cx)
+                }));
+            let menu = super::branch_list::delete_items(menu, app);
+            super::branch_list::sort_items(menu, app, false, sorts.0)
+        }
         "tags" => {
             let mut menu = menu.item(command_item("Create Tag at HEAD…", "CreateTag", app, |this, w, cx| {
                 this.create_tag_dialog("HEAD".into(), "HEAD".into(), w, cx)

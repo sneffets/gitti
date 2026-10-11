@@ -11,6 +11,7 @@
 
 mod common;
 
+mod branches;
 mod commit;
 mod config_safety;
 mod custom_commands;
@@ -56,6 +57,7 @@ const SUITES: &[(&str, fn())] = &[
     ("signature", signature::main),
     ("selection", selection::main),
     ("reflog", reflog::main),
+    ("branches", branches::main),
 ];
 
 fn main() {

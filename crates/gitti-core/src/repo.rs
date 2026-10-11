@@ -180,6 +180,9 @@ pub struct RepoSnapshot {
     pub submodules: Vec<crate::submodule::Submodule>,
     /// Whether the repository uses Git LFS and git-lfs is installed ([`crate::lfs`]).
     pub lfs: crate::lfs::RepoLfs,
+    /// The branches checked out last in this worktree, newest first (HEAD's reflog,
+    /// in-process; [`crate::branch_order::recent_checkouts`]).
+    pub recent_checkouts: Vec<String>,
 }
 
 /// The result of a scoped thread; a panic there becomes an error.
@@ -1221,6 +1224,7 @@ impl Repo {
                 worktrees: joined(worktrees)?,
                 submodules,
                 lfs,
+                recent_checkouts: self.recent_checkouts(),
             })
         })
     }

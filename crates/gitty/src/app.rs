@@ -35,6 +35,7 @@ use crate::modal::{MenuItem, Modal, PickItem};
 use crate::sidebar::{self, SideItem};
 use crate::theme::Palette;
 
+mod branch_cmds;
 mod change_search;
 mod commit_box;
 mod commit_flow;
@@ -451,6 +452,8 @@ pub struct App {
     pub side_cursor: usize,
     pub side_offset: usize,
     pub collapsed: HashSet<String>,
+    /// The sidebar's branch order, pins, recent checkouts (`app/branch_cmds.rs`).
+    pub branches: branch_cmds::BranchState,
 
     pub selected: usize,
     pub commit_offset: usize,
@@ -774,6 +777,7 @@ impl App {
             side_cursor: 0,
             side_offset: 0,
             collapsed,
+            branches: branch_cmds::BranchState::new(&settings),
             selected: 0,
             commit_offset: 0,
             detail: Detail::Empty,
@@ -919,6 +923,8 @@ impl App {
             intraline_strength: self.opts.intraline_strength,
             commit_list_layout: self.opts.list_layout,
             show_main_worktree_alone: self.main_worktree_alone,
+            branch_sort: self.branches.sort,
+            remote_branch_sort: self.branches.remote_sort,
         }
     }
 
@@ -974,6 +980,11 @@ impl App {
         self.show_sidebar = s.show_sidebar;
         if self.main_worktree_alone != s.show_main_worktree_alone {
             self.main_worktree_alone = s.show_main_worktree_alone;
+            self.rebuild_sidebar();
+        }
+        if (self.branches.sort, self.branches.remote_sort) != (s.branch_sort, s.remote_branch_sort) {
+            self.branches.sort = s.branch_sort;
+            self.branches.remote_sort = s.remote_branch_sort;
             self.rebuild_sidebar();
         }
         self.log_reads = s.log_show_reads;
@@ -1531,6 +1542,7 @@ impl App {
         }
         self.head = s.head;
         self.refs = s.refs;
+        self.branches.recent = s.recent_checkouts;
         self.remotes = s.remotes;
         self.stashes = s.stashes;
         self.worktrees = s.worktrees;
@@ -1643,8 +1655,10 @@ impl App {
                 self.load_detail();
             }
         }
-        // Its refs may have changed (the history's `refs_by_commit`).
+        // Its refs may have changed (the history's `refs_by_commit`); sorting by date
+        // reads its commit times.
         self.rewrap_header();
+        self.rebuild_sidebar();
     }
 
     /// Selects commit list row `row` and loads its detail.
@@ -2090,6 +2104,7 @@ impl App {
     }
 
     pub fn rebuild_sidebar(&mut self) {
+        self.update_branch_order();
         self.sidebar = sidebar::build(self);
         self.side_cursor = self.side_cursor.min(self.sidebar.len().saturating_sub(1));
     }
@@ -4070,6 +4085,8 @@ impl App {
                 app.set_list_layout(l)
             })
         }));
+        // The sidebar's branch order and the multi-branch deletes (`app/branch_cmds.rs`).
+        items.extend(self.branch_palette_items());
         items.extend([
             PickItem::new("Expand All Files", "", |app: &mut App| {
                 app.set_all_expanded(true)
