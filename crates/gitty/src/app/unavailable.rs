@@ -3,7 +3,7 @@
 //! reason after the label; ⏎ says why in the status line instead of running them.
 
 use gitti_core::RefKind;
-use gitti_core::availability::{self, RepoFacts, Selection};
+use gitti_core::availability::{self, CursorFile, RepoFacts, Selection};
 use gitti_core::palette::{Gitty, MENU_COMMANDS, normalize};
 
 use super::App;
@@ -23,6 +23,11 @@ impl App {
                 },
                 None => Selection::None,
             }
+        };
+        let cursor_file = match self.rows.get(self.diff_cursor).and_then(|r| r.file_ref()) {
+            Some((gitti_core::rows::Src::Conflicted, _)) => CursorFile::Conflicted,
+            Some(_) => CursorFile::Changed,
+            None => CursorFile::None,
         };
         RepoFacts {
             repo: true,
@@ -51,6 +56,7 @@ impl App {
             // gitty has no "Open This Version" (a noted gap).
             this_version: false,
             old_version: false,
+            cursor_file,
             github_remote: gitti_core::signing_keys::github_repo(&self.remotes).is_some(),
             signing_keys: self.signing_keys_offered(),
             fs_paths: self.working.fs_paths.shown().count(),

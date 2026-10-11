@@ -269,6 +269,8 @@ working tree or the index while the app shows an older state.
 | MG-22 | Binary conflict | both sides changed a binary | no merge editor; take ours / theirs | — | — | — |
 | MG-23 | Merge conflict in a SHA-256 repository | — | as in SHA-1 | `sha256::merge_conflict_worktrees_and_branch_ops` | — | — |
 | MG-24 | Resolve with an external merge tool | conflicted file → Open in External Merge Tool | the tool's result staged; status says no conflict is left | ~`ext_tool::describes_the_merge_outcome` (unit) | `ext_tools::merge_tool` | `ext_tools::merge_tool_from_the_resolve_menu` |
+| MG-25 | First external merge tool, set up on the way | no merge tool set; Open in External Merge Tool; choose one in the set-up dialog (this repository) | the dialog lists git's tools (own first, installed, missing); the choice written to the named config file; the tool resolves the file right after | `ext_tools::without_a_tool_the_choices_come_first_then_the_chosen_tool_runs` | `ext_tools::merge_tool_set_up_first` | ~`ext_tools::set_up_dialog_then_the_diff_tool_runs` (diff tool) |
+| MG-26 | Resolve with a terminal merge tool | `merge.tool` runs vim; Open in External Merge Tool | gitty hands the tool its terminal; the file resolved and staged, backup kept; gitti refuses with the reason | `ext_tools::terminal_merge_tool_resolves_the_file` | n/a | `ext_tools::terminal_merge_tool_gets_the_terminal` |
 
 ## CP — Cherry-pick
 
@@ -498,11 +500,11 @@ layer (partial `~` and `n/a` don't count as covered).
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
 | ST staging | 21 | 14 | 11 | 9 |
-| EX external changes | 24 | 13 | 3 | 5 |
+| EX external changes | 24 | 14 | 3 | 5 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 13 | 6 | 7 |
 | BR branches | 17 | 8 | 5 | 9 |
-| MG merge | 24 | 18 | 7 | 9 |
+| MG merge | 26 | 20 | 8 | 10 |
 | CP cherry-pick | 18 | 9 | 3 | 3 |
 | RV revert | 6 | 2 | 0 | 0 |
 | RB rebase | 9 | 4 | 1 | 1 |
@@ -520,7 +522,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **259** | **176** | **101** | **113** |
+| **Total** | **261** | **179** | **102** | **114** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

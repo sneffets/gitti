@@ -249,21 +249,32 @@ fn run_terminal_editor(
     argv: &[String],
     dir: &std::path::Path,
 ) -> Result<()> {
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]).current_dir(dir);
+    let status = with_terminal(terminal, paused, enhanced, &mut cmd)?;
+    app.terminal_editor_done(&argv[0], status);
+    Ok(())
+}
+
+/// Runs `cmd` (a terminal editor, a terminal diff / merge tool) with the terminal handed
+/// over until it exits, then takes the terminal back; its exit status.
+fn with_terminal(
+    terminal: &mut Tui,
+    paused: &AtomicBool,
+    enhanced: bool,
+    cmd: &mut std::process::Command,
+) -> Result<std::io::Result<std::process::ExitStatus>> {
     paused.store(true, Ordering::SeqCst);
-    // Let the input thread leave its poll before the editor reads the keyboard.
+    // Let the input thread leave its poll before the program reads the keyboard.
     std::thread::sleep(Duration::from_millis(80));
     leave_tui(enhanced);
-    let status = std::process::Command::new(&argv[0])
-        .args(&argv[1..])
-        .current_dir(dir)
-        .status();
+    let status = cmd.status();
     enter_tui(enhanced)?;
     // A fresh terminal redraws everything; `Terminal::clear` would query the cursor position.
     execute!(stdout(), Clear(ClearType::All))?;
     *terminal = new_terminal()?;
     paused.store(false, Ordering::SeqCst);
-    app.terminal_editor_done(&argv[0], status);
-    Ok(())
+    Ok(status)
 }
 
 type Tui = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
@@ -306,6 +317,11 @@ fn event_loop(
         }
         if let Some((argv, dir)) = app.run_in_terminal.take() {
             run_terminal_editor(terminal, app, paused, enhanced, &argv, &dir)?;
+        }
+        if let Some(run) = app.run_tool_in_terminal.take() {
+            let start = std::time::Instant::now();
+            let status = with_terminal(terminal, paused, enhanced, &mut run.command())?;
+            app.terminal_tool_done(*run, status, start.elapsed());
         }
         if app.quit || app.reopen.is_some() {
             return Ok(());
