@@ -114,8 +114,8 @@ pub struct FileDiff {
     /// are not UTF-8 keep their exact bytes ([`DiffLine::raw`]) for patches.
     pub encoding: TextEncoding,
     /// A header line (a file name) was not valid UTF-8 and is shown with U+FFFD in its
-    /// place: a patch would name another file, so hunk / line (un)staging and discarding
-    /// refuse it ([`crate::patch::check_utf8`]). Paths are strings app-wide.
+    /// place. Paths are strings app-wide: git gets such a name's bytes back from
+    /// [`crate::raw_names`] (a patch: [`crate::Repo::raw_patch_names`]).
     pub lossy_name: bool,
     /// A Git LFS file: the pointer change as sizes / ids (and, when the objects are local
     /// text, `hunks` are the content's diff), or a file under an LFS path; whole-file

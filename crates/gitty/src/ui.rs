@@ -2607,7 +2607,11 @@ fn draw_diff_row(
                 .as_ref()
                 .map(|s| s.count_in_hunk(src, file, hunk))
                 .unwrap_or(0);
-            let lossy_name = app.file_diff(src, file).is_some_and(|f| f.lossy_name);
+            // A name that is not UTF-8 whose bytes aren't known for sure (two names that
+            // show alike); others get their bytes back.
+            let lossy_name = app.file_diff(src, file).is_some_and(|f| {
+                f.lossy_name && app.repo.check_names(f, gitti_core::patch::PatchMode::Stage).is_err()
+            });
             let lfs = app.file_diff(src, file).is_some_and(|f| f.lfs.is_some());
             let hint = match src {
                 // An LFS file: its index entry is the pointer.
@@ -2615,7 +2619,7 @@ fn draw_diff_row(
                     let keys = if src == Src::Staged { "u" } else { "s / d" };
                     format!("{} — {keys} on the file row", gitti_core::lfs::WHOLE_FILE_NOTE)
                 }
-                // A file name that is not UTF-8: no hunk / line staging.
+                // A file name that is not UTF-8 and ambiguous: no hunk / line staging.
                 Src::Unstaged | Src::Staged if lossy_name => gitti_core::patch::NOT_UTF8_NOTE.into(),
                 _ if selected > 0 => {
                     let verb = if src == Src::Staged {

@@ -430,7 +430,9 @@ pub mod long_history {
 /// ([`MERGE_SUBJECT`], HEAD). The user selects the merge, then its neighbour.
 ///
 /// Expected: the merge shows after one load (one `git show` of it, every file listed) and
-/// is not loaded again for the neighbour's prefetch; nothing in the repository changes.
+/// is not loaded again for the neighbour's prefetch; the neighbour `side` (as big),
+/// prefetched while the merge is selected, shows without a second load; nothing in the
+/// repository changes.
 pub mod huge_merge {
     use std::path::Path;
 
@@ -634,20 +636,37 @@ pub mod odd_names {
     }
 }
 
-/// **NU-04 — a file name that isn't UTF-8.** An untracked file `caf\xe9.txt` (Latin-1)
-/// beside a tracked `keep.txt`. The apps list it (its name with U+FFFD), refuse its hunks
-/// and lines before any git runs — in plain words — and leave the repository alone
-/// ([`expect`]). Only where the file system takes such a name ([`holds`]: Linux; macOS
-/// refuses it).
+/// **NU-04 — a file name that isn't UTF-8.** `caf\xe9.txt` (Latin-1): the apps list it
+/// with U+FFFD for the byte and hand git its bytes back — whole file and lines alike.
+/// Two shapes:
+///
+/// - **In the index only** ([`fixture_index`], any unix file system — git keeps the name
+///   whatever the disk takes): committed as `one / two`, staged as `one / TWO / three`, not
+///   on disk (macOS can't hold it). The user unstages the line `three`
+///   ([`expect_line_unstaged`]), stages the whole file — its deletion
+///   ([`expect_deletion_staged`]) — and unstages it ([`expect_deletion_unstaged`]).
+/// - **On disk** ([`fixture`], only where the file system takes such a name ([`holds`]:
+///   Linux; macOS refuses it)): untracked beside a tracked `keep.txt`. The user stages
+///   the line `one` ([`expect_line_staged`]), then the whole file ([`expect_staged`]),
+///   unstages it ([`expect_unstaged`]) and discards it — deleted
+///   ([`expect_discarded`]).
 pub mod non_utf8_name {
     use std::path::Path;
 
     use crate::expect::{Checks, Expect};
-    use crate::fixture::{Fixture, put};
+    use crate::fixture::{Fixture, put, put_raw_name};
 
     /// The name's bytes and how the apps show it.
     pub const RAW: &[u8] = b"caf\xe9.txt";
     pub const SHOWN: &str = "caf\u{fffd}.txt";
+    /// The committed text and the staged one ([`fixture_index`]); the untracked file's
+    /// text ([`fixture`]) is the committed one.
+    pub const COMMITTED: &str = "one\ntwo\n";
+    pub const STAGED: &str = "one\nTWO\nthree\n";
+    /// The staged line the user unstages.
+    pub const UNSTAGED_LINE: &str = "three";
+    /// The untracked file's line the user stages first.
+    pub const STAGED_LINE: &str = "one";
 
     /// Whether `dir`'s file system takes a name that isn't UTF-8 (writes and removes a
     /// probe file).
@@ -660,8 +679,45 @@ pub mod non_utf8_name {
         ok
     }
 
-    /// `keep.txt` committed (three git processes); the untracked file written when the
-    /// file system takes it ([`holds`]). Whether it was.
+    /// The name in HEAD (`one / two`) and the index (`one / TWO / three`), not on disk —
+    /// on any file system: the checkout is of a commit without it, HEAD and the index are
+    /// moved afterwards without touching the disk. Five git processes.
+    pub fn fixture_index(dir: &Path) {
+        let mut fx = Fixture::new();
+        let init = fx.commit("main", "init", &[put("keep.txt", "k\n")]);
+        let named = fx.commit_from("named", init, "name", &[put_raw_name(RAW, COMMITTED)]);
+        fx.commit_from("staged", named, "staged", &[put_raw_name(RAW, STAGED)]);
+        fx.git_after(&["reset", "-q", "--soft", "named"]);
+        fx.git_after(&["read-tree", "staged"]);
+        fx.build(dir);
+    }
+
+    /// `three` unstaged: `one / TWO` staged, still deleted on disk. One git process.
+    pub fn expect_line_unstaged(dir: &Path) -> Result<(), String> {
+        index_state(dir, "NU-04 after unstaging the line", "MD", Some("one\nTWO\n"))
+    }
+
+    /// The whole file staged: its deletion. One git process.
+    pub fn expect_deletion_staged(dir: &Path) -> Result<(), String> {
+        index_state(dir, "NU-04 after staging the whole file", "D ", None)
+    }
+
+    /// The whole file unstaged: the index as HEAD, deleted on disk. One git process.
+    pub fn expect_deletion_unstaged(dir: &Path) -> Result<(), String> {
+        index_state(dir, "NU-04 after unstaging the whole file", " D", Some(COMMITTED))
+    }
+
+    /// The status line of the file and its index content (`git status` + `cat-file`).
+    fn index_state(dir: &Path, what: &str, xy: &str, index: Option<&str>) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut c = Checks::new(what);
+        c.eq("status", e.status_lines(), vec![format!("{xy} {SHOWN}")]);
+        c.text("index", e.index_bytes(RAW).as_deref(), index);
+        c.done()
+    }
+
+    /// `keep.txt` committed (three git processes); the untracked file (`one / two`)
+    /// written when the file system takes it ([`holds`]). Whether it was.
     pub fn fixture(dir: &Path) -> bool {
         let mut fx = Fixture::new();
         fx.commit("main", "init", &[put("keep.txt", "k\n")]);
@@ -670,18 +726,39 @@ pub mod non_utf8_name {
         {
             use std::os::unix::ffi::OsStrExt as _;
             if holds(dir) {
-                std::fs::write(dir.join(std::ffi::OsStr::from_bytes(RAW)), "one\ntwo\n").unwrap();
+                std::fs::write(dir.join(std::ffi::OsStr::from_bytes(RAW)), COMMITTED).unwrap();
                 return true;
             }
         }
         false
     }
 
-    /// Nothing staged, the file untouched. One git process.
-    pub fn expect(dir: &Path) -> Result<(), String> {
+    /// The line `one` staged: a new file in the index with just that line. One git
+    /// process.
+    pub fn expect_line_staged(dir: &Path) -> Result<(), String> {
+        index_state(dir, "NU-04 after staging a line", "AM", Some("one\n"))
+    }
+
+    /// The whole untracked file staged. One git process.
+    pub fn expect_staged(dir: &Path) -> Result<(), String> {
+        index_state(dir, "NU-04 after staging the whole file", "A ", Some(COMMITTED))
+    }
+
+    /// The whole file unstaged: untracked again. One git process.
+    pub fn expect_unstaged(dir: &Path) -> Result<(), String> {
+        index_state(dir, "NU-04 after unstaging the whole file", "??", None)
+    }
+
+    /// The untracked file discarded: deleted, the tree clean. One git process.
+    pub fn expect_discarded(dir: &Path) -> Result<(), String> {
         let e = Expect::new(dir);
-        let mut c = Checks::new("NU-04 after the refused line stage");
-        c.eq("status", e.status_lines(), vec![format!("?? {SHOWN}")]);
+        let mut c = Checks::new("NU-04 after discarding the file");
+        c.eq("status", e.status_lines(), Vec::<String>::new());
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt as _;
+            c.ok("deleted", !dir.join(std::ffi::OsStr::from_bytes(RAW)).exists(), RAW);
+        }
         c.done()
     }
 }

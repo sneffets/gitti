@@ -202,7 +202,8 @@ fn bn02_unstage_a_line_of_the_text_again() {
 }
 
 /// BG-01: j selects the merge of 1 700 files: one `git show` of it, its files listed; j
-/// to its parent doesn't load it again.
+/// to its parent `side` (as big, prefetched as the merge's neighbour) doesn't load the
+/// merge again, and `side` once in all.
 /// Workflow: BG-01
 #[gitti_test::test]
 fn bg01_a_huge_merge_loads_once() {
@@ -210,12 +211,14 @@ fn bg01_a_huge_merge_loads_once() {
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     let s = wf::fixture(d);
-    let merge = &s.ids[s.merge];
+    let (merge, side) = (&s.ids[s.merge], &s.ids[s.side]);
     let out = run(d, "cmds;key:j;cmds;state;dump;key:j;cmds;state");
     let blocks = cmds(&out);
-    let loads = |b: &[String]| b.iter().filter(|c| c.starts_with("show") && c.contains(merge)).count();
+    let loads_of = |id: &str, b: &[String]| b.iter().filter(|c| c.starts_with("show") && c.contains(id)).count();
+    let loads = |b: &[String]| loads_of(merge, b);
     assert_eq!(loads(&blocks[0]) + loads(&blocks[1]), 1, "one load: {out}");
     assert_eq!(loads(&blocks[2]), 0, "not loaded again: {out}");
+    assert_eq!(blocks.iter().map(|b| loads_of(side, b)).sum::<usize>(), 1, "side once: {out}");
     let st = states(&out);
     assert!(st[0].contains(wf::MERGE_SUBJECT), "{out}");
     assert!(screens(&out)[0].contains(&wf::name(0)), "{out}");
@@ -384,29 +387,73 @@ fn nu05_discard_odd_names_by_group() {
     wf::expect_clean(d).unwrap();
 }
 
-/// NU-04 (where the disk takes such a name): an untracked `caf\xe9.txt` is listed (U+FFFD
-/// for the byte), its hunk says why it can't be staged by lines, and s on the hunk is
-/// refused before git runs.
+/// NU-04 in the index only (unix; git keeps the name whatever the disk takes): the staged
+/// `caf\xe9.txt` listed with U+FFFD for the byte, no "not UTF-8" note; ] to its staged
+/// header, its line `three` picked (space) and unstaged (u) — the patch names the file by
+/// its bytes.
 /// Workflow: NU-04
 #[cfg(unix)]
 #[gitti_test::test]
-fn nu04_a_name_that_is_not_utf8() {
+fn nu04_unstage_a_line_of_a_name_that_is_not_utf8() {
+    use shapes::non_utf8_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    wf::fixture_index(d);
+    let out = run(d, &format!("key:enter;dump;{}press:];press:n;{}press:space;state;key:u;state", goto("caf"), times("j", 4)));
+    let screen = screens(&out)[0];
+    assert!(screen.contains(wf::SHOWN), "{out}");
+    assert!(!screen.contains(gitti_core::patch::NOT_UTF8_NOTE), "{out}");
+    let st = states(&out);
+    assert!(st[0].contains("Line { src: Staged") && num(st[0], "sel_lines") == 1, "{out}");
+    no_error(st[1], &out);
+    wf::expect_line_unstaged(d).unwrap();
+}
+
+/// NU-04 in the index only: s on the file's header stages it — its deletion —, u on the
+/// staged header unstages it; git gets the name's bytes.
+/// Workflow: NU-04
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu04_stage_and_unstage_a_name_that_is_not_utf8() {
+    use shapes::non_utf8_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    wf::fixture_index(d);
+    let out = run(d, &format!("key:enter;{}key:s;state", goto("caf")));
+    no_error(states(&out)[0], &out);
+    wf::expect_deletion_staged(d).unwrap();
+    let out = run(d, &format!("key:enter;{}key:u;state", goto("caf")));
+    no_error(states(&out)[0], &out);
+    wf::expect_deletion_unstaged(d).unwrap();
+}
+
+/// NU-04 on disk (where the file system takes such a name: Linux): the untracked
+/// `caf\xe9.txt` listed; its line `one` picked (n to the hunk, j, space) and staged (s);
+/// then s on its header stages the whole file, u unstages it, d (asks, y) deletes it.
+/// Workflow: NU-04
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu04_a_name_that_is_not_utf8_on_disk() {
     use shapes::non_utf8_name as wf;
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     if !wf::fixture(d) {
         return; // this file system refuses such names (macOS)
     }
-    let out = run(d, "key:enter;dump;press:n;cmds;key:s;state;cmds");
-    let screen = screens(&out)[0];
-    assert!(screen.contains(wf::SHOWN), "{out}");
-    assert!(screen.contains(gitti_core::patch::NOT_UTF8_NOTE), "{out}");
+    let out = run(d, "key:enter;dump;press:n;press:j;press:space;state;key:s;state");
+    assert!(screens(&out)[0].contains(wf::SHOWN), "{out}");
     let st = states(&out);
-    assert!(st[0].contains("not UTF-8"), "said why: {out}");
-    assert!(cmds(&out)[1].is_empty(), "no git: {out}");
-    // TODO(open point NU-04): s on the file's header (a whole-file stage) gives git's
-    // pathspec error instead of a plain refusal — paths are strings app-wide.
-    wf::expect(d).unwrap();
+    assert_eq!(num(st[0], "sel_lines"), 1, "{out}");
+    no_error(st[1], &out);
+    wf::expect_line_staged(d).unwrap();
+    let out = run(d, &format!("key:enter;{}key:s;state;{}key:u;state", goto("caf"), goto("caf")));
+    let st = states(&out);
+    no_error(st[0], &out);
+    no_error(st[1], &out);
+    wf::expect_unstaged(d).unwrap();
+    let out = run(d, &format!("key:enter;{}press:d;key:y;state", goto("caf")));
+    no_error(states(&out)[0], &out);
+    wf::expect_discarded(d).unwrap();
 }
 
 /// FS-03 (where the disk keeps the names apart): Readme.md → README.md — a deletion and

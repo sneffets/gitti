@@ -49,11 +49,7 @@ impl Repo {
         if paths.is_empty() {
             return Vec::new();
         }
-        let mut input = Vec::new();
-        for p in paths {
-            input.extend_from_slice(p.as_bytes());
-            input.push(0);
-        }
+        let input = self.pathspec_list(paths).unwrap_or_default();
         let sizes = self
             .git()
             .run_stdin(&["check-attr", "-z", "--stdin", "conflict-marker-size"], Some(&input))
@@ -62,7 +58,7 @@ impl Repo {
         paths
             .iter()
             .filter(|p| {
-                let Ok(bytes) = std::fs::read(crate::paths::join_repo_path(self.workdir(), p)) else {
+                let Ok(bytes) = std::fs::read(self.fs_path(p)) else {
                     return false;
                 };
                 let size = sizes

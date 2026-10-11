@@ -125,6 +125,9 @@ impl Mode {
 pub enum Change {
     /// `path` with `data` (a symlink's data is its target).
     Put { path: String, data: Vec<u8>, mode: Mode },
+    /// A file whose name is any bytes (not UTF-8): the name only git keeps — a checkout
+    /// of it fails where the file system refuses such names (macOS).
+    PutRawName { path: Vec<u8>, data: Vec<u8> },
     Del(String),
 }
 
@@ -136,6 +139,11 @@ pub fn put(path: &str, text: &str) -> Change {
 /// `path` with `data` (any bytes).
 pub fn put_bytes(path: &str, data: &[u8]) -> Change {
     Change::Put { path: path.into(), data: data.to_vec(), mode: Mode::File }
+}
+
+/// A file named by the bytes `path` (not UTF-8) with `text`.
+pub fn put_raw_name(path: &[u8], text: &str) -> Change {
+    Change::PutRawName { path: path.to_vec(), data: text.as_bytes().to_vec() }
 }
 
 /// An executable `path` with `text`.
@@ -645,6 +653,12 @@ fn write_changes(stream: &mut Vec<u8>, changes: &[Change]) {
                 stream.extend_from_slice(data);
                 stream.push(b'\n');
             }
+            Change::PutRawName { path, data } => {
+                stream.extend_from_slice(format!("M 100644 inline {}\n", quote_bytes(path)).as_bytes());
+                stream.extend_from_slice(format!("data {}\n", data.len()).as_bytes());
+                stream.extend_from_slice(data);
+                stream.push(b'\n');
+            }
             Change::Del(path) => stream.extend_from_slice(format!("D {}\n", quote(path)).as_bytes()),
         }
     }
@@ -670,6 +684,22 @@ fn quote(path: &str) -> String {
             '\\' => q.push_str("\\\\"),
             '\n' => q.push_str("\\n"),
             c => q.push(c),
+        }
+    }
+    q.push('"');
+    q
+}
+
+/// A name of any bytes as fast-import reads it: C-quoted, bytes outside printable ASCII
+/// as octal escapes.
+fn quote_bytes(path: &[u8]) -> String {
+    let mut q = String::from("\"");
+    for &b in path {
+        match b {
+            b'"' => q.push_str("\\\""),
+            b'\\' => q.push_str("\\\\"),
+            0x20..=0x7e => q.push(b as char),
+            b => q.push_str(&format!("\\{b:03o}")),
         }
     }
     q.push('"');

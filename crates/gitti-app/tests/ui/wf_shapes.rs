@@ -51,7 +51,8 @@ pub fn main() {
         ("bg02_stage_and_discard_beside_very_long_lines", bg02_stage_and_discard_beside_very_long_lines),
         ("bg03_a_long_history", bg03_a_long_history),
         ("nu02_utf16_lines", nu02_utf16_lines),
-        ("nu04_a_name_that_is_not_utf8", nu04_a_name_that_is_not_utf8),
+        ("nu04_a_name_that_is_not_utf8_in_the_index", nu04_a_name_that_is_not_utf8_in_the_index),
+        ("nu04_a_name_that_is_not_utf8_on_disk", nu04_a_name_that_is_not_utf8_on_disk),
         ("nu05_odd_names", nu05_odd_names),
         ("fs03_rename_only_in_case", fs03_rename_only_in_case),
         ("fs04_nfc_and_nfd_names", fs04_nfc_and_nfd_names),
@@ -84,6 +85,7 @@ pub fn main() {
                 shapes::utf16::fixture(&dir);
                 true
             }
+            "nu04" if name.ends_with("index") => unix_fixture(&dir, shapes::non_utf8_name::fixture_index),
             "nu04" => shapes::non_utf8_name::fixture(&dir),
             "nu05" => {
                 shapes::odd_names::fixture(&dir);
@@ -381,10 +383,42 @@ fn nu02_utf16_lines(ui: &mut Ui) {
     expect(ui, wf::expect_unstaged(&dir));
 }
 
-/// NU-04 (where the disk takes such a name): an untracked `caf\xe9.txt` is listed (U+FFFD
-/// for the byte); its lines selected and s: refused before git runs, saying why.
+/// NU-04 in the index only (unix; git keeps the name whatever the disk takes): the staged
+/// `caf\xe9.txt` listed with U+FFFD for the byte; its line `three` selected and u, then
+/// Stage on the file (its deletion) and Unstage — git gets the name's bytes each time.
 /// Workflow: NU-04
-fn nu04_a_name_that_is_not_utf8(ui: &mut Ui) {
+fn nu04_a_name_that_is_not_utf8_in_the_index(ui: &mut Ui) {
+    use shapes::non_utf8_name as wf;
+    if !made() {
+        return; // Windows: names reach git as UTF-8
+    }
+    let dir = ui.workdir();
+    let s = ui.ui_state();
+    if s.staged != [wf::SHOWN] || s.unstaged != [wf::SHOWN] {
+        fail!(ui, "listed: staged {:?}, unstaged {:?}", s.staged, s.unstaged);
+    }
+    if ui.frame().iter().any(|q| q.kind() == "not-utf8") {
+        fail!(ui, "a known name that isn't UTF-8 has its hunk buttons");
+    }
+    if !select(ui, "Staged", wf::SHOWN, wf::UNSTAGED_LINE, wf::UNSTAGED_LINE, 1) {
+        return;
+    }
+    key_on_lines(ui, "u");
+    no_error(ui, "unstaging the line");
+    expect(ui, wf::expect_line_unstaged(&dir));
+    ui.step(&format!("stagefile:{}", wf::SHOWN));
+    no_error(ui, "staging the file");
+    expect(ui, wf::expect_deletion_staged(&dir));
+    ui.step(&format!("unstagefile:{}", wf::SHOWN));
+    no_error(ui, "unstaging the file");
+    expect(ui, wf::expect_deletion_unstaged(&dir));
+}
+
+/// NU-04 on disk (where the file system takes such a name: Linux): the untracked
+/// `caf\xe9.txt` listed; its line `one` selected and s, then Stage, Unstage and Discard
+/// (asks) on the file.
+/// Workflow: NU-04
+fn nu04_a_name_that_is_not_utf8_on_disk(ui: &mut Ui) {
     use shapes::non_utf8_name as wf;
     if !made() {
         return; // this file system refuses such names (macOS)
@@ -394,19 +428,21 @@ fn nu04_a_name_that_is_not_utf8(ui: &mut Ui) {
     if s.unstaged != [wf::SHOWN] {
         fail!(ui, "listed: {:?}", s.unstaged);
     }
-    if !select(ui, "Unstaged", wf::SHOWN, "one", "two", 2) {
+    if !select(ui, "Unstaged", wf::SHOWN, wf::STAGED_LINE, wf::STAGED_LINE, 1) {
         return;
     }
-    let n = ui.n_git();
     key_on_lines(ui, "s");
-    ui.no_git_since(n, "staging lines of a file whose name isn't UTF-8");
-    match ui.ui_state().status {
-        Some((text, true)) if text.contains("not UTF-8") => {}
-        other => fail!(ui, "status after the refused stage: {other:?}"),
-    }
-    // TODO(open point NU-04): Stage on the file's header (a whole-file stage) gives git's
-    // pathspec error instead of a plain refusal — paths are strings app-wide.
-    expect(ui, wf::expect(&dir));
+    no_error(ui, "staging the line");
+    expect(ui, wf::expect_line_staged(&dir));
+    ui.step(&format!("stagefile:{}", wf::SHOWN));
+    no_error(ui, "staging the file");
+    expect(ui, wf::expect_staged(&dir));
+    ui.step(&format!("unstagefile:{}", wf::SHOWN));
+    no_error(ui, "unstaging the file");
+    expect(ui, wf::expect_unstaged(&dir));
+    discard_file(ui, wf::SHOWN);
+    no_error(ui, "discarding the file");
+    expect(ui, wf::expect_discarded(&dir));
 }
 
 /// NU-05: the hunks of two odd names staged (their patches name them), then every file

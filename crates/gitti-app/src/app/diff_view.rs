@@ -2063,10 +2063,13 @@ impl GittiApp {
         if let Some(label) = self.pending_label(src, file, Some(hunk)) {
             return el.child(pending_badge(label, p, &self.settings)).into_any_element();
         }
-        // A file name that is not UTF-8: no hunk / line buttons, a note instead. File
-        // content in any encoding stages byte-exact.
+        // A file name that is not UTF-8 whose bytes aren't known for sure (two names
+        // that show alike): no hunk / line buttons, a note instead. Other names that are
+        // not UTF-8 get their bytes back; file content in any encoding stages byte-exact.
         if matches!(src, Src::Unstaged | Src::Staged)
-            && self.file_diff(src, file).is_some_and(|f| f.lossy_name)
+            && let (Some(f), Some(repo)) = (self.file_diff(src, file), self.repo.as_ref())
+            && f.lossy_name
+            && repo.check_names(f, PatchMode::Stage).is_err()
         {
             return el
                 .child(
@@ -2078,8 +2081,9 @@ impl GittiApp {
                         .child(gitti_core::patch::NOT_UTF8_NOTE)
                         .tooltip(|window, cx| {
                             gpui_kit::component::tooltip::Tooltip::new(
-                                "The file name is not UTF-8: a patch would name another file, \
-                                 so its hunks and lines cannot be staged.",
+                                "The file name is not UTF-8 and another file's name shows the \
+                                 same: a patch could name the wrong one, so its hunks and lines \
+                                 cannot be staged.",
                             )
                             .build(window, cx)
                         }),

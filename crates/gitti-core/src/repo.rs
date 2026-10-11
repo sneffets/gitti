@@ -1063,7 +1063,7 @@ impl Repo {
                 .entries
                 .iter()
                 .filter(|e| !e.untracked && !e.conflicted && e.worktree.is_some_and(|c| c != 'D'))
-                .filter(|e| unreadable(&crate::paths::join_repo_path(&self.workdir, &e.path)))
+                .filter(|e| unreadable(&self.fs_path(&e.path)))
                 .map(|e| e.path.clone())
                 .collect();
             if !skip.is_empty() {
@@ -1171,7 +1171,10 @@ impl Repo {
             args.push("--");
             args.extend(pathspec.iter().map(String::as_str));
         }
-        let mut status = parse_porcelain_v2(&self.git.run(&args)?.stdout);
+        let out = self.git.run(&args)?.stdout;
+        // Names that are not UTF-8 get their bytes back wherever they go to git.
+        self.git.raw_names().learn_status(&out);
+        let mut status = parse_porcelain_v2(&out);
         status
             .entries
             .sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
@@ -1302,7 +1305,7 @@ impl Repo {
     }
 
     fn untracked_in_process(&self, path: &str, deleted: bool) -> Result<InProcess> {
-        let full = crate::paths::join_repo_path(&self.workdir, path);
+        let full = self.fs_path(path);
         let meta = std::fs::symlink_metadata(&full)?;
         let link = meta.file_type().is_symlink();
         if !link && (!meta.is_file() || meta.len() > UNTRACKED_PREVIEW_MAX_BYTES) {
@@ -1424,6 +1427,84 @@ impl Repo {
         self.git.with_env(&[("GIT_LITERAL_PATHSPECS", "1")])
     }
 
+    /// The bytes git must get for the shown path `path` (a name that is not UTF-8 shows
+    /// with U+FFFD, [`crate::raw_names`]) — for pathspec lists on stdin; arguments get
+    /// theirs from the runner. Refused in plain words when more than one name shows like
+    /// it.
+    pub fn path_bytes<'a>(&self, path: &'a str) -> Result<std::borrow::Cow<'a, [u8]>> {
+        self.git.raw_names().bytes(path).map_err(|e| anyhow!(e))
+    }
+
+    /// `paths` NUL-separated for `--pathspec-from-file=- --pathspec-file-nul`, each in its
+    /// bytes ([`Self::path_bytes`]).
+    pub fn pathspec_list<S: AsRef<str>>(&self, paths: &[S]) -> Result<Vec<u8>> {
+        let mut list = Vec::new();
+        for p in paths {
+            list.extend_from_slice(&self.path_bytes(p.as_ref())?);
+            list.push(0);
+        }
+        Ok(list)
+    }
+
+    /// Where the shown repository path `path` is on disk: a name that is not UTF-8 by its
+    /// bytes (unix; [`crate::raw_names`]), every other one as
+    /// [`crate::paths::join_repo_path`].
+    pub fn fs_path(&self, path: &str) -> PathBuf {
+        #[cfg(unix)]
+        if let crate::raw_names::Resolved::Bytes(raw) = self.git.raw_names().resolve(path) {
+            use std::os::unix::ffi::OsStrExt as _;
+            let mut out = self.workdir.clone();
+            out.extend(
+                raw.split(|b| *b == b'/')
+                    .filter(|c| !c.is_empty())
+                    .map(std::ffi::OsStr::from_bytes),
+            );
+            return out;
+        }
+        crate::paths::join_repo_path(&self.workdir, path)
+    }
+
+    /// `patch` (built from `file`) with the file's names in its header put back into
+    /// their bytes when they are not UTF-8. Refused ([`crate::patch::NotUtf8`]) when one
+    /// can't be: then the patch would name another file.
+    pub fn raw_patch_names(&self, file: &FileDiff, patch: Vec<u8>, mode: PatchMode) -> Result<Vec<u8>> {
+        let names = self.raw_names_of(file, mode)?;
+        if names.is_empty() {
+            return Ok(patch);
+        }
+        Ok(crate::patch::with_raw_names(&patch, &names))
+    }
+
+    /// Whether hunks / lines of `file` can be applied with `mode`: its names are UTF-8, or
+    /// their bytes are known ([`Self::raw_patch_names`]). In-process.
+    pub fn check_names(&self, file: &FileDiff, mode: PatchMode) -> std::result::Result<(), crate::patch::NotUtf8> {
+        self.raw_names_of(file, mode).map(|_| ())
+    }
+
+    /// The shown names of `file` that are not their own bytes, with their bytes.
+    fn raw_names_of<'a>(
+        &self,
+        file: &'a FileDiff,
+        mode: PatchMode,
+    ) -> std::result::Result<Vec<(&'a str, Vec<u8>)>, crate::patch::NotUtf8> {
+        use crate::raw_names::Resolved;
+        let mut names: Vec<(&str, Vec<u8>)> = Vec::new();
+        for path in [file.old_path.as_deref(), file.new_path.as_deref()].into_iter().flatten() {
+            match self.git.raw_names().resolve(path) {
+                Resolved::Plain => {}
+                Resolved::Bytes(raw) => {
+                    if raw != path.as_bytes() && !names.iter().any(|(p, _)| *p == path) {
+                        names.push((path, raw));
+                    }
+                }
+                Resolved::Ambiguous | Resolved::Unknown => {
+                    return Err(crate::patch::NotUtf8 { path: path.to_string(), mode });
+                }
+            }
+        }
+        Ok(names)
+    }
+
     pub fn stage_paths(&self, paths: &[&str]) -> Result<()> {
         let mut args = vec!["add", "-A", "--"];
         args.extend_from_slice(paths);
@@ -1508,8 +1589,9 @@ impl Repo {
     }
 
     /// Applies the selected part of `file` (a diff produced by [`Repo::working_state`]),
-    /// byte-exact in any encoding. A file whose name is not valid UTF-8 is refused with
-    /// [`crate::patch::NotUtf8`].
+    /// byte-exact in any encoding. A name that is not valid UTF-8 goes into the patch as
+    /// its bytes; one whose bytes aren't known for sure is refused with
+    /// [`crate::patch::NotUtf8`] ([`Self::raw_patch_names`]).
     pub fn apply_selection(&self, file: &FileDiff, sel: &Selection, mode: PatchMode) -> Result<()> {
         // A type change (file ↔ symlink) is two diffs in git's patch format and has no
         // line-level meaning: any selection is the whole file.
@@ -1525,10 +1607,11 @@ impl Repo {
             };
         }
         // Never a patch naming a lossily decoded file name.
-        crate::patch::check_utf8(file, mode)?;
+        self.check_names(file, mode)?;
         // An LFS file's index entry is its pointer: never a partial patch.
         crate::lfs::check_partial(file, mode)?;
         let patch = build_patch(file, sel, mode).ok_or_else(|| anyhow!("nothing selected"))?;
+        let patch = self.raw_patch_names(file, patch, mode)?;
         // A stale view: refused, nothing applied (`apply_check`).
         self.check_shown(file, mode)?;
         // `git apply` writes the file anew with the index's mode: a read-only file would

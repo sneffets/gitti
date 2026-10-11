@@ -877,7 +877,9 @@ fn huge_file_in_a_commit_loads_on_demand(ui: &mut Ui) {
 
 /// A commit too big for the core's commit cache (over 100 000 diff lines; e.g. a merge
 /// of 1700 files) shows after one load — it was looked up in the cache again and
-/// loaded forever ("Loading…") — and selecting its neighbour doesn't prefetch it again.
+/// loaded forever ("Loading…") — also when the prefetch for its neighbour loaded it
+/// first (it was loaded a second time once selected), and selecting the neighbour again
+/// doesn't prefetch it again.
 /// Workflow: BG-01
 fn huge_commit_shows_after_one_load(ui: &mut Ui) {
     let path = ui.workdir();
@@ -891,7 +893,9 @@ fn huge_commit_shows_after_one_load(ui: &mut Ui) {
         ui.fail("the commit did not show up".into());
         return;
     }
+    // The commit below it first: the prefetch of its neighbours loads the huge one.
     let n = ui.n_git();
+    ui.step("select:2");
     ui.step("select:1");
     let shows: Vec<String> = ui.git_since(n).into_iter().filter(|c| c.contains(&id)).collect();
     if shows.len() != 1 || !row_ids(ui).iter().any(|r| r == "file Commit many.txt") {

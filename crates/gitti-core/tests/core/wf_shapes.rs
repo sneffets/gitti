@@ -84,9 +84,10 @@ fn rn02_stage_lines_of_a_renamed_file_then_its_deletion() {
     assert_eq!((f.entry.index, f.entry.orig_path.as_deref()), (Some('R'), Some(wf::DRAFT)));
 }
 
-/// BG-01: a merge of 1 700 files (over 100 000 diff lines) loads with one `git show`; it
-/// is too big for the commit cache, and a prefetch of its neighbours doesn't load it
-/// again.
+/// BG-01: a merge of 1 700 files (over 100 000 diff lines) loads with one `git show`;
+/// the prefetch of its neighbour `side` (as big) loads that once — selecting it next shows
+/// it without a second load (the last too-big commit is kept) — and the prefetch of
+/// `side`'s neighbours doesn't load the merge again.
 /// Workflow: BG-01
 #[gitti_test::test]
 fn bg01_a_huge_merge_loads_once() {
@@ -96,7 +97,7 @@ fn bg01_a_huge_merge_loads_once() {
     let s = wf::fixture(dir);
     let repo = Repo::open(dir).unwrap();
     let id = |m| ObjectId::from_hex(s.ids[m].as_bytes()).unwrap();
-    let (merge, init) = (id(s.merge), id(s.init));
+    let (merge, side, init) = (id(s.merge), id(s.side), id(s.init));
     let opts = DiffOptions::default();
     let shows = |repo: &Repo, n: usize| -> Vec<String> {
         repo.command_log().snapshot()[n..]
@@ -110,8 +111,14 @@ fn bg01_a_huge_merge_loads_once() {
     assert_eq!(data.files.len(), wf::FILES, "every file of the merge");
     assert_eq!(data.details.message.trim_end(), wf::MERGE_SUBJECT);
     assert_eq!(shows(&repo, n).len(), 1, "one load");
-    assert!(repo.cached_commit(merge, &opts).is_none(), "too big for the cache");
-    // The neighbours' prefetch (the merge is the selection's neighbour): only `init`.
+    // Its neighbour prefetched, then selected: loaded once.
+    let n = repo.command_log().snapshot().len();
+    repo.load_commits(&[side], &opts).unwrap();
+    let data = repo.load_commit(side, None, &opts).unwrap();
+    assert_eq!(data.files.len(), wf::FILES);
+    let loads = shows(&repo, n);
+    assert_eq!(loads.len(), 1, "side loaded once: {loads:#?}");
+    // `side`'s neighbours: only `init` (the merge is known to be too big).
     let n = repo.command_log().snapshot().len();
     repo.load_commits(&[merge, init], &opts).unwrap();
     let again = shows(&repo, n);
@@ -134,4 +141,92 @@ fn ig06_negation_and_excludes_file() {
     assert_eq!(paths(&ws.unstaged), wf::SHOWN);
     assert_eq!(repo.stage_all_shown(ws.status.untracked_files).unwrap(), None);
     wf::expect(&dir).unwrap();
+}
+
+/// A selection of the change lines whose text is `text` (every hunk).
+#[cfg(unix)]
+fn line_named(d: &FileDiff, text: &str) -> Selection {
+    let mut sel = Selection::default();
+    for (h, hunk) in d.hunks.iter().enumerate() {
+        let picked: Vec<usize> =
+            (hunk.lines.iter().enumerate()).filter(|(_, l)| l.is_change() && l.text == text).map(|(i, _)| i).collect();
+        if !picked.is_empty() {
+            sel.add_lines(h, picked);
+        }
+    }
+    assert!(!sel.hunks.is_empty(), "no line {text:?} in {d:#?}");
+    sel
+}
+
+/// The working state after an operation on `path`, read the way the apps do (that path
+/// only).
+#[cfg(unix)]
+fn after(repo: &Repo, prev: &WorkingState, path: &str) -> WorkingState {
+    repo.working_state_after(&DiffOptions::default(), prev, &[path.to_string()]).unwrap()
+}
+
+/// NU-04 in the index only (any unix file system): `caf\xe9.txt` staged, deleted on disk.
+/// The line `three` unstaged (the patch names the file by its bytes), the whole file
+/// staged — its deletion — and unstaged; each time the path-limited re-read finds it.
+/// Workflow: NU-04
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu04_a_name_that_is_not_utf8_in_the_index() {
+    use shapes::non_utf8_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    wf::fixture_index(dir);
+    let repo = Repo::open(dir).unwrap();
+    let ws = state(&repo);
+    assert_eq!((paths(&ws.staged), paths(&ws.unstaged)), (vec![wf::SHOWN], vec![wf::SHOWN]));
+    let d = shown(file(&ws.staged, wf::SHOWN));
+    assert!(d.lossy_name);
+    repo.check_names(d, PatchMode::Unstage).unwrap();
+    repo.apply_selection(d, &line_named(d, wf::UNSTAGED_LINE), PatchMode::Unstage).unwrap();
+    wf::expect_line_unstaged(dir).unwrap();
+    let ws = after(&repo, &ws, wf::SHOWN);
+    let d = shown(file(&ws.staged, wf::SHOWN));
+    assert!(d.hunks.iter().flat_map(|h| &h.lines).all(|l| l.text != wf::UNSTAGED_LINE), "{d:#?}");
+    repo.stage_paths(&[wf::SHOWN]).unwrap();
+    wf::expect_deletion_staged(dir).unwrap();
+    let ws = after(&repo, &ws, wf::SHOWN);
+    assert_eq!(file(&ws.staged, wf::SHOWN).entry.index, Some('D'));
+    assert!(ws.unstaged.is_empty());
+    repo.unstage_path_list(&[wf::SHOWN.to_string()]).unwrap();
+    wf::expect_deletion_unstaged(dir).unwrap();
+    let ws = after(&repo, &ws, wf::SHOWN);
+    assert!(ws.staged.is_empty());
+    assert_eq!(file(&ws.unstaged, wf::SHOWN).entry.worktree, Some('D'));
+}
+
+/// NU-04 on disk (where the file system takes such a name: Linux): the untracked
+/// `caf\xe9.txt` previewed, its line `one` staged, then the whole file staged, unstaged
+/// and discarded (deleted in-process by its bytes).
+/// Workflow: NU-04
+#[cfg(unix)]
+#[gitti_test::test]
+fn nu04_a_name_that_is_not_utf8_on_disk() {
+    use shapes::non_utf8_name as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    if !wf::fixture(dir) {
+        return; // this file system refuses such names (macOS)
+    }
+    let repo = Repo::open(dir).unwrap();
+    let ws = state(&repo);
+    assert_eq!(paths(&ws.unstaged), [wf::SHOWN]);
+    let d = shown(file(&ws.unstaged, wf::SHOWN));
+    repo.apply_selection(d, &line_named(d, wf::STAGED_LINE), PatchMode::Stage).unwrap();
+    wf::expect_line_staged(dir).unwrap();
+    let ws = after(&repo, &ws, wf::SHOWN);
+    repo.stage_path_list(&[wf::SHOWN.to_string()]).unwrap();
+    wf::expect_staged(dir).unwrap();
+    let ws = after(&repo, &ws, wf::SHOWN);
+    repo.unstage_paths(&[wf::SHOWN]).unwrap();
+    wf::expect_unstaged(dir).unwrap();
+    let ws = after(&repo, &ws, wf::SHOWN);
+    let f = file(&ws.unstaged, wf::SHOWN);
+    assert!(f.entry.untracked);
+    repo.discard_paths(&[&f.entry]).unwrap();
+    wf::expect_discarded(dir).unwrap();
 }

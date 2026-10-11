@@ -470,7 +470,7 @@ impl Repo {
             self.git().run(&args)?
         } else {
             args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
-            self.git_literal().run_stdin(&args, Some(&nul_list(paths)))?
+            self.git_literal().run_stdin(&args, Some(&self.pathspec_list(paths)?))?
         };
         Ok(format!("{}{}", out.stdout_str(), out.stderr).trim().to_string())
     }
@@ -1188,15 +1188,6 @@ impl Repo {
         }
         Ok(Some(branch_local_refusal(&name, &local)))
     }
-}
-
-fn nul_list(paths: &[String]) -> Vec<u8> {
-    let mut v = Vec::new();
-    for p in paths {
-        v.extend_from_slice(p.as_bytes());
-        v.push(0);
-    }
-    v
 }
 
 #[cfg(test)]

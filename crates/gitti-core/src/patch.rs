@@ -24,7 +24,9 @@ impl PatchMode {
 }
 
 /// A hunk / line (un)stage or discard refused because the file's name is not valid UTF-8
-/// ([`FileDiff::lossy_name`]): the patch would name a file with U+FFFD in its name. File
+/// and its bytes are not known for sure ([`crate::raw_names`]: two names that show alike,
+/// or one no `git status` listed): the patch would name another file. Names that are not
+/// UTF-8 are otherwise put back into their bytes ([`crate::Repo::raw_patch_names`]); file
 /// content in any encoding is fine — patches carry the lines' exact bytes
 /// ([`crate::diff::DiffLine::bytes`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,22 +42,82 @@ impl std::fmt::Display for NotUtf8 {
             PatchMode::Unstage => "unstage",
             PatchMode::Discard => "discard",
         };
-        write!(f, "The name of {} is not UTF-8 — cannot {verb} its hunks or lines", self.path)
+        write!(
+            f,
+            "The name of {} is not UTF-8 and gitti can't tell for sure which file it is \
+             (another file's name shows the same) — cannot {verb} its hunks or lines",
+            self.path
+        )
     }
 }
 
 impl std::error::Error for NotUtf8 {}
 
-/// The short note frontends show where hunk / line actions of a [`FileDiff::lossy_name`]
-/// file would be.
-pub const NOT_UTF8_NOTE: &str = "file name not UTF-8: no hunk / line staging";
+/// The short note frontends show where hunk / line actions of a file are refused with
+/// [`NotUtf8`] ([`crate::Repo::check_names`]).
+pub const NOT_UTF8_NOTE: &str = "file name not UTF-8 and ambiguous: no hunk / line staging";
 
-/// Whether hunks / lines of `file` may be applied with `mode` (see [`NotUtf8`]).
-pub fn check_utf8(file: &FileDiff, mode: PatchMode) -> Result<(), NotUtf8> {
-    if file.lossy_name {
-        return Err(NotUtf8 { path: file.path().to_string(), mode });
+/// `patch` with each shown name of `names` (with U+FFFD) in its header lines — before
+/// the first hunk — replaced by its bytes, also inside a C-quoted name.
+pub fn with_raw_names(patch: &[u8], names: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    let mut names: Vec<&(&str, Vec<u8>)> = names.iter().collect();
+    // The longer name first: one may be part of another.
+    names.sort_by_key(|(shown, _)| std::cmp::Reverse(shown.len()));
+    let mut out = Vec::with_capacity(patch.len());
+    let mut rest = patch;
+    while !rest.is_empty() && !rest.starts_with(b"@@") {
+        let end = rest.iter().position(|b| *b == b'\n').map_or(rest.len(), |i| i + 1);
+        let mut line = rest[..end].to_vec();
+        for (shown, raw) in &names {
+            line = replace(&line, shown.as_bytes(), raw);
+            let (q_shown, q_raw) = (c_escape(shown.as_bytes()), c_escape(raw));
+            if q_shown != shown.as_bytes() {
+                line = replace(&line, &q_shown, &q_raw);
+            }
+        }
+        out.extend_from_slice(&line);
+        rest = &rest[end..];
     }
-    Ok(())
+    out.extend_from_slice(rest);
+    out
+}
+
+/// `hay` with every `from` replaced by `to`.
+fn replace(hay: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(hay.len());
+    let mut i = 0;
+    while i < hay.len() {
+        if hay[i..].starts_with(from) {
+            out.extend_from_slice(to);
+            i += from.len();
+        } else {
+            out.push(hay[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// `bytes` escaped the way git writes them inside a C-quoted name (see [`quote_path`]):
+/// bytes of 0x80 and up stay as they are (`core.quotepath=false`).
+fn c_escape(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            b'"' => out.extend_from_slice(b"\\\""),
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            0x07 => out.extend_from_slice(b"\\a"),
+            0x08 => out.extend_from_slice(b"\\b"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            0x0b => out.extend_from_slice(b"\\v"),
+            0x0c => out.extend_from_slice(b"\\f"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b if b < 0x20 || b == 0x7f => out.extend_from_slice(format!("\\{b:03o}").as_bytes()),
+            b => out.push(b),
+        }
+    }
+    out
 }
 
 /// Which lines of a file diff are selected.
@@ -323,8 +385,9 @@ fn symlink_selection(file: &FileDiff, sel: &Selection) -> Selection {
 
 /// Builds a patch containing only the selected changes of `file`, ready for `git apply`
 /// (with `-R` for reverse modes), as bytes: the lines' exact bytes in whatever encoding the
-/// file has. Returns `None` if nothing would change. The caller checks [`check_utf8`]
-/// first: a patch of a file whose name is not UTF-8 would name another file.
+/// file has. Returns `None` if nothing would change. The header names the file as the
+/// diff shows it: a name that is not UTF-8 gets its bytes back from
+/// [`crate::Repo::raw_patch_names`].
 pub fn build_patch(file: &FileDiff, sel: &Selection, mode: PatchMode) -> Option<Vec<u8>> {
     let symlink_sel;
     let sel = if is_symlink(file) {
@@ -681,5 +744,27 @@ index 1..2 100644
         let f = &parse_unified(D)[0];
         assert!(build_patch(f, &Selection::default(), PatchMode::Stage).is_none());
         assert!(build_patch(f, &Selection::lines(0, [0]), PatchMode::Stage).is_none());
+    }
+
+    /// Shown names (with U+FFFD) go back to their bytes in the header only — plain and
+    /// inside a C-quoted name — never in the hunk lines.
+    #[gitti_test::test]
+    fn raw_names_go_back_into_the_header() {
+        let shown = "caf\u{fffd}.txt";
+        let quoted = "a\"caf\u{fffd}";
+        let patch = format!(
+            "diff --git a/{shown} b/{shown}\n--- a/{shown}\n+++ b/{shown}\n@@ -1 +1 @@\n-{shown}\n+x\n"
+        );
+        let names = [(shown, b"caf\xe9.txt".to_vec()), (quoted, b"a\"caf\xe9".to_vec())];
+        let out = with_raw_names(patch.as_bytes(), &names);
+        let want = [
+            &b"diff --git a/caf\xe9.txt b/caf\xe9.txt\n--- a/caf\xe9.txt\n+++ b/caf\xe9.txt\n"[..],
+            format!("@@ -1 +1 @@\n-{shown}\n+x\n").as_bytes(),
+        ]
+        .concat();
+        assert_eq!(out, want);
+        let patch = format!("diff --git \"a/{q}\" \"b/{q}\"\n", q = quoted.replace('"', "\\\""));
+        let out = with_raw_names(patch.as_bytes(), &names);
+        assert_eq!(out, b"diff --git \"a/a\\\"caf\xe9\" \"b/a\\\"caf\xe9\"\n");
     }
 }
