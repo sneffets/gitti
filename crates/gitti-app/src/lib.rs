@@ -1117,6 +1117,8 @@ pub mod testing {
         pub collapsed: Vec<String>,
         /// Compare mode: `base=<id>[ swapped][ shown=<old>..<new>]` (`None` = off).
         pub compare: Option<String>,
+        /// Ids of the marked commits (Cherry-pick / Revert Marked Commits…), top to bottom.
+        pub marked_commits: Vec<String>,
     }
 
     /// The open picker: labels of the shown items (best match first), the selected one,
@@ -1433,6 +1435,8 @@ actions!(
         RebaseCurrentOnto,
         RevertCommit,
         CherryPickCommit,
+        CherryPickMarked,
+        RevertMarked,
         EditCommitMessage,
         GetSigningKeys,
         DropLatestStash,
@@ -1783,6 +1787,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Revert Selected Commit", RevertCommit),
                 MenuItem::action("Cherry-pick Selected Commit", CherryPickCommit),
+                MenuItem::action(gitti_core::pick_several::CHERRY_PICK_MARKED, CherryPickMarked),
+                MenuItem::action(gitti_core::pick_several::REVERT_MARKED, RevertMarked),
                 MenuItem::action("Edit Commit Message…", EditCommitMessage),
                 MenuItem::action("Get Signing Keys from GitHub…", GetSigningKeys),
                 MenuItem::separator(),

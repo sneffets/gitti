@@ -219,6 +219,10 @@ impl GittiApp {
             p.bg_list.blend(lane.opacity(0.22))
         } else if self.is_compare_base(ix) {
             p.bg_compare
+        } else if self.is_commit_marked(ix) {
+            // Marked for Cherry-pick / Revert Marked Commits… (`pick_several.rs`): a
+            // lighter tint than the selected row.
+            p.bg_list.blend(p.bg_list_selected.opacity(0.55))
         } else {
             p.bg_list
         };
@@ -248,6 +252,17 @@ impl GittiApp {
         let badge_pick: BadgePick = Rc::default();
         // The marked compare base, before everything else (also on the worktree row).
         subject = subject.children(self.compare_badge(ix, cx));
+        // Marked for Cherry-pick / Revert Marked Commits… (`pick_several.rs`).
+        if self.is_commit_marked(ix) {
+            subject = subject.child(
+                div()
+                    .flex_none()
+                    .text_color(p.accent)
+                    .font_weight(FontWeight::BOLD)
+                    .probe(format!("commit-marked:{ix}"))
+                    .child("✓"),
+            );
+        }
         if is_wt {
             let text = if self.working_counts().is_none() {
                 if self.working.status.untracked_hidden() {
@@ -498,11 +513,12 @@ impl GittiApp {
                 nav,
             ))
             .child(text)
+            // ⌘ / shift mark commits (`pick_several.rs`).
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                     this.list_focus.focus(window, cx);
-                    this.select_row(ix, window, cx);
+                    this.click_commit_row(ix, ev.modifiers, window, cx);
                 }),
             )
             // Right click selects too (like gitty), then the menu opens.
@@ -523,7 +539,9 @@ impl GittiApp {
                 let menu = match (&menu_ctx, stash) {
                     (_, Some(n)) => super::menus::stash_menu(menu, &app, n),
                     (Some(c), None) => {
+                        let menu = super::pick_several::marked_commands(menu, &app, ix, cx);
                         let menu = super::menus::commit_menu(menu, &app, c, window, cx);
+                        let menu = super::pick_several::mark_entries(menu, &app, ix, cx);
                         let given = super::custom_commands::Given {
                             commit: Some(c.rev.clone()),
                             ..Default::default()
@@ -754,6 +772,13 @@ impl GittiApp {
             .child(measure)
             .track_focus(&self.list_focus)
             .key_context("CommitList")
+            // Esc clears marked commits before it ends a comparison (capture: ahead of
+            // End Comparison's own handler and of its "not comparing" refusal).
+            .capture_action(cx.listener(|this, _: &crate::EndCompare, _, cx| {
+                if this.clear_commit_marks(cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(Self::on_select_next))
             .on_action(cx.listener(Self::on_select_prev))
             // The strip at the right edge: thumb drags, track clicks do nothing, the

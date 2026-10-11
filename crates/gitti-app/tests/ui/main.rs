@@ -38,6 +38,7 @@ mod wf_commit;
 mod wf_eol;
 mod wf_merge;
 mod wf_modules;
+mod wf_pick;
 mod wf_pilot;
 mod wf_remotes;
 mod wf_reset;
@@ -84,6 +85,7 @@ const SUITES: &[(&str, fn())] = &[
     ("wf_modules", wf_modules::main),
     ("wf_staging", wf_staging::main),
     ("wf_eol", wf_eol::main),
+    ("wf_pick", wf_pick::main),
 ];
 
 fn main() {

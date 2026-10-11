@@ -14,9 +14,9 @@
 //! - [`expect`]: [`Expect`], the repository afterwards read with few git processes, and
 //!   [`Checks`] collecting the mismatches;
 //! - the workflows, one module each in their area's module ([`st`], [`dc`], [`bg`],
-//!   [`cm`], [`cp`], [`ex`], [`mg`], [`rs`], [`sh`], [`tg`], …): a `fixture(dir)`, the
-//!   step constants the drivers need, and `expect…(dir)` functions returning `Err(text)`
-//!   with every mismatch.
+//!   [`cm`], [`cp`], [`rv`], [`ex`], [`mg`], [`rs`], [`sh`], [`tg`], …): a
+//!   `fixture(dir)`, the step constants the drivers need, and `expect…(dir)` functions
+//!   returning `Err(text)` with every mismatch.
 //!
 //! The catalog of all workflows — IDs, steps, expected results and which test covers each
 //! on which layer — is `WORKFLOWS.md` next to this crate's `Cargo.toml`; keep it in sync.
@@ -39,6 +39,7 @@ pub mod mg;
 pub mod nu;
 pub mod rm;
 pub mod rs;
+pub mod rv;
 pub mod sh;
 pub mod sm;
 pub mod st;

@@ -379,7 +379,13 @@ impl App {
                 self.focus = Focus::Sidebar;
                 return true;
             }
-            KeyCode::Esc => return self.end_compare(),
+            // Marks the commit for Cherry-pick / Revert Marked Commits… (`app/pick_several.rs`).
+            KeyCode::Char(' ') if key.modifiers.is_empty() => {
+                self.toggle_commit_mark();
+                return true;
+            }
+            // Clears marked commits first, then ends a comparison.
+            KeyCode::Esc => return self.clear_commit_marks() || self.end_compare(),
             _ => return false,
         };
         self.select_row(to);

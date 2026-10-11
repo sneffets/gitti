@@ -10,7 +10,11 @@
 //!   nothing to commit, and Continue fails with git's "is now empty … use --skip". The
 //!   pick, its Continue, and a revert report it as [`EmptyPick`]; the apps ask: Skip,
 //!   Commit Empty ([`Repo::commit_empty_pick`]) or nothing for now. (A rebase drops such
-//!   commits itself.)
+//!   commits itself.) A revert in a sequence that comes out empty stops without
+//!   `REVERT_HEAD` — only `sequencer/todo` says where — and is an [`EmptyPick`] too.
+//! - **Nothing to revert** ([`nothing_to_revert`]): a single revert whose changes are
+//!   already undone makes git stop with "nothing to commit" on stdout and no state left
+//!   behind; it is said as a result in plain words instead of a bare exit code.
 
 use anyhow::{Context as _, Result};
 
@@ -165,8 +169,12 @@ impl Repo {
             return Err(e);
         }
         let state = self.state();
+        // A revert in a sequence that comes out empty stops without `REVERT_HEAD`, only
+        // its `sequencer/todo` says where it is.
         let stopped = self.git_dir().is_some_and(|d| {
-            d.join("CHERRY_PICK_HEAD").exists() || d.join("REVERT_HEAD").exists()
+            d.join("CHERRY_PICK_HEAD").exists()
+                || d.join("REVERT_HEAD").exists()
+                || d.join("sequencer").join("todo").exists()
         });
         if !matches!(state, RepoState::CherryPicking | RepoState::Reverting) || !stopped {
             return Err(e);
@@ -183,6 +191,40 @@ impl Repo {
         }
         let empty = anyhow::Error::new(EmptyPick { state, message: format!("{e:#}") });
         Err(if e.is::<MessageCommitted>() { empty.context(MessageCommitted) } else { empty })
+    }
+}
+
+/// The status line of a single revert whose changes are already undone: git stops
+/// without leaving anything behind.
+pub fn nothing_to_revert(short: &str, branch: &str) -> String {
+    format!("Nothing to revert: the changes of {short} are already undone on {branch} — nothing was changed.")
+}
+
+impl Repo {
+    /// `result` of a single revert with git's bare "nothing to commit" failure — HEAD
+    /// where it was (`head`), nothing in progress, staged or conflicted — turned into
+    /// [`nothing_to_revert`] (a result: nothing happened, nothing is wrong).
+    pub(crate) fn nothing_to_revert_as(&self, result: Result<String>, rev: &str, head: Option<gix::ObjectId>) -> Result<String> {
+        let Err(e) = &result else {
+            return result;
+        };
+        if e.is::<EmptyPick>() || e.is::<crate::local_changes::LocalChanges>() || self.state() != RepoState::Clean {
+            return result;
+        }
+        let now = self.head().ok();
+        if head.is_none() || now.as_ref().and_then(|h| h.id) != head {
+            return result;
+        }
+        let clean = self.unmerged_index_paths().is_ok_and(|u| u.is_empty())
+            && self
+                .git()
+                .run_raw(&["diff", "--cached", "--quiet", "--ignore-submodules=none"], None)
+                .is_ok_and(|o| o.code == 0);
+        if !clean {
+            return result;
+        }
+        let branch = now.and_then(|h| h.branch).unwrap_or_else(|| "HEAD".into());
+        Ok(nothing_to_revert(&rev[..7.min(rev.len())], &branch))
     }
 }
 

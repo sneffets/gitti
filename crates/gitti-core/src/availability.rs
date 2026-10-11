@@ -89,6 +89,10 @@ pub struct RepoFacts {
     pub fs_paths: usize,
     pub fs_hidable: usize,
     pub fs_hidden: usize,
+    /// Marked commits of the commit list ([`crate::commit_marks`]) and whether HEAD is
+    /// one of them.
+    pub marked_commits: usize,
+    pub head_marked: bool,
 }
 
 impl Default for RepoFacts {
@@ -121,6 +125,8 @@ impl Default for RepoFacts {
             fs_paths: 0,
             fs_hidable: 0,
             fs_hidden: 0,
+            marked_commits: 0,
+            head_marked: false,
         }
     }
 }
@@ -159,6 +165,8 @@ pub const NO_FS_PATHS: &str = "every path fits this file system";
 pub const NO_FS_PATH_CHANGED: &str = "none of them shows as changed";
 pub const NO_HIDDEN_PATHS: &str = "no paths hidden";
 pub const UNRESOLVED: &str = "conflicted files are not resolved yet";
+pub const NO_MARKED_COMMITS: &str = "no commits marked";
+pub const HEAD_MARKED: &str = "a marked commit is HEAD";
 
 /// "a merge is in progress" & co. (`None`: no operation half-done).
 pub fn in_progress(state: RepoState) -> Option<&'static str> {
@@ -267,6 +275,11 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "CherryPickCommit" => commit(f)
             .or(check(f.selection == Selection::Commit { head: true }, IS_HEAD))
             .or(busy_op),
+        "CherryPickMarked" | "RevertMarked" => {
+            use crate::pick_several::{SeveralKind, why_not};
+            let kind = if action == "RevertMarked" { SeveralKind::Revert } else { SeveralKind::CherryPick };
+            why_not(kind, f.marked_commits, f.head_marked, f.state)
+        }
         "OpenThisVersion" => check(!f.this_version, NO_COMMIT_FILE),
         "OpenOldVersion" => {
             check(!f.this_version && !f.old_version, NO_COMMIT_FILE).or(check(!f.old_version, NO_OLD_VERSION))
@@ -325,6 +338,8 @@ pub fn what_to_do(why: &str) -> Option<&'static str> {
         DETACHED => Some("switch to a branch first"),
         NO_KEY_MISSING => Some("select a signed commit git can't verify yet"),
         UNRESOLVED => Some("resolve them first"),
+        NO_MARKED_COMMITS => Some("mark them first: Mark for Cherry-pick / Revert in a commit's menu"),
+        HEAD_MARKED => Some("unmark it: it is already the current commit"),
         _ if why.ends_with("in progress") => Some("continue or abort it first"),
         _ => None,
     }
@@ -465,6 +480,7 @@ mod tests {
             fs_paths: 2,
             fs_hidable: 1,
             fs_hidden: 1,
+            marked_commits: 2,
             ..plain()
         };
         // (The merge tool needs a conflicted file at the cursor: `external_tools_…`.)
@@ -490,6 +506,12 @@ mod tests {
         assert_eq!(unavailable(&verified), [("GetSigningKeys", NO_KEY_MISSING)]);
         let elsewhere = RepoFacts { github_remote: false, signing_keys: false, ..f.clone() };
         assert_eq!(why_not("GetSigningKeys", &elsewhere), Some(NO_GITHUB_REMOTE));
+        // Marked commits: HEAD among them can't be picked (reverted it can); none marked.
+        let head_marked = RepoFacts { head_marked: true, ..f.clone() };
+        assert_eq!(unavailable(&head_marked), [("CherryPickMarked", HEAD_MARKED)]);
+        let none = RepoFacts { marked_commits: 0, ..f.clone() };
+        assert_eq!(off(&none), ["CherryPickMarked", "RevertMarked"]);
+        assert_eq!(why_not("RevertMarked", &none), Some(NO_MARKED_COMMITS));
         let stash = RepoFacts { selection: Selection::Stash, ..f };
         assert_eq!(why_not("RevertCommit", &stash), Some(STASH_SELECTED));
     }
@@ -540,7 +562,11 @@ mod tests {
             selection: Selection::Commit { head: false },
             ..plain()
         };
-        for a in ["MergeBranch", "RebaseCurrentOnto", "CherryPickCommit", "RevertCommit", "Pull"] {
+        let merging = RepoFacts { marked_commits: 2, ..merging };
+        for a in [
+            "MergeBranch", "RebaseCurrentOnto", "CherryPickCommit", "RevertCommit", "Pull", "CherryPickMarked",
+            "RevertMarked",
+        ] {
             assert_eq!(why_not(a, &merging), Some("a merge is in progress"), "{a}");
         }
         // A stash would end the operation half-done.

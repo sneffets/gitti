@@ -1120,6 +1120,9 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             blend(p.lane(grow.color), p.bg_list, 0.25)
         } else if is_base {
             p.bg_compare
+        } else if app.is_commit_marked(i) {
+            // Marked for Cherry-pick / Revert Marked Commits… (`app/pick_several.rs`).
+            blend(p.bg_list_selected, p.bg_list, 0.55)
         } else {
             p.bg_list
         };
@@ -1180,6 +1183,10 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
         }
         if let Some(y2) = y2 {
             graph_line(buf, y2, line(true));
+        }
+        // A marked commit: ✓ in the column before the graph.
+        if app.is_commit_marked(i) {
+            buf[(content.x, y)].set_char('✓').set_fg(p.accent);
         }
         let text_x = x;
         let right_w = if two { 0 } else { date_w + author_w + 1 };
@@ -4118,6 +4125,7 @@ Commit list
   C               compare: mark the selected commit (base); every other selection then
                   shows the diff base → selected under a purple banner (m: swap / end;
                   esc or C on the base ends it)
+  space           mark / unmark the commit (✓); m on a marked one: cherry-pick / revert all
 
 Diff / working directory
   ↑ ↓  j k        move the cursor      pgup pgdn  g G

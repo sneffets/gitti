@@ -51,6 +51,7 @@ mod wf_commit;
 mod wf_eol;
 mod wf_merge;
 mod wf_modules;
+mod wf_pick;
 mod wf_pilot;
 mod wf_remotes;
 mod wf_reset;

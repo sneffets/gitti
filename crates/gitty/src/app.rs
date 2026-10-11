@@ -56,6 +56,7 @@ mod op_cancel;
 mod op_output;
 mod op_stops;
 mod overwrite;
+mod pick_several;
 pub mod reflog;
 mod remote_cmds;
 mod renormalize;
@@ -543,6 +544,8 @@ pub struct App {
     pub folders: gitti_core::rows::Folders,
     /// Files marked for an action on several (space on a file / folder row).
     pub marks: gitti_core::rows::FileMarks,
+    /// Marked commits of the commit list (`app/pick_several.rs`).
+    pub commit_marks: gitti_core::commit_marks::CommitMarks,
     /// The working directory's changes as a tree (setting `changes_as_tree`).
     pub changes_tree: bool,
     /// Marked files still to open in a terminal editor, one after the other.
@@ -861,6 +864,7 @@ impl App {
             rows: Vec::new(),
             folders: Default::default(),
             marks: Default::default(),
+            commit_marks: Default::default(),
             changes_tree: settings.changes_as_tree,
             open_queue: Vec::new(),
             expansion: Expansion::default(),
@@ -1481,7 +1485,7 @@ impl App {
             "focus={:?} selected={} [{sel}] cursor={} {row} sel_lines={lines} marked={} unstaged={} staged={} \
              repo_state={} conflicted={} history_rows={} history_load={:?} status={status:?} \
              commit_offset={} diff_offset={} hscroll={} side_cursor={} side_offset={} \
-             log_first={log_first} log_follow={} top={}{list}{}{}{}",
+             log_first={log_first} log_follow={} top={}{list} commit_marks={}{}{}{}",
             self.focus,
             self.selected,
             self.diff_cursor,
@@ -1499,6 +1503,7 @@ impl App {
             self.side_offset,
             self.log_top.is_none(),
             self.top_line_debug(),
+            self.commit_marks.len(),
             self.compare_debug(),
             self.errors
                 .text()
@@ -1772,6 +1777,9 @@ impl App {
                 self.load_detail();
             }
         }
+        // Marks of commits the new history no longer lists go.
+        let history = self.history.clone();
+        self.commit_marks.retain(&history);
         // Its refs may have changed (the history's `refs_by_commit`); sorting by date
         // reads its commit times.
         self.rewrap_header();
@@ -3884,7 +3892,8 @@ impl App {
         let head_or_busy = (self.head.id == Some(c.id))
             .then_some(gitti_core::availability::IS_HEAD)
             .or(busy_op);
-        let mut items = Vec::new();
+        // On a marked commit: the commands for all marked ones first.
+        let mut items = self.marked_commit_items();
         for r in self
             .history
             .refs_by_commit
@@ -3971,6 +3980,8 @@ impl App {
             MenuItem::new("Edit Commit Message…", move |app| app.edit_commit_message(&s)).key('e'),
         );
         items.extend(self.restore_contains_items(c.id));
+        items.push(MenuItem::separator());
+        items.extend(self.mark_commit_items());
         items.push(MenuItem::separator());
         items.extend(self.subtree_ref_items(&sha, ObjectId::from_hex(sha.as_bytes()).ok(), None));
         items.push(MenuItem::separator());
@@ -4440,6 +4451,7 @@ impl App {
         items.extend(self.compare_palette_items());
         items.extend(self.stash_palette_items());
         items.extend(self.file_marks_palette_items());
+        items.extend(self.pick_several_palette_items());
         // Last: on an equal match the everyday commands come first ("merge").
         items.extend(self.subtree_palette_items());
         items.extend(self.custom_palette_items());
