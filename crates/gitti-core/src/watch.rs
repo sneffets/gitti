@@ -15,6 +15,8 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -27,6 +29,16 @@ use crate::git_cli::Git;
 /// Keeps the watcher alive; drop it to stop watching.
 pub struct RepoWatcher {
     stop: Sender<Ev>,
+    ready: Arc<AtomicBool>,
+}
+
+impl RepoWatcher {
+    /// Whether its watches are in place (or setting them up failed): a change from now on
+    /// is reported. Before that, one on macOS / Windows (a recursive watch, no scan of
+    /// what changed meanwhile) can be missed.
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+    }
 }
 
 impl Drop for RepoWatcher {
@@ -316,6 +328,8 @@ pub fn watch(workdir: &Path, on_change: impl Fn(Change) + Send + 'static) -> Res
         }
     })?;
     let workdir = workdir.to_path_buf();
+    let ready = Arc::new(AtomicBool::new(false));
+    let set_up = ready.clone();
     std::thread::Builder::new()
         .name("gitti-watch".into())
         .spawn(move || {
@@ -328,14 +342,21 @@ pub fn watch(workdir: &Path, on_change: impl Fn(Change) + Send + 'static) -> Res
                 watched: HashSet::new(),
                 limited: false,
             };
-            run(tree, since, rx, on_change)
+            run(tree, since, rx, &set_up, on_change)
         })?;
-    Ok(RepoWatcher { stop: tx })
+    Ok(RepoWatcher { stop: tx, ready })
 }
 
-fn run(mut tree: Tree, since: SystemTime, rx: Receiver<Ev>, on_change: impl Fn(Change)) {
+fn run(
+    mut tree: Tree,
+    since: SystemTime,
+    rx: Receiver<Ev>,
+    ready: &AtomicBool,
+    on_change: impl Fn(Change),
+) {
     let t0 = Instant::now();
     let setup = tree.setup(since);
+    ready.store(true, Ordering::Release);
     if std::env::var_os("GITTI_PROFILE").is_some() {
         eprintln!(
             "[profile] watcher setup: {} dirs watched in {:?}{}",

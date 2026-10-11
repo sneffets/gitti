@@ -821,6 +821,14 @@ pub mod testing {
             .is_none_or(|app| app.read(cx).script_idle())
     }
 
+    /// The active tab's file watcher has its watches in place (an outside write from now
+    /// on is reported).
+    pub fn watcher_ready(ws: &Entity<Workspace>, cx: &App) -> bool {
+        ws.read(cx)
+            .active_app()
+            .is_none_or(|app| app.read(cx).script_watcher_ready())
+    }
+
     /// The active tab's busy area once it shows: `Commit… [meter] | last output line`
     /// (the status bar, `app/op_progress.rs`).
     pub fn busy_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {

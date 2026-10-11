@@ -309,6 +309,12 @@ impl Ui {
         };
         let t1 = t0.elapsed();
         ui.settle();
+        // Outside writes of a scenario come after the file watcher's watches are in place
+        // (before, macOS / Windows miss them: one recursive watch, no scan).
+        let ws = ui.ws.clone();
+        if !ui.wait_real(3000, |ui| ui.cx.update(|cx| testing::watcher_ready(&ws, cx))) {
+            ui.fail("the file watcher wasn't set up within 3 s".into());
+        }
         if step_times() {
             println!("    window {:.1} ms, first settle {:.1} ms", t1.as_secs_f64() * 1000., (t0.elapsed() - t1).as_secs_f64() * 1000.);
         }
