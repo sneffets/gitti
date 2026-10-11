@@ -39,6 +39,9 @@ pub enum ConflictKind {
 pub enum ConflictAction {
     /// Open the merge editor (content conflicts; the apps handle it).
     MergeEditor,
+    /// The configured external merge tool (`git mergetool`, [`crate::ext_tool`]); git
+    /// stages the file when the tool merged it.
+    MergeTool,
     /// The checked-out side's version (`checkout --ours` + `add`; `rm` if it has none).
     TakeOurs,
     /// The incoming side's version (`checkout --theirs` + `add`; `rm` if it has none).
@@ -59,6 +62,7 @@ impl ConflictAction {
     pub fn button_label(self) -> &'static str {
         match self {
             Self::MergeEditor => "Merge Editor",
+            Self::MergeTool => "External Merge Tool",
             Self::TakeOurs => "Take Ours",
             Self::TakeTheirs => "Take Theirs",
             Self::MarkResolved => "Mark Resolved",
@@ -201,6 +205,12 @@ impl ConflictKind {
                     "Combine both versions chunk by chunk",
                 ),
                 c(
+                    A::MergeTool,
+                    "Open in External Merge Tool".into(),
+                    "Resolve in the merge tool git is set up with (git mergetool, \
+                     merge.tool); git stages the file when the tool merged it",
+                ),
+                c(
                     A::TakeOurs,
                     format!("Take Ours — {o}"),
                     "Replace the file with this side's version and stage it",
@@ -249,6 +259,13 @@ impl Repo {
         use ConflictAction as A;
         match action {
             A::MergeEditor => bail!("the merge editor is opened by the app"),
+            A::MergeTool => {
+                let mut notes = Vec::new();
+                for p in paths {
+                    notes.push(self.open_merge_tool(p)?.describe());
+                }
+                Ok(notes.join("\n"))
+            }
             A::TakeOurs | A::TakeTheirs => self.resolve_with_side(paths, action == A::TakeOurs),
             A::MarkResolved => self.mark_resolved(paths),
             A::Keep => {

@@ -51,6 +51,7 @@ impl GittiApp {
     ) {
         match action {
             ConflictAction::MergeEditor => self.open_merge_editor(file, window, cx),
+            ConflictAction::MergeTool => self.open_external_merge_tool(file, window, cx),
             ConflictAction::TakeOurs => self.resolve_conflict(file, Some(true), window, cx),
             ConflictAction::TakeTheirs => self.resolve_conflict(file, Some(false), window, cx),
             ConflictAction::MarkResolved => self.resolve_conflict(file, None, window, cx),

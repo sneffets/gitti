@@ -334,7 +334,7 @@ pub(super) fn conflict_menu(
     for c in choices {
         // Merge editor | the sides | stage as is.
         let group = |a: A| match a {
-            A::MergeEditor => 0,
+            A::MergeEditor | A::MergeTool => 0,
             A::MarkResolved => 2,
             _ => 1,
         };
@@ -386,6 +386,7 @@ pub(super) fn diff_menu(
             }));
         }
     }
+    let menu = super::ext_tools::diff_menu_item(menu, app, cx);
     // A commit's file into the working tree, as it is here or was before.
     let menu = super::from_commit::diff_menu_items(menu, app, cx);
     let mut menu = menu
