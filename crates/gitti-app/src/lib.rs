@@ -1379,6 +1379,7 @@ actions!(
         EditRepoConfig,
         EditGlobalConfig,
         WriteCommitGraph,
+        RepositoryStatistics,
         CreateBranch,
         CreateTag,
         MergeBranch,
@@ -1695,6 +1696,7 @@ fn menu_bar() -> Vec<Menu> {
             "Repository",
             vec![
                 MenuItem::action("Refresh", Refresh),
+                MenuItem::action(gitti_core::repo_stats::MENU_LABEL, RepositoryStatistics),
                 MenuItem::separator(),
                 MenuItem::action(format!("Open in {file_manager}"), OpenInFileManager),
                 MenuItem::action("Open in Terminal", OpenTerminal),

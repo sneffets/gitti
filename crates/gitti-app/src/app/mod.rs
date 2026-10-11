@@ -42,6 +42,7 @@ mod picker;
 mod push_ui;
 mod reflog;
 mod repo_actions;
+mod repo_stats;
 mod script_scroll;
 mod settings_view;
 mod sidebar;
@@ -447,6 +448,8 @@ pub struct GittiApp {
     change_search: change_search::ChangeSearchUi,
     /// The reflog view in place of the commit list (`reflog.rs`).
     reflog: reflog::ReflogUi,
+    /// Repository ▸ Repository Statistics… (`repo_stats.rs`).
+    repo_stats: repo_stats::StatsUi,
     /// `DiffRow::HeaderSpace` rows reserved for the commit header (from its measured height).
     header_rows: usize,
     /// Line totals of the working-directory sections / groups and the state they were
@@ -771,6 +774,7 @@ impl GittiApp {
             compare: Default::default(),
             change_search: Default::default(),
             reflog: Default::default(),
+            repo_stats: Default::default(),
             header_rows: 0,
             worktree_totals: RefCell::new(None),
             commit_box_h: px(0.),

@@ -69,6 +69,8 @@ pub fn main() {
         ("tag_message_and_show_tag", tag_message_and_show_tag),
         ("startup_timings", startup_timings),
         ("about_and_licences", about_and_licences),
+        ("repository_statistics", repository_statistics),
+        ("repository_statistics_count_all", repository_statistics_count_all),
         ("unavailable_commands", unavailable_commands),
         ("detached_head_greys_branch_commands", detached_head_greys_branch_commands),
         ("fresh_repository_greys_what_needs_a_commit", fresh_repository_greys_what_needs_a_commit),
@@ -95,6 +97,14 @@ pub fn main() {
             s.commit_on("refs/heads/feat", "Add x", &ids[5], &[("x.txt", Some("theirs\n"))]);
             s.import(&d);
             std::fs::write(d.join("x.txt"), "ours\n").unwrap();
+        }
+        if name == "repository_statistics_count_all" {
+            // Branch `long`: 12,000 commits of its own, more than the window counts at once.
+            let mut s = Stream::new();
+            for i in 0..12_000 {
+                s.commit_by("refs/heads/long", "Other <o@example.com>", &i.to_string(), None, &[]);
+            }
+            s.import(&d);
         }
         if name == "detached_head_greys_branch_commands" {
             // HEAD on the commit itself, written as git would (no git process).
@@ -369,6 +379,107 @@ fn about_and_licences(ui: &mut Ui) {
     let ran = ui.git_commands()[n..].to_vec();
     if !ran.is_empty() {
         fail!(ui, "About / licences ran git: {ran:?}");
+    }
+    ui.quick("cancel");
+}
+
+/// Repository ▸ Repository Statistics… — also from the palette and a right click on the
+/// repository's name in the toolbar: the window fills in (paths, commits, sizes, commits
+/// per author); Copy as Text copies all of it and leaves the window open.
+fn repository_statistics(ui: &mut Ui) {
+    let ws = ui.ws.clone();
+    let viewer = |ui: &mut Ui| ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+    let title = gitti_core::repo_stats::TITLE;
+    ui.quick("focuslist");
+    ui.step("action:gitti::RepositoryStatistics");
+    let filled = ui.wait_real(1500, |ui| {
+        let t = viewer(ui);
+        t.contains("Commits per author — ") && !t.contains("reading…")
+    });
+    let text = viewer(ui);
+    if !filled || modal_title(ui).as_deref() != Some(title) {
+        fail!(ui, "{title}: {:?}, text:\n{text}", modal_title(ui));
+    }
+    for part in [
+        "\n  Work tree:       ",
+        "\n  Object format:   SHA-1\n",
+        "\n  Commits:         5 — reachable from the branches",
+        "\n  Git data:        ",
+        "the history: all objects in",
+        "\n  Whole .git:      ",
+        "\n  Tracked files:   ",
+        "\nCommits per author — all 5 commits",
+    ] {
+        if !text.contains(part) {
+            fail!(ui, "{title} lacks `{part}`:\n{text}");
+        }
+    }
+    ui.cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+    ui.click_on("modal-copy", MouseButton::Left);
+    ui.settle();
+    let copied = ui.cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+    if copied != text {
+        fail!(ui, "Copy as Text copied {copied:?}");
+    }
+    if modal_title(ui).as_deref() != Some(title) {
+        fail!(ui, "Copy as Text closed the window: {:?}", modal_title(ui));
+    }
+    ui.quick("cancel");
+    ui.quick("palette:repository statistics");
+    if modal_title(ui).as_deref() != Some(title) {
+        fail!(ui, "palette: dialog {:?}", modal_title(ui));
+    }
+    ui.quick("cancel");
+    ui.click_on("toolbar-repo-name", MouseButton::Right);
+    ui.quick(&format!("menu:{}", gitti_core::repo_stats::MENU_LABEL));
+    if modal_title(ui).as_deref() != Some(title) {
+        fail!(ui, "repository name's menu: dialog {:?}", modal_title(ui));
+    }
+    ui.quick("cancel");
+}
+
+/// A history bigger than what is counted at once: the authors of the newest 1,000
+/// commits, "Count All Commits" counts the whole history in the background; closing the
+/// window while it counts stops it (the next window offers it again).
+fn repository_statistics_count_all(ui: &mut Ui) {
+    let ws = ui.ws.clone();
+    let viewer = |ui: &mut Ui| ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+    let open = |ui: &mut Ui| {
+        ui.quick("focuslist");
+        ui.step("action:gitti::RepositoryStatistics");
+        ui.wait_real(1500, |ui| viewer(ui).contains("Commits per author — "))
+    };
+    if !open(ui) {
+        fail!(ui, "no authors:\n{}", viewer(ui));
+    }
+    let text = viewer(ui);
+    for part in [
+        "Commits per author — the newest 1,000 of 12,005 commits",
+        "The Count All Commits button counts the whole history",
+    ] {
+        if !text.contains(part) {
+            fail!(ui, "lacks `{part}`:\n{text}");
+        }
+    }
+    ui.click_on("modal-extra", MouseButton::Left);
+    let counted = ui.wait_real(1500, |ui| viewer(ui).contains("Commits per author — all 12,005 commits"));
+    let text = viewer(ui);
+    if !counted || !text.contains("\n  12,000  100.0 %  Other\n       5    0.0 %  Layout Test\n") {
+        fail!(ui, "whole count (done: {counted}):\n{text}");
+    }
+    if text.contains("Count All Commits") {
+        fail!(ui, "still offers the count:\n{text}");
+    }
+    ui.quick("cancel");
+    // Closed while counting: stopped, offered again.
+    open(ui);
+    ui.click_on("modal-extra", MouseButton::Left);
+    ui.quick("cancel");
+    ui.wait_real(200, |_| false);
+    open(ui);
+    let text = viewer(ui);
+    if !text.contains("The Count All Commits button counts") {
+        fail!(ui, "not offered again after closing:\n{text}");
     }
     ui.quick("cancel");
 }

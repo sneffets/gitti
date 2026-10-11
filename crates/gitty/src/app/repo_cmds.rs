@@ -158,7 +158,7 @@ impl App {
         ));
     }
 
-    fn open_folder(&mut self) {
+    pub(super) fn open_folder(&mut self) {
         match gitti_core::desktop::open_folder(self.repo.workdir()) {
             Ok(()) => self.set_info(format!("Opened {}", self.repo.workdir().display())),
             Err(e) => self.set_error(format!("{e:#}")),
@@ -343,6 +343,9 @@ impl App {
                 app.clone_dialog()
             }),
             PickItem::new("Init Repository…", "", |app: &mut App| app.init_dialog()),
+            PickItem::new(gitti_core::repo_stats::MENU_LABEL, "sizes, commits, authors", |app: &mut App| {
+                app.show_repo_stats()
+            }),
             PickItem::new(format!("Open in {fm}"), "", |app: &mut App| {
                 app.open_folder()
             }),

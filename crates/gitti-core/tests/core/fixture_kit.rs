@@ -102,6 +102,8 @@ pub struct History {
     mark: usize,
     commits: Vec<usize>,
     time: i64,
+    /// `Name <email>` of the next commits' author (default `T <t@example.com>`).
+    author: Option<String>,
 }
 
 /// The object ids of a [`History`]'s commits, by [`C`].
@@ -143,7 +145,11 @@ impl History {
         let mark = self.mark;
         self.time += 60;
         let who = format!("T <t@example.com> {} +0000", self.time);
-        write!(self.stream, "commit {refname}\nmark :{mark}\nauthor {who}\ncommitter {who}\n").unwrap();
+        let author = match &self.author {
+            Some(a) => format!("{a} {} +0000", self.time),
+            None => who.clone(),
+        };
+        write!(self.stream, "commit {refname}\nmark :{mark}\nauthor {author}\ncommitter {who}\n").unwrap();
         self.data(message.as_bytes());
         for (i, p) in parents.iter().enumerate() {
             let kind = if i == 0 { "from" } else { "merge" };
@@ -167,6 +173,11 @@ impl History {
         self.stream.push(b'\n');
         self.commits.push(mark);
         C(mark)
+    }
+
+    /// The author (`Name <email>`) of the commits that follow; the committer stays `T`.
+    pub fn author(&mut self, who: &str) {
+        self.author = Some(who.to_string());
     }
 
     /// An annotated tag on a commit.

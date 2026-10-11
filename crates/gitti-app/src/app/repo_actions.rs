@@ -25,7 +25,8 @@ use crate::theme::PaletteExt as _;
 use crate::{
     About, AddRemote, AddToGitignore, ApplyStash, CreateBranch, CreateTag, EditGitattributes,
     EditGitignore, EditGlobalConfig, EditRepoConfig, GlobalGitSettings, GoToWorkingDirectory,
-    MergeBranch, OpenInFileManager, OpenTerminal, PopStash, RepoGitSettings, StartupTimings,
+    MergeBranch, OpenInFileManager, OpenTerminal, PopStash, RepoGitSettings, RepositoryStatistics,
+    StartupTimings,
     ThirdPartyLicences, TrackWithLfs, WriteCommitGraph,
 };
 
@@ -157,6 +158,9 @@ impl GittiApp {
             this.select_row(0, w, cx);
             this.message.update(cx, |m, cx| m.focus(w, cx));
         }))
+        .on_action(cx.listener(|this, _: &RepositoryStatistics, w, cx| {
+            this.show_repo_stats(w, cx)
+        }))
         .on_action(cx.listener(|this, _: &About, w, cx| this.show_about(w, cx)))
         .on_action(cx.listener(|this, _: &ThirdPartyLicences, w, cx| {
             this.show_licences(w, cx)
@@ -202,6 +206,12 @@ impl GittiApp {
             entry("Init Repository…", "git init", |t, w, cx| {
                 t.init_dialog(w, cx)
             }),
+            entry(
+                gitti_core::repo_stats::MENU_LABEL,
+                "sizes, commits, authors",
+                |t, w, cx| t.show_repo_stats(w, cx),
+            )
+            .act(&RepositoryStatistics),
             entry(format!("Open in {fm}"), "repository folder", |t, _, cx| {
                 t.open_in_file_manager(cx)
             }),
