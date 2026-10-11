@@ -224,7 +224,7 @@ fn rm06_resolve_and_continue_the_stopped_pull() {
 
 /// RM-07: p with an uncommitted edit in the file the pull changes: refused — the dialog
 /// says why, names the file and offers Stash and Pull / Discard and Pull; nothing changed
-/// yet. s (Stash and Pull) pulls and puts the edit back.
+/// yet.
 /// Workflow: RM-07
 #[gitti_test::test]
 fn rm07_pull_into_a_dirty_tree_is_refused() {
@@ -237,6 +237,17 @@ fn rm07_pull_into_a_dirty_tree_is_refused() {
     assert!(screen.contains("Pull refused: uncommitted changes in the way") && screen.contains("a.txt"), "{out}");
     assert!(screen.contains(wf::WAY) && screen.contains("Discard and Pull"), "{out}");
     wf::expect_refused(&d, &s).unwrap();
+}
+
+/// RM-07: the refused pull's s (Stash and Pull) pulls and puts the edit back (a run of its
+/// own: both runs in one test came close to the time limit).
+/// Workflow: RM-07
+#[gitti_test::test]
+fn rm07_stash_and_pull() {
+    use rm::pull_dirty as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = work(&tmp);
+    let s = wf::fixture(&d);
     let out = run(&tmp, &d, "key:p;key:s;state");
     let st = states(&out);
     assert!(st[0].contains("unstaged=1 staged=0 repo_state=clean") && !st[0].contains("ERROR"), "{out}");
