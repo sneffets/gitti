@@ -52,6 +52,11 @@ fn stash_label(label: String, busy: Option<&str>) -> String {
     }
 }
 
+/// The palette's Stash Marked entry for `n` marked files.
+fn stash_marked_label(n: usize) -> String {
+    format!("Stash Marked ({})…", files_word(n))
+}
+
 /// Width of one tree level.
 const INDENT: f32 = 16.;
 
@@ -389,6 +394,18 @@ impl GittiApp {
     }
 
     /// Palette entries of this module.
+    /// This module's palette entries that can't act now, by label (`mark_unavailable`
+    /// greys them): Stash Marked while a merge / rebase / cherry-pick / revert is in
+    /// progress, as the Stash commands and the diff menu's entry.
+    pub(super) fn file_marks_palette_refusals(&self) -> Vec<(String, &'static str)> {
+        match gitti_core::availability::in_progress(self.repo_state) {
+            Some(why) if !self.file_marks.is_empty() => {
+                vec![(stash_marked_label(self.file_marks.len()), why)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub(super) fn file_marks_palette_items(&self) -> Vec<PickerItem> {
         let item = |label: String, run: RunFn| PickerItem {
             label,
@@ -414,7 +431,7 @@ impl GittiApp {
             items.push(item(format!("Discard Marked ({n})…"), Rc::new(|t, w, cx| {
                 t.marks_action(PatchMode::Discard, w, cx);
             })));
-            items.push(item(format!("Stash Marked ({n})…"), Rc::new(|t, w, cx| {
+            items.push(item(stash_marked_label(self.file_marks.len()), Rc::new(|t, w, cx| {
                 let paths = t.file_marks.all_paths();
                 t.stash_paths_dialog(paths, w, cx)
             })));

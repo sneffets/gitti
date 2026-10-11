@@ -47,18 +47,31 @@ fn merging() -> tempfile::TempDir {
 }
 
 /// During the merge: z (Stash) says it can't; S asks about a.txt's conflict markers
-/// (esc: nothing staged); the diff menu's stash entries are greyed.
+/// (esc: nothing staged); the diff menu's and the palette's stash entries are greyed, a
+/// greyed palette entry chosen says why.
 /// Workflow: MG-19, SH-16
 #[gitti_test::test]
 fn during_a_merge_stash_waits_and_stage_all_asks() {
     let dir = merging();
     let d = dir.path();
-    let out = gitty(d, "press:z;state;press:S;dump;press:esc;state;press:enter;press:];press:];press:space;press:m;dump");
+    let out = gitty(
+        d,
+        "press:z;state;press:S;dump;press:esc;state;press:enter;press:];press:];press:space;press:m;dump;\
+         press:esc;press:ctrl-p;type:stash;dump;press:esc;press:ctrl-p;type:stash marked;press:enter;state",
+    );
     let st = states(&out);
     // The diff menu's stash entries (the file, the marked files) are greyed with the reason.
     let menu = screens(&out)[1];
     assert!(menu.contains("Stash This File… (a merge is in progress)"), "{out}");
     assert!(menu.contains("Stash Marked (1 file)… (a merge is in progress)"), "{out}");
+    // The palette's: the reason as the hint.
+    let palette = screens(&out)[2];
+    for label in ["Stash Marked (1 file)…", "Stash…", "Stash Including Untracked", gitti_core::stash::SELECTION_LABEL] {
+        let line = palette.lines().find(|l| l.contains(label)).unwrap_or_else(|| panic!("no {label:?}: {out}"));
+        // (cut to the palette's width after the long selection label)
+        assert!(line.contains("a merge is in prog"), "{label:?} not greyed: {out}");
+    }
+    assert!(st[2].contains("not available: a merge is in progress"), "{out}");
     assert!(st[0].contains("not available: a merge is in progress"), "{out}");
     assert!(screens(&out)[0].contains("a.txt still contains conflict markers"), "{out}");
     assert!(st[1].contains("staged=1 ") && !st[1].contains("modal="), "{out}");

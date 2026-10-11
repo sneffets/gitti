@@ -117,6 +117,36 @@ fn merge_stop_stash_and_stage_all(ui: &mut Ui) {
         }
     }
     ui.quick("key:escape");
+    // The palette's stash entries too; one chosen anyway says why and runs nothing.
+    ui.step("action:gitti::CommandPalette");
+    ui.quick("pick:stash");
+    let (labels, disabled) = ui.ui_state().picker.map(|p| (p.labels, p.disabled)).unwrap_or_default();
+    for want in ["Stash Marked (1 file)…", "Stash Changes…", "Stash Including Untracked", gitti_core::stash::SELECTION_LABEL] {
+        let why = labels.iter().position(|l| l == want).and_then(|i| disabled.get(i).cloned());
+        if why != Some(Some("a merge is in progress".to_string())) {
+            ui.fail(format!("palette during the merge: {want:?} {why:?} in {labels:?}"));
+        }
+    }
+    ui.quick("key:escape");
+    let n = ui.n_git();
+    ui.step("palette:Stash Marked (1 file)…");
+    match ui.status() {
+        Some((s, _)) if s.contains("not available: a merge is in progress") => {}
+        other => ui.fail(format!("Stash Marked from the palette during the merge: {other:?}")),
+    }
+    ui.no_git_since(n, "a refused stash from the palette");
+    // The file tab's menu: Stash File… greyed.
+    if ui.probe_named("file-tab", 1).is_some() {
+        testing::menu_labels();
+        ui.click_on("file-tab:1", MouseButton::Right);
+        let labels = testing::menu_labels();
+        if !labels.iter().any(|l| l == "Stash File… (a merge is in progress)") {
+            ui.fail(format!("file tab menu during the merge: {labels:?}"));
+        }
+        ui.quick("key:escape");
+    } else {
+        ui.fail("no file tab".into());
+    }
 }
 
 /// Picking `same` stops with nothing to commit (on the command line): the banner offers

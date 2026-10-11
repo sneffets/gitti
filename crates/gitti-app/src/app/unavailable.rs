@@ -131,10 +131,12 @@ impl GittiApp {
 
     /// The palette's entries of unavailable commands: their reason replaces the
     /// description, ⏎ / a click say it instead of running. Entries without an action get
-    /// the menu-bar action of the same label. Returns the reason per entry.
+    /// the menu-bar action of the same label; palette-only entries (Stash Marked) are
+    /// found by their label. Returns the reason per entry.
     pub(super) fn mark_unavailable(&self, items: &mut [PickerItem]) -> Vec<Option<&'static str>> {
         let off = self.unavailable_commands();
-        if off.is_empty() {
+        let by_entry = self.file_marks_palette_refusals();
+        if off.is_empty() && by_entry.is_empty() {
             return vec![None; items.len()];
         }
         let by_label = crate::menu_actions_by_label();
@@ -145,8 +147,12 @@ impl GittiApp {
                     let key = normalize(&it.label);
                     it.action = by_label.iter().find(|(l, _)| *l == key).map(|(_, a)| *a);
                 }
-                let name = it.action?.trim_start_matches("gitti::");
-                let why = off.iter().find(|(a, _)| *a == name).map(|(_, w)| *w)?;
+                let by_action = it.action.and_then(|a| {
+                    let name = a.trim_start_matches("gitti::");
+                    off.iter().find(|(a, _)| *a == name).map(|(_, w)| *w)
+                });
+                let why = by_action
+                    .or_else(|| by_entry.iter().find(|(l, _)| *l == it.label).map(|(_, w)| *w))?;
                 let msg = availability::refusal(&it.label, why);
                 it.detail = why.to_string();
                 it.run = Rc::new(move |t: &mut GittiApp, _, cx: &mut Context<GittiApp>| {

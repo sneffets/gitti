@@ -300,9 +300,15 @@ impl App {
                 app.marks_action(PatchMode::Discard)
             }));
             let paths = self.marks.all_paths();
-            items.push(PickItem::new(format!("Stash Marked ({n})…"), "", move |app: &mut App| {
+            let stash = PickItem::new(format!("Stash Marked ({n})…"), "", move |app: &mut App| {
                 app.stash_paths_dialog(paths.clone())
-            }));
+            });
+            // Greyed during a merge / rebase / cherry-pick / revert (a stash would end it
+            // half-done), as the Stash commands and the diff menu's entry.
+            items.push(match gitti_core::availability::in_progress(self.repo_state) {
+                Some(why) => stash.unavailable(why),
+                None => stash,
+            });
             items.push(PickItem::new(format!("Open Marked in Editor ({n})"), "", |app: &mut App| {
                 app.open_marked()
             }));
