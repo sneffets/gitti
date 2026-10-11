@@ -266,29 +266,39 @@ fn main_worktree_alone_copy_sha_and_the_setting() {
     assert!(states(&out)[0].contains(&format!("Copied {}", rev(d, "HEAD~1"))), "{out}");
 }
 
-/// Sidebar menu actions: Rename… a branch, Drop a stash (asks), the STASHES header's Stash
-/// Changes…, Delete a tag; Create Branch from Stash….
+/// Sidebar menu actions: Rename… a branch, Delete a tag.
 #[gitti_test::test]
-fn sidebar_menus_rename_drop_stash_and_delete_a_tag() {
+fn sidebar_menus_rename_a_branch_and_delete_a_tag() {
     let (dir, _wt) = sidebar_fixture();
     let d = dir.path();
-    // Rows as in `sidebar_fixture`; TAGS folded: 12 = STASHES, 13 = stash@{0}.
+    // Rows as in `sidebar_fixture`; the last one is stash@{0}, above it STASHES, then the
+    // folded TAGS.
     let script = format!(
         "press:backtab;press:g;press:j;press:j;press:m;dump;press:r;press:ctrl-u;{}key:enter;\
-         press:G;press:m;press:d;dump;key:y;press:G;press:m;press:z;dump;press:esc;\
-         press:G;press:k;press:enter;press:j;press:m;dump;press:d;key:enter",
+         press:G;press:k;press:k;press:enter;press:j;press:m;dump;press:d;key:enter",
         presses("gamma")
     );
     let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "160x45", &script);
     let s = screens(&out);
     assert!(s[0].contains("Rename…"), "{out}");
     assert!(git(d, &["branch", "--list", "gamma"]).contains("gamma"), "{out}");
-    assert!(s[1].contains("Drop stash@{0}?"), "{out}");
+    assert!(s[1].contains("Checkout v1 (detached)"), "{out}");
+    assert_eq!(git(d, &["tag"]), "", "tag deleted: {out}");
+}
+
+/// Sidebar menu actions: Drop a stash (asks), the STASHES header's Stash Changes….
+#[gitti_test::test]
+fn sidebar_menus_drop_a_stash_and_the_stashes_header() {
+    let (dir, _wt) = sidebar_fixture();
+    let d = dir.path();
+    // The last row is stash@{0}; once dropped, the STASHES header.
+    let script = "press:backtab;press:G;press:m;press:d;dump;key:y;press:G;press:m;press:z;dump;press:esc";
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "160x45", script);
+    let s = screens(&out);
+    assert!(s[0].contains("Drop stash@{0}?"), "{out}");
     assert_eq!(git(d, &["stash", "list"]), "", "{out}");
     // The STASHES header (the stash is dropped: the last row) has its own menu.
-    assert!(s[2].contains("Stash Changes"), "header menu z: {out}");
-    assert!(s[3].contains("Checkout v1 (detached)"), "{out}");
-    assert_eq!(git(d, &["tag"]), "", "tag deleted: {out}");
+    assert!(s[1].contains("Stash Changes"), "header menu z: {out}");
 }
 
 /// The text inside the dialog box of `screen` (between its side borders), its lines
