@@ -522,7 +522,8 @@ impl Repo {
     }
 
     pub fn revert(&self, rev: &str, is_merge: bool) -> Result<String> {
-        self.stop_on_conflicts(|| {
+        let head = self.head().ok().and_then(|h| h.id);
+        let out = self.stop_on_conflicts(|| {
             let out = self.empty_pick_as(self.noting_fs_paths(|| {
                 if is_merge {
                     self.out(&["revert", "--no-edit", "-m", "1", rev])
@@ -531,7 +532,9 @@ impl Repo {
                 }
             }));
             self.local_changes_as(out, || BlockedOp::Revert { rev: rev.to_string(), is_merge })
-        })
+        });
+        // Its changes already undone: git stops without a word (on stdout only).
+        self.nothing_to_revert_as(out, rev, head)
     }
 
     /// `git reset --soft | --mixed | --hard <rev>`; the status line says where the branch
