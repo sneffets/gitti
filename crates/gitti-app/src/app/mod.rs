@@ -40,6 +40,7 @@ mod script_scroll;
 mod settings_view;
 mod sidebar;
 mod signers;
+mod stash_ui;
 mod signing_keys;
 mod spell_ui;
 mod startup_ui;
@@ -3585,6 +3586,7 @@ impl Render for GittiApp {
         let root = self.navigate_actions(root, cx);
         let root = self.menu_cmd_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);
+        let root = self.stash_ui_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
         let root = self.worktree_actions(root, cx);
         let root = self.submodule_actions(root, cx);

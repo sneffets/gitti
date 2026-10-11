@@ -879,9 +879,12 @@ impl Repo {
             let common = self.common_dir();
             let mut config = vec![common.join("config"), git_dir.join("config.worktree")];
             config.extend(crate::stamp_cache::global_config_files());
+            // A reftable repository (`extensions.refStorage=reftable`) has neither file:
+            // its table list changes with every ref update, the stash's too.
             let stash = vec![
                 common.join("refs").join("stash"),
                 common.join("logs").join("refs").join("stash"),
+                common.join("reftable").join("tables.list"),
             ];
             (config, stash)
         })

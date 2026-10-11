@@ -291,8 +291,26 @@ fn sidebar_menus_rename_drop_stash_and_delete_a_tag() {
     assert_eq!(git(d, &["tag"]), "", "tag deleted: {out}");
 }
 
-/// z: esc cancels; the message, "Include untracked" (on, space turns it off), the fields
-/// moved by ↓ ↑ tab shift-tab; ⏎ stashes.
+/// The text inside the dialog box of `screen` (between its side borders), its lines
+/// joined with spaces — wrapped sentences read whole.
+fn dialog_text(screen: &str) -> String {
+    let lines: Vec<Vec<char>> = screen.lines().map(|l| l.chars().collect()).collect();
+    let Some(col) = lines.iter().find_map(|l| l.iter().position(|c| *c == '┌')) else {
+        return String::new();
+    };
+    let mut words = Vec::new();
+    for l in &lines {
+        if l.get(col) != Some(&'│') {
+            continue;
+        }
+        let inner: String = l[col + 1..].iter().take_while(|c| **c != '│').collect();
+        words.extend(inner.split_whitespace().map(str::to_string));
+    }
+    words.join(" ")
+}
+
+/// z: esc cancels; the message, "Include untracked" (off as in git, space turns it on),
+/// the fields moved by ↓ ↑ tab shift-tab; ⏎ stashes.
 #[gitti_test::test]
 fn stash_dialog_fields_checkboxes_and_cancel() {
     let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n"), ("u.txt", "untracked\n")]);
@@ -303,11 +321,14 @@ fn stash_dialog_fields_checkboxes_and_cancel() {
          press:down;press:up;press:backtab;press:tab;dump;key:enter;state",
     );
     let s = screens(&out);
-    assert!(s[0].contains("Stash Changes") && s[0].contains("☑ Include untracked files"), "{out}");
-    assert!(s[1].contains("☐ Include untracked files"), "{out}");
+    assert!(s[0].contains("Stash Changes") && s[0].contains("☐ Include untracked files"), "{out}");
+    // What Enter does, said under the fields.
+    assert!(dialog_text(s[0]).contains("1 untracked file stays"), "{out}");
+    assert!(s[1].contains("☑ Include untracked files"), "{out}");
+    assert!(dialog_text(s[1]).contains("The untracked files are deleted once saved"), "{out}");
     let list = git(d, &["stash", "list"]);
     assert!(list.contains("wip") && list.lines().count() == 1, "{list}");
-    assert!(d.join("u.txt").exists(), "untracked files were not stashed");
+    assert!(!d.join("u.txt").exists(), "the untracked file is stashed");
     assert_eq!(git(d, &["diff"]), "");
 }
 

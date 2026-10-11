@@ -51,6 +51,8 @@ pub struct Tracking {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StashFlags {
     pub include_untracked: bool,
+    /// `--all`: untracked and ignored files (wins over `include_untracked`).
+    pub include_ignored: bool,
     pub keep_index: bool,
     pub staged_only: bool,
 }
@@ -977,22 +979,9 @@ impl Repo {
         )
     }
 
+    /// `git stash push` of all changes with `flags` ([`Self::stash_push`]).
     pub fn stash_save_with(&self, message: &str, flags: StashFlags) -> Result<String> {
-        let mut args = vec!["stash", "push"];
-        if flags.include_untracked {
-            args.push("--include-untracked");
-        }
-        if flags.keep_index {
-            args.push("--keep-index");
-        }
-        if flags.staged_only {
-            args.push("--staged");
-        }
-        if !message.trim().is_empty() {
-            args.push("-m");
-            args.push(message);
-        }
-        self.out(&args)
+        self.stash_push(message, flags, &[])
     }
 
     pub fn stash_apply(&self, index: usize, pop: bool) -> Result<String> {

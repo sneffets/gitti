@@ -1354,6 +1354,9 @@ actions!(gitti, [ToggleSignOff, RecentMessages, MessageHistoryPrev, MessageHisto
 // handlers in `app/from_commit.rs`.
 actions!(gitti, [ShowContaining, RestoreFromCommit]);
 
+// Stash ▸ Stash Selected Lines or File… / Rename Stash…; handlers in `app/stash_ui.rs`.
+actions!(gitti, [StashSelection, RenameStash]);
+
 // View ▸ Auto / One-Line / Two-Line Commit List; handlers in `app/commit_list.rs`.
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
@@ -1661,11 +1664,13 @@ fn menu_bar() -> Vec<Menu> {
             vec![
                 MenuItem::action("Stash Changes…", StashChanges),
                 MenuItem::action("Stash Including Untracked", StashIncludingUntracked),
+                MenuItem::action(gitti_core::stash::SELECTION_LABEL, StashSelection),
                 MenuItem::separator(),
                 MenuItem::action("Apply Latest Stash", ApplyStash),
                 MenuItem::action("Pop Latest Stash", PopStash),
                 MenuItem::action("Drop Latest Stash…", DropLatestStash),
                 MenuItem::action("Drop Stash…", DropStash),
+                MenuItem::action("Rename Stash…", RenameStash),
             ],
         ),
         menu(

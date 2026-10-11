@@ -612,6 +612,13 @@ pub(super) fn worktree_tab_menu(
             }),
         ));
     }
+    {
+        let p = path.clone();
+        menu = menu.item(item(
+            "Stash File…",
+            Rc::new(move |t, w, cx| t.stash_paths_dialog(vec![p.clone()], w, cx)),
+        ));
+    }
     let p = path.clone();
     menu.separator()
         .item(item(

@@ -57,6 +57,7 @@ mod search;
 mod sidebar_menu;
 mod signers;
 mod signing_keys;
+mod stash_cmds;
 mod submodules;
 mod subtrees;
 mod terminal;
@@ -3393,27 +3394,9 @@ impl App {
         self.modal = Some(m);
     }
 
+    /// "Stash…": all changes (`stash_cmds::stash_paths_dialog`).
     pub fn stash_dialog(&mut self) {
-        self.modal = Some(Modal::input_checks(
-            "Stash Changes",
-            vec![("Message", "")],
-            vec![
-                ("Include untracked files", true),
-                ("Keep staged changes in the index", false),
-                ("Only staged changes", false),
-            ],
-            |app, v, c| {
-                let msg = v[0].clone();
-                let flags = gitti_core::ops::StashFlags {
-                    include_untracked: c[0],
-                    keep_index: c[1],
-                    staged_only: c[2],
-                };
-                app.run_op("Stash", true, After::Nothing, move |r| {
-                    r.stash_save_with(&msg, flags)
-                });
-            },
-        ));
+        self.stash_paths_dialog(Vec::new());
     }
 
     pub fn create_branch_dialog(&mut self, start: String) {
@@ -3875,6 +3858,7 @@ impl App {
                     })),
                     _ => {}
                 }
+                items.extend(self.stash_row_items(row));
                 if matches!(src, Src::Unstaged | Src::Staged) {
                     let tracked = !work_files(&self.working, src)
                         .get(file)
@@ -3910,6 +3894,10 @@ impl App {
                     items.extend(sub);
                     items.push(MenuItem::separator());
                 }
+            }
+            Some(DiffRow::Group(_)) => {
+                items.extend(self.stash_row_items(row));
+                items.push(MenuItem::separator());
             }
             _ => {}
         }
@@ -4178,6 +4166,7 @@ impl App {
             ));
         }
         items.extend(self.compare_palette_items());
+        items.extend(self.stash_palette_items());
         // Last: on an equal match the everyday commands come first ("merge").
         items.extend(self.subtree_palette_items());
         items.extend(self.custom_palette_items());
