@@ -229,7 +229,9 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "SetUpstreamMenu" => check(f.unborn, UNBORN)
             .or(check(f.detached, DETACHED))
             .or(check(f.remotes == 0, NO_REMOTES)),
-        "DeleteBranchMenu" => check(f.other_branches == 0, NO_OTHER_BRANCH),
+        "DeleteBranchMenu" | "DeleteBranches" | "CleanUpMergedBranches" => {
+            check(f.other_branches == 0, NO_OTHER_BRANCH)
+        }
         // Commit.
         "StageAllAndCommit" => check(changes == 0, NO_CHANGES),
         "StageTrackedAndCommit" => check(
@@ -401,12 +403,15 @@ mod tests {
             ("EndCompare", NOT_COMPARING),
             ("NextTab", ONE_TAB),
             ("DeleteBranchMenu", NO_OTHER_BRANCH),
+            ("DeleteBranches", NO_OTHER_BRANCH),
+            ("CleanUpMergedBranches", NO_OTHER_BRANCH),
             ("ShowWholeFile", NO_FILE),
         ] {
             assert_eq!(why_not(a, &f), Some(why), "{a}");
         }
     }
 
+    /// Workflow: CP-17
     #[gitti_test::test]
     fn changes_stashes_and_selection_turn_them_on() {
         let f = RepoFacts {

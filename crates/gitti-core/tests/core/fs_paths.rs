@@ -76,6 +76,7 @@ fn the_probe_agrees_with_gits_own() {
     assert_eq!(left, vec![std::ffi::OsString::from(".git")]);
 }
 
+/// Workflow: FS-01
 #[gitti_test::test]
 fn index_paths_the_file_system_cant_hold_are_reported() {
     let mut h = History::new();
@@ -119,6 +120,7 @@ fn index_paths_the_file_system_cant_hold_are_reported() {
     assert!(note.starts_with("4 paths can't be checked out on this file system"), "{note}");
 }
 
+/// Workflow: RS-05
 #[gitti_test::test]
 fn switching_and_resetting_to_colliding_paths_say_so() {
     let (_tmp, dir) = pair_fixture();
@@ -141,6 +143,7 @@ fn switching_and_resetting_to_colliding_paths_say_so() {
     assert!(!out.contains("can't be held"), "{out}");
 }
 
+/// Workflow: FS-01
 #[gitti_test::test]
 fn hiding_with_skip_worktree_and_showing_again() {
     let (_tmp, dir) = pair_fixture();
@@ -160,6 +163,7 @@ fn hiding_with_skip_worktree_and_showing_again() {
     assert_eq!(repo.fs_paths_now().unwrap().hidden().count(), 0);
 }
 
+/// Workflow: FS-08
 #[gitti_test::test]
 fn gits_refusal_of_a_dot_git_alias_in_plain_words() {
     let mut h = History::new();
@@ -175,6 +179,7 @@ fn gits_refusal_of_a_dot_git_alias_in_plain_words() {
     );
 }
 
+/// Workflow: FS-08
 #[gitti_test::test]
 fn a_clone_explains_gits_collided_warning() {
     let (tmp, dir) = pair_fixture();
@@ -195,6 +200,7 @@ fn a_clone_explains_gits_collided_warning() {
     }
 }
 
+/// Workflow: FS-02
 #[gitti_test::test]
 fn a_commit_that_adds_the_other_spelling_is_marked_before_it_is_checked_out() {
     let mut h = History::new();

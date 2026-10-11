@@ -35,13 +35,16 @@ use crate::modal::{MenuItem, Modal, PickItem};
 use crate::sidebar::{self, SideItem};
 use crate::theme::Palette;
 
+mod branch_cmds;
 mod change_search;
 mod commit_box;
 mod commit_flow;
 mod compare;
 mod context_lines;
 mod custom_commands;
+mod ext_tools;
 mod file_list;
+mod file_marks;
 mod from_commit;
 mod fs_paths;
 mod keybar;
@@ -237,6 +240,9 @@ pub enum FollowUp {
     },
     /// Fetch, Then Decide (a refused push): what a push with lease overwrites now.
     Overwrite(Box<gitti_core::overwrite::Overwrite>),
+    /// git refused to clone submodules from local paths (Update Submodules, a clone's
+    /// `--recurse-submodules`): allow it for one update? (`app/submodules.rs`)
+    SubmodulesRefused(Box<gitti_core::submodule::add::FileRefused>, submodules::RetryUpdate),
 }
 
 impl std::fmt::Display for FollowUp {
@@ -248,6 +254,7 @@ impl std::fmt::Display for FollowUp {
             FollowUp::UnmergedBranch { branch, .. } => write!(f, "{branch} is not fully merged"),
             FollowUp::SplitDone { message, .. } => write!(f, "{message}"),
             FollowUp::Overwrite(o) => write!(f, "{}", o.title()),
+            FollowUp::SubmodulesRefused(r, _) => write!(f, "{r}"),
         }
     }
 }
@@ -450,6 +457,8 @@ pub struct App {
     pub side_cursor: usize,
     pub side_offset: usize,
     pub collapsed: HashSet<String>,
+    /// The sidebar's branch order, pins, recent checkouts (`app/branch_cmds.rs`).
+    pub branches: branch_cmds::BranchState,
 
     pub selected: usize,
     pub commit_offset: usize,
@@ -466,6 +475,9 @@ pub struct App {
     /// The commit list's "+N" badges as last drawn: where, and what they hide (one line,
     /// `ref_badges::ListBadges::hidden_summary`) — a click says it, as gitti's tooltip.
     pub badge_more: Vec<(Rect, String)>,
+    /// The commit list's ref badges as last drawn (the shown part of each): a right click
+    /// opens that ref's menu, as on its sidebar entry.
+    pub badge_refs: Vec<(Rect, RefInfo)>,
     /// Commits being prefetched (`prefetch_around`).
     prefetching: Arc<std::sync::Mutex<std::collections::HashSet<ObjectId>>>,
     /// Row of the commit shown before, for the prefetch direction.
@@ -489,6 +501,14 @@ pub struct App {
     /// A terminal is being started (detection, macOS `open`).
     pub terminal_job: bool,
     pub rows: Vec<DiffRow>,
+    /// The folder rows of `rows` (tree view of the working directory; empty when flat).
+    pub folders: gitti_core::rows::Folders,
+    /// Files marked for an action on several (space on a file / folder row).
+    pub marks: gitti_core::rows::FileMarks,
+    /// The working directory's changes as a tree (setting `changes_as_tree`).
+    pub changes_tree: bool,
+    /// Marked files still to open in a terminal editor, one after the other.
+    pub open_queue: Vec<String>,
     pub expansion: Expansion,
     /// Line totals of the working-directory sections / groups, summed when the rows
     /// are rebuilt (not per frame).
@@ -773,6 +793,7 @@ impl App {
             side_cursor: 0,
             side_offset: 0,
             collapsed,
+            branches: branch_cmds::BranchState::new(&settings),
             selected: 0,
             commit_offset: 0,
             detail: Detail::Empty,
@@ -792,6 +813,10 @@ impl App {
             change: Default::default(),
             reflog: Default::default(),
             rows: Vec::new(),
+            folders: Default::default(),
+            marks: Default::default(),
+            changes_tree: settings.changes_as_tree,
+            open_queue: Vec::new(),
             expansion: Expansion::default(),
             worktree_totals: Default::default(),
             diff_cursor: 0,
@@ -803,6 +828,7 @@ impl App {
             note_cols: None,
             header_cols: 0,
             badge_more: Vec::new(),
+            badge_refs: Vec::new(),
             line_sel: None,
             message: TextEdit::multi(),
             message_view: Default::default(),
@@ -918,6 +944,9 @@ impl App {
             intraline_strength: self.opts.intraline_strength,
             commit_list_layout: self.opts.list_layout,
             show_main_worktree_alone: self.main_worktree_alone,
+            branch_sort: self.branches.sort,
+            remote_branch_sort: self.branches.remote_sort,
+            changes_as_tree: self.changes_tree,
         }
     }
 
@@ -974,6 +1003,15 @@ impl App {
         if self.main_worktree_alone != s.show_main_worktree_alone {
             self.main_worktree_alone = s.show_main_worktree_alone;
             self.rebuild_sidebar();
+        }
+        if (self.branches.sort, self.branches.remote_sort) != (s.branch_sort, s.remote_branch_sort) {
+            self.branches.sort = s.branch_sort;
+            self.branches.remote_sort = s.remote_branch_sort;
+            self.rebuild_sidebar();
+        }
+        if self.changes_tree != s.changes_as_tree {
+            self.changes_tree = s.changes_as_tree;
+            self.rebuild_rows();
         }
         self.log_reads = s.log_show_reads;
         self.merge_single = s.merge_single_view;
@@ -1375,15 +1413,18 @@ impl App {
             _ => String::new(),
         };
         format!(
-            "focus={:?} selected={} [{sel}] cursor={} {row} sel_lines={lines} unstaged={} staged={} \
-             history_rows={} history_load={:?} status={status:?} \
+            "focus={:?} selected={} [{sel}] cursor={} {row} sel_lines={lines} marked={} unstaged={} staged={} \
+             repo_state={} conflicted={} history_rows={} history_load={:?} status={status:?} \
              commit_offset={} diff_offset={} hscroll={} side_cursor={} side_offset={} \
              log_first={log_first} log_follow={} top={}{list}{}{}{}",
             self.focus,
             self.selected,
             self.diff_cursor,
+            self.marks.len(),
             self.working.unstaged.len(),
             self.working.staged.len(),
+            format!("{:?}", self.repo_state).to_lowercase(),
+            self.working.conflicted.len(),
             self.history.commits.len(),
             self.history.load,
             self.commit_offset,
@@ -1530,6 +1571,7 @@ impl App {
         }
         self.head = s.head;
         self.refs = s.refs;
+        self.branches.recent = s.recent_checkouts;
         self.remotes = s.remotes;
         self.stashes = s.stashes;
         self.worktrees = s.worktrees;
@@ -1642,8 +1684,10 @@ impl App {
                 self.load_detail();
             }
         }
-        // Its refs may have changed (the history's `refs_by_commit`).
+        // Its refs may have changed (the history's `refs_by_commit`); sorting by date
+        // reads its commit times.
         self.rewrap_header();
+        self.rebuild_sidebar();
     }
 
     /// Selects commit list row `row` and loads its detail.
@@ -2063,10 +2107,21 @@ impl App {
             None => gitti_core::rows::NoteWrap::None,
         };
         self.commit_fs = self.shown_commit_fs();
+        self.folders = Default::default();
         self.rows = match &self.detail {
             Detail::Worktree => {
                 self.worktree_totals = gitti_core::rows::WorktreeTotals::of(&self.working);
-                gitti_core::rows::build_worktree_rows_noted(&self.working, None, &self.expansion, wrap, &notes)
+                self.marks.retain(&self.working);
+                let (rows, folders) = gitti_core::rows::build_worktree_view(
+                    &self.working,
+                    None,
+                    &self.expansion,
+                    wrap,
+                    &notes,
+                    self.changes_tree,
+                );
+                self.folders = folders;
+                rows
             }
             Detail::Commit(cv) => {
                 let mut rows = vec![DiffRow::HeaderSpace; self.header.len()];
@@ -2089,6 +2144,7 @@ impl App {
     }
 
     pub fn rebuild_sidebar(&mut self) {
+        self.update_branch_order();
         self.sidebar = sidebar::build(self);
         self.side_cursor = self.side_cursor.min(self.sidebar.len().saturating_sub(1));
     }
@@ -2667,8 +2723,6 @@ impl App {
         if entries.is_empty() {
             return;
         }
-        let plan = DiscardPlan::of(self.repo.workdir(), &entries);
-        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let n = entries.len();
         let (title, question, done) = match group {
             None => (
@@ -2687,9 +2741,25 @@ impl App {
                 "Untracked files deleted",
             ),
         };
+        self.discard_entries(entries, "Discard all", title, question, done);
+    }
+
+    /// The confirmation of discarding the unstaged changes of `entries` (several files: a
+    /// group, a folder, marked files): `question`, what happens to each kind of file, then
+    /// one discard; `done` starts the status line's report.
+    pub(crate) fn discard_entries(
+        &mut self,
+        entries: Vec<gitti_core::status::StatusEntry>,
+        label: &'static str,
+        title: &'static str,
+        question: String,
+        done: &'static str,
+    ) {
+        let plan = DiscardPlan::of(self.repo.workdir(), &entries);
+        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let run = move |app: &mut App, opts: DiscardOptions| {
             let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
-            app.work_op_noted("Discard all", paths, move |r| {
+            app.work_op_noted(label, paths, move |r| {
                 let report = r.discard_with(&entries.iter().collect::<Vec<_>>(), opts)?;
                 Ok(Some(gitti_core::discard::done_note(done, &report)))
             })
@@ -2750,8 +2820,13 @@ impl App {
             self.apply_selection(sel.src, sel.file, sel.to_selection(), mode);
             return;
         }
+        // Marked files: the action is theirs.
+        if !self.marks.is_empty() {
+            return self.marks_action(mode);
+        }
         let row = self.rows.get(self.diff_cursor).copied();
         match row {
+            Some(DiffRow::Folder { .. }) => self.folder_action(mode),
             Some(DiffRow::Group(group)) if want == Src::Unstaged => match mode {
                 PatchMode::Discard => self.discard_unstaged(Some(group)),
                 _ => self.stage_group(group),
@@ -2938,6 +3013,10 @@ impl App {
                     MenuItem::new("Open in Merge Editor", move |app| app.open_merge_editor(p))
                         .key('e')
                 }
+                A::MergeTool => MenuItem::new("Open in External Merge Tool", move |app| {
+                    app.open_external_merge_tool(p)
+                })
+                .key('x'),
                 A::MarkResolved => {
                     let shown = path.clone();
                     MenuItem::new("Mark Resolved", move |app| {
@@ -3343,6 +3422,7 @@ impl App {
         match f {
             FollowUp::SplitDone { prefix, id, message } => self.split_done(&prefix, id, &message),
             FollowUp::Overwrite(plan) => self.overwrite_confirm(*plan),
+            FollowUp::SubmodulesRefused(refused, retry) => self.submodules_refused(*refused, retry),
             FollowUp::Switch(target, block) => {
                 // What blocks, then one entry per way out, each explained.
                 let name = target.name().to_string();
@@ -3490,6 +3570,35 @@ impl App {
         if let Some((title, items)) = self.context_menu_spec() {
             self.modal = Some(Modal::menu(title, items));
         }
+    }
+
+    /// The menu of ref `r` (a right click on its badge in the commit list): its sidebar
+    /// entry's, custom commands included. No git.
+    pub fn ref_menu(&mut self, r: &RefInfo) {
+        let item = match r.kind {
+            RefKind::LocalBranch => SideItem::Branch {
+                current: self.current_branch() == Some(r.short_name.as_str()),
+                tracking: self.tracking_of(&r.short_name).cloned(),
+                name: r.short_name.clone(),
+                pinned: self.is_pinned(&r.full_name),
+            },
+            RefKind::RemoteBranch => SideItem::RemoteBranch {
+                pinned: self.is_pinned(&r.full_name),
+                full: r.short_name.clone(),
+                short: self
+                    .remotes
+                    .iter()
+                    .find_map(|rm| r.short_name.strip_prefix(&format!("{}/", rm.name)))
+                    .unwrap_or(&r.short_name)
+                    .to_string(),
+            },
+            RefKind::Tag => SideItem::Tag {
+                name: r.short_name.clone(),
+            },
+            _ => return self.context_menu(),
+        };
+        let items = self.side_menu_items(&item);
+        self.modal = Some(Modal::menu(item.title(), items));
     }
 
     /// The focused thing's context menu (title, items) — what `m` opens and the key bar
@@ -3908,6 +4017,7 @@ impl App {
                 };
                 items.extend(self.restore_file_items(src, file));
                 items.extend(self.lfs_menu_items());
+                items.extend(self.external_diff_item(src, file));
                 items.push(MenuItem::new("Copy Path", move |app| app.copy(path)));
                 // The file's custom commands (the diff cursor's file).
                 items.extend(self.custom_menu_items(
@@ -3926,6 +4036,7 @@ impl App {
             }
             _ => {}
         }
+        items.extend(self.marks_menu_items());
         if matches!(self.detail, Detail::Worktree) {
             items.extend(self.worktree_items());
             items.push(MenuItem::separator());
@@ -3940,6 +4051,9 @@ impl App {
             items.push(MenuItem::new("Show Changes Only", move |app| {
                 app.show_changes_only(Some(file));
             }));
+        }
+        if matches!(self.detail, Detail::Worktree) {
+            items.push(self.tree_menu_item());
         }
         items.push(MenuItem::new("Expand All Files", |app| {
             app.set_all_expanded(true)
@@ -4064,6 +4178,8 @@ impl App {
                 app.set_list_layout(l)
             })
         }));
+        // The sidebar's branch order and the multi-branch deletes (`app/branch_cmds.rs`).
+        items.extend(self.branch_palette_items());
         items.extend([
             PickItem::new("Expand All Files", "", |app: &mut App| {
                 app.set_all_expanded(true)
@@ -4193,6 +4309,7 @@ impl App {
         }
         items.extend(self.compare_palette_items());
         items.extend(self.stash_palette_items());
+        items.extend(self.file_marks_palette_items());
         // Last: on an equal match the everyday commands come first ("merge").
         items.extend(self.subtree_palette_items());
         items.extend(self.custom_palette_items());
@@ -4369,6 +4486,7 @@ impl App {
         }
         self.merge_check_disk();
         self.refresh(false);
+        self.open_next();
     }
 
     /// The copy entries (label, text) of the header line under the detail cursor: the

@@ -1,0 +1,103 @@
+//! The sidebar's branch lists (`app/branch_cmds.rs`): sort choices from the section menu
+//! and the palette (no git, remembered), "Pin to Top" (remembered per repository), and the
+//! multi-branch deletes — "Clean Up Merged Branches…" and "Delete Branches…" with its
+//! Force box for an unmerged branch.
+
+use crate::common::*;
+use crate::support::*;
+
+/// main: one → two; `side` = one + its own commit (the newest); `done` at one (merged).
+/// Checked out: done, then main again (HEAD's reflog). Sidebar rows by name: 0 BRANCHES,
+/// 1 done, 2 main, 3 side.
+fn fixture() -> tempfile::TempDir {
+    let dir = import_with(
+        &[
+            Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "one\n")] },
+            Commit { branch: "main", from: None, merge: None, msg: "two", files: &[("a.txt", "two\n")] },
+            Commit { branch: "side", from: Some(1), merge: None, msg: "side", files: &[("s.txt", "s\n")] },
+        ],
+        "reset refs/heads/done\nfrom :1\n\n",
+    );
+    git(dir.path(), &["checkout", "-q", "done"]);
+    git(dir.path(), &["checkout", "-q", "main"]);
+    dir
+}
+
+/// The branch names in the order the sidebar's BRANCHES section shows them.
+fn sidebar_order(screen: &str) -> Vec<String> {
+    screen
+        .lines()
+        .skip_while(|l| !l.contains("BRANCHES"))
+        .skip(1)
+        .take_while(|l| !l.contains("WORKTREES"))
+        .filter_map(|l| {
+            let side: String = l.chars().take(24).collect();
+            side.split_whitespace().find(|w| ["done", "main", "side"].contains(w)).map(str::to_string)
+        })
+        .collect()
+}
+
+#[gitti_test::test]
+fn sort_choices_and_pins_run_no_git_and_are_remembered() {
+    let dir = fixture();
+    let config = tempfile::tempdir().unwrap();
+    let script = format!(
+        "cmds;press:backtab;press:g;dump;\
+         press:m;press:up;press:up;press:enter;dump;\
+         press:ctrl-p;{}press:enter;dump;\
+         press:g;press:j;press:j;press:j;press:m;press:up;press:up;press:enter;dump;state;cmds",
+        presses("recently checked out")
+    );
+    let out = gitty_with(dir.path(), config.path(), "120x30", &script);
+    let s = dumps(&out, 30);
+    assert_eq!(sidebar_order(&s[0]), ["done", "main", "side"], "by name: {out}");
+    assert_eq!(sidebar_order(&s[1]), ["side", "main", "done"], "by date: {out}");
+    assert_eq!(sidebar_order(&s[2]), ["main", "done", "side"], "recently checked out: {out}");
+    assert_eq!(sidebar_order(&s[3]), ["side", "main", "done"], "side pinned: {out}");
+    assert!(s[3].contains("side ▴"), "the pin mark: {out}");
+    assert!(states(&out)[0].contains("is pinned"), "{out}");
+    assert_no_git(&cmds(&out)[1..], "sorting and pinning", &out);
+    // The next run: the same choice and pin.
+    let out = gitty_with(dir.path(), config.path(), "120x30", "press:backtab;dump");
+    assert_eq!(sidebar_order(&dumps(&out, 30)[0]), ["side", "main", "done"], "remembered: {out}");
+}
+
+#[gitti_test::test]
+fn clean_up_merged_deletes_the_merged_branch() {
+    let dir = fixture();
+    let d = dir.path();
+    let script = format!(
+        "press:ctrl-p;{}press:enter;wait;state;dump;press:enter;wait;state",
+        presses("clean up merged")
+    );
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "120x40", &script);
+    let st = states(&out);
+    let s = dumps(&out, 40);
+    assert!(st[0].contains("Clean Up Branches Merged into main"), "{out}");
+    assert!(s[0].contains("☑ done") && !s[0].contains("☐ side"), "only the merged one: {out}");
+    assert!(s[0].contains("Delete 1 Branch"), "{out}");
+    assert!(st[1].contains("Deleted 1 branch: done"), "{out}");
+    assert_eq!(rev(d, "refs/heads/done"), "", "{out}");
+    assert_ne!(rev(d, "refs/heads/side"), "", "{out}");
+}
+
+#[gitti_test::test]
+fn delete_branches_needs_force_for_an_unmerged_one() {
+    let dir = fixture();
+    let d = dir.path();
+    // Rows: done (merged), side (not merged) and its Force box.
+    let script = format!(
+        "press:ctrl-p;{}press:enter;wait;state;dump;press:down;press:space;press:enter;wait;state;\
+         press:down;press:space;press:enter;wait;state",
+        presses("delete branches")
+    );
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "120x40", &script);
+    let st = states(&out);
+    let s = dumps(&out, 40);
+    assert!(st[0].contains("Delete Branches"), "{out}");
+    assert!(s[0].contains("☐ side") && s[0].contains("Force: delete side"), "{out}");
+    assert!(st[1].contains("modal="), "blocked without Force: {out}");
+    assert!(!st[2].contains("modal="), "{out}");
+    assert_eq!(rev(d, "refs/heads/side"), "", "forced: {out}");
+    assert_ne!(rev(d, "refs/heads/done"), "", "not ticked: {out}");
+}

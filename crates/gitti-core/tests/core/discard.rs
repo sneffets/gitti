@@ -50,6 +50,7 @@ fn discard(repo: &Repo, entries: &[StatusEntry], opts: DiscardOptions) -> anyhow
 /// it, an ignored file stays (and keeps its folder), the tracked change is restored by one
 /// `git restore` (paths on stdin); the deletion is one entry in the command log and
 /// reports a meter (once per percent at most) to the operation's progress sink.
+/// Workflow: DC-04
 #[gitti_test::test]
 fn discard_all_deletes_thousands_of_untracked_files_in_one_go() {
     let (_tmp, p, repo) = fixture();
@@ -105,6 +106,7 @@ fn discard_all_deletes_thousands_of_untracked_files_in_one_go() {
 /// A folder that is a repository of its own (`git status` lists it as `nested/`): kept and
 /// named, unless deleting it is asked for. Before, `git clean -f` skipped it without a
 /// word and it stayed in the list as if Discard had worked only partly.
+/// Workflow: DC-05
 #[gitti_test::test]
 fn nested_repository_is_kept_and_named_unless_asked() {
     let (_tmp, p, repo) = fixture();
@@ -146,6 +148,7 @@ fn nested_repository_is_kept_and_named_unless_asked() {
 
 /// `status.showUntrackedFiles=normal`: a new folder is one entry (`dir/`), deleted by
 /// `git clean` — a repository inside it is kept and named.
+/// Workflow: DC-05
 #[gitti_test::test]
 fn untracked_folder_entry_keeps_a_repository_inside() {
     let (_tmp, p, repo) = fixture();
@@ -169,6 +172,7 @@ fn untracked_folder_entry_keeps_a_repository_inside() {
 
 /// A file that can't be deleted (its folder is read-only) doesn't stop the rest: every
 /// other file is deleted, the tracked change restored, and the error names the file.
+/// Workflow: DC-06
 #[cfg(unix)]
 #[gitti_test::test]
 fn a_file_that_cannot_be_deleted_does_not_stop_the_others() {

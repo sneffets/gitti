@@ -620,6 +620,12 @@ pub mod testing {
         app.read(cx).script_working()
     }
 
+    /// The active tab's marked files (`unstaged:path`, …), sorted.
+    pub fn marks(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_marks()
+    }
+
     /// Rows of the active tab's history and how it was loaded (`HistoryLoad`).
     pub fn history(ws: &Entity<Workspace>, cx: &App) -> (usize, String) {
         let app = ws.read(cx).active_app().expect("a repository tab");
@@ -813,20 +819,20 @@ pub mod testing {
         out
     }
 
+    /// The active tab's file watcher has its watches in place: an outside change from now
+    /// on is seen.
+    pub fn watcher_armed(ws: &Entity<Workspace>, cx: &App) -> bool {
+        ws.read(cx)
+            .active_app()
+            .is_some_and(|app| app.read(cx).script_watcher_armed())
+    }
+
     /// No operation, refresh or reload of the active tab is running or queued (true without
     /// a repository tab).
     pub fn idle(ws: &Entity<Workspace>, cx: &App) -> bool {
         ws.read(cx)
             .active_app()
             .is_none_or(|app| app.read(cx).script_idle())
-    }
-
-    /// The active tab's file watcher has its watches in place (an outside write from now
-    /// on is reported).
-    pub fn watcher_ready(ws: &Entity<Workspace>, cx: &App) -> bool {
-        ws.read(cx)
-            .active_app()
-            .is_none_or(|app| app.read(cx).script_watcher_ready())
     }
 
     /// The active tab's busy area once it shows: `Commit… [meter] | last output line`
@@ -957,15 +963,26 @@ pub mod testing {
         app.read(cx).script_text_point(area, line, byte)
     }
 
-    /// The commit message editor (`field` = `None`) or the open dialog's field `ix`: the
-    /// window position of its byte `byte` (`None`: not laid out) and its selected text.
+    /// A text input of the active tab, for [`input`].
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum InputBox {
+        /// The commit message editor.
+        Message,
+        /// The open dialog's single-line field `ix`.
+        DialogField(usize),
+        /// The open dialog's multi-line text area (e.g. the tag message).
+        DialogText,
+    }
+
+    /// The window position of `input`'s byte `byte` (`None`: not laid out) and its
+    /// selected text; `None` when there is no such input.
     pub fn input(
         ws: &Entity<Workspace>,
-        field: Option<usize>,
+        input: InputBox,
         byte: usize,
         cx: &App,
     ) -> Option<(Option<Point<Pixels>>, String)> {
-        ws.read(cx).script_app()?.read(cx).script_input(field, byte, cx)
+        ws.read(cx).script_app()?.read(cx).script_input(input, byte, cx)
     }
 
     /// The commit message box's text.
@@ -1052,6 +1069,13 @@ pub mod testing {
         pub commits: usize,
         /// Id of the selected commit (`None` for the worktree row).
         pub selected_commit: Option<String>,
+        /// The selected row of the commit list (`commit-row:N`).
+        pub selected_row: usize,
+        /// The operation git left half-done: `clean`, `merging`, `rebasing`,
+        /// `cherrypicking`, `reverting` (as `gitti_workflow::OpState::name`).
+        pub repo_state: String,
+        /// Paths in the worktree view's conflicted list.
+        pub conflicted: Vec<String>,
         /// Paths in the worktree view's unstaged / staged lists.
         pub unstaged: Vec<String>,
         pub staged: Vec<String>,
@@ -1374,6 +1398,23 @@ actions!(gitti, [StashSelection, RenameStash]);
 // View ▸ Auto / One-Line / Two-Line Commit List; handlers in `app/commit_list.rs`.
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
+// View ▸ Sort (Remote) Branches by …, Branch ▸ Delete Branches… / Clean Up Merged
+// Branches…; handlers in `app/branch_list.rs`.
+actions!(
+    gitti,
+    [
+        SortBranchesByName,
+        SortBranchesByDate,
+        SortBranchesByRecent,
+        SortRemoteBranchesByName,
+        SortRemoteBranchesByDate,
+        DeleteBranches,
+        CleanUpMergedBranches,
+    ]
+);
+// View ▸ Show Changes as Tree; handler in `app/file_marks.rs`.
+actions!(gitti, [ToggleChangesTree]);
+
 // Repository ▸ Run Custom Command… / Custom Commands…; handlers in `app/custom_commands.rs`.
 actions!(gitti, [RunCustomCommand, CustomCommands]);
 
@@ -1528,6 +1569,7 @@ fn menu(name: &str, items: Vec<MenuItem>) -> Menu {
 /// The menus after the app menu (macOS) — File … Help. On Windows /
 /// Linux `set_menus` adds Settings and Exit to File.
 fn menu_bar() -> Vec<Menu> {
+    use gitti_core::branch_order::BranchSort;
     use gitti_core::list_layout::CommitListLayout;
     let file_manager = gitti_core::desktop::file_manager_name();
     vec![
@@ -1564,6 +1606,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("More Context Lines", MoreContext),
                 MenuItem::action("Fewer Context Lines", LessContext),
                 MenuItem::action("Show Whole File", ShowWholeFile),
+                MenuItem::action("Show Changes as Tree", ToggleChangesTree),
                 MenuItem::separator(),
                 MenuItem::action("Bigger Font", ZoomIn),
                 MenuItem::action("Smaller Font", ZoomOut),
@@ -1576,6 +1619,13 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action(CommitListLayout::Auto.label(), CommitListAuto),
                 MenuItem::action(CommitListLayout::OneLine.label(), CommitListOneLine),
                 MenuItem::action(CommitListLayout::TwoLines.label(), CommitListTwoLines),
+                MenuItem::separator(),
+                // The sidebar's branch order (`gitti_core::branch_order`).
+                MenuItem::action(BranchSort::Name.label(false), SortBranchesByName),
+                MenuItem::action(BranchSort::Date.label(false), SortBranchesByDate),
+                MenuItem::action(BranchSort::Recent.label(false), SortBranchesByRecent),
+                MenuItem::action(BranchSort::Name.label(true), SortRemoteBranchesByName),
+                MenuItem::action(BranchSort::Date.label(true), SortRemoteBranchesByDate),
                 MenuItem::separator(),
                 MenuItem::action("Refresh", Refresh),
             ],
@@ -1642,6 +1692,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Rename Current Branch…", RenameCurrentBranch),
                 MenuItem::action("Set Upstream of Current Branch…", SetUpstreamMenu),
                 MenuItem::action("Delete Branch…", DeleteBranchMenu),
+                MenuItem::action("Delete Branches…", DeleteBranches),
+                MenuItem::action("Clean Up Merged Branches…", CleanUpMergedBranches),
             ],
         ),
         menu(

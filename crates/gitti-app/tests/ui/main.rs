@@ -11,9 +11,11 @@
 
 mod common;
 
+mod branches;
 mod commit;
 mod config_safety;
 mod custom_commands;
+mod ext_tools;
 mod fs_paths;
 mod keys;
 mod layout;
@@ -29,6 +31,7 @@ mod submodules;
 mod subtrees;
 mod toolbar;
 mod tooltips;
+mod wf_pilot;
 mod worktrees;
 
 use std::process::Command;
@@ -45,6 +48,7 @@ const SUITES: &[(&str, fn())] = &[
     ("submodules", submodules::main),
     ("subtrees", subtrees::main),
     ("custom_commands", custom_commands::main),
+    ("ext_tools", ext_tools::main),
     ("toolbar", toolbar::main),
     ("tooltips", tooltips::main),
     ("worktrees", worktrees::main),
@@ -54,6 +58,8 @@ const SUITES: &[(&str, fn())] = &[
     ("signature", signature::main),
     ("selection", selection::main),
     ("reflog", reflog::main),
+    ("branches", branches::main),
+    ("wf_pilot", wf_pilot::main),
 ];
 
 fn main() {

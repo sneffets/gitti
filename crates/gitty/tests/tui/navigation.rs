@@ -255,6 +255,7 @@ fn ctrl_home_end_and_ctrl_g_everywhere() {
 
 /// Sidebar: moving, folding, ⏎ on a branch checks it out (on the current one: says so),
 /// ⏎ on a tag jumps to its commit; l / → back to the list.
+/// Workflow: BR-03
 #[gitti_test::test]
 fn sidebar_keys_move_fold_jump_and_checkout() {
     let dir = import(&[

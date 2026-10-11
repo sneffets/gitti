@@ -70,6 +70,7 @@ fn super_repo() -> (tempfile::TempDir, std::path::PathBuf) {
 /// The SUBMODULES section with state marks; a pointer change shows as the submodule's
 /// commits (no raw "Subproject commit" lines) and s stages it as one unit without any
 /// submodule command; staged, the pointer counts as recorded.
+/// Workflow: SM-02
 #[gitti_test::test]
 fn submodule_pointer_change_shows_commits_and_stages_as_one_unit() {
     let (_tmp, sup) = super_repo();
@@ -93,6 +94,7 @@ fn submodule_pointer_change_shows_commits_and_stages_as_one_unit() {
 /// A submodule checked out at an older commit: "1 SUBMODULE OUT OF DATE" and ↓ in the
 /// sidebar; its menu copies the checked-out commit (h = Copy SHA) and offers the recorded
 /// one; the palette's Update Submodules runs `submodule update --init --recursive`.
+/// Workflow: SM-01, SM-03
 #[gitti_test::test]
 fn submodule_out_of_date_badge_and_update_from_the_palette() {
     let (_tmp, sup) = super_repo();
@@ -119,6 +121,7 @@ fn submodule_out_of_date_badge_and_update_from_the_palette() {
 
 /// An uninitialised submodule (a gitlink and `.gitmodules`, nothing cloned): its menu's
 /// Copy SHA copies the commit the parent records, and says so.
+/// Workflow: SM-08
 #[gitti_test::test]
 fn uninitialised_submodule_copies_the_recorded_sha() {
     let dir = fixture(&[(".gitmodules", "[submodule \"lib\"]\n\tpath = lib\n\turl = ../lib.git\n")], &[]);
@@ -141,6 +144,7 @@ fn submodule_commands_without_submodules_say_so() {
 
 /// Palette → Add Submodule…: the URL, the path; `submodule add` runs, the section and the
 /// files appear, .gitmodules and the submodule are staged.
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_a_submodule_from_the_palette() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -167,6 +171,7 @@ fn add_a_submodule_from_the_palette() {
 /// submodule's clone doesn't read it): the dialog says so
 /// while typed, Enter asks first with what allowing does and what lands in .gitmodules;
 /// "Allow for This Add" runs `git -c protocol.file.allow=always submodule add`.
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_a_submodule_from_a_local_path_asks_first() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -201,4 +206,69 @@ fn add_a_submodule_from_a_local_path_asks_first() {
     );
     assert!(dir.path().join("deps/local/s.txt").is_file(), "{out}");
     assert!(s[2].contains("SUBMODULES (1)"), "{out}");
+}
+
+/// An environment without this machine's git config: git refuses the `file` transport for
+/// submodules (its default).
+fn refusing_env(home: &Path) -> String {
+    let global = home.join("gitconfig");
+    std::fs::write(&global, "").unwrap();
+    global.display().to_string()
+}
+
+/// `lib` (one commit) and `super`, which records it as the submodule `libs/lib` by its
+/// local path — not checked out (as after a plain clone): eight git processes.
+fn uninitialised_super() -> (tempfile::TempDir, tempfile::TempDir) {
+    let lib = fixture(&[("l.txt", "1\n")], &[]);
+    let modules = format!("[submodule \"libs/lib\"]\n\tpath = libs/lib\n\turl = {}\n", lib.path().display());
+    let sup = fixture(&[("s.txt", "s\n"), (".gitmodules", modules.as_str())], &[]);
+    let info = format!("160000,{},libs/lib", rev(lib.path(), "HEAD"));
+    git(sup.path(), &["update-index", "--add", "--cacheinfo", &info]);
+    git(sup.path(), &["commit", "-qm", "add lib"]);
+    (lib, sup)
+}
+
+/// Update Submodules where `.gitmodules` names a local path git refuses for submodules
+/// (git's default: no global setting): a menu says which submodule and why, `a` ("Allow
+/// for This Update") runs `git -c protocol.file.allow=always submodule update`.
+#[gitti_test::test]
+fn update_from_a_local_path_asks_first() {
+    let (_lib, sup) = uninitialised_super();
+    let home = tempfile::tempdir().unwrap();
+    let global = refusing_env(home.path());
+    let env = [("GIT_CONFIG_GLOBAL", global.as_str()), ("GIT_CONFIG_NOSYSTEM", "1")];
+    let script = format!("press:ctrl-p;{}key:enter;dump;key:a;cmds;dump", presses("update submodules"));
+    let out = gitty_env(sup.path(), home.path(), "160x45", &env, &script);
+    let s = screens(&out);
+    assert!(s[0].contains("Clone submodules from local paths?") && s[0].contains("libs/lib (from"), "{out}");
+    assert!(s[0].contains("git's default since") && s[0].contains("Allow for This Update"), "{out}");
+    assert!(
+        cmds(&out)[0].iter().any(|l| l.contains("protocol.file.allow=always") && l.contains("submodule update")),
+        "{out}"
+    );
+    assert!(sup.path().join("libs/lib/l.txt").is_file() && s[1].contains("✓ libs/lib"), "{out}");
+}
+
+/// Clone with `--recurse-submodules` of a repository whose submodule git refuses (a
+/// local path): the clone is kept, the menu says why; `a` updates its submodules with
+/// the `file` transport allowed once, then gitty offers to open it.
+#[gitti_test::test]
+fn clone_with_local_submodules_asks_first() {
+    let (_lib, sup) = uninitialised_super();
+    let into = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let global = refusing_env(home.path());
+    let env = [("GIT_CONFIG_GLOBAL", global.as_str()), ("GIT_CONFIG_NOSYSTEM", "1")];
+    let script = format!(
+        "press:ctrl-p;{}press:enter;type:{};press:tab;press:ctrl-u;type:{};press:tab;{}key:enter;dump;key:a;dump",
+        presses("clone repository"),
+        sup.path().display(),
+        into.path().display(),
+        presses("deep")
+    );
+    let out = gitty_env(sup.path(), home.path(), "160x45", &env, &script);
+    let s = screens(&out);
+    assert!(s[0].contains("The repository is cloned") && s[0].contains("Open Without the Submodules"), "{out}");
+    assert!(s[1].contains("Open the new repository?"), "{out}");
+    assert!(into.path().join("deep/libs/lib/l.txt").is_file(), "{out}");
 }

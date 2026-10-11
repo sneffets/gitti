@@ -472,6 +472,7 @@ fn unicode_sidebar(ui: &mut Ui) {
 /// A commit message with CJK, emoji, RTL, combining marks and a long unbroken word in the
 /// editor at every window × font size: the editor stays inside the commit box (invariant),
 /// the Commit button whole, and the text comes back unchanged.
+/// Workflow: CM-20
 fn unicode_message(ui: &mut Ui) {
     let msg = format!(
         "修正：{JP} 👩‍👩‍👧‍👦\\n\\n{RTL}\\n{COMB}{COMB} zoë é\u{301}\\n{}\\nzero\u{200b}width",
@@ -519,6 +520,7 @@ fn git_out(dir: &Path, args: &[&str]) -> String {
 /// Line staging on Unicode lines (wrapped, so the line has several rows): selecting one
 /// row of the long CJK line stages the whole line exactly; unstaging it puts it back; the
 /// same for a line in the RTL file.
+/// Workflow: ST-21
 fn unicode_staging(ui: &mut Ui) {
     let dir = ui.repo.clone();
     ui.step("select:0");

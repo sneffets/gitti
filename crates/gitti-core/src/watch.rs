@@ -29,15 +29,15 @@ use crate::git_cli::Git;
 /// Keeps the watcher alive; drop it to stop watching.
 pub struct RepoWatcher {
     stop: Sender<Ev>,
-    ready: Arc<AtomicBool>,
+    armed: Arc<AtomicBool>,
 }
 
 impl RepoWatcher {
-    /// Whether its watches are in place (or setting them up failed): a change from now on
-    /// is reported. Before that, one on macOS / Windows (a recursive watch, no scan of
-    /// what changed meanwhile) can be missed.
-    pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire)
+    /// The watches are in place: changes from now on are reported. On Linux what changed
+    /// since [`watch`] was called is found by its mtime; with a recursive OS watch (macOS,
+    /// Windows) a change before this point is not seen.
+    pub fn is_armed(&self) -> bool {
+        self.armed.load(Ordering::Acquire)
     }
 }
 
@@ -328,8 +328,8 @@ pub fn watch(workdir: &Path, on_change: impl Fn(Change) + Send + 'static) -> Res
         }
     })?;
     let workdir = workdir.to_path_buf();
-    let ready = Arc::new(AtomicBool::new(false));
-    let set_up = ready.clone();
+    let armed = Arc::new(AtomicBool::new(false));
+    let armed_flag = armed.clone();
     std::thread::Builder::new()
         .name("gitti-watch".into())
         .spawn(move || {
@@ -342,21 +342,21 @@ pub fn watch(workdir: &Path, on_change: impl Fn(Change) + Send + 'static) -> Res
                 watched: HashSet::new(),
                 limited: false,
             };
-            run(tree, since, rx, &set_up, on_change)
+            run(tree, since, rx, &armed_flag, on_change)
         })?;
-    Ok(RepoWatcher { stop: tx, ready })
+    Ok(RepoWatcher { stop: tx, armed })
 }
 
 fn run(
     mut tree: Tree,
     since: SystemTime,
     rx: Receiver<Ev>,
-    ready: &AtomicBool,
+    armed: &AtomicBool,
     on_change: impl Fn(Change),
 ) {
     let t0 = Instant::now();
     let setup = tree.setup(since);
-    ready.store(true, Ordering::Release);
+    armed.store(true, Ordering::Release);
     if std::env::var_os("GITTI_PROFILE").is_some() {
         eprintln!(
             "[profile] watcher setup: {} dirs watched in {:?}{}",
@@ -1145,6 +1145,7 @@ mod tests {
         assert_eq!(f.needs(&change(d, &[("wt-head", Rules)], late), || stamp), Some(Snapshot));
     }
 
+    /// Workflow: EX-01
     #[gitti_test::test]
     fn worktree_changes_need_only_their_paths() {
         use PathKind::*;

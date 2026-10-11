@@ -256,6 +256,7 @@ fn link_target(p: &Path) -> String {
 /// `chmod +x` alone: a diff with `old mode` / `new mode` and no hunks. Staging it (the
 /// whole file, `apply_selection` of a hunkless diff) sets 100755 in the index; unstaging
 /// takes it back; discarding resets the worktree file's mode.
+/// Workflow: EX-12
 #[cfg(unix)]
 #[gitti_test::test]
 fn mode_only_change_stages_unstages_and_discards() {
@@ -302,6 +303,7 @@ fn mode_only_change_stages_unstages_and_discards() {
 }
 
 /// 100755 → 100644 (dropping +x) is the same in the other direction.
+/// Workflow: EX-12
 #[cfg(unix)]
 #[gitti_test::test]
 fn removing_the_exec_bit_stages() {
@@ -470,6 +472,7 @@ fn new_executable_file_partial_stage_keeps_mode() {
 
 /// `core.fileMode=false` (e.g. repositories on vfat / NTFS mounts): `chmod` is no change
 /// at all, and line staging keeps the recorded mode whatever the worktree says.
+/// Workflow: EX-12
 #[cfg(unix)]
 #[gitti_test::test]
 fn core_filemode_false_ignores_the_exec_bit() {
@@ -502,6 +505,7 @@ fn core_filemode_false_ignores_the_exec_bit() {
 
 /// A new symlink is an untracked entry (no preview: it is not a regular file); staging,
 /// unstaging and discarding it act on the link, never on its target.
+/// Workflow: FS-05
 #[cfg(unix)]
 #[gitti_test::test]
 fn new_symlink_stage_unstage_discard() {
@@ -549,6 +553,7 @@ fn staged_new_symlink_unstages_as_a_hunk() {
 /// newline). Hunk stage / unstage / discard repoint the link; any line selection acts as
 /// the whole hunk (a link target is one value — staging "just the added line" would
 /// make a target with a newline in it).
+/// Workflow: FS-05
 #[cfg(unix)]
 #[gitti_test::test]
 fn changed_symlink_target_hunk_and_lines() {
@@ -654,6 +659,7 @@ fn read_versions_of_names_with_newlines() {
 
 /// A symlink to a directory is one entry (git does not descend into it); discarding the
 /// untracked link removes the link only.
+/// Workflow: FS-05
 #[cfg(unix)]
 #[gitti_test::test]
 fn symlink_to_directory() {
@@ -684,6 +690,7 @@ fn symlink_to_directory() {
 }
 
 /// A dangling symlink is listed, staged and discarded like any other.
+/// Workflow: FS-05
 #[cfg(unix)]
 #[gitti_test::test]
 fn dangling_symlink() {
@@ -714,6 +721,7 @@ fn dangling_symlink() {
 }
 
 /// A deleted symlink: hunk stage / unstage / discard.
+/// Workflow: FS-05
 #[cfg(unix)]
 #[gitti_test::test]
 fn deleted_symlink_hunks() {
@@ -739,6 +747,7 @@ fn deleted_symlink_hunks() {
 
 /// A regular file replaced by a symlink (status `T`): listed once per side, and the
 /// hunk / line operations of the UI act on the whole type change.
+/// Workflow: EX-13
 #[cfg(unix)]
 #[gitti_test::test]
 fn file_to_symlink_type_change() {
@@ -782,6 +791,7 @@ fn file_to_symlink_type_change() {
 }
 
 /// A symlink replaced by a regular file: the other direction.
+/// Workflow: EX-13
 #[cfg(unix)]
 #[gitti_test::test]
 fn symlink_to_file_type_change() {
@@ -857,6 +867,7 @@ const UNIX_NAMES: &[&str] = &[
 
 /// `Foo` and `foo` are two files on a case-sensitive file system: each is staged on its
 /// own, line by line.
+/// Workflow: FS-03
 #[cfg(target_os = "linux")]
 #[gitti_test::test]
 fn case_sensitive_names_are_separate_files() {
@@ -892,6 +903,7 @@ fn case_sensitive_names_are_separate_files() {
 
 /// A rename that only changes the case: delete + untracked in the worktree, a rename
 /// once both are staged; unstaging takes both back.
+/// Workflow: RN-01, FS-03
 #[cfg(target_os = "linux")]
 #[gitti_test::test]
 fn rename_only_in_case() {
@@ -949,6 +961,7 @@ fn rename_only_in_case() {
 }
 
 /// NFC and NFD spellings of "café" are two different files on Linux.
+/// Workflow: FS-04
 #[cfg(target_os = "linux")]
 #[gitti_test::test]
 fn unicode_nfc_and_nfd_names_are_separate_files() {
@@ -973,6 +986,7 @@ fn unicode_nfc_and_nfd_names_are_separate_files() {
 }
 
 /// A file name that is not UTF-8 (Latin-1 "é"): listed, and refresh does not fail.
+/// Workflow: NU-04
 #[cfg(target_os = "linux")]
 #[gitti_test::test]
 fn non_utf8_name_is_listed() {
@@ -991,6 +1005,7 @@ fn non_utf8_name_is_listed() {
 #[gitti_test::test]
 #[ignore = "paths are Strings (lossy UTF-8): a non-UTF-8 name becomes U+FFFD and \
             git does not find it"]
+/// Workflow: NU-04
 fn non_utf8_name_stages() {
     use std::os::unix::ffi::OsStrExt;
     let fx = fixture(&[("keep.txt", "k\n")]);
@@ -1012,6 +1027,7 @@ fn non_utf8_name_stages() {
 
 /// File content that is not UTF-8 (Latin-1 text): hunk and line staging move the exact
 /// bytes (more in `non_utf8::`).
+/// Workflow: NU-01
 #[gitti_test::test]
 fn latin1_content_stages_lines() {
     let fx = fixture(&[("l1.txt", "a\n")]);
@@ -1027,6 +1043,7 @@ fn latin1_content_stages_lines() {
 /// `chmod 000` on a modified tracked file: `git diff` dies on it ("cannot hash"). The
 /// refresh still works: the file is listed without a diff, every other file has its
 /// diff, and whole-file operations on the others work.
+/// Workflow: EX-23
 #[cfg(unix)]
 #[gitti_test::test]
 fn unreadable_tracked_file_does_not_break_the_refresh() {
@@ -1124,6 +1141,7 @@ fn unreadable_untracked_directory() {
 
 /// A directory with tracked files that becomes unreadable (`chmod 000`: not even
 /// `lstat` of its entries works): no panic, no error; the files show as deleted.
+/// Workflow: EX-23
 #[cfg(unix)]
 #[gitti_test::test]
 fn unreadable_directory_with_tracked_files() {
@@ -1150,6 +1168,7 @@ fn unreadable_directory_with_tracked_files() {
 
 /// Discarding the deleted files of a directory replaced by a file, in the order the UI
 /// lists them (tracked first) — and the untracked file alone.
+/// Workflow: EX-14
 #[gitti_test::test]
 fn directory_replaced_by_file_discard_in_steps() {
     let fx = fixture(&[("d/a.txt", "a\n"), ("keep", "k\n")]);
@@ -1187,6 +1206,7 @@ fn no_eol_both_sides_discard_one_side() {
 
 /// A file in a directory reached through a tracked symlink is outside the repository
 /// (git refuses `beyond a symbolic link`): staging fails cleanly.
+/// Workflow: FS-06
 #[cfg(unix)]
 #[gitti_test::test]
 fn path_beyond_a_symlink_is_refused() {
@@ -1202,6 +1222,7 @@ fn path_beyond_a_symlink_is_refused() {
 
 /// Hard links: two tracked names for the same inode; changing one changes both, and they
 /// stage independently.
+/// Workflow: FS-07
 #[cfg(unix)]
 #[gitti_test::test]
 fn hard_linked_files_stage_independently() {
@@ -1224,6 +1245,7 @@ fn hard_linked_files_stage_independently() {
 
 /// A FIFO / socket-like special file in the worktree is ignored by git (not a regular
 /// file, not a link): the refresh does not block or fail on it.
+/// Workflow: FS-07
 #[cfg(unix)]
 #[gitti_test::test]
 fn fifo_in_worktree_does_not_block() {
@@ -1247,6 +1269,7 @@ fn fifo_in_worktree_does_not_block() {
 
 /// A read-only (0444) tracked file: discarding a line rewrites it (git replaces the file
 /// through a new inode, which works in a writable directory), and the mode bits stay.
+/// Workflow: DC-09
 #[cfg(unix)]
 #[gitti_test::test]
 fn read_only_file_discard_lines() {
@@ -1263,6 +1286,7 @@ fn read_only_file_discard_lines() {
 
 /// Files in a read-only directory: staging works (only the index changes), discarding
 /// fails cleanly and leaves the file as it was.
+/// Workflow: DC-06
 #[cfg(unix)]
 #[gitti_test::test]
 fn read_only_directory() {
@@ -1534,6 +1558,7 @@ fn odd_names_changed() -> (Vec<&'static str>, Fx, WorkingState, String) {
 /// Tracked files with odd names, all in one repository: one status, every diff parsed
 /// with its own path, hunk and line stage / unstage (one patch for all files per step),
 /// the path-limited re-read.
+/// Workflow: NU-05
 #[gitti_test::test]
 fn odd_names_tracked_hunks_and_lines() {
     let (names, fx, state, base) = odd_names_changed();
@@ -1572,6 +1597,7 @@ fn odd_names_tracked_hunks_and_lines() {
 
 /// Tracked files with odd names: line and hunk discard (one patch for all files), then
 /// whole-file stage / unstage / discard and the path-limited re-read.
+/// Workflow: NU-05
 #[gitti_test::test]
 fn odd_names_tracked_discard_and_whole_files() {
     let (names, fx, state, base) = odd_names_changed();
@@ -1604,6 +1630,7 @@ fn odd_names_tracked_discard_and_whole_files() {
 
 /// Untracked files with odd names: preview, partial stage, partial unstage of the added
 /// file, unstage of the rest.
+/// Workflow: NU-05
 #[gitti_test::test]
 fn odd_names_untracked_partial_stage_and_unstage() {
     let names = odd_names();
@@ -1636,6 +1663,7 @@ fn odd_names_untracked_partial_stage_and_unstage() {
 }
 
 /// Untracked files with odd names: discard of single lines, deletion.
+/// Workflow: NU-05
 #[gitti_test::test]
 fn odd_names_untracked_discard_lines_and_files() {
     let names = odd_names();
@@ -1664,6 +1692,7 @@ fn odd_names_untracked_discard_lines_and_files() {
 
 /// Deleted files with odd names: partial stage of the deletion (header rewritten to a
 /// modification), unstage, the whole deletion, unstaging one line of it, discard.
+/// Workflow: NU-05
 #[gitti_test::test]
 fn odd_names_deleted_partial_stage_and_discard() {
     let names = odd_names();
@@ -1716,6 +1745,7 @@ fn odd_names_deleted_partial_stage_and_discard() {
 /// Whole-file operations take a path literally: a name with glob characters or pathspec
 /// magic must not also hit the files it would match as a pattern (all pairs in one
 /// repository: no name may hit any other file).
+/// Workflow: ST-07
 #[gitti_test::test]
 fn whole_file_operations_take_paths_literally() {
     #[cfg_attr(not(unix), allow(unused_mut))]
@@ -1769,6 +1799,7 @@ fn whole_file_operations_take_paths_literally() {
 
 /// A tracked directory replaced by a file of the same name: its files are deleted, the
 /// file is untracked; stage / unstage / discard bring either state back.
+/// Workflow: EX-14
 #[gitti_test::test]
 fn directory_replaced_by_file() {
     let fx = fixture(&[("d/a.txt", "a\n"), ("d/b.txt", "one\ntwo\n"), ("keep", "k\n")]);
@@ -1801,6 +1832,7 @@ fn directory_replaced_by_file() {
 }
 
 /// A tracked file replaced by a directory of the same name.
+/// Workflow: EX-14
 #[gitti_test::test]
 fn file_replaced_by_directory() {
     let fx = fixture(&[("f", "one\ntwo\n"), ("keep", "k\n")]);
@@ -1839,6 +1871,7 @@ fn file_replaced_by_directory() {
 /// Empty files: a new empty file has no hunks and stages as a whole; an empty tracked
 /// file gets lines (staged one by one) and loses them again; an emptied file stays in
 /// the index (emptied, not deleted); an empty file deleted is a hunkless deletion.
+/// Workflow: FS-07
 #[gitti_test::test]
 fn empty_files() {
     let fx = fixture(&[("empty", ""), ("full", "a\nb\n"), ("gone", "")]);
@@ -1889,6 +1922,7 @@ fn empty_files() {
 /// The last line changes and neither version ends with a newline: staging only the
 /// added line keeps the old last line (which now needs a newline), staging only the
 /// removed line drops it; unstaging one side of the staged change likewise.
+/// Workflow: EX-11
 #[gitti_test::test]
 fn no_eol_both_sides_stage_and_unstage_one_side() {
     let fx = fixture(&[("f", "x\na"), ("g", "x\na")]);
@@ -1911,6 +1945,7 @@ fn no_eol_both_sides_stage_and_unstage_one_side() {
 
 /// A newline added at the end (`a` → `a\n`) or removed, and lines appended after a last
 /// line without newline: partial selections.
+/// Workflow: EX-11
 #[gitti_test::test]
 fn no_eol_added_or_removed() {
     let fx = fixture(&[("f", "x\na"), ("g", "x\na\n")]);
@@ -1950,6 +1985,7 @@ fn no_eol_untracked_partial() {
 }
 
 /// Very long lines (200 KB, one with no newline at all) diff and stage byte-exactly.
+/// Workflow: BG-02
 #[gitti_test::test]
 fn very_long_lines() {
     let long_a = "a".repeat(200_000);
@@ -1977,6 +2013,7 @@ fn very_long_lines() {
 /// A binary file next to text files: listed with a hunkless binary diff; text lines of
 /// the neighbours stage as usual; the binary file stages as a whole; a patch of a binary
 /// diff is an error, not a broken index.
+/// Workflow: BN-01
 #[gitti_test::test]
 fn binary_next_to_text() {
     let fx = fixture(&[("a.txt", "a\nb\n"), ("z.txt", "z\n")]);
@@ -2008,6 +2045,7 @@ fn binary_next_to_text() {
 }
 
 /// A text file that becomes binary and back.
+/// Workflow: EX-10, BN-02
 #[gitti_test::test]
 fn text_becomes_binary() {
     let fx = fixture(&[("f", "text\n")]);

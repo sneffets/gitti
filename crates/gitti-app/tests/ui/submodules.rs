@@ -69,6 +69,8 @@ pub fn main() {
         ("pointer_diff_rows", pointer_diff_rows),
         ("no_submodules", no_submodules),
         ("add_local_path_asks", add_local_path_asks),
+        ("update_local_path_asks", update_local_path_asks),
+        ("long_message_dialogs", long_message_dialogs),
         ("sidebar_menus", sidebar_menus),
         ("checkout_commit", checkout_commit),
         ("own_commit_is_seen", own_commit_is_seen),
@@ -78,6 +80,12 @@ pub fn main() {
     common::run(tests, |name| {
         if name == "no_submodules" || name == "add_local_path_asks" {
             make_repo(&base().join(name))
+        } else if name == "update_local_path_asks" {
+            // A plain clone: its submodules not initialised.
+            let dir = base().join(name).join("super");
+            std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
+            git(dir.parent().unwrap(), &["clone", "-q", &template().join("super").display().to_string(), "super"]);
+            dir
         } else {
             let dir = base().join(name).join("super");
             copy_dir(&template().join("super"), &dir).unwrap();
@@ -180,6 +188,7 @@ fn font_sweep(ui: &mut Ui, ctx: &str, must_show: &[&str]) {
 /// The section lists both submodules (nested one indented after its parent) as up to
 /// date; checking the submodule out at an older commit shows the banner, whose Update
 /// brings it back (and the banner goes); a double click opens the submodule in a tab.
+/// Workflow: SM-01, SM-03
 fn sidebar_banner_update(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let want = ["libs/lib up to date", "libs/lib/vendor/inner up to date"];
@@ -243,6 +252,7 @@ fn sidebar_banner_update(ui: &mut Ui) {
 /// Two new commits in the submodule: the working-directory diff shows the summary and
 /// both commit subjects as `submodule` rows (no hunk / line rows), staging the file moves
 /// it as a whole and runs no submodule command; the layout holds at every font size.
+/// Workflow: SM-02
 fn pointer_diff_rows(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let sub = sup.join("libs/lib");
@@ -326,6 +336,7 @@ fn no_submodules(ui: &mut Ui) {
 /// dialog says so under the fields, OK asks first — what allowing does, what lands in
 /// .gitmodules — and "Allow for This Add" adds it with `-c protocol.file.allow=always`. A
 /// URL gets no note.
+/// Workflow: SM-04
 fn add_local_path_asks(ui: &mut Ui) {
     let dir = workdir(ui);
     let config = dir.join(".git/config");
@@ -364,6 +375,7 @@ fn add_local_path_asks_steps(ui: &mut Ui) {
     {
         fail!(ui, "no confirmation before the add: {title:?} {message}");
     }
+    open_dialog_sweep(ui, "allow a local path");
     if !submodules(ui).is_empty() {
         fail!(ui, "added before the confirmation: {:?}", submodules(ui));
     }
@@ -374,6 +386,180 @@ fn add_local_path_asks_steps(ui: &mut Ui) {
     if !ui.git_commands().iter().any(|c| c.contains("protocol.file.allow=always") && c.contains("submodule add")) {
         fail!(ui, "no -c protocol.file.allow=always: {:?}", ui.git_commands());
     }
+}
+
+/// Update Submodules where `.gitmodules` names local paths git refuses for submodules
+/// (the suite's global config says `protocol.file.allow = user` meanwhile): no bare
+/// error but a dialog naming the submodule, its URL and the setting; "Allow for This
+/// Update" runs the update with `-c protocol.file.allow=always` and both submodules are
+/// up to date. Cloning that repository with `--recurse-submodules`: the clone opens in a
+/// new tab, which asks the same; allowed, its submodules are up to date too.
+fn update_local_path_asks(ui: &mut Ui) {
+    let global = PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").unwrap());
+    let saved = std::fs::read_to_string(&global).unwrap();
+    std::fs::write(&global, "[protocol \"file\"]\n\tallow = user\n").unwrap();
+    update_local_path_asks_steps(ui);
+    std::fs::write(&global, saved).unwrap();
+}
+
+fn update_local_path_asks_steps(ui: &mut Ui) {
+    let want = ["libs/lib up to date", "libs/lib/vendor/inner up to date"];
+    if submodules(ui) != ["libs/lib not initialised"] {
+        fail!(ui, "at the start: {:?}", submodules(ui));
+    }
+    let asks = |ui: &mut Ui, ctx: &str, cloned: bool| {
+        let (title, message) = (modal_title(ui), modal_message(ui));
+        if title.as_deref() != Some("Clone Submodules From Local Paths?")
+            || !message.contains("the submodule libs/lib (from ")
+            || !message.contains("protocol.file.allow = user")
+            || message.starts_with("The repository is cloned") != cloned
+        {
+            fail!(ui, "{ctx}: no question about the local path: {title:?} {message}");
+        }
+    };
+    ui.step("action:gitti::UpdateSubmodules");
+    asks(ui, "update", false);
+    open_dialog_sweep(ui, "clone submodules from local paths");
+    if submodules(ui) != ["libs/lib not initialised"] {
+        fail!(ui, "updated before the question: {:?}", submodules(ui));
+    }
+    ui.step("modalok");
+    if submodules(ui) != want {
+        fail!(ui, "after Allow for This Update: {:?}", submodules(ui));
+    }
+    if !ui.git_commands().iter().any(|c| c.contains("protocol.file.allow=always") && c.contains("submodule update")) {
+        fail!(ui, "no -c protocol.file.allow=always: {:?}", ui.git_commands());
+    }
+
+    ui.quick("action:gitti::CloneRepository");
+    ui.quick(&format!("field:0={}", template().join("super").display()));
+    ui.quick(&format!("field:1={}", base().display()));
+    ui.quick("field:2=cloned-recursive");
+    ui.step("modalok");
+    let opened = ui.wait_real(5000, |ui| tabs(ui).0 == 2 && modal_title(ui).is_some());
+    if !opened || workdir(ui) != base().join("cloned-recursive") {
+        let (t, w) = (tabs(ui), workdir(ui));
+        fail!(ui, "clone not opened with a question: {t:?} {}", w.display());
+        return;
+    }
+    asks(ui, "clone", true);
+    ui.step("modalok");
+    if !ui.wait_real(5000, |ui| submodules(ui) == want) {
+        fail!(ui, "clone after Allow for This Update: {:?}", submodules(ui));
+    }
+}
+
+/// The open dialog at the sweep points (default window and fonts; 800x500 with fonts
+/// 28/32), left open: the dialog and its buttons whole in the window; the first field (if
+/// any) has the focus and is in view as it opens (whole, or 40 px of it where the message
+/// above it fills the scrolling part: the message is read first); the message is cut
+/// nowhere — its top shows as the dialog opens, and the scrolling part shows the rest of
+/// it and every field whole, wheel by wheel.
+fn open_dialog_sweep(ui: &mut Ui, ctx: &str) {
+    let points = common::sweep(
+        &[((1500., 950.), (13., 13.)), ((1000., 640.), (20., 22.)), ((800., 500.), (28., 32.))],
+        &[0, 2],
+    );
+    for ((w, h), (f_ui, f_diff)) in points {
+        ui.resize(w, h);
+        ui.step(&format!("fonts:{f_ui},{f_diff}"));
+        let ctx = format!("{ctx} at {w}x{h} fonts {f_ui}/{f_diff}");
+        dialog_reachable(ui, &ctx);
+    }
+    ui.resize(1500., 950.);
+    ui.step("fonts:13,13");
+}
+
+/// See [`open_dialog_sweep`]: one point; scrolls the dialog back to its top afterwards.
+fn dialog_reachable(ui: &mut Ui, ctx: &str) {
+    let p = ui.check(&format!("{ctx}, opened"));
+    let (Some(m), Some(body)) = (find(&p, "modal"), find(&p, "modal-body")) else {
+        fail!(ui, "{ctx}: no dialog");
+        return;
+    };
+    let body = body.bounds;
+    if m.visible() != Some(m.bounds) {
+        fail!(ui, "{ctx}: dialog {:?} not whole in the window ({:?})", m.bounds, m.visible());
+    }
+    match find(&p, "modal-ok") {
+        Some(ok) if ok.visible() == Some(ok.bounds) && body.bottom() <= ok.bounds.top() => {}
+        other => fail!(ui, "{ctx}: OK not whole below the scrolling part: {:?}", other.map(|o| o.bounds)),
+    }
+    let whole_in_body = |q: &Probe| {
+        q.visible() == Some(q.bounds)
+            && q.bounds.top() + px(0.5) >= body.top()
+            && q.bounds.bottom() <= body.bottom() + px(0.5)
+    };
+    let shown = |q: &Probe| {
+        whole_in_body(q) || q.visible().is_some_and(|v| v.size.height + px(0.5) >= px(40.).min(q.bounds.size.height))
+    };
+    if find(&p, "modal-field:0").is_some() {
+        match find(&p, "modal-focus") {
+            Some(f) if shown(f) => {}
+            other => fail!(ui, "{ctx}: the first field not focused and whole in view: {:?} in {body:?}",
+                other.map(|f| (f.bounds, f.visible()))),
+        }
+    }
+    // The message's top as it opens; then every part shown, wheel by wheel.
+    let message = find(&p, "modal-message").map(|q| q.bounds);
+    let parts: Vec<String> = p
+        .iter()
+        .filter(|q| matches!(q.kind(), "modal-field" | "modal-check"))
+        .map(|q| q.name.clone())
+        .collect();
+    let (mut top_seen, mut bottom_seen) = (false, message.is_none());
+    let mut seen: Vec<String> = Vec::new();
+    let (x, y) = (f32::from(body.center().x), f32::from(body.center().y));
+    // Small steps: a part is seen whole even where it barely fits.
+    let page = (f32::from(body.size.height) * 0.25).max(20.);
+    for step in 0..40 {
+        let p = if step == 0 {
+            p.clone()
+        } else {
+            ui.step(&format!("wheel:{x},{y},{page}"));
+            ui.check(&format!("{ctx}, scrolled {step}"))
+        };
+        if let Some(q) = find(&p, "modal-message").and_then(|q| q.visible().map(|v| (q.bounds, v))) {
+            let (b, v) = q;
+            top_seen |= step == 0 && v.top() <= b.top() + px(0.5);
+            bottom_seen |= v.bottom() + px(0.5) >= b.bottom();
+        }
+        seen.extend(parts.iter().filter(|n| find(&p, n).is_some_and(whole_in_body)).cloned());
+        if bottom_seen && parts.iter().all(|n| seen.contains(n)) {
+            break;
+        }
+    }
+    if message.is_some() && !(top_seen && bottom_seen) {
+        fail!(ui, "{ctx}: message cut (top shown {top_seen}, bottom reached {bottom_seen}), {message:?} in {body:?}");
+    }
+    let missed: Vec<&String> = parts.iter().filter(|n| !seen.contains(n)).collect();
+    if !missed.is_empty() {
+        fail!(ui, "{ctx}: not reachable by scrolling: {missed:?}");
+    }
+    ui.step(&format!("wheel:{x},{y},-100000"));
+}
+
+/// The submodule dialogs with long messages and the Clone dialog at the sweep points (see
+/// [`open_dialog_sweep`]): Clone, Add Submodule (with a local path's note), Remove
+/// Submodule (its local work listed).
+fn long_message_dialogs(ui: &mut Ui) {
+    let sup = ui.repo.clone();
+    std::fs::write(sup.join("libs/lib/l.txt"), "local work\n").unwrap();
+    std::fs::write(sup.join("libs/lib/untracked.txt"), "u\n").unwrap();
+    ui.step("key:secondary-r");
+    ui.quick("action:gitti::CloneRepository");
+    open_dialog_sweep(ui, "clone");
+    ui.quick("cancel");
+    ui.quick("action:gitti::AddSubmodule");
+    ui.quick(&format!("field:0={}", template().join("lib").display()));
+    open_dialog_sweep(ui, "add submodule");
+    ui.quick("cancel");
+    ui.step("submodule:remove,libs/lib");
+    if !modal_message(ui).contains("local work is lost") {
+        fail!(ui, "remove dialog without the local work: {}", modal_message(ui));
+    }
+    open_dialog_sweep(ui, "remove submodule");
+    ui.quick("cancel");
 }
 
 fn modal_title(ui: &mut Ui) -> Option<String> {
@@ -391,6 +577,7 @@ fn modal_message(ui: &mut Ui) -> String {
 /// to commit); the diff's menu on the pointer change ends with the submodule's actions
 /// (Remove Submodule… last), whose dialog names the local work that gets lost; removing
 /// stages `.gitmodules` + the pointer and the section goes.
+/// Workflow: SM-01, SM-05
 fn stage2_nested_remote_remove(ui: &mut Ui) {
     let sup = ui.repo.clone();
     // (The submodule's origin: the template's `lib`, shared — this scenario runs last.)
@@ -546,6 +733,7 @@ fn head(p: &Path) -> String {
 /// without the banner offering to undo it; staging + committing the pointer records it
 /// (the sidebar shows recorded → checked out until then); a detached commit nothing else
 /// has makes it ask first.
+/// Workflow: SM-06
 fn checkout_commit(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let sub = sup.join("libs/lib");
@@ -651,6 +839,7 @@ fn checkout_commit(ui: &mut Ui) {
 /// `.git/modules/` (`libs/lib` is on a branch: its branch ref moves; the nested `inner`
 /// is detached: its HEAD): the file watcher sees both and the superproject shows the
 /// new state without a refresh by hand.
+/// Workflow: SM-07
 fn own_commit_is_seen(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let lib = sup.join("libs/lib");

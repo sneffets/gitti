@@ -80,6 +80,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("RunCustomCommand", "Run Custom Command…"),
     both("CustomCommands", "Custom Commands…"),
     both("ToggleWrap", "Wrap Lines"),
+    both("ToggleChangesTree", "Changes as Tree"),
     both("ToggleWhitespace", "Ignore Whitespace"),
     both("MoreContext", "More Context Lines"),
     both("LessContext", "Fewer Context Lines"),
@@ -94,6 +95,12 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("CommitListAuto", "Auto Commit List Layout"),
     both("CommitListOneLine", "One-Line Commit List"),
     both("CommitListTwoLines", "Two-Line Commit List"),
+    // The sidebar's branch order (`branch_order::BranchSort::label`).
+    both("SortBranchesByName", "Sort Branches by Name"),
+    both("SortBranchesByDate", "Sort Branches by Last Commit Date"),
+    both("SortBranchesByRecent", "Sort Branches by Recently Checked Out"),
+    both("SortRemoteBranchesByName", "Sort Remote Branches by Name"),
+    both("SortRemoteBranchesByDate", "Sort Remote Branches by Last Commit Date"),
     both("Refresh", "Refresh"),
     // Repository
     both("OpenInFileManager", "Open in {fm}"),
@@ -149,6 +156,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("RenameCurrentBranch", "Rename Current Branch…"),
     both("SetUpstreamMenu", "Set Upstream of Current Branch…"),
     both("DeleteBranchMenu", "Delete Branch…"),
+    both("DeleteBranches", "Delete Branches…"),
+    both("CleanUpMergedBranches", "Clean Up Merged Branches…"),
     // Commit
     both("Commit", "Commit"),
     both("StageAllAndCommit", "Stage All and Commit"),

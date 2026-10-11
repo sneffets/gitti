@@ -216,6 +216,7 @@ fn switcher_repo() -> tempfile::TempDir {
 }
 
 /// The branch switcher (b): ↓ ↑ move, typing filters, ⏎ checks out. Moving runs no git.
+/// Workflow: BR-03
 #[gitti_test::test]
 fn branch_switcher_moves_filters_and_checks_out() {
     let dir = switcher_repo();
@@ -241,6 +242,7 @@ fn branch_switcher_moves_filters_and_checks_out() {
 
 /// The branch switcher's other keys (pgdn pgup ctrl-n ctrl-j ctrl-k tab shift-tab
 /// ctrl-p), "no matches", esc closes. Moving runs no git.
+/// Workflow: BR-03
 #[gitti_test::test]
 fn branch_switcher_keys_no_matches_and_esc() {
     let dir = switcher_repo();
@@ -264,6 +266,7 @@ fn branch_switcher_keys_no_matches_and_esc() {
 
 /// "merge" finds Merge Branch into Current…; ⏎ lists the other branches and the tags,
 /// picking one merges it. "new" finds the Create… and Add… commands too.
+/// Workflow: MG-01
 #[gitti_test::test]
 fn palette_merge_picker_and_synonyms() {
     let dir = import_with(
@@ -298,6 +301,7 @@ fn palette_merge_picker_and_synonyms() {
 
 /// The "… Current Branch…" commands on a detached HEAD say so instead of doing
 /// nothing; merging into a detached HEAD is offered (git does it).
+/// Workflow: BR-16
 #[gitti_test::test]
 fn palette_branch_commands_on_a_detached_head() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -326,6 +330,7 @@ fn offs(out: &str) -> Vec<&str> {
 /// gitti uses, `gitti_core::availability`); ⏎ on it says why in the status line and runs
 /// no git. A clean repository without remotes, stashes or submodules; its Working
 /// Directory menu greys the same way.
+/// Workflow: CP-17
 #[gitti_test::test]
 fn palette_and_menu_grey_what_cannot_act_with_the_reason() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);

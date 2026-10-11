@@ -28,7 +28,7 @@ use gpui_kit::*;
 
 use super::GittiApp;
 use super::modal::{ModalLive, ModalSpec};
-use gitti_core::submodule::add::FilePermission;
+use gitti_core::submodule::add::{ALLOW_UPDATE, FilePermission, FileRefused};
 use super::picker::PickerItem;
 use super::repo_actions::AppEvent;
 use crate::probe::ProbeExt as _;
@@ -54,6 +54,16 @@ enum SubCommand {
 
 /// The out-of-date submodules a dismissed banner was about (it comes back when they change).
 pub(super) type BannerKey = Vec<(String, Option<ObjectId>)>;
+
+/// What [`GittiApp::submodules_refused`] runs again with the `file` transport allowed.
+#[derive(Debug, Clone)]
+pub enum RetryUpdate {
+    /// Update Submodules of `paths` (empty = all), `remote`: to their remote branches.
+    Update { paths: Vec<String>, remote: bool },
+    /// The submodules of this repository, just cloned with `--recurse-submodules`
+    /// (`note`: what else the clone has to say).
+    Clone { note: Option<String> },
+}
 
 fn item(
     label: impl Into<SharedString>,
@@ -431,21 +441,7 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let what = match paths.as_slice() {
-            [one] => one.clone(),
-            _ => "submodules".to_string(),
-        };
-        self.run_op(
-            "Updating submodules",
-            true,
-            window,
-            cx,
-            move |r| {
-                let p: Vec<&str> = paths.iter().map(String::as_str).collect();
-                r.update_submodules(&p)
-            },
-            move |this, _, _, _| this.set_info(format!("Updated {what}")),
-        );
+        self.run_update(paths, false, false, window, cx);
     }
 
     /// `git submodule update --init --recursive --remote [-- paths]` (empty = all): the
@@ -456,25 +452,89 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.run_update(paths, true, false, window, cx);
+    }
+
+    /// Update Submodules (`remote`: to their remote branches; `allow_file`: the user
+    /// agreed to clone from local paths this once). git's refusal of a local path
+    /// (`submodule::add::FileRefused`) ends in [`Self::submodules_refused`], not an error.
+    fn run_update(
+        &mut self,
+        paths: Vec<String>,
+        remote: bool,
+        allow_file: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let what = match paths.as_slice() {
             [one] => one.clone(),
             _ => "submodules".to_string(),
         };
+        let label = if remote {
+            "Updating submodules to their remote branches"
+        } else {
+            "Updating submodules"
+        };
+        let retry = paths.clone();
         self.run_op(
-            "Updating submodules to their remote branches",
+            label,
             true,
             window,
             cx,
             move |r| {
                 let p: Vec<&str> = paths.iter().map(String::as_str).collect();
-                r.update_submodules_remote(&p)
+                match r.update_submodules_with(&p, remote, allow_file) {
+                    Ok(out) => Ok(Ok(out)),
+                    Err(e) => e.downcast::<FileRefused>().map(Err),
+                }
             },
-            move |this, _, _, _| {
-                this.set_info(format!(
+            move |this, result, window, cx| match result {
+                Ok(_) if remote => this.set_info(format!(
                     "Updated {what} to the remote branch — commit the new pointers to record them"
-                ))
+                )),
+                Ok(_) => this.set_info(format!("Updated {what}")),
+                Err(refused) => {
+                    let retry = RetryUpdate::Update { paths: retry, remote };
+                    this.submodules_refused(refused, retry, window, cx)
+                }
             },
         );
+    }
+
+    /// git refused to clone submodules from a local path (Update Submodules, or the
+    /// clone of this repository with `--recurse-submodules`): says which and why, and
+    /// offers the update again with the `file` transport allowed for that one command —
+    /// nothing written to a config. Refused by `GIT_ALLOW_PROTOCOL`: only says what to
+    /// change.
+    pub fn submodules_refused(
+        &mut self,
+        refused: FileRefused,
+        retry: RetryUpdate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cloned = matches!(retry, RetryUpdate::Clone { .. });
+        let (paths, remote, note) = match retry {
+            RetryUpdate::Update { paths, remote } => (paths, remote, None),
+            RetryUpdate::Clone { note } => (Vec::new(), false, note),
+        };
+        let mut text = refused.explain(cloned);
+        if let Some(n) = note {
+            text = format!("{n}\n\n{text}");
+        }
+        if refused.blocked {
+            self.set_error("Submodules not cloned: GIT_ALLOW_PROTOCOL doesn't allow local paths".into());
+            self.show_notice("Submodules Not Cloned", text, window, cx);
+            return;
+        }
+        self.set_info("Submodules not cloned yet: git refuses local paths unless allowed");
+        let spec = ModalSpec::new("Clone Submodules From Local Paths?")
+            .message(text)
+            .ok(ALLOW_UPDATE)
+            .cancel(Some("Not Now"));
+        self.open_modal(spec, window, cx, move |this, _, w, cx| {
+            this.run_update(paths, remote, true, w, cx)
+        });
     }
 
     /// Remove Submodule… from the menu bar / palette: the one there is, or a picker.

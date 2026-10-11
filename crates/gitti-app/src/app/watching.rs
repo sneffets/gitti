@@ -46,12 +46,6 @@ impl GittiApp {
         .detach();
     }
 
-    /// Whether the file watcher's watches are in place (no watcher: true) — scripts and
-    /// tests write outside changes only then.
-    pub fn script_watcher_ready(&self) -> bool {
-        self._watcher.as_ref().is_none_or(|w| w.is_ready())
-    }
-
     /// A file-system change: refreshes what it touched, unless that was read after it
     /// already. The watcher's notice (watch limit reached) shows once.
     pub(super) fn on_watch(&mut self, change: Change, window: &mut Window, cx: &mut Context<Self>) {

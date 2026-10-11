@@ -45,6 +45,7 @@ fn ignore_fixture() -> (tempfile::TempDir, std::path::PathBuf, Repo) {
 /// expendable: `gen.txt`, ignored here and tracked there, is silently replaced), the
 /// build output stays and shows as untracked there — the status line says why — and the
 /// way back works and ignores it again.
+/// Workflow: BR-10
 #[gitti_test::test]
 fn switching_to_fewer_ignore_rules_shows_ignored_files_as_untracked() {
     let (_tmp, p, repo) = ignore_fixture();
@@ -80,6 +81,7 @@ fn switching_to_fewer_ignore_rules_shows_ignored_files_as_untracked() {
 
 /// A switch between branches with the same `.gitignore` files costs no extra git call
 /// (the rules are compared in-process).
+/// Workflow: BR-03
 #[gitti_test::test]
 fn same_ignore_rules_cost_no_extra_git() {
     let mut h = History::new();
@@ -120,6 +122,7 @@ fn blocked(repo: &Repo, target: &SwitchTarget) -> SwitchBlock {
 /// A folder with untracked files where the target has a file: git's "would lose untracked
 /// files in them" is a block like the others (before, a bare error). Delete & Switch
 /// deletes only those files; Stash & Switch keeps them in a stash.
+/// Workflow: BR-08
 #[gitti_test::test]
 fn folder_with_untracked_files_where_the_target_has_a_file() {
     let (_tmp, p, repo) = block_fixture();
@@ -151,6 +154,7 @@ fn folder_with_untracked_files_where_the_target_has_a_file() {
 
 /// An untracked file where the target has a folder: git names it once per file of that
 /// folder; the block lists it once.
+/// Workflow: BR-08
 #[gitti_test::test]
 fn untracked_file_where_the_target_has_a_folder_is_listed_once() {
     let mut h = History::new();
@@ -167,6 +171,7 @@ fn untracked_file_where_the_target_has_a_folder_is_listed_once() {
 /// message after 4 KiB) — the block is completed, else Stash & Switch would stash a part
 /// and fail again. They go into the stash by one `git stash push` that reads the paths
 /// from stdin (a command line has a limit — Windows: 32k characters).
+/// Workflow: BR-09
 #[gitti_test::test]
 fn many_blocking_untracked_files_are_stashed_in_one_go() {
     let mut h = History::new();
@@ -202,6 +207,7 @@ fn many_blocking_untracked_files_are_stashed_in_one_go() {
 
 /// Local changes that conflict with the target: Discard & Switch drops only those (an
 /// unrelated change is carried over); Force Switch drops every change.
+/// Workflow: BR-04, BR-08
 #[gitti_test::test]
 fn discard_and_force_switch_drop_local_changes() {
     let (_tmp, p, repo) = block_fixture();

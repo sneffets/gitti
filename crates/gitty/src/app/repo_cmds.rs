@@ -201,8 +201,13 @@ impl App {
                     let progress = &mut |l: &str| {
                         let _ = tx.send(Msg::Progress(l.to_string()));
                     };
-                    let (path, note) =
-                        gitti_core::create::clone_repo_noted(r.git(), &url, &dest, recurse, progress)?;
+                    let c = gitti_core::create::clone_repo_outcome(r.git(), &url, &dest, recurse, progress)?;
+                    let (path, note) = (c.dir, c.note);
+                    // Submodules git refused from local paths: allow them once, then open?
+                    if let Some(refused) = c.refused {
+                        let retry = super::submodules::RetryUpdate::Clone { dir: path, note };
+                        return Err(super::FollowUp::SubmodulesRefused(Box::new(refused), retry).into());
+                    }
                     // The note (paths that collided) goes into the "Open?" question.
                     Ok(match note {
                         Some(note) => format!("cloned into {}\n\n{note}", path.display()),

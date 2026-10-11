@@ -3,6 +3,7 @@
 //! Split by area: `sidebar`, `commit_list`, `diff_view`, `modal` (dialogs + askpass),
 //! `menus` (context menus and the operations behind them).
 
+mod branch_list;
 mod change_search;
 mod commit_box;
 mod commit_list;
@@ -12,6 +13,8 @@ mod context_lines;
 mod config_ui;
 mod conflict_ui;
 mod diff_view;
+mod ext_tools;
+mod file_marks;
 mod file_tabs;
 mod folder_picker;
 mod from_commit;
@@ -60,7 +63,7 @@ mod worktree_tabs;
 mod worktrees;
 
 pub(crate) use overlay_keys::intercept as intercept_overlay_keys;
-pub(crate) use menus::take_menu_labels;
+pub(crate) use menus::{run_menu_entry, take_menu_labels};
 pub(crate) use signers::set_open_repos;
 pub(crate) use unavailable::set_tab_count;
 pub(crate) use startup_ui::WHERE as STARTUP_TIMINGS_WHERE;
@@ -105,6 +108,7 @@ pub use reflog::ReflogState;
 pub use modal::AskRequest;
 pub use settings_view::{ShortcutLine, shortcut_lines};
 pub use repo_actions::AppEvent;
+pub use submodules::RetryUpdate;
 pub use spell_ui::SpellTarget;
 pub(crate) use spell_ui::take_last_editor_menu;
 use modal::Modal;
@@ -260,6 +264,10 @@ pub struct GittiApp {
     /// Counts commit loads: the [`SLOW_LOAD`] timer of one that has ended does nothing.
     commit_load_gen: u64,
     rows: Arc<Vec<DiffRow>>,
+    /// The folder rows of `rows` (the working directory as a tree; empty when flat).
+    folders: gitti_core::rows::Folders,
+    /// Files marked for an action on several (⌘ / shift-click on file headers).
+    file_marks: gitti_core::rows::FileMarks,
     expansion: Expansion,
     line_sel: Option<LineSel>,
     dragging: bool,
@@ -366,6 +374,8 @@ pub struct GittiApp {
     paths_queued: Option<Vec<String>>,
     /// Collapsed sidebar groups ("branches", "remotes", "remote:origin", "tags", "stashes").
     collapsed: HashSet<String>,
+    /// The sidebar's branch order, pins, recent checkouts (`branch_list.rs`).
+    branches: branch_list::BranchState,
     modal: Option<Modal>,
     ask_queue: std::collections::VecDeque<AskRequest>,
     /// The helper waiting for the shown credential dialog (it closes when that goes away).
@@ -645,6 +655,8 @@ impl GittiApp {
             commit_loading: false,
             commit_load_gen: 0,
             rows: Arc::new(Vec::new()),
+            folders: Default::default(),
+            file_marks: Default::default(),
             expansion: Expansion::default(),
             line_sel: None,
             dragging: false,
@@ -699,6 +711,7 @@ impl GittiApp {
             paths_in_flight: false,
             paths_queued: None,
             collapsed: HashSet::new(),
+            branches: Default::default(),
             modal: None,
             ask_queue: Default::default(),
             ask_shown: None,
@@ -1002,6 +1015,8 @@ impl GittiApp {
         let prev_working = std::mem::replace(&mut self.working, Arc::new(s.working));
         self.head = s.head;
         self.refs = s.refs;
+        self.branches.recent = s.recent_checkouts;
+        self.update_branch_order();
         self.remotes = s.remotes;
         self.stashes = s.stashes;
         self.repo_state = s.state;
@@ -1104,6 +1119,8 @@ impl GittiApp {
             .filter(|_| !self.history.is_worktree_row(self.selected))
             .map(|c| c.id);
         self.history = Arc::new(hist);
+        // Sorting by date reads the new history's commit times.
+        self.update_branch_order();
         let new_sel = match selected_id {
             Some(id) => self.history.row_of(&id).unwrap_or(0),
             None => 0,
@@ -1179,6 +1196,7 @@ impl GittiApp {
         let wrap = self.wrap();
         let before = self.rows.clone();
         self.commit_fs = self.shown_commit_fs();
+        self.folders = Default::default();
         self.rows = Arc::new(match &self.detail {
             Detail::Worktree => self.worktree_rows(wrap),
             Detail::Commit(cv) => {
@@ -2454,6 +2472,11 @@ impl GittiApp {
     }
 
     /// Stage/unstage the current line selection.
+    /// Whether selected lines of section `src` are what s / u act on.
+    fn has_line_selection(&self, src: Src) -> bool {
+        self.line_sel.as_ref().is_some_and(|s| s.src == src && !s.lines.is_empty())
+    }
+
     fn apply_line_selection(&mut self, want: Src, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sel) = self.line_sel.clone() else {
             return;
@@ -2588,12 +2611,7 @@ impl GittiApp {
             cx.notify();
             return;
         }
-        let plan = match &self.repo {
-            Some(r) => DiscardPlan::of(r.workdir(), &entries),
-            None => return,
-        };
         let n = entries.len();
-        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let (title, done) = match group {
             None => (
                 format!("Discard all unstaged changes in {n} file(s)?"),
@@ -2608,6 +2626,27 @@ impl GittiApp {
                 "Untracked files deleted",
             ),
         };
+        self.discard_entries(entries, title, done, "Discard All", window, cx);
+    }
+
+    /// The confirmation of discarding the unstaged changes of `entries` (several files: all,
+    /// a group, a folder, marked files): `title` asks, the detail says what happens to each
+    /// kind of file; then one discard and a re-read of those paths. `done` starts the status
+    /// bar's report, `button` confirms.
+    pub(super) fn discard_entries(
+        &mut self,
+        entries: Vec<gitti_core::status::StatusEntry>,
+        title: String,
+        done: &'static str,
+        button: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let plan = match &self.repo {
+            Some(r) => DiscardPlan::of(r.workdir(), &entries),
+            None => return,
+        };
+        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let run = move |this: &mut Self, opts: DiscardOptions, window: &mut Window, cx: &mut Context<Self>| {
             let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
             this.work_op_noted("Discarding", paths, window, cx, move |r| {
@@ -2620,7 +2659,7 @@ impl GittiApp {
             None => plan.detail(),
         };
         if plan.nested.is_empty() {
-            self.confirm(title, Some(detail), "Discard All", window, cx, move |this, w, cx| {
+            self.confirm(title, Some(detail), button, window, cx, move |this, w, cx| {
                 run(this, DiscardOptions::default(), w, cx)
             });
             return;
@@ -2629,7 +2668,7 @@ impl GittiApp {
         let spec = modal::ModalSpec::new(title)
             .message(detail)
             .check(plan.nested_check(), false)
-            .ok("Discard All")
+            .ok(button)
             .danger();
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let opts = DiscardOptions {
@@ -2732,11 +2771,17 @@ impl GittiApp {
         if self.defer_while_busy(|this, w, cx| this.stage_selection(w, cx)) {
             return;
         }
+        if !self.has_line_selection(Src::Unstaged) && self.marks_action(PatchMode::Stage, window, cx) {
+            return;
+        }
         self.apply_line_selection(Src::Unstaged, window, cx);
     }
 
     pub fn unstage_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.defer_while_busy(|this, w, cx| this.unstage_selection(w, cx)) {
+            return;
+        }
+        if !self.has_line_selection(Src::Staged) && self.marks_action(PatchMode::Unstage, window, cx) {
             return;
         }
         self.apply_line_selection(Src::Staged, window, cx);
@@ -2845,10 +2890,10 @@ impl GittiApp {
     }
 
     fn on_focus_list(&mut self, _: &FocusCommitList, window: &mut Window, cx: &mut Context<Self>) {
-        // Esc in the diff: hides revealed unchanged lines first ("Show Changes Only"),
-        // then ends compare mode (the focus stays).
+        // Esc in the diff: clears marked files first, then hides revealed unchanged lines
+        // ("Show Changes Only"), then ends compare mode (the focus stays).
         if self.diff_focus.is_focused(window)
-            && (self.esc_changes_only(cx) || self.end_compare(cx))
+            && (self.clear_marks(cx) || self.esc_changes_only(cx) || self.end_compare(cx))
         {
             return;
         }
@@ -3225,6 +3270,11 @@ impl GittiApp {
         (self.history.commits.len(), format!("{:?}", self.history.load))
     }
 
+    /// The file watcher's watches are in place (tests).
+    pub fn script_watcher_armed(&self) -> bool {
+        self._watcher.as_ref().is_some_and(|w| w.is_armed())
+    }
+
     pub fn script_idle(&self) -> bool {
         self.busy.is_none()
             && !self.refresh_in_flight
@@ -3308,21 +3358,24 @@ impl GittiApp {
         self.drag_targets.point(area, line, byte)
     }
 
-    /// Script hook: the commit message editor (`field` = `None`) or the open dialog's
-    /// field: where its byte `byte` was laid out (inside the character) and its selected
+    /// Script hook: the commit message editor, a field or the text area of the open
+    /// dialog: where its byte `byte` was laid out (inside the character) and its selected
     /// text.
     pub fn script_input(
         &self,
-        field: Option<usize>,
+        input: crate::testing::InputBox,
         byte: usize,
         cx: &App,
     ) -> Option<(Option<Point<Pixels>>, String)> {
-        let (bounds, text) = match field {
-            None => {
-                let m = self.message.read(cx);
-                (m.range_to_bounds(&(byte..byte + 1)), m.selected_value())
-            }
-            Some(ix) => {
+        use crate::testing::InputBox;
+        let area = |a: &Entity<TextareaState>| {
+            let a = a.read(cx);
+            (a.range_to_bounds(&(byte..byte + 1)), a.selected_value())
+        };
+        let (bounds, text) = match input {
+            InputBox::Message => area(&self.message),
+            InputBox::DialogText => area(self.modal.as_ref()?.text_area()?),
+            InputBox::DialogField(ix) => {
                 let f = self.modal.as_ref()?.field_input(ix)?.read(cx);
                 (f.range_to_bounds(&(byte..byte + 1)), f.selected_value())
             }
@@ -3613,7 +3666,9 @@ impl Render for GittiApp {
         let root = self.menu_cmd_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
+        let root = self.file_marks_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
+        let root = self.branch_list_actions(root, cx);
         let root = self.worktree_actions(root, cx);
         let root = self.submodule_actions(root, cx);
         let root = self.subtree_actions(root, cx);

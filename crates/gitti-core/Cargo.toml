@@ -61,6 +61,8 @@ filetime = "0.2"
 [dev-dependencies]
 tempfile = "3"
 gitti-test.workspace = true
+# Workflow tests (`wf_*`): fixtures, "another program", expectations.
+gitti-workflow.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

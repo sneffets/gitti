@@ -13,6 +13,7 @@ use support::*;
 
 /// s on a hunk, u on a staged file header: each one `git apply` / `git restore` plus
 /// queries limited to its path; moving the cursor runs nothing.
+/// Workflow: ST-01, ST-07
 #[gitti_test::test]
 fn stage_a_hunk_and_unstage_a_file_with_path_limited_git() {
     let dir = two_file_repo();
@@ -42,6 +43,7 @@ fn stage_a_hunk_and_unstage_a_file_with_path_limited_git() {
 
 /// space selects one line, s stages only it (the unselected `+` line is dropped); d on a
 /// line of another hunk asks, then discards that hunk's lines — the rest of the file stays.
+/// Workflow: ST-02, DC-01
 #[gitti_test::test]
 fn stage_a_single_line_and_discard_lines_after_asking() {
     let dir = two_file_repo();
@@ -73,6 +75,7 @@ fn stage_a_single_line_and_discard_lines_after_asking() {
 
 /// S / U, D with every key that keeps the changes (n, N, q, esc) and Y that discards —
 /// untracked files too; in a commit's diff s / u / d only explain.
+/// Workflow: ST-08, DC-03
 #[gitti_test::test]
 fn stage_all_unstage_all_discard_all_with_confirmations() {
     let dir = two_file_repo();
@@ -98,6 +101,7 @@ fn stage_all_unstage_all_discard_all_with_confirmations() {
 /// D with an untracked folder that is a repository of its own: the menu says it is kept
 /// unless asked; `d` discards the rest and the status line names what was kept (its diff
 /// pane says what it is), `x` deletes it too.
+/// Workflow: DC-05
 #[gitti_test::test]
 fn discard_all_keeps_a_nested_repository_unless_asked() {
     let dir = two_file_repo();
@@ -127,6 +131,7 @@ fn discard_all_keeps_a_nested_repository_unless_asked() {
 }
 
 /// On the section headers: s stages all, u unstages all, d asks (Esc keeps).
+/// Workflow: ST-08
 #[gitti_test::test]
 fn section_headers_stage_unstage_and_discard_all() {
     let dir = two_file_repo();
@@ -142,6 +147,7 @@ fn section_headers_stage_unstage_and_discard_all() {
 }
 
 /// Keys pressed while a stage runs are not refused: they run after it.
+/// Workflow: ST-15
 #[gitti_test::test]
 fn keys_pressed_during_a_stage_run_after_it() {
     // Five hunks in one file.
@@ -165,6 +171,7 @@ fn keys_pressed_during_a_stage_run_after_it() {
 /// back; ctrl-s refuses an empty message (focus stays); with nothing to commit it offers
 /// an empty commit (esc declines); alt-⏎ commits; A fills in HEAD's message and
 /// ticks amend (again: empties it); ctrl-⏎ amends.
+/// Workflow: CM-01, CM-02, CM-03, CM-09
 #[gitti_test::test]
 fn commit_message_keys_commit_and_amend() {
     let dir = two_file_repo();
@@ -198,6 +205,7 @@ fn commit_message_keys_commit_and_amend() {
 
 /// A file that is not UTF-8: its lines are shown decoded, the file row
 /// names the encoding, and a line staged by line reaches the index as its exact bytes.
+/// Workflow: EX-09, NU-01
 #[gitti_test::test]
 fn latin1_line_stages_exactly() {
     let dir = fixture(&[("l.txt", "a\nb\nc\n")], &[]);
@@ -228,6 +236,7 @@ fn latin1_line_stages_exactly() {
 /// untracked file would come along); with none: "Create Empty Commit" (y) makes a commit
 /// without changes. (The palette's entries: `palette.rs`; the
 /// refusal of an empty commit with files staged: core's `ops` tests.)
+/// Workflow: CM-08
 #[gitti_test::test]
 fn nothing_staged_offers_stage_all_or_an_empty_commit() {
     let dir = two_file_repo();
@@ -269,6 +278,7 @@ fn nothing_staged_offers_stage_all_or_an_empty_commit() {
 /// The typed message is a draft per worktree — it survives quitting gitty and is
 /// back at the next start (also for gitti, same db); a failed commit (hook) keeps it, a
 /// successful one drops it.
+/// Workflow: CM-10
 #[gitti_test::test]
 fn commit_message_draft_survives_a_restart_until_committed() {
     let dir = two_file_repo();
@@ -306,6 +316,7 @@ fn commit_message_draft_survives_a_restart_until_committed() {
 /// An edited amend message is a draft for the commit it amends — not the commit draft:
 /// quit and started again, A brings it back; once HEAD moved, A takes HEAD's message;
 /// the amend that succeeds drops it.
+/// Workflow: CM-05
 #[gitti_test::test]
 fn amend_draft_comes_back_for_its_commit() {
     let dir = two_file_repo();

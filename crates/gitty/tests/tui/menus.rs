@@ -33,6 +33,7 @@ fn worktree_menu_keys_open_move_close_and_run() {
 /// A right click selects the commit and opens its menu (`.` too): Create Tag Here… (an
 /// annotated tag: its multi-line message in an editor, kept as typed, `#` lines too),
 /// Create Branch Here… (not checked out).
+/// Workflow: BR-02, TG-01
 #[gitti_test::test]
 fn commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -69,6 +70,7 @@ fn three_commits() -> tempfile::TempDir {
 }
 
 /// Edit Commit Message (m, e) of HEAD: esc drops the edit, alt-⏎ saves it.
+/// Workflow: CM-15
 #[gitti_test::test]
 fn commit_menu_rewords_head() {
     let dir = three_commits();
@@ -86,6 +88,7 @@ fn commit_menu_rewords_head() {
 }
 
 /// Edit Commit Message of an older commit: the history above it is rewritten.
+/// Workflow: CM-16
 #[gitti_test::test]
 fn commit_menu_rewords_an_older_commit() {
     let dir = three_commits();
@@ -267,6 +270,7 @@ fn main_worktree_alone_copy_sha_and_the_setting() {
 }
 
 /// Sidebar menu actions: Rename… a branch, Delete a tag.
+/// Workflow: BR-11, TG-04
 #[gitti_test::test]
 fn sidebar_menus_rename_a_branch_and_delete_a_tag() {
     let (dir, _wt) = sidebar_fixture();
@@ -287,6 +291,7 @@ fn sidebar_menus_rename_a_branch_and_delete_a_tag() {
 }
 
 /// Sidebar menu actions: Drop a stash (asks), the STASHES header's Stash Changes….
+/// Workflow: SH-11, SH-14
 #[gitti_test::test]
 fn sidebar_menus_drop_a_stash_and_the_stashes_header() {
     let (dir, _wt) = sidebar_fixture();
@@ -321,6 +326,7 @@ fn dialog_text(screen: &str) -> String {
 
 /// z: esc cancels; the message, "Include untracked" (off as in git, space turns it on),
 /// the fields moved by ↓ ↑ tab shift-tab; ⏎ stashes.
+/// Workflow: SH-01, SH-02
 #[gitti_test::test]
 fn stash_dialog_fields_checkboxes_and_cancel() {
     let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n"), ("u.txt", "untracked\n")]);
@@ -404,6 +410,7 @@ fn view_toggles_whitespace_wrap_and_log_are_kept() {
 
 /// + / = / - change the context lines (the diffs again with -U4 …), T the history order
 /// (in-process: only `stash list` may run).
+/// Workflow: ST-12
 #[gitti_test::test]
 fn view_toggles_context_lines_and_history_order() {
     let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n")]);
@@ -579,6 +586,7 @@ fn header_ids_copy_from_their_menus_and_y() {
 /// Restore from a commit (palette): the path, the version before the commit, then a menu
 /// saying what it writes and that the local change is lost ("Overwrite My Changes and
 /// Restore"). "Branches and Tags Containing Selected Commit…" lists main without git.
+/// Workflow: RS-06
 #[gitti_test::test]
 fn restore_from_a_commit_and_branches_containing_it() {
     let dir = three_commits();
@@ -646,6 +654,7 @@ fn git_log_menu_opens_and_copies_links() {
 
 /// The tag menu's Show Tag: lightweight says it is only a name; annotated shows tagger
 /// and the whole message.
+/// Workflow: TG-02
 #[gitti_test::test]
 fn show_tag_lightweight_and_annotated() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);

@@ -8,6 +8,7 @@ use gitti_core::Repo;
 
 use crate::fx::{self, Import, put};
 
+/// Workflow: SH-14
 #[gitti_test::test]
 fn stash_branch_checks_out_a_branch_with_the_stash() {
     let tmp = tempfile::tempdir().unwrap();

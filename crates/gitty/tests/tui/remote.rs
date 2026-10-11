@@ -63,6 +63,7 @@ fn fast_import(dir: &Path, stream: &str) {
     assert!(child.wait().unwrap().success());
 }
 
+/// Workflow: RM-02, RM-03
 #[gitti_test::test]
 fn fetch_and_pull_with_a_local_remote() {
     let (dir, _bare, theirs) = behind_origin();
@@ -82,6 +83,7 @@ fn fetch_and_pull_with_a_local_remote() {
 /// git refuses, the menu offers Merge / Rebase / Fast-forward only, once or remembered;
 /// `N` merges what the refused pull fetched (no second fetch) and remembers it
 /// (gitti's settings, not the git config).
+/// Workflow: RM-04
 #[gitti_test::test]
 fn diverged_pull_asks_for_a_strategy_and_remembers_it() {
     let (dir, _origin, theirs) = diverged_from_origin();
@@ -129,6 +131,7 @@ fn diverged_pull_asks_for_a_strategy_and_remembers_it() {
 /// upstream yet)" with every remote and Set Upstream…; the first entry pushes with `-u`
 /// to the default remote only, and from then on P pushes to the upstream. Detached: a
 /// message, no git.
+/// Workflow: RM-08
 #[gitti_test::test]
 fn pull_and_push_without_upstream_run_no_git() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -177,6 +180,7 @@ fn pull_and_push_without_upstream_run_no_git() {
 
 /// Palette "Push…": the remotes, All Remotes, Set Upstream…, Options…; the dialog pushes to
 /// both remotes under a new name with the tags.
+/// Workflow: TG-03, RM-11
 #[gitti_test::test]
 fn push_dialog_to_two_remotes_under_a_new_name_with_tags() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -206,6 +210,7 @@ fn push_dialog_to_two_remotes_under_a_new_name_with_tags() {
 /// A failed pull leaves "⚠ Pull failed" in the top line and the error in the status line —
 /// over a background refresh (the fs watcher's) — until the next operation the user starts
 /// (here a stage, which re-reads only its paths); `e` still shows the details.
+/// Workflow: RM-16
 #[gitti_test::test]
 fn error_mark_until_the_next_operation() {
     let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n")]);
@@ -256,6 +261,7 @@ fn http_401_server() -> String {
 
 /// f against a server that wants credentials: the prompt names the asking command, takes
 /// typing (backspace too) and ⏎; a secret shows as dots; esc stops the fetch.
+/// Workflow: RM-14
 #[gitti_test::test]
 fn askpass_prompt_takes_typing_enter_and_esc() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -280,6 +286,7 @@ fn askpass_prompt_takes_typing_enter_and_esc() {
 /// "Pull with…" (palette): the strategy for this pull, once or remembered — `R`
 /// rebases (`--rebase`, whatever git would ask) and remembers it; the title then names
 /// it, `x` forgets it.
+/// Workflow: RB-09
 #[gitti_test::test]
 fn pull_with_chooses_remembers_and_forgets_the_strategy() {
     let (dir, _origin, theirs) = diverged_from_origin();
@@ -317,6 +324,7 @@ fn origin_at(d: &Path, tip: &str) -> tempfile::TempDir {
 /// Someone pushed to origin (not fetched): `P` is refused, the dialog says so in plain
 /// words and offers Pull or Fetch, Then Decide…; `F` fetches, the confirmation names what
 /// origin/main loses; Enter pushes with the lease pinned to their commit.
+/// Workflow: RM-09
 #[gitti_test::test]
 fn refused_push_fetch_then_push_with_lease() {
     let (dir, origin, theirs) = diverged_from_origin();
@@ -341,6 +349,7 @@ fn refused_push_fetch_then_push_with_lease() {
 /// main was amended after it was pushed (origin/main has the old commit): the main push
 /// runs no push at all but offers Pull or Push with Lease… right away; `f` lists what
 /// origin/main loses and pushes with the lease on Enter.
+/// Workflow: CM-06
 #[gitti_test::test]
 fn push_after_an_amend_offers_push_with_lease() {
     let commits = [
@@ -369,6 +378,7 @@ fn push_after_an_amend_offers_push_with_lease() {
 /// main was amended after it was pushed: Push…'s Options with "Force with lease"
 /// (checks: origin, set upstream, force, …) lists what origin/main loses first, as Push
 /// with Lease… does; Enter pushes with the lease pinned to what the list was read from.
+/// Workflow: RM-10
 #[gitti_test::test]
 fn push_options_force_with_lease_lists_what_the_remote_loses() {
     let commits = [
@@ -396,6 +406,7 @@ fn push_options_force_with_lease_lists_what_the_remote_loses() {
 /// selected commit with the lease pinned to origin/main as shown. The local branch stays.
 /// (A stale lease and Fetch, Then Decide: `refused_push_fetch_then_push_with_lease` and
 /// core's `push::refused_push_after_someone_pushed`.)
+/// Workflow: RS-08
 #[gitti_test::test]
 fn reset_remote_branch_from_the_palette() {
     let commits = [

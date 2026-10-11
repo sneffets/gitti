@@ -180,6 +180,9 @@ pub struct RepoSnapshot {
     pub submodules: Vec<crate::submodule::Submodule>,
     /// Whether the repository uses Git LFS and git-lfs is installed ([`crate::lfs`]).
     pub lfs: crate::lfs::RepoLfs,
+    /// The branches checked out last in this worktree, newest first (HEAD's reflog,
+    /// in-process; [`crate::branch_order::recent_checkouts`]).
+    pub recent_checkouts: Vec<String>,
 }
 
 /// The result of a scoped thread; a panic there becomes an error.
@@ -1221,6 +1224,7 @@ impl Repo {
                 worktrees: joined(worktrees)?,
                 submodules,
                 lfs,
+                recent_checkouts: self.recent_checkouts(),
             })
         })
     }
@@ -1414,6 +1418,16 @@ impl Repo {
         };
         args.extend_from_slice(paths);
         self.git_literal().run(&args)?;
+        Ok(())
+    }
+
+    /// [`Self::unstage_paths`] for a list of any length (marked files, a folder): one git
+    /// call per 200 paths.
+    pub fn unstage_path_list(&self, paths: &[String]) -> Result<()> {
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        for chunk in paths.chunks(200) {
+            self.unstage_paths(chunk)?;
+        }
         Ok(())
     }
 

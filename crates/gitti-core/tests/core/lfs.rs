@@ -192,6 +192,7 @@ fn commit_diffs_show_lfs_rows_and_local_text_content() {
     assert_eq!(kinds, ["file", "note", "hunk", "line", "line"]);
 }
 
+/// Workflow: LF-01
 #[gitti_test::test]
 fn working_lfs_files_stage_only_whole() {
     let (_tmp, p, _) = lfs_repo(NO_FILTER);
@@ -258,6 +259,7 @@ fn working_lfs_files_stage_only_whole() {
 /// store, the file is. Staging the whole file runs the filter: the pointer lands in the
 /// index. (Where git-lfs is installed its `filter.lfs.process` wins over the fake and
 /// writes the same pointer.)
+/// Workflow: LF-01
 #[gitti_test::test]
 fn whole_file_stage_runs_the_clean_filter() {
     let doc3 = b"alpha\nBETA\ngamma\nfrom the filter\n";
@@ -346,6 +348,7 @@ fn nested_untracked_attributes_count() {
 /// The commit and the comparison caches: a diff showing `far.dat`'s objects as missing is
 /// offered for download; once the store has them (however they came) the cached entries
 /// are dropped and the next load shows the content. No git-lfs needed.
+/// Workflow: LF-04
 #[gitti_test::test]
 fn cached_diffs_reannotate_when_objects_arrive() {
     use gitti_core::compare::CompareSide::Commit;
@@ -391,6 +394,7 @@ fn cached_diffs_reannotate_when_objects_arrive() {
 /// Real git-lfs (where installed): "Download LFS objects" fetches a commit's missing
 /// objects from a local bare remote (`origin.git/lfs/objects`), also in a folder; an
 /// object the server lacks is named; afterwards the commit shows the content.
+/// Workflow: LF-04
 #[gitti_test::test]
 fn download_fetches_missing_objects_from_the_remote() {
     use gitti_core::lfs_fetch::LfsDownload;
@@ -488,6 +492,7 @@ fn track_repo_with(more: &[(&str, &str)]) -> (tempfile::TempDir, std::path::Path
 /// "Track with Git LFS…" in a folder: the line goes into the folder's `.gitattributes`
 /// (staged on request), the committed files it newly matches show as changed, staging one
 /// stores the pointer, the hooks are installed, a second time changes nothing.
+/// Workflow: LF-02
 #[gitti_test::test]
 fn track_in_a_folder() {
     use gitti_core::lfs_track::{LfsTrackOptions, NOT_INSTALLED};
@@ -532,6 +537,7 @@ fn track_in_a_folder() {
 
 /// "Track with Git LFS…" of a whole folder (`/art/**`) also matches the files git reads
 /// itself (the folder's `.gitattributes`, committed here): they stay plain.
+/// Workflow: LF-02
 #[gitti_test::test]
 fn track_a_folder_keeps_its_attributes_plain() {
     use gitti_core::lfs_track::LfsTrackOptions;
@@ -561,6 +567,7 @@ fn track_a_folder_keeps_its_attributes_plain() {
 
 /// Without `git lfs install` (no filters in the user's config) tracking is refused unless
 /// the dialog's "set up" is on; then `git lfs install` writes the (test's) global config.
+/// Workflow: LF-02
 #[gitti_test::test]
 fn track_sets_up_git_lfs_only_when_asked() {
     use gitti_core::lfs_track::LfsTrackOptions;
@@ -613,6 +620,7 @@ fn lfs_content() -> Vec<u8> {
 
 /// Real git-lfs (where installed): stage stores the pointer, commit and push — the
 /// `pre-push` hook (installed by tracking) uploads into `origin.git/lfs/objects`.
+/// Workflow: LF-03
 #[gitti_test::test]
 fn push_uploads_to_a_local_remote() {
     let tmp = tempfile::tempdir().unwrap();
@@ -656,6 +664,7 @@ fn push_uploads_to_a_local_remote() {
 /// Real git-lfs (where installed): a clone of a remote holding an LFS file (pointer
 /// committed, object in `origin.git/lfs/objects`) checks out the content, not the pointer,
 /// and has nothing to commit.
+/// Workflow: LF-06
 #[gitti_test::test]
 fn clone_checks_out_the_content() {
     let tmp = tempfile::tempdir().unwrap();

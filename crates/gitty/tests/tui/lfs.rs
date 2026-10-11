@@ -25,6 +25,7 @@ fn stored_pointer(dir: &Path, content: &[u8]) -> String {
     p.text()
 }
 
+/// Workflow: LF-01
 #[gitti_test::test]
 fn lfs_rows_whole_file_staging_and_the_notice() {
     let (c1, c2): (&[u8], &[u8]) = (b"alpha\nbeta\n", b"alpha\nBETA\n");
@@ -81,6 +82,7 @@ fn lfs_rows_whole_file_staging_and_the_notice() {
 }
 
 /// "Track with Git LFS…" (diff menu, L) without git-lfs says how to install it.
+/// Workflow: LF-02
 #[gitti_test::test]
 fn track_without_git_lfs_says_how_to_install() {
     let dir = fixture(&[("a.txt", "a\n")], &[("art/x.psd", "PSD")]);
@@ -94,6 +96,7 @@ fn track_without_git_lfs_says_how_to_install() {
 
 /// With git-lfs (where installed; its filters in the test's global config) the menu
 /// explains LFS and offers the patterns, then the line is written and staged.
+/// Workflow: LF-02
 #[gitti_test::test]
 fn track_with_git_lfs_from_the_diff_menu() {
     if !gitti_core::lfs::LfsCaps::get().installed() {
@@ -127,6 +130,7 @@ fn track_with_git_lfs_from_the_diff_menu() {
 /// Where git-lfs is installed: a commit whose LFS object isn't local says so on
 /// its row with "Enter: download"; the diff menu's "Download LFS Objects" (F) fetches it
 /// from a local bare remote (`origin.git/lfs/objects`) and the commit shows its content.
+/// Workflow: LF-04
 #[gitti_test::test]
 fn download_missing_objects_from_the_diff_menu() {
     if !gitti_core::lfs::LfsCaps::get().installed() {
@@ -191,6 +195,7 @@ fn download_missing_objects_from_the_diff_menu() {
 
 /// Without git-lfs, "Git LFS Problems…" in the palette says how to install it;
 /// hiding takes the badge away.
+/// Workflow: LF-05
 #[gitti_test::test]
 fn missing_git_lfs_badge_explained_and_hidden() {
     let dir = fixture(
@@ -212,6 +217,7 @@ fn missing_git_lfs_badge_explained_and_hidden() {
 /// With git-lfs (where installed; its filters in the test's global config): no
 /// pre-push hook — the badge says so, and a push asks first; "install, then push" writes
 /// git-lfs's hook before the push runs.
+/// Workflow: LF-03
 #[gitti_test::test]
 fn push_without_the_lfs_hook_asks() {
     if !gitti_core::lfs::LfsCaps::get().installed() {
@@ -253,6 +259,7 @@ fn push_without_the_lfs_hook_asks() {
 /// A repository without LFS that still has git-lfs's hooks (the last pattern was removed):
 /// the badge names it, "Git LFS Problems…" explains the cost and "Remove LFS Hooks" (1)
 /// deletes them — the badge goes.
+/// Workflow: LF-05
 #[gitti_test::test]
 fn hooks_without_lfs_removed() {
     let dir = fixture(&[("a.txt", "x\n")], &[]);

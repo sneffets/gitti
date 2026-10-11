@@ -1,0 +1,16 @@
+[package]
+name = "gitti-workflow"
+edition.workspace = true
+version = "0.1.0"
+license.workspace = true
+publish = false
+description = "Workflow tests' shared part: fixtures by one `git fast-import`, changes by \"another program\", the repository afterwards read with few git processes, and the workflows themselves"
+
+# std only, on purpose: a dev-dependency of gitti-core, gitti-app and gitty that pulls in
+# nothing — no dependency features to unify differently (see CLAUDE.md). Its code runs in
+# the three crates' test binaries (`wf_*` modules); it has no test binary of its own.
+[lib]
+test = false
+doctest = false
+
+[dependencies]

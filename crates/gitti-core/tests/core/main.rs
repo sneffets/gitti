@@ -4,12 +4,14 @@
 //! `askpass_env` stays its own binary (own `main`, environment set before any thread).
 
 mod allowed_signers;
+mod branches;
 mod change_search;
 mod commit_box;
 mod config_safety;
 mod conflicts;
 mod custom_commands;
 mod discard;
+mod ext_tools;
 mod fixture_kit;
 mod fs_paths;
 mod fx;
@@ -40,6 +42,8 @@ mod subtrees;
 mod switching;
 mod tab_marks;
 mod unix_fs;
+mod wf_catalog;
+mod wf_pilot;
 mod worktrees;
 
 /// The test repositories' settings — identity, no signing, contents as written whatever

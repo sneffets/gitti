@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, Result, SharedString};
 
-gpui_kit::assets::icon_assets!(ExtraIcons, [KeyRound, Funnel, FolderGit2]);
+gpui_kit::assets::icon_assets!(ExtraIcons, [KeyRound, Funnel, FolderGit2, Pin]);
 
 /// Key of the credential prompt (askpass dialog): an SVG, so it looks the same on every
 /// platform (an emoji depends on the system fonts — Windows showed none).
@@ -17,6 +17,9 @@ pub const SPARSE_ICON: gpui_kit::assets::IconName = gpui_kit::assets::IconName::
 
 /// Mark of a subtree in the sidebar: another repository's files in a folder.
 pub const SUBTREE_ICON: gpui_kit::assets::IconName = gpui_kit::assets::IconName::FolderGit2;
+
+/// Mark of a branch pinned to the top of its sidebar list (`gitti_core::branch_order`).
+pub const PIN_ICON: gpui_kit::assets::IconName = gpui_kit::assets::IconName::Pin;
 
 pub struct GittiAssets;
 

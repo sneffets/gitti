@@ -5,11 +5,14 @@
 mod common;
 mod support;
 
+mod branches;
 mod cancel;
 mod change_search;
 mod commit_box;
 mod config_safety;
 mod custom_commands;
+mod ext_tools;
+mod file_tree;
 mod fs_paths;
 mod keybar;
 mod lfs;
@@ -32,3 +35,4 @@ mod submodules;
 mod subtrees;
 mod unicode;
 mod views;
+mod wf_pilot;

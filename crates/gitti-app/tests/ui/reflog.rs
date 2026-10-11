@@ -77,6 +77,7 @@ pub fn main() {
 
 /// The entries in plain words, the lost commit marked; selecting shows the commit (also
 /// the lost one); arrowing through loaded entries runs no git; Esc goes back.
+/// Workflow: RS-04, RL-01
 fn lists_shows_and_navigates(ui: &mut Ui) {
     let n = ui.n_git();
     ui.step("reflog:HEAD");
@@ -136,6 +137,7 @@ fn lists_shows_and_navigates(ui: &mut Ui) {
 }
 
 /// Create Branch Here… on the lost commit: a branch at it, which the history then lists.
+/// Workflow: RS-04
 fn create_branch_keeps_a_lost_commit(ui: &mut Ui) {
     ui.step("reflog:HEAD");
     ui.step("reflogentry:1");
@@ -159,6 +161,7 @@ fn create_branch_keeps_a_lost_commit(ui: &mut Ui) {
 }
 
 /// Navigate ▸ Show Reflog… opens HEAD's; main's menu entry opens main's.
+/// Workflow: RL-01
 fn menu_bar_and_branch_menu_open_it(ui: &mut Ui) {
     ui.step("action:gitti::ShowReflog");
     let st = state(ui);

@@ -41,6 +41,7 @@ fn untracked_repo() -> (tempfile::TempDir, std::path::PathBuf) {
     (tmp, dir)
 }
 
+/// Workflow: IG-04
 #[gitti_test::test]
 fn show_untracked_files_config_is_honoured() {
     let (_tmp, dir) = untracked_repo();
@@ -64,6 +65,7 @@ fn show_untracked_files_config_is_honoured() {
 /// `normal`: the folder entry `d/` stages as a whole, a path-limited re-read after
 /// unstaging folds the files back into it like a full read, and discarding it deletes the
 /// untracked files but keeps the ignored one.
+/// Workflow: IG-04
 #[gitti_test::test]
 fn untracked_folder_entry_stages_and_discards_as_a_whole() {
     let (_tmp, dir) = untracked_repo();

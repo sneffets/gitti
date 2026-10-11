@@ -44,6 +44,7 @@ fn unstaged(repo: &Repo) -> Vec<String> {
     w.unstaged.iter().map(|f| f.path().to_string()).collect()
 }
 
+/// Workflow: IG-01
 #[gitti_test::test]
 fn ignored_file_disappears_and_line_is_not_duplicated() {
     let (dir, repo) = repo();
@@ -69,6 +70,7 @@ fn ignored_file_disappears_and_line_is_not_duplicated() {
     );
 }
 
+/// Workflow: IG-01
 #[gitti_test::test]
 fn folder_pattern_hides_everything_below() {
     let (dir, repo) = repo();
@@ -91,6 +93,7 @@ fn folder_pattern_hides_everything_below() {
     assert!(!unstaged(&repo).contains(&"new.txt".to_string()));
 }
 
+/// Workflow: IG-03
 #[gitti_test::test]
 fn info_exclude_target() {
     let (dir, repo) = repo();
@@ -105,6 +108,7 @@ fn info_exclude_target() {
     assert!(!files.contains(&"new.txt".to_string()), "{files:?}");
 }
 
+/// Workflow: IG-02
 #[gitti_test::test]
 fn tracked_files_stay_tracked_unless_untracked() {
     let (dir, repo) = repo();
@@ -131,6 +135,7 @@ fn tracked_files_stay_tracked_unless_untracked() {
 /// Clone from a local bare repository (two commits): progress lines, one logged command,
 /// HEAD and branch of the source; refused into a non-empty or below a missing folder, and
 /// a failed clone leaves nothing behind.
+/// Workflow: RM-17
 #[gitti_test::test]
 fn clone_from_local_bare_repo() {
     use crate::fx::{self, Import, put};
@@ -238,6 +243,7 @@ fn init_object_format_follows_gits_default() {
 
 /// A folder's own `.gitignore`: the pattern is relative to the folder and only applies
 /// inside it — also for the tracked files it offers to untrack.
+/// Workflow: IG-03
 #[gitti_test::test]
 fn folder_gitignore_patterns_apply_inside_the_folder() {
     let (dir, repo) = repo();

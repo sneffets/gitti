@@ -92,6 +92,7 @@ fn numbered(n: usize) -> String {
     (1..=n).map(|i| format!("line {i}\n")).collect()
 }
 
+/// Workflow: ST-01
 #[gitti_test::test]
 fn stage_one_of_two_hunks() {
     let fx = fixture(&[("a.txt", &numbered(30))]);
@@ -111,6 +112,7 @@ fn stage_one_of_two_hunks() {
     assert_eq!(fx.staged("a.txt").hunks.len(), 1);
 }
 
+/// Workflow: ST-03
 #[gitti_test::test]
 fn unstage_lines_in_second_hunk_with_first_hunk_staged() {
     let fx = fixture(&[("a.txt", &numbered(40))]);
@@ -133,6 +135,7 @@ fn unstage_lines_in_second_hunk_with_first_hunk_staged() {
     assert_eq!(fx.index("a.txt"), expected);
 }
 
+/// Workflow: ST-04
 #[gitti_test::test]
 fn partial_stage_of_untracked_file() {
     let fx = fixture(&[("keep.txt", "k\n")]);
@@ -146,6 +149,7 @@ fn partial_stage_of_untracked_file() {
     assert_eq!(d.added_removed(), (1, 0));
 }
 
+/// Workflow: ST-05
 #[gitti_test::test]
 fn partial_unstage_of_added_file() {
     let fx = fixture(&[("keep.txt", "k\n")]);
@@ -159,6 +163,7 @@ fn partial_unstage_of_added_file() {
     assert_eq!(fx.index("new.txt"), "one\nthree\n");
 }
 
+/// Workflow: ST-06
 #[gitti_test::test]
 fn partial_stage_of_deleted_file() {
     let fx = fixture(&[("gone.txt", "one\ntwo\nthree\n")]);
@@ -180,6 +185,7 @@ fn partial_stage_of_deleted_file() {
     );
 }
 
+/// Workflow: DC-01
 #[gitti_test::test]
 fn discard_single_line() {
     let fx = fixture(&[("a.txt", "a\nb\nc\n")]);
@@ -192,6 +198,7 @@ fn discard_single_line() {
     assert_eq!(fx.read("a.txt"), "a\nb\nY\nc\n");
 }
 
+/// Workflow: EX-11
 #[gitti_test::test]
 fn no_newline_at_eof() {
     let fx = fixture(&[("a.txt", "a\nb")]);
@@ -203,6 +210,7 @@ fn no_newline_at_eof() {
     assert_eq!(fx.index("a.txt"), "a\nb\nc");
 }
 
+/// Workflow: ST-13, CM-01
 #[gitti_test::test]
 fn commit_via_cli() {
     let fx = fixture(&[("a.txt", "1\n")]);
@@ -257,6 +265,7 @@ fn config_list_scope() {
     assert_eq!(local.get("user.name").map(String::as_str), Some("T"));
 }
 
+/// Workflow: ST-12
 #[gitti_test::test]
 fn staging_works_with_minimal_context() {
     // context_lines 0 is clamped to 1 for the working state, so line staging still applies
@@ -278,6 +287,7 @@ fn staging_works_with_minimal_context() {
 
 /// With "ignore whitespace" the shown diff comes from `git diff -w`; staging maps the
 /// selection onto the exact diff, so only the visible change is staged.
+/// Workflow: ST-10
 #[gitti_test::test]
 fn stage_hunk_while_ignoring_whitespace() {
     let f = fixture(&[("a.txt", &numbered(20))]);
@@ -316,6 +326,7 @@ fn stage_hunk_while_ignoring_whitespace() {
 }
 
 /// "Discard All": every unstaged change goes, staged changes stay.
+/// Workflow: ST-08, DC-03
 #[gitti_test::test]
 fn discard_all_keeps_staged_changes() {
     let f = fixture(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
@@ -335,6 +346,7 @@ fn discard_all_keeps_staged_changes() {
     assert!(f.state().unstaged.is_empty());
 }
 
+/// Workflow: CM-19
 #[gitti_test::test]
 fn history_of_repo_without_commits_has_worktree_row() {
     let fx = fixture(&[]);
@@ -345,6 +357,7 @@ fn history_of_repo_without_commits_has_worktree_row() {
     assert_eq!(fx.state().unstaged.len(), 1);
 }
 
+/// Workflow: ST-11
 #[gitti_test::test]
 fn stage_and_unstage_lines_with_expanded_context() {
     use gitti_core::blobs::Version;
@@ -432,6 +445,7 @@ fn first_change(f: &FileDiff) -> Option<usize> {
     f.hunks[0].lines.iter().position(|l| l.is_change())
 }
 
+/// Workflow: ST-02
 #[gitti_test::test]
 fn stage_single_lines_and_unstage_again() {
     use gitti_core::diff::LineKind;
@@ -470,6 +484,7 @@ fn stage_single_lines_and_unstage_again() {
 /// diff shows the lines without CR, line stage / unstage keep the index LF, a discard
 /// writes CRLF back (git converts on checkout). An untracked CRLF file is shown and
 /// partially staged with LF, as `git add` stores it; without autocrlf the CR is kept.
+/// Workflow: EX-05
 #[gitti_test::test]
 fn line_staging_with_autocrlf_and_untracked_crlf_file() {
     let fx = fixture(&[("a.txt", "a\nb\nc\n")]);
@@ -568,6 +583,7 @@ fn after_fixture() -> Fixture {
 }
 
 /// Hunks and lines (also with "ignore whitespace", where staging uses the exact diff).
+/// Workflow: ST-18
 #[gitti_test::test]
 fn working_state_after_hunks_and_lines_match_a_full_read() {
     let fx = after_fixture();
@@ -593,6 +609,7 @@ fn working_state_after_hunks_and_lines_match_a_full_read() {
 }
 
 /// Whole files: untracked, deleted, a name with glob characters, two at once, discard.
+/// Workflow: ST-07, DC-08
 #[gitti_test::test]
 fn working_state_after_whole_files_match_a_full_read() {
     let fx = after_fixture();
@@ -612,6 +629,7 @@ fn working_state_after_whole_files_match_a_full_read() {
 /// The watcher re-reads a changed directory as a whole (a new one, one removed or
 /// moved away — inotify reports just the directory then): everything below it, and only
 /// that, is re-read; a sibling with the same prefix is not touched.
+/// Workflow: ST-18
 #[gitti_test::test]
 fn working_state_after_takes_directories() {
     use crate::fixture_kit::{History, f, repo_with};
@@ -722,6 +740,7 @@ fn pick_bytes(f: &FileDiff, h: usize, lines: &[&[u8]]) -> Vec<usize> {
 /// and as selected lines with CRLF endings (no autocrlf: the CR is content), a selected
 /// removal and addition, and Shift-JIS lines whose second bytes are `\` (0x5C). The index
 /// and the working tree get exactly the expected bytes after stage, unstage and discard.
+/// Workflow: EX-02
 #[gitti_test::test]
 fn non_utf8_lines_stage_unstage_discard_byte_exact() {
     let fx = fixture(&[]);

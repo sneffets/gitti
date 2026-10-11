@@ -824,6 +824,7 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                 name,
                 current,
                 tracking,
+                pinned,
             } => {
                 let style = if *current {
                     Style::new().fg(p.text_strong).add_modifier(Modifier::BOLD)
@@ -857,6 +858,10 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                             Style::new().fg(p.accent),
                         ),
                         Span::styled(name.clone(), style),
+                        Span::styled(
+                            if *pinned { format!(" {PIN_MARK}") } else { String::new() },
+                            Style::new().fg(p.text_faint),
+                        ),
                     ],
                 );
                 if rw > 0 {
@@ -875,13 +880,19 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
                     ],
                 );
             }
-            SideItem::RemoteBranch { short, .. } => {
+            SideItem::RemoteBranch { short, pinned, .. } => {
                 put(
                     buf,
                     x + 6,
                     y,
                     w.saturating_sub(6),
-                    vec![Span::styled(short.clone(), Style::new().fg(p.text_muted))],
+                    vec![
+                        Span::styled(short.clone(), Style::new().fg(p.text_muted)),
+                        Span::styled(
+                            if *pinned { format!(" {PIN_MARK}") } else { String::new() },
+                            Style::new().fg(p.text_faint),
+                        ),
+                    ],
                 );
             }
             SideItem::Tag { name } => {
@@ -1019,6 +1030,7 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
     );
     app.areas.commits = content;
     app.badge_more.clear();
+    app.badge_refs.clear();
     // One or two text rows per commit (`ViewOpts::list_layout`; gitty's Auto stays
     // on one line: a terminal has few rows to spare).
     let two = app.opts.list_layout.two_lines(false);
@@ -1169,6 +1181,8 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
         let wt_spans = worktree_badges(&app.worktrees, c.id, bg, p);
         // The "+N": its column from the text start, its width, what it hides.
         let mut more: Option<(u16, u16, String)> = None;
+        // Each badge: its column from the text start, its width, its ref.
+        let mut refs_at: Vec<BadgeAt> = Vec::new();
         if let Some(refs) = history.refs_by_commit.get(&c.id) {
             // Room beside the subject's 16 columns (one line) or left of the date (two
             // lines), less the labels around them.
@@ -1180,7 +1194,9 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             };
             let others = Line::from(spans.clone()).width() + Line::from(wt_spans.clone()).width();
             let room = room.saturating_sub(others as u16);
-            let (b, hidden) = badges(refs, app.current_branch(), &app.worktrees, bg, p, room);
+            let (b, hidden, at) = badges(refs, app.current_branch(), &app.worktrees, bg, p, room);
+            let start = Line::from(spans.clone()).width() as u16;
+            refs_at = at.into_iter().map(|(x, w, r)| (start + x, w, r)).collect();
             spans.extend(b);
             // Where the "+N" (the last span so far) will be, from the row's text start.
             if let Some(hidden) = hidden {
@@ -1213,6 +1229,9 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
             if let Some((at, mw, hidden)) = more {
                 more_hit(&mut app.badge_more, text_x, y2, badges_w, at, mw, hidden);
             }
+            for (at, bw, r) in refs_at {
+                more_hit(&mut app.badge_refs, text_x, y2, badges_w, at, bw, r);
+            }
             let bx = put(buf, text_x, y2, badges_w, spans);
             let aw = (text_x + avail).saturating_sub(bx);
             put(buf, bx, y2, aw, vec![Span::styled(fit_width(&meta.author, aw), muted)]);
@@ -1220,6 +1239,9 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
         }
         if let Some((at, mw, hidden)) = more {
             more_hit(&mut app.badge_more, x, y, text_w, at, mw, hidden);
+        }
+        for (at, bw, r) in refs_at {
+            more_hit(&mut app.badge_refs, x, y, text_w, at, bw, r);
         }
         spans.push(subject);
         put(buf, x, y, text_w, spans);
@@ -1235,12 +1257,12 @@ fn draw_commit_list(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette, ti
     }
 }
 
-/// Records a row's "+N" for clicks: drawn from column `x` in a text `w` columns wide, at
-/// `at` from its start, `mw` wide (as far as it is shown).
-fn more_hit(hits: &mut Vec<(Rect, String)>, x: u16, y: u16, w: u16, at: u16, mw: u16, hidden: String) {
+/// Records a row's "+N" (or a ref badge) for clicks: drawn from column `x` in a text `w`
+/// columns wide, at `at` from its start, `mw` wide (as far as it is shown).
+fn more_hit<T>(hits: &mut Vec<(Rect, T)>, x: u16, y: u16, w: u16, at: u16, mw: u16, what: T) {
     let shown = mw.min(w.saturating_sub(at));
     if shown > 0 {
-        hits.push((Rect::new(x + at, y, shown, 1), hidden));
+        hits.push((Rect::new(x + at, y, shown, 1), what));
     }
 }
 
@@ -1315,6 +1337,8 @@ fn badge(text: &str, fg: Color, bg: Color) -> Span<'static> {
 /// Marks worktrees in the commit list (gitti draws a folder icon): `⌂ <folder>` for another
 /// worktree's detached HEAD at this commit, `⌂` before a branch checked out in another one.
 const WORKTREE_MARK: &str = "⌂";
+/// After a branch pinned to the top of its sidebar list (`app/branch_cmds.rs`).
+const PIN_MARK: &str = "▴";
 
 /// Labels of the other worktrees with a detached HEAD at `id`.
 fn worktree_badges(
@@ -1380,12 +1404,16 @@ fn ref_badge(
     badge(&text, fg, b)
 }
 
+/// Where a row's ref badge is: column from the first badge, width, its ref.
+type BadgeAt = (u16, u16, RefInfo);
+
 /// A list badge's text is cut ("…") beyond this many columns (gitti: 11 ems).
 const LIST_BADGE_COLS: u16 = 20;
 
 /// A commit-list row's badges: current branch first, then locals, remotes, tags; at most
 /// `ref_badges::LIST_MAX` and as many as fit in `room` columns, the (first) tag always
-/// among them, the rest as "+N" (the last span) — and what it hides, on one line.
+/// among them, the rest as "+N" (the last span) — and what it hides, on one line, and
+/// where each badge is (column from the first, width, its ref).
 fn badges(
     refs: &[RefInfo],
     current: Option<&str>,
@@ -1393,7 +1421,7 @@ fn badges(
     bg: Color,
     p: &Palette,
     room: u16,
-) -> (Vec<Span<'static>>, Option<String>) {
+) -> (Vec<Span<'static>>, Option<String>, Vec<BadgeAt>) {
     use gitti_core::ref_badges;
     let sorted = badge_refs(refs, current);
     let cap = Some(LIST_BADGE_COLS);
@@ -1407,8 +1435,15 @@ fn badges(
         |n| format!("+{n} ").width() as f32,
     );
     let mut out = Vec::new();
+    // Where each badge is (column from the first, width) and its ref.
+    let mut at = Vec::new();
+    let mut x = 0u16;
     for r in &pick.shown {
-        out.push(ref_badge(r, current, worktrees, bg, p, cap));
+        let b = ref_badge(r, current, worktrees, bg, p, cap);
+        let w = b.content.width() as u16;
+        at.push((x, w, (*r).clone()));
+        x += w + 1;
+        out.push(b);
         out.push(Span::raw(" "));
     }
     if !pick.hidden.is_empty() {
@@ -1420,7 +1455,7 @@ fn badges(
     let hidden = pick
         .hidden_summary()
         .map(|s| s.replacen(":\n", ": ", 1).replace('\n', ", "));
-    (out, hidden)
+    (out, hidden, at)
 }
 
 /// The commit header's "Refs" lines: every ref of the commit (not only the list's few),
@@ -2235,8 +2270,52 @@ fn draw_diff_row(
                 );
             }
         }
+        DiffRow::Folder { src, folder } => {
+            let Some(f) = app.folders.get(folder) else {
+                return;
+            };
+            let marked = !f.files.is_empty()
+                && f.files.iter().all(|&i| {
+                    work_files(&app.working, src)
+                        .get(i)
+                        .is_some_and(|w| app.marks.contains(src, w.path()))
+                });
+            let bg = cursor_bg(if marked { p.bg_list_selected } else { p.bg_section });
+            buf.set_style(area, Style::new().bg(bg));
+            let mark = if app.expansion.is_folder_collapsed(src, f.group, &f.path) {
+                "▸ "
+            } else {
+                "▾ "
+            };
+            let mut spans = vec![
+                Span::styled(mark, Style::new().fg(p.text_muted)),
+                Span::styled(format!("{}/", f.label), Style::new().fg(p.text_strong)),
+                Span::styled(format!(" ({})", f.files.len()), Style::new().fg(p.text_muted)),
+            ];
+            spans.extend(totals_spans(f.totals, p));
+            // Under its group header (3) or folder, two columns per level.
+            let indent = 3 + 2 * f.depth;
+            let end = put(buf, x + indent, y, w.saturating_sub(indent), spans);
+            let hint = match src {
+                Src::Unstaged => "⏎ fold · s stage · d discard · space mark",
+                Src::Staged => "⏎ fold · u unstage · space mark",
+                _ => "⏎ fold",
+            };
+            if cursor && end + hint.width() as u16 + 3 < x + w {
+                put_right(
+                    buf,
+                    x,
+                    y,
+                    w.saturating_sub(1),
+                    vec![Span::styled(hint, Style::new().fg(p.text_faint))],
+                );
+            }
+        }
         DiffRow::File { src, file } => {
-            let bg = cursor_bg(p.bg_file_header);
+            let marked = work_files(&app.working, src)
+                .get(file)
+                .is_some_and(|w| app.marks.contains(src, w.path()));
+            let bg = cursor_bg(if marked { p.bg_list_selected } else { p.bg_file_header });
             buf.set_style(area, Style::new().bg(bg));
             let diff = app.file_diff(src, file);
             let wf = work_files(&app.working, src).get(file);
@@ -2274,9 +2353,22 @@ fn draw_diff_row(
                 })
                 .or_else(|| wf.map(|w| w.path().to_string()))
                 .unwrap_or_default();
+            // The tree: the file's name under its folder (a rename says where from).
+            let depth = app.folders.file_depth(src, file);
+            let path = match (depth, diff) {
+                (None, _) => path,
+                (Some(_), Some(d)) if d.old_path.is_some() && d.old_path != d.new_path => format!(
+                    "{} ← {}",
+                    gitti_core::rows::file_name(d.path()),
+                    d.old_path.as_deref().unwrap_or_default()
+                ),
+                (Some(_), _) => gitti_core::rows::file_name(&path).to_string(),
+            };
             let expanded = diff.is_none_or(|d| app.expansion.is_expanded(src, d));
             let mut spans = vec![
                 Span::styled("▌", Style::new().fg(color)),
+                // The tree: the chevron one level right of its folder's.
+                Span::raw(depth.map_or(String::new(), |d| "  ".repeat(d as usize + 1))),
                 Span::styled(
                     if expanded { "▾ " } else { "▸ " },
                     Style::new().fg(p.text_muted),
@@ -2341,8 +2433,8 @@ fn draw_diff_row(
             let mut hint = String::new();
             if cursor && wt {
                 hint.push_str(match src {
-                    Src::Unstaged => "s stage file · d discard · ⏎ fold",
-                    Src::Staged => "u unstage file · ⏎ fold",
+                    Src::Unstaged => "s stage file · d discard · ⏎ fold · space mark",
+                    Src::Staged => "u unstage file · ⏎ fold · space mark",
                     Src::Conflicted => "s/m resolve",
                     Src::Commit => "",
                 });
@@ -3867,11 +3959,14 @@ Commit list
 Diff / working directory
   ↑ ↓  j k        move the cursor      pgup pgdn  g G
   n  N            next / previous hunk     ]  [   next / previous file
-  space           select the change line under the cursor
+  space           select the change line under the cursor; on a file / folder row: mark
+                  it — s / u / d and the menu (m) then act on the marked files, esc clears
   shift-↑ ↓  J K  extend the line selection
-  ⏎               on a file: fold / unfold; on a hunk or line: select the hunk
+  ⏎               on a file / folder: fold / unfold; on a hunk or line: select the hunk
                   on a conflicted file: resolve menu (e = merge editor, ? there)
-  s               stage the selected lines — or the hunk / file / section under the cursor
+  s               stage the selected lines, the marked files — or the hunk / file / folder /
+                  section under the cursor
+  ctrl-p          Changes as Tree: the working directory as folders (shared with gitti)
   u               unstage (same rules, staged side)
   d               discard (asks first)
   y               copy the selected lines / the line under the cursor (commit header:
@@ -3894,6 +3989,15 @@ Menus, pickers and text windows
   ↑ ↓  j k        move / scroll (menus: home end pgup pgdn; pickers: pgup pgdn
                   ctrl-n ctrl-p, typing filters); the wheel scrolls the list
   g G  home end   text windows (output, errors, help): top / end
+
+Dialogs
+  tab / ↓  shift-tab / ↑   next / previous field or checkbox    space  tick a checkbox
+  ⏎               the dialog's action (named in its bottom line)    esc  close it
+  ← →  home end   move in the field    ctrl-a ctrl-e  start / end of the field
+  ctrl-w ctrl-u ctrl-k  delete word / to the field's start / to its end
+  ctrl-n          the field's next suggestion (listed under it, e.g. remotes)
+  ctrl-o          choose the field's value from a list (named under it, e.g. a folder)
+  ctrl-d          the dialog's further action, named in its bottom line (e.g. Delete…)
 
 Commit message
   ctrl-s, alt-⏎   commit         esc  leave the message box
@@ -3939,6 +4043,27 @@ fn lighten(c: Color, lift: f32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::word_wrap;
+
+    /// The dialog keys are in the help, and none of them is a field editing key (the
+    /// field would never see it: the dialog takes it first).
+    #[gitti_test::test]
+    fn help_names_the_dialog_keys_and_fields_dont_use_them() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let help = super::help_text();
+        let dialogs = &help[help.find("\nDialogs\n").expect("a Dialogs section")..];
+        for (key, label) in [
+            (crate::modal::FILL_KEY, crate::modal::FILL_KEY_LABEL),
+            (crate::modal::PICK_KEY, crate::modal::PICK_KEY_LABEL),
+            ('d', "ctrl-d"),
+        ] {
+            assert!(dialogs.contains(&format!("\n  {label} ")), "{label} not in the help");
+            let mut field = crate::edit::TextEdit::single("ab");
+            assert!(
+                !field.handle_key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL)),
+                "{label} edits a field too"
+            );
+        }
+    }
 
     #[gitti_test::test]
     fn word_wrap_breaks_at_spaces_and_splits_long_words() {

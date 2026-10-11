@@ -110,6 +110,7 @@ fn open_this_version_writes_read_only_copies() {
     assert!(repo.export_version_in(&root, head, "nope.txt", false).is_err());
 }
 
+/// Workflow: SH-15
 #[gitti_test::test]
 fn stash_versions_include_untracked_files() {
     let (dir, repo, ids) = repo();

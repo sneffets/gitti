@@ -10,7 +10,9 @@
 //! without waiting for the jobs it starts — e.g. Esc on a running operation), `type:TEXT`,
 //! `click:X,Y`, `rclick:X,Y`, `pressclick:X,Y` (a left click without waiting for the jobs
 //! — e.g. on a running operation's status line), `wheel:X,Y,DY`, `answer:TEXT` (askpass), `dump` (screen as
-//! text, after a `=== dump ===` line), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status),
+//! text, after a `=== dump ===` line), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status;
+//! `repo_state=` the operation in progress — `clean`, `merging`, `rebasing`,
+//! `cherrypicking`, `reverting` — and `conflicted=` the number of conflicted files),
 //! `changes` (Search in Changes: query, toggles, scans, hits with why, note), `reflog`
 //! (the reflog view: title, note, selection, shown commit, entries),
 //! `write:PATH=TEXT` (writes a working-tree file as another program would; `\n` = newline),

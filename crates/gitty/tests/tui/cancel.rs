@@ -12,6 +12,7 @@ use common::*;
 /// A fetch whose remote hangs (its upload-pack sleeps): Esc while the busy label shows
 /// stops it, the status says so, and gitty is idle again long before the remote would
 /// have answered.
+/// Workflow: RM-15
 #[cfg(unix)]
 #[gitti_test::test]
 fn esc_cancels_a_hanging_fetch() {
@@ -54,6 +55,7 @@ fn slow_commit_repo(hook: &str) -> tempfile::TempDir {
 /// `q` while an operation runs (a commit held up by its hook) asks before quitting —
 /// Quit When Done / Stop and Quit, explained; Esc keeps gitty, and the commit ends
 /// normally.
+/// Workflow: CM-21
 #[gitti_test::test]
 fn quit_while_an_operation_runs_asks_first() {
     let dir = slow_commit_repo("sleep 0.3");
@@ -68,6 +70,7 @@ fn quit_while_an_operation_runs_asks_first() {
 }
 
 /// Quit When Done: gitty waits for the commit, then quits; the commit is made.
+/// Workflow: CM-21
 #[gitti_test::test]
 fn quit_when_done_waits_for_the_operation() {
     let dir = slow_commit_repo("sleep 0.2");
@@ -79,6 +82,7 @@ fn quit_when_done_waits_for_the_operation() {
 
 /// Stop and Quit: the hook (and git) are stopped, gitty quits long before the hook would
 /// have ended; no commit, the message stays a draft.
+/// Workflow: CM-21
 #[cfg(unix)]
 #[gitti_test::test]
 fn stop_and_quit_stops_the_operation() {
@@ -105,6 +109,7 @@ fn quick_esc_does_not_cancel() {
 /// to remove the lock, and afterwards staging works. Linux only: elsewhere any running git
 /// process counts as "git alive" (`lock::git_running_in`), and the other tests of this binary
 /// run git in parallel.
+/// Workflow: EX-21
 #[cfg(target_os = "linux")]
 #[gitti_test::test]
 fn stale_index_lock_is_offered_for_removal() {
@@ -130,6 +135,7 @@ fn stale_index_lock_is_offered_for_removal() {
 /// a wrong passphrase and every new ssh connection of one operation (Git LFS's pre-push
 /// hook) does. The repeat is explained, and Esc stops the whole operation, not only the
 /// one question.
+/// Workflow: RM-14
 #[cfg(unix)]
 #[gitti_test::test]
 fn esc_in_a_repeating_prompt_stops_the_operation() {
@@ -163,6 +169,7 @@ fn esc_in_a_repeating_prompt_stops_the_operation() {
 /// The program that asked goes away (ssh gave up, the operation ended) while the dialog
 /// is open: the orphaned helper ends, and the dialog closes by itself instead of asking a
 /// question nobody waits for.
+/// Workflow: RM-14
 #[cfg(unix)]
 #[gitti_test::test]
 fn prompt_of_a_gone_helper_closes() {
