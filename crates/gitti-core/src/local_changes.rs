@@ -29,6 +29,8 @@ pub enum BlockedOp {
     Rebase { onto: String },
     /// Everything after `git pull` (strategy, remote, branch).
     Pull { args: Vec<String> },
+    /// Cherry-pick / Revert Marked Commits….
+    Several(crate::pick_several::SeveralPlan),
 }
 
 impl BlockedOp {
@@ -40,6 +42,10 @@ impl BlockedOp {
             BlockedOp::Revert { .. } => "revert",
             BlockedOp::Rebase { .. } => "rebase",
             BlockedOp::Pull { .. } => "pull",
+            BlockedOp::Several(p) => match p.kind {
+                crate::pick_several::SeveralKind::CherryPick => "cherry-pick",
+                crate::pick_several::SeveralKind::Revert => "revert",
+            },
         }
     }
 
@@ -51,6 +57,7 @@ impl BlockedOp {
             BlockedOp::Revert { .. } => "Revert",
             BlockedOp::Rebase { .. } => "Rebase",
             BlockedOp::Pull { .. } => "Pull",
+            BlockedOp::Several(p) => p.kind.verb(),
         }
     }
 
@@ -60,6 +67,7 @@ impl BlockedOp {
             BlockedOp::CherryPick { rev, is_merge, opts } => repo.cherry_pick_with(rev, *is_merge, *opts),
             BlockedOp::Revert { rev, is_merge } => repo.revert(rev, *is_merge),
             BlockedOp::Rebase { onto } => repo.rebase(onto),
+            BlockedOp::Several(plan) => repo.pick_several(plan),
             BlockedOp::Pull { args } => {
                 let mut full = vec!["pull"];
                 full.extend(args.iter().map(String::as_str));

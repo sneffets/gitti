@@ -38,6 +38,7 @@ mod op_progress;
 mod op_stops;
 mod overlay_keys;
 mod panes;
+mod pick_several;
 mod picker;
 mod push_ui;
 mod reflog;
@@ -276,6 +277,8 @@ pub struct GittiApp {
     folders: gitti_core::rows::Folders,
     /// Files marked for an action on several (⌘ / shift-click on file headers).
     file_marks: gitti_core::rows::FileMarks,
+    /// Marked commits of the commit list (`pick_several.rs`).
+    commit_marks: gitti_core::commit_marks::CommitMarks,
     expansion: Expansion,
     line_sel: Option<LineSel>,
     dragging: bool,
@@ -682,6 +685,7 @@ impl GittiApp {
             rows: Arc::new(Vec::new()),
             folders: Default::default(),
             file_marks: Default::default(),
+            commit_marks: Default::default(),
             expansion: Expansion::default(),
             line_sel: None,
             dragging: false,
@@ -1189,6 +1193,9 @@ impl GittiApp {
             };
         }
         self.selected = new_sel.min(self.history.commits.len().saturating_sub(1));
+        // Marks of commits the new history no longer lists go.
+        let history = self.history.clone();
+        self.commit_marks.retain(&history);
     }
 
     /// New rows for a new working state (`prev` = the one the current rows show). What is
@@ -3752,6 +3759,7 @@ impl Render for GittiApp {
         let root = self.restore_contains_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
         let root = self.file_marks_actions(root, cx);
+        let root = self.pick_several_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
         let root = self.branch_list_actions(root, cx);
         let root = self.worktree_actions(root, cx);

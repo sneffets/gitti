@@ -62,6 +62,8 @@ impl App {
             fs_paths: self.working.fs_paths.shown().count(),
             fs_hidable: self.fs_hidable().len(),
             fs_hidden: self.working.fs_paths.hidden().count(),
+            marked_commits: self.commit_marks.len(),
+            head_marked: self.commit_marks.has(self.head.id),
         }
     }
 

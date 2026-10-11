@@ -178,6 +178,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
         "CherryPickCommit",
         "gitty gap: the commit's menu (m) has it",
     ),
+    both("CherryPickMarked", "Cherry-pick Marked Commits…"),
+    both("RevertMarked", "Revert Marked Commits…"),
     gitti(
         "EditCommitMessage",
         "gitty gap: the commit's menu (m) has it",

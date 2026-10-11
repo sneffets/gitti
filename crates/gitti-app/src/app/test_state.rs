@@ -97,6 +97,12 @@ impl GittiApp {
             rows: self.rows.iter().map(|r| self.describe_row(r)).collect(),
             selected_lines: self.line_sel.as_ref().map_or(0, |s| s.lines.len()),
             compare: self.script_compare(),
+            marked_commits: self
+                .commit_marks
+                .rows(&self.history)
+                .into_iter()
+                .map(|r| self.history.commits.at(r).id.to_string())
+                .collect(),
             side_cursor: self.side_cursor,
             collapsed: {
                 let mut c: Vec<String> = self.collapsed.iter().cloned().collect();
