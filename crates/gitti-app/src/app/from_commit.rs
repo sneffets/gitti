@@ -30,7 +30,8 @@ fn entry(
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
 ) -> gpui_kit::component::menu::PopupMenuItem {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    // As the context menus' entries: a script step `menu:LABEL` can choose it.
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
