@@ -2866,40 +2866,44 @@ impl App {
         }
     }
 
-    /// The menu of conflicted file `file` (`None`: no such file).
+    /// The sides' names of the current conflicts ("ours" / "theirs" until known).
+    pub fn conflict_sides_or_default(&self) -> ConflictSides {
+        self.conflict_sides.clone().unwrap_or_else(|| ConflictSides {
+            ours: "ours".into(),
+            theirs: "theirs".into(),
+        })
+    }
+
+    /// The menu of conflicted file `file` (`None`: no such file): its kind's explanation and
+    /// choices ([`gitti_core::conflict::ConflictKind::choices`]) — merge editor / ours /
+    /// theirs for a content conflict, keep / delete for a file one side deleted.
     fn resolve_menu_spec(&self, file: usize) -> Option<(String, Vec<MenuItem>)> {
+        use gitti_core::conflict::{ConflictAction as A, ConflictKind};
         let wf = self.working.conflicted.get(file)?;
         let path = wf.entry.path.clone();
-        let (ours, theirs) = self
-            .conflict_sides
-            .as_ref()
-            .map(|s| (s.ours.clone(), s.theirs.clone()))
-            .unwrap_or_else(|| ("ours".into(), "theirs".into()));
-        let (p0, p1, p2, p3) = (path.clone(), path.clone(), path.clone(), path.clone());
-        Some((
-            format!("Resolve {path}"),
-            vec![
-                MenuItem::new("Open in Merge Editor", move |app| app.open_merge_editor(p0))
-                    .key('e'),
-                MenuItem::new(format!("Take Ours — {ours}"), move |app| {
-                    app.run_op("Take ours", false, After::Nothing, move |r| {
-                        r.resolve_with_side(&[p1], true)
-                    })
-                })
-                .key('o'),
-                MenuItem::new(format!("Take Theirs — {theirs}"), move |app| {
-                    app.run_op("Take theirs", false, After::Nothing, move |r| {
-                        r.resolve_with_side(&[p2], false)
-                    })
-                })
-                .key('t'),
-                MenuItem::new("Mark Resolved", move |app| {
+        let kind = ConflictKind::of(&wf.entry).unwrap_or(ConflictKind::BothModified);
+        let sides = self.conflict_sides_or_default();
+        let mut items = Vec::new();
+        if !kind.is_content() {
+            items.extend(MenuItem::notes(&kind.explain(&sides), 60));
+            items.push(MenuItem::separator());
+        }
+        for c in kind.choices(&sides) {
+            let p = path.clone();
+            let item = match c.action {
+                A::MergeEditor => {
+                    MenuItem::new("Open in Merge Editor", move |app| app.open_merge_editor(p))
+                        .key('e')
+                }
+                A::MarkResolved => {
+                    let shown = path.clone();
+                    MenuItem::new("Mark Resolved", move |app| {
                     let mark = move |app: &mut App| {
                         app.run_op("Mark resolved", false, After::Nothing, move |r| {
-                            r.mark_resolved(&[p3])
+                            r.mark_resolved(&[p])
                         })
                     };
-                    let path = path.clone();
+                    let path = shown.clone();
                     if app.repo.has_conflict_markers(&path) {
                         app.modal = Some(Modal::confirm(
                             "Mark Resolved",
@@ -2912,10 +2916,28 @@ impl App {
                     } else {
                         mark(app);
                     }
-                })
-                .key('r'),
-            ],
-        ))
+                    })
+                    .key('r')
+                }
+                action => {
+                    let (label, key) = match action {
+                        A::TakeOurs => ("Take ours", 'o'),
+                        A::TakeTheirs => ("Take theirs", 't'),
+                        A::Keep => ("Keep conflicted file", 'k'),
+                        A::Delete => ("Delete conflicted file", 'd'),
+                        _ => ("Restore base version", 'b'),
+                    };
+                    MenuItem::new(c.label, move |app| {
+                        app.run_op(label, false, After::Nothing, move |r| {
+                            r.resolve_conflict(&[p], action)
+                        })
+                    })
+                    .key(key)
+                }
+            };
+            items.push(item);
+        }
+        Some((format!("Resolve {path}"), items))
     }
 
     // ------------------------------------------------------------------ line selection
@@ -3399,25 +3421,43 @@ impl App {
         ));
     }
 
+    /// Create Tag: the name, and whether to write a message next (multi-line, in its own
+    /// editor): with one an annotated tag (`git tag -a`), without a lightweight one.
     pub fn create_tag_dialog(&mut self, rev: String) {
         let title = format!("Create tag at {}", short_rev(&rev));
-        self.modal = Some(Modal::input(
+        self.modal = Some(Modal::input_checks(
             title,
-            vec![("Tag name", ""), ("Message (annotated if set)", "")],
-            move |app, v| {
+            vec![("Tag name", "")],
+            vec![("Annotated — write a message next (git tag -a)", true)],
+            move |app, v, checks| {
                 let name = v[0].trim().to_string();
                 if name.is_empty() {
                     return;
                 }
-                let msg = v[1].trim().to_string();
-                app.run_op(
-                    &format!("Create tag {name}"),
-                    true,
-                    After::Nothing,
-                    move |r| r.create_tag(&name, &rev, (!msg.is_empty()).then_some(msg.as_str())),
-                );
+                let create = move |app: &mut App, name: String, msg: String| {
+                    app.run_op(&format!("Create tag {name}"), true, After::Nothing, move |r| {
+                        r.create_tag(&name, &rev, (!msg.trim().is_empty()).then_some(msg.as_str()))
+                    });
+                };
+                if !checks[0] {
+                    return create(app, name, String::new());
+                }
+                app.modal = Some(Modal::edit(
+                    format!("Message of tag {name}"),
+                    "the tag's message (empty: a lightweight tag)",
+                    "",
+                    move |app, text| create(app, name, text),
+                ));
             },
         ));
+    }
+
+    /// Show Tag: tag `name`'s details (lightweight or annotated: tagger, date, message,
+    /// verified signature) in a text window, read in the background.
+    pub fn show_tag(&mut self, name: String) {
+        self.run_op("Show tag", false, After::ShowOutput(format!("Tag {name}")), move |r| {
+            Ok(r.tag_details(&name)?.describe())
+        });
     }
 
     /// The action menu of the focused item (right click / `m`).
@@ -3451,17 +3491,50 @@ impl App {
 
     fn log_menu_spec(&self) -> (String, Vec<MenuItem>) {
         let reads = if self.log_reads { "on" } else { "off" };
-        (
-            "Git Command Log".to_string(),
-            vec![
-                MenuItem::new(format!("Show Queries: {reads}"), |app: &mut App| {
-                    app.log_reads = !app.log_reads
-                })
-                .key('r'),
-                MenuItem::new("Hide Log", |app: &mut App| app.toggle_log())
-                    .same_as('L', Command::ToggleGitLog),
-            ],
-        )
+        let mut items = vec![
+            MenuItem::new(format!("Show Queries: {reads}"), |app: &mut App| {
+                app.log_reads = !app.log_reads
+            })
+            .key('r'),
+            MenuItem::new("Hide Log", |app: &mut App| app.toggle_log())
+                .same_as('L', Command::ToggleGitLog),
+        ];
+        // Web links of the newest outputs (a push's "Create a pull request: https://…").
+        let links = self.log_links(3);
+        if !links.is_empty() {
+            items.push(MenuItem::separator());
+        }
+        for (i, url) in links.into_iter().enumerate() {
+            let u = url.clone();
+            let open = MenuItem::new(format!("Open Link {url}"), move |app: &mut App| {
+                match gitti_core::desktop::open_url(&u) {
+                    Ok(()) => app.set_info(format!("Opened {u}")),
+                    Err(e) => app.set_error(format!("Cannot open {u}: {e:#}")),
+                }
+            });
+            let u = url.clone();
+            let copy = MenuItem::new(format!("Copy Link {url}"), move |app: &mut App| app.copy(u));
+            // o / y for the newest link.
+            items.push(if i == 0 { open.key('o') } else { open });
+            items.push(if i == 0 { copy.key('y') } else { copy });
+        }
+        ("Git Command Log".to_string(), items)
+    }
+
+    /// The web links in the shown log entries' output, newest first, at most `max`.
+    pub fn log_links(&self, max: usize) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for e in self.log_entries().iter().rev() {
+            if !e.output.contains("://") {
+                continue;
+            }
+            for url in gitti_core::links::find_links(&e.output) {
+                if out.len() < max && !out.contains(&url) {
+                    out.push(url);
+                }
+            }
+        }
+        out
     }
 
     // ------------------------------------------------------------------ git log panel

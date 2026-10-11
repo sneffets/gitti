@@ -878,6 +878,26 @@ impl GittiApp {
         }
     }
 
+    /// Gives the open dialog a multi-line text area under its fields (e.g. a tag's message;
+    /// Enter there starts a new line), spell checked like the commit message; its text
+    /// comes back as `ModalResult::text`. The focus stays in the first field.
+    pub(super) fn add_modal_text_area(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let area = cx.new(|cx| {
+            let mut s = TextareaState::new(window, cx);
+            s.set_value(text, window, cx);
+            s
+        });
+        if let Some(m) = self.modal.as_mut() {
+            m.text = Some(area);
+        }
+        self.spell_check_modal_text(cx);
+    }
+
     /// The open dialog's text area is a message (Edit Commit Message…): spell checked like
     /// the commit message.
     pub(super) fn spell_check_modal_text(&mut self, cx: &mut Context<Self>) {

@@ -2297,6 +2297,17 @@ fn draw_diff_row(
                     Style::new().fg(p.warning),
                 ));
             }
+            // A conflict: its kind in a few words (the resolve menu explains it).
+            if let Some(kind) = wf
+                .filter(|_| src == Src::Conflicted)
+                .and_then(|w| gitti_core::conflict::ConflictKind::of(&w.entry))
+            {
+                let fg = if kind.is_content() { p.text_muted } else { p.warning };
+                spans.push(Span::styled(
+                    format!("  {}", kind.short(&app.conflict_sides_or_default())),
+                    Style::new().fg(fg),
+                ));
+            }
             let end = put(buf, x, y, w, spans);
             let mut hint = String::new();
             if cursor && wt {
@@ -2635,6 +2646,15 @@ fn draw_diff_row(
                 (None, Some(w)) if w.entry.untracked => {
                     "Untracked file — too large or too many to preview".to_string()
                 }
+                // A conflicted file the diff against HEAD shows nothing of.
+                (None, Some(w)) if src == Src::Conflicted => gitti_core::conflict::no_diff_note(
+                    &app.conflict_sides_or_default(),
+                    std::fs::symlink_metadata(gitti_core::paths::join_repo_path(
+                        app.repo.workdir(),
+                        w.path(),
+                    ))
+                    .is_ok(),
+                ),
                 _ => "No diff preview".to_string(),
             };
             put(

@@ -1352,6 +1352,11 @@ impl GittiApp {
                 // A binary placeholder: "Binary file (… MB)", nothing to load.
                 let text = match diff.and_then(gitti_core::commit_files::placeholder_note) {
                     Some(note) => note,
+                    // A conflicted file the diff against HEAD shows nothing of (deleted,
+                    // or as HEAD has it).
+                    None if diff.is_none() && src == Src::Conflicted => {
+                        self.conflict_no_diff_note(file)
+                    }
                     None => match diff {
                         None => "No preview (large or special file)",
                         Some(d) if d.binary => "Binary file",
@@ -1767,6 +1772,30 @@ impl GittiApp {
                         .child(format!("{} {short}", gitti_core::rows::FS_MARK)),
                 )
             })
+            // A conflict: its kind in a few words ("deleted by main, changed by feature"),
+            // the whole explanation in the tooltip.
+            .when_some(
+                (src == Src::Conflicted).then(|| self.conflict_kind(file)).flatten(),
+                |d, kind| {
+                    let sides = self.conflict_sides_or_default();
+                    let tip = kind.explain(&sides);
+                    d.child(
+                        div()
+                            .id(("conflict-kind", ix))
+                            .probe(format!("conflict-kind:{ix}"))
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::NORMAL)
+                            .text_size(self.settings.diff_small())
+                            .text_color(if kind.is_content() { p.text_muted } else { p.warning })
+                            .child(kind.short(&sides))
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(tip.clone())
+                                    .build(window, cx)
+                            }),
+                    )
+                },
+            )
             .child(div().flex_1())
             .children(self.render_hide_path_button(src, file, ix, cx))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -1830,9 +1859,31 @@ impl GittiApp {
                         })),
                 )
             }
+            Src::Conflicted if !self.conflict_kind(file).is_none_or(|k| k.is_content()) => {
+                // A file one side deleted / only one side has: a button per way out (keep,
+                // delete, restore), the menu's words in the tooltip.
+                for c in self.conflict_choices(file) {
+                    let action = c.action;
+                    let tip = format!("{} — {}", c.label, c.detail);
+                    el = el.child(
+                        Button::new(("conflict-choice", ix * 8 + action as usize))
+                            .probe(format!("conflict-choice:{ix}:{action:?}"))
+                            .label(action.button_label())
+                            .xsmall()
+                            .when(action != gitti_core::conflict::ConflictAction::Delete, |b| {
+                                b.ghost()
+                            })
+                            .tooltip(tip)
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                cx.stop_propagation();
+                                this.run_conflict_choice(file, action, w, cx)
+                            })),
+                    );
+                }
+            }
             Src::Conflicted => {
                 let app = cx.entity().downgrade();
-                let sides = self.conflict_sides.clone();
+                let choices = self.conflict_choices(file);
                 el = el
                     .child(
                         // Keep the click from toggling the file row.
@@ -1856,7 +1907,7 @@ impl GittiApp {
                                             })),
                                     )
                                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                                        super::menus::conflict_menu(menu, &app, file, sides.as_ref())
+                                        super::menus::conflict_menu(menu, &app, file, choices.clone())
                                     }),
                             ),
                     )

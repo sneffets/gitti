@@ -64,6 +64,7 @@ pub fn main() {
         ("pane_keys", pane_keys),
         ("compare_keys", compare_keys),
         ("git_log_keys", git_log_keys),
+        ("git_log_link", git_log_link),
         ("list_keys", list_keys),
         ("text_window_keys", text_window_keys),
         ("escape_everywhere", escape_everywhere),
@@ -2352,5 +2353,38 @@ fn text_antialiasing(ui: &mut Ui) {
         if got != (saved, mode.to_string()) {
             ui.fail(format!("{chip}: saved / live {got:?}, expected ({saved}, {mode})"));
         }
+    }
+}
+
+/// A git command whose output has a web link (as a push's "Create a pull request:
+/// https://…"): its log row gets Open Link, which opens it (the test sandbox only reports
+/// it) — no git; the entry's details window too.
+fn git_log_link(ui: &mut Ui) {
+    let url = "https://example.com/o/r/pull/new/feature";
+    ui.quick(&format!("cmd:rev-parse --sq-quote {url}"));
+    ui.quick("focuslog");
+    let link = ui
+        .frame()
+        .iter()
+        .rfind(|q| q.kind() == "log-link" && q.visible().is_some())
+        .map(|q| q.name.clone());
+    let Some(link) = link else {
+        ui.fail("no Open Link on the entry with a URL".into());
+        return;
+    };
+    let n = ui.n_git();
+    ui.click_on(&link, MouseButton::Left);
+    match ui.status() {
+        Some((text, false)) if text == format!("Opened {url}") => {}
+        other => ui.fail(format!("Open Link: status {other:?}")),
+    }
+    ui.no_git_since(n, "Open Link");
+    if ui.ui_state().modal.is_some() {
+        ui.fail("Open Link also opened the entry's details".into());
+    }
+    // Entries without a link have none.
+    let links = ui.frame().iter().filter(|q| q.kind() == "log-link").count();
+    if links != 1 {
+        ui.fail(format!("{links} Open Link buttons, want 1"));
     }
 }

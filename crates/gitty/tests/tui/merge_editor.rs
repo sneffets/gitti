@@ -2,7 +2,8 @@
 //! the single view, edit mode, questions before closing, outside edits, both halves
 //! scrolling together; the merge message and committing a merge; the message git
 //! prepared after `cherry-pick -n -x` (alone, next to the user's text); Continue with the
-//! message edited in the box, a merge concluded with the box emptied.
+//! message edited in the box, a merge concluded with the box emptied; a file one side
+//! deleted (its kind in the header, keep / delete in its menu).
 
 use crate::common;
 use crate::support;
@@ -491,4 +492,27 @@ fn merge_concluded_with_the_box_emptied() {
     let (parents, body) = log.split_once('\n').unwrap();
     assert_eq!(parents.split_whitespace().count(), 2, "a merge commit: {out}");
     assert_eq!(body.trim(), "Merge branch 'other'", "{out}");
+}
+
+/// A file `feat` deleted and main changed (`UD`): its header says so, its resolve menu
+/// explains it and offers keep / delete (no merge editor); k keeps it (`git add`).
+#[gitti_test::test]
+fn deleted_file_conflict_offers_keep_and_delete() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("gone.txt", "a\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "main", files: &[("gone.txt", "main\n")] },
+    ]);
+    let d = dir.path();
+    git(d, &["switch", "-qc", "feat", "HEAD~1"]);
+    git(d, &["rm", "-q", "gone.txt"]);
+    git(d, &["commit", "-qm", "delete"]);
+    git(d, &["switch", "-q", "main"]);
+    merge_feat(d);
+    let out = gitty(d, "press:enter;press:j;dump;press:enter;dump;key:k;state");
+    assert!(screens(&out)[0].contains("deleted by feat, changed by main"), "{out}");
+    let screen = screens(&out)[1];
+    assert!(screen.contains("Keep the File — main's version"), "{out}");
+    assert!(screen.contains("Delete the File — as feat did"), "{out}");
+    assert!(!screen.contains("Merge Editor"), "{out}");
+    assert_eq!(git(d, &["status", "--porcelain"]), "", "kept as main has it: {out}");
 }

@@ -194,9 +194,11 @@ impl Workspace {
         };
         this.restore_tabs(&saved.repos, window, cx);
         this.active = saved.active.min(this.tabs.len().saturating_sub(1));
+        // Started with GIT_DIR / GIT_WORK_TREE: the folder they are meant for opens (and
+        // says why not, if they name another repository) — never silently the saved tabs.
+        let launch_env = gitti_core::open_check::LaunchEnv::current().is_some();
         let requested = path.or_else(|| {
-            this.tabs
-                .is_empty()
+            (this.tabs.is_empty() || launch_env)
                 .then(|| std::env::current_dir().ok())
                 .flatten()
         });

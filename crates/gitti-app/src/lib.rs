@@ -144,6 +144,8 @@ pub fn run() {
     });
 
     let path = std::env::args().nth(1).map(PathBuf::from);
+    // GIT_DIR / GIT_WORK_TREE this start has (checked when that folder opens).
+    gitti_core::open_check::LaunchEnv::capture(path.as_deref());
     // Old read-only file versions ("Open This Version in Editor") of earlier sessions.
     std::thread::spawn(|| {
         use gitti_core::version_file::{MAX_AGE, cleanup_copies, copies_root};

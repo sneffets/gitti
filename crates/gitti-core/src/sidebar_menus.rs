@@ -119,6 +119,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Copy Name",
         ],
         SideMenu::Tag => &[
+            "Show Tag",
             "Checkout {name}",
             "Merge {name} into {head}",
             "Create Branch From…",

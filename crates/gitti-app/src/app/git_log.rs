@@ -1,6 +1,8 @@
 //! Bottom panel listing the git commands gitti ran (toggle: cmd-shift-l / palette). Its
 //! list takes the focus by click or Tab and then scrolls with the list / scroll keys
-//! (`nav_keys.rs`); the newest end follows new commands.
+//! (`nav_keys.rs`); the newest end follows new commands. An entry whose output has a web
+//! link (a push's "Create a pull request: https://…") gets an Open Link button; its
+//! details window too.
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -263,6 +265,12 @@ impl GittiApp {
         let old = e.previous_session;
         let ok = e.code == 0;
         let cmd = entry_line(&e);
+        // The first web link of the output (a push's pull request page).
+        let link = e
+            .output
+            .contains("://")
+            .then(|| gitti_core::links::find_links(&e.output).into_iter().next())
+            .flatten();
         let first_out = e
             .output
             .lines()
@@ -320,6 +328,20 @@ impl GittiApp {
                     .text_color(if ok { p.text_faint } else { p.danger })
                     .when(!first_out.is_empty(), |d| d.child(first_out)),
             )
+            .when_some(link.clone(), |d, url| {
+                d.child(
+                    Button::new(("log-link", ix))
+                        .probe(format!("log-link:{ix}"))
+                        .label("Open Link ↗")
+                        .xsmall()
+                        .ghost()
+                        .tooltip(url.clone())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.open_link(&url, cx);
+                        })),
+                )
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 let detail = format!(
                     "$ {}\n# exit {} · {} ms · {time}\n\n{}",
@@ -332,11 +354,26 @@ impl GittiApp {
                         &e.output
                     }
                 );
-                this.show_text_modal("Git command", detail, window, cx);
+                let mut spec = super::modal::ModalSpec::new("Git command").ok("Close").cancel(None);
+                if let Some(url) = link.clone() {
+                    spec = spec.extra("Open Link ↗", move |this, _, cx| this.open_link(&url, cx));
+                }
+                this.show_text_modal_spec(spec, detail, window, cx);
                 // Esc / Close: back to the log, where the click came from.
                 this.modal_returns_focus_to(this.log_focus.clone());
             }))
             .into_any_element()
+    }
+}
+
+impl GittiApp {
+    /// Opens a web link from git's output in the browser; a failure goes to the status line.
+    pub(super) fn open_link(&mut self, url: &str, cx: &mut Context<Self>) {
+        match gitti_core::desktop::open_url(url) {
+            Ok(()) => self.set_info(format!("Opened {url}")),
+            Err(e) => self.set_error(format!("Cannot open {url}: {e:#}")),
+        }
+        cx.notify();
     }
 }
 

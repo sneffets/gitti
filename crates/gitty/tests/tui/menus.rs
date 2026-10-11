@@ -1,7 +1,7 @@
 //! Menus and dialogs: the worktree, commit, diff and sidebar menus — their keys and
 //! actions, the sidebar menus' entries against the shared table —, the stash dialog, the
 //! git command dialog with its history, output and error details, the view toggles, copy /
-//! open in editor and compare mode.
+//! open in editor and compare mode; the git log menu's web links; Show Tag.
 
 use crate::common;
 use crate::support;
@@ -31,7 +31,8 @@ fn worktree_menu_keys_open_move_close_and_run() {
 }
 
 /// A right click selects the commit and opens its menu (`.` too): Create Tag Here… (an
-/// annotated tag), Create Branch Here… (not checked out).
+/// annotated tag: its multi-line message in an editor, kept as typed, `#` lines too),
+/// Create Branch Here… (not checked out).
 #[gitti_test::test]
 fn commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -40,10 +41,11 @@ fn commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch() {
     let out = gitty(
         d,
         &format!(
-            "rclick:40,3;dump;press:t;dump;{}press:tab;{}key:enter;\
+            "rclick:40,3;dump;press:t;dump;{}press:enter;{}press:enter;press:enter;{}key:ctrl-s;\
              press:.;press:b;{}press:tab;press:space;key:enter;dump",
             presses("v2"),
             presses("annotated"),
+            presses("# kept"),
             presses("topic2")
         ),
     );
@@ -51,6 +53,8 @@ fn commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch() {
     assert!(s[0].contains("Commit ") && s[0].contains("Create Tag Here…"), "{out}");
     assert!(s[1].contains("Create tag at"), "{out}");
     assert_eq!(git(d, &["cat-file", "-t", "v2"]).trim(), "tag");
+    let msg = git(d, &["for-each-ref", "--format=%(contents)", "refs/tags/v2"]);
+    assert_eq!(msg.trim_end(), "annotated\n\n# kept", "{out}");
     assert!(s[2].contains("topic2"), "the branch shows: {out}");
     assert!(git(d, &["branch", "--list", "topic2"]).contains("topic2"));
     assert_eq!(git(d, &["branch", "--show-current"]).trim(), "main", "not checked out");
@@ -589,4 +593,43 @@ fn header_author_and_date_copy() {
     assert!(st[1].contains(&format!("Copied {who}")), "y on Author: {out}");
     assert!(st[2].contains("Copied ") && !st[2].contains(who), "y on Date: {out}");
     assert_no_git(&cmds(&out)[1..], "copying the header's author / date", &out);
+}
+
+/// A command whose output has a web link (as a push's "Create a pull request: https://…"):
+/// the git log's menu offers to open (the test sandbox only reports it) and copy it.
+#[gitti_test::test]
+fn git_log_menu_opens_and_copies_links() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let url = "https://example.com/o/r/pull/new/x";
+    let out = gitty(
+        dir.path(),
+        &format!(
+            "key::;type:rev-parse --sq-quote {url};key:enter;key:esc;key:L;\
+             key:shift-tab;key:shift-tab;key:m;items;key:o;state"
+        ),
+    );
+    assert!(out.contains(&format!("item: Open Link {url}")), "{out}");
+    assert!(out.contains(&format!("item: Copy Link {url}")), "{out}");
+    assert!(states(&out)[0].contains(&format!("status=\"Opened {url}\"")), "{out}");
+}
+
+/// The tag menu's Show Tag: lightweight says it is only a name; annotated shows tagger
+/// and the whole message.
+#[gitti_test::test]
+fn show_tag_lightweight_and_annotated() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let d = dir.path();
+    git(d, &["tag", "light"]);
+    git(d, &["tag", "-a", "-m", "Release one\n\nSecond line", "v1.0"]);
+    // The sidebar: TAGS (the 6th row: branches, main, worktrees, the worktree, remotes),
+    // expanded, its tags (newest first: v1.0, then light), each one's menu, Show Tag.
+    let out = gitty(
+        d,
+        "key:h;key:j;key:j;key:j;key:j;key:j;key:enter;key:j;key:m;key:i;dump;\
+         key:esc;key:j;key:m;key:i;dump",
+    );
+    let s = screens(&out);
+    assert!(s[0].contains("Annotated tag v1.0") && s[0].contains("Tagger:"), "{out}");
+    assert!(s[0].contains("Second line"), "{out}");
+    assert!(s[1].contains("Lightweight tag light"), "{out}");
 }

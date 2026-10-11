@@ -38,6 +38,29 @@ pub fn folder_argv(dir: &Path) -> Vec<String> {
     }
 }
 
+/// Opens the web link `url` in the default browser. Only http / https
+/// ([`crate::links::is_web_link`]): a link from git's (or a remote's) output must not
+/// start another handler.
+pub fn open_url(url: &str) -> Result<()> {
+    if !crate::links::is_web_link(url) {
+        bail!("not a web link: {url}");
+    }
+    spawn(&url_argv(url), &std::env::temp_dir())
+}
+
+/// The command [`open_url`] runs.
+pub fn url_argv(url: &str) -> Vec<String> {
+    let u = url.to_string();
+    if cfg!(target_os = "macos") {
+        vec!["open".into(), u]
+    } else if cfg!(windows) {
+        // Not `cmd /c start`: cmd would read the URL's `&` as a command separator.
+        vec!["rundll32".into(), "url.dll,FileProtocolHandler".into(), u]
+    } else {
+        vec!["xdg-open".into(), u]
+    }
+}
+
 /// What "Open in Terminal" starts for the shared setting `terminal_command`: the
 /// environment variable `GITTI_TERMINAL` if set (it overrides the setting, e.g. for one
 /// session), else the setting, else the detected default (see [`crate::terminal`]).
@@ -161,5 +184,15 @@ mod tests {
         assert!(spawn_detached(&missing, &dir).is_ok());
         let abs = [dir.join("gitti-no-such-opener-xyz").to_string_lossy().into_owned()];
         assert!(spawn_detached(&abs, &dir).is_err());
+    }
+
+    /// Only web links open (refused before anything starts); the URL is one argument
+    /// (no shell). (Not `sandbox()` here: the test above needs it off first.)
+    #[gitti_test::test]
+    fn open_url_takes_web_links_only() {
+        assert!(open_url("file:///etc/passwd").is_err());
+        assert!(open_url("javascript:alert(1)").is_err());
+        let argv = url_argv("https://h.io/a?b=1&c=2");
+        assert_eq!(argv.last().unwrap(), "https://h.io/a?b=1&c=2");
     }
 }
