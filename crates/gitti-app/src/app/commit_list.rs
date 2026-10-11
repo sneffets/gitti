@@ -33,6 +33,12 @@ pub(super) enum ListLayout {
     TwoLine,
 }
 
+/// The ref whose badge in a commit row got the right click. The row's context menu opens
+/// on the same click (its listener runs first; it builds the menu a moment later) and
+/// takes the ref from here: then it is that ref's menu instead of the commit's. gpui
+/// opens every context menu under the pointer, so the badge can't have its own.
+type BadgePick = Rc<std::cell::RefCell<Option<gitti_core::RefInfo>>>;
+
 /// One-line rows' author column: at most this many UI-font ems (about 12 characters of the
 /// small font, then "…"; gitty: 11 columns). It gives way before the subject does in a
 /// narrow list.
@@ -230,6 +236,8 @@ impl GittiApp {
             .overflow_hidden();
         let mut branch_here = None;
         let mut badges: Vec<AnyElement> = Vec::new();
+        // The ref whose badge got the right click: the row's menu is that ref's then.
+        let badge_pick: BadgePick = Rc::default();
         // The marked compare base, before everything else (also on the worktree row).
         subject = subject.children(self.compare_badge(ix, cx));
         if is_wt {
@@ -292,11 +300,12 @@ impl GittiApp {
                     |n| self.small_text_w(&format!("+{n}"), false, cx) + 8.,
                 );
                 for r in &pick.shown {
-                    badges.push(self.ref_badge(
+                    badges.push(self.ref_badge_with(
                         r,
                         Some(px(s.ui_font_size * 11.)),
                         format!("ref-badge:{ix}:{}", r.short_name),
                         true,
+                        Some(badge_pick.clone()),
                         &p,
                         cx,
                     ));
@@ -499,6 +508,10 @@ impl GittiApp {
                 }),
             )
             .context_menu(move |menu, window, cx| {
+                // A right click on a ref's badge: that ref's menu (as in the sidebar).
+                if let Some(r) = badge_pick.borrow_mut().take() {
+                    return super::menus::ref_context_menu(menu, &app, &r, window, cx);
+                }
                 let menu = match (&menu_ctx, stash) {
                     (_, Some(n)) => super::menus::stash_menu(menu, &app, n),
                     (Some(c), None) => {
@@ -545,6 +558,22 @@ impl GittiApp {
         p: &crate::theme::Palette,
         cx: &App,
     ) -> AnyElement {
+        self.ref_badge_with(r, max_w, probe, wt_probe, None, p, cx)
+    }
+
+    /// [`Self::ref_badge`]; `menu`: a right click on it (a branch's or tag's) puts the
+    /// ref there for its row's menu, which then is the ref's ([`BadgePick`]).
+    #[allow(clippy::too_many_arguments)]
+    fn ref_badge_with(
+        &self,
+        r: &gitti_core::RefInfo,
+        max_w: Option<Pixels>,
+        probe: String,
+        wt_probe: bool,
+        menu: Option<BadgePick>,
+        p: &crate::theme::Palette,
+        cx: &App,
+    ) -> AnyElement {
         let s = &self.settings;
         let current = ref_badges::is_current(r, self.head.branch.as_deref());
         let (fg, bg, border) = match r.kind {
@@ -584,6 +613,12 @@ impl GittiApp {
             .text_color(fg)
             .when(current, |d| d.font_weight(FontWeight::BOLD))
             .probe(probe)
+            .when_some(menu.filter(|_| r.kind != RefKind::Stash), |d, pick| {
+                let r = r.clone();
+                d.on_mouse_down(MouseButton::Right, move |_, _, _| {
+                    *pick.borrow_mut() = Some(r.clone())
+                })
+            })
             .when(elsewhere.is_some(), |d| {
                 d.child(Icon::new(IconName::Folder).xsmall().flex_none().text_color(fg))
             })

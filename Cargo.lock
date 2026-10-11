@@ -2420,6 +2420,7 @@ dependencies = [
  "embed-resource",
  "gitti-core",
  "gitti-test",
+ "gitti-workflow",
  "gpui-kit",
  "image",
  "objc2 0.6.4",
@@ -2442,6 +2443,7 @@ dependencies = [
  "filetime",
  "getrandom 0.4.3",
  "gitti-test",
+ "gitti-workflow",
  "gix",
  "libc",
  "notify 8.2.0",
@@ -2493,6 +2495,10 @@ name = "gitti-test"
 version = "0.1.0"
 
 [[package]]
+name = "gitti-workflow"
+version = "0.1.0"
+
+[[package]]
 name = "gitty"
 version = "0.1.0"
 dependencies = [
@@ -2501,6 +2507,7 @@ dependencies = [
  "embed-resource",
  "gitti-core",
  "gitti-test",
+ "gitti-workflow",
  "ratatui",
  "tempfile",
  "unicode-width",
@@ -10816,6 +10823,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "gitti-test",
+ "serde_json",
 ]
 
 [[package]]

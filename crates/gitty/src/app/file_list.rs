@@ -56,7 +56,9 @@ impl App {
     /// gets the focus.
     fn goto_file_row(&mut self, path: &str) {
         // Another file chosen: it opens as changes (revealed unchanged lines go).
-        if self.expansion.hide_all_context() {
+        let hidden = self.expansion.hide_all_context();
+        // In the tree, the folders the file is in open.
+        if hidden | self.expansion.open_folders_of(path) {
             self.rebuild_rows();
         }
         let row = self.rows.iter().position(|r| match *r {

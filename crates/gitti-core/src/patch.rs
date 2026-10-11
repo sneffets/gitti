@@ -432,6 +432,7 @@ index 1..2 100644
  c
 ";
 
+    /// Workflow: ST-02
     #[gitti_test::test]
     fn stage_only_added_line() {
         let f = &parse_unified(D)[0];

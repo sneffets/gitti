@@ -155,6 +155,7 @@ fn o_pages_the_bar_and_a_new_selection_starts_over() {
 /// The keys the bar shows run their entries: a on a remote (Add Remote…), u on a remote
 /// branch (Set as Upstream), d on a tag (Delete Tag… asks), y in the commit list (Copy
 /// SHA); `m c` stays the commit message key's `c` outside the menu.
+/// Workflow: BR-12, BR-17, RM-01
 #[gitti_test::test]
 fn the_keys_shown_run_their_entries() {
     let dir = bar_repo();

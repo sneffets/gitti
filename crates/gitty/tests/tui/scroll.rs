@@ -261,6 +261,7 @@ fn picker_keeps_its_window_and_the_wheel_scrolls_it() {
 
 /// Hunk 5's header on top, the wheel up 3 rows; staging it keeps the rows above where
 /// they were (the next hunk takes its place); a refresh keeps the view too.
+/// Workflow: ST-17
 #[gitti_test::test]
 fn scroll_position_is_kept_across_staging_and_refresh() {
     let text = |big: bool| -> String {
@@ -309,6 +310,7 @@ fn three_files_repo() -> tempfile::TempDir {
 
 /// Scrolled into a file's diff, staging the whole file shows the next
 /// file (else the previous one) — cursor on its header, at the top.
+/// Workflow: ST-17
 #[gitti_test::test]
 fn staging_a_whole_file_moves_to_the_next_file() {
     let dir = three_files_repo();
@@ -329,6 +331,7 @@ fn staging_a_whole_file_moves_to_the_next_file() {
 /// "Show more lines": ⏎ / x on the expander above the first hunk reveal 20 lines each, X
 /// the whole file; esc / the menu's / palette's Show Changes Only go back; Show Whole
 /// File from the palette and the menu (m X). From the work file — no git.
+/// Workflow: ST-11
 #[gitti_test::test]
 fn expanders_whole_file_and_changes_only_without_git() {
     let dir = three_files_repo();

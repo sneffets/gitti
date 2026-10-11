@@ -64,6 +64,7 @@ fn terminal_diff_tool_is_refused() {
 
 /// Unix only: `git mergetool` is a shell script that starts ~35 git processes and about
 /// as many shell tools — seconds of process starts on Windows, over the test time limit.
+/// Workflow: MG-24
 #[cfg(unix)]
 #[gitti_test::test]
 fn merge_tool_from_the_resolve_menu() {

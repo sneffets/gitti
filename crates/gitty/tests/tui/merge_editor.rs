@@ -113,6 +113,7 @@ fn merge_editor_pick_undo_navigation_pan_and_help_keys() {
 /// s saves without marking resolved; v / alt-v fold and unfold ours | theirs; esc and
 /// ctrl-c ask while the result isn't saved (n / esc stay); o saves and opens the editor at
 /// the conflict; S saves, marks resolved (theirs-only changes came along) and closes.
+/// Workflow: MG-07
 #[gitti_test::test]
 fn merge_editor_save_single_view_questions_editor_and_resolve() {
     let dir = conflicted_repo();
@@ -159,6 +160,7 @@ fn merge_editor_save_single_view_questions_editor_and_resolve() {
 /// A file that is not UTF-8 (Latin-1 here, by its `working-tree-encoding`): the editor
 /// names the encoding, shows the text decoded and saves the result as the file's exact
 /// bytes.
+/// Workflow: MG-15
 #[gitti_test::test]
 fn merge_editor_saves_a_latin1_file_exactly() {
     let attrs = "a.txt working-tree-encoding=ISO-8859-1\n";
@@ -262,6 +264,7 @@ fn merge_editor_remembers_the_single_view() {
 
 /// Another program resolves the conflict while the editor is open: taken in on focus;
 /// undo brings the conflict back; saving with markers is refused.
+/// Workflow: EX-24
 #[gitti_test::test]
 fn merge_editor_takes_in_outside_edits() {
     let dir = conflicted_repo();
@@ -316,6 +319,7 @@ fn merge_editor_halves_scroll_together_by_keys_and_wheel() {
 
 /// During a merge the message box has git's merge message; Commit is refused while
 /// conflicts are open (the status says why) and concludes the merge once they are resolved.
+/// Workflow: MG-06
 #[gitti_test::test]
 fn merge_message_prefilled_commit_blocked_then_concludes_the_merge() {
     let dir = conflicted_repo();
@@ -336,6 +340,7 @@ fn merge_message_prefilled_commit_blocked_then_concludes_the_merge() {
 
 /// Conflicts from a `git stash pop`: the banner offers Abort; the palette's Abort asks
 /// (listing the files, saying the stash stays) — n keeps, y aborts.
+/// Workflow: SH-12
 #[gitti_test::test]
 fn stash_pop_conflict_aborts_from_the_palette_and_keeps_the_stash() {
     let dir = fixture(&[("a.txt", "base\n"), ("b.txt", "b\n")], &[("a.txt", "stashed\n"), ("b.txt", "b stashed\n")]);
@@ -368,6 +373,7 @@ fn pick_repo() -> tempfile::TempDir {
 
 /// `git cherry-pick -n -x` on the command line leaves only MERGE_MSG: the empty message
 /// box gets it (no note) and ctrl-s commits it (git drops the file).
+/// Workflow: CP-03
 #[gitti_test::test]
 fn prepared_message_after_cherry_pick_no_commit() {
     let dir = pick_repo();
@@ -389,6 +395,7 @@ fn prepared_message_after_cherry_pick_no_commit() {
 /// The user's own text in the box, then gitty's Cherry-pick with Options… (`--no-commit
 /// -x`): the text stays and a note offers git's message — the palette's "Keep My Commit
 /// Message" hides it, "Use the Message git Prepared" takes it; nothing is committed.
+/// Workflow: CP-02, CP-03
 #[gitti_test::test]
 fn prepared_message_next_to_the_users_text() {
     let dir = pick_repo();
@@ -415,6 +422,7 @@ fn prepared_message_next_to_the_users_text() {
 /// Keep Mine is kept with the draft: a draft from an earlier run next to git's message
 /// (`cherry-pick -n -x` on the command line meanwhile) shows the note; Keep Mine hides it,
 /// and the next start shows the draft without the note.
+/// Workflow: CP-03
 #[gitti_test::test]
 fn keep_mine_survives_a_restart() {
     let dir = pick_repo();
@@ -457,6 +465,7 @@ fn conflicting_branches() -> tempfile::TempDir {
 /// A cherry-pick of two commits stopped on a conflict (resolved on the command line): the
 /// box holds git's message; edited, the palette's Continue — its detail says it takes the
 /// box's text — commits the resolution with it and picks the rest; the box empties.
+/// Workflow: CP-04, CP-07
 #[gitti_test::test]
 fn continue_with_the_edited_message() {
     let dir = conflicting_branches();
@@ -480,6 +489,7 @@ fn continue_with_the_edited_message() {
 
 /// A merge whose conflict is resolved, concluded with the box emptied (ctrl-s): git's
 /// message without its "# Conflicts:" lines.
+/// Workflow: MG-11
 #[gitti_test::test]
 fn merge_concluded_with_the_box_emptied() {
     let dir = conflicting_branches();
@@ -496,6 +506,7 @@ fn merge_concluded_with_the_box_emptied() {
 
 /// A file `feat` deleted and main changed (`UD`): its header says so, its resolve menu
 /// explains it and offers keep / delete (no merge editor); k keeps it (`git add`).
+/// Workflow: MG-08
 #[gitti_test::test]
 fn deleted_file_conflict_offers_keep_and_delete() {
     let dir = import(&[

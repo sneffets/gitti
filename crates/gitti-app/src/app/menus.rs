@@ -9,7 +9,9 @@ use gitti_core::{RefInfo, RefKind};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 
+use super::custom_commands::Given;
 use super::{GittiApp, last_line};
+use gitti_core::custom_command::Menu;
 use super::modal::{ModalLive, ModalSpec};
 
 type AppHandle = WeakEntity<GittiApp>;
@@ -36,6 +38,60 @@ pub fn take_menu_labels() -> Vec<String> {
     BUILT.with(|b| std::mem::take(&mut *b.borrow_mut()))
 }
 
+/// What a context-menu entry does when chosen.
+type EntryAction = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
+
+thread_local! {
+    /// The entries of the menus built lately with what they do, newest last (only while
+    /// the layout probes are on): the `menu:LABEL` script step chooses one by its label.
+    static ACTIONS: std::cell::RefCell<Vec<(String, EntryAction)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A context-menu entry that runs `f` when chosen — by a click, or by the `menu:LABEL`
+/// script step ([`run_menu_entry`]).
+pub(super) fn menu_action(
+    label: impl Into<SharedString>,
+    f: impl Fn(&mut Window, &mut App) + 'static,
+) -> PopupMenuItem {
+    let label = label.into();
+    let f: EntryAction = std::rc::Rc::new(f);
+    if crate::probe::enabled() {
+        ACTIONS.with(|a| {
+            let mut a = a.borrow_mut();
+            // Menus are built on every open: keep the recent ones.
+            if a.len() >= 512 {
+                a.drain(..256);
+            }
+            a.push((label.to_string(), f.clone()));
+        });
+    }
+    menu_entry(label).on_click(move |_, window, cx| f(window, cx))
+}
+
+/// Runs the entry `label` (exactly as shown, a greyed one with its reason) of the menu
+/// built last that has it — what clicking it does, without the menu's coordinates. The
+/// caller closes the open menu first. An error when no such entry was built.
+pub fn run_menu_entry(label: &str, window: &mut Window, cx: &mut App) -> Result<(), String> {
+    let found = ACTIONS.with(|a| {
+        a.borrow()
+            .iter()
+            .rev()
+            .find(|(l, _)| l == label)
+            .map(|(_, f)| f.clone())
+    });
+    match found {
+        Some(f) => {
+            f(window, cx);
+            Ok(())
+        }
+        None => {
+            let known: Vec<String> = ACTIONS.with(|a| a.borrow().iter().rev().take(40).map(|(l, _)| l.clone()).collect());
+            Err(format!("no menu entry {label:?} (latest: {known:?})"))
+        }
+    }
+}
+
 /// A menu entry that runs `f` on the app.
 fn item(
     label: impl Into<SharedString>,
@@ -43,7 +99,7 @@ fn item(
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
 ) -> PopupMenuItem {
     let app = app.clone();
-    menu_entry(label).on_click(move |_, window, cx| {
+    menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
@@ -366,6 +422,11 @@ pub(super) fn diff_menu(
     let keys = |label: &str, action: &dyn Action| {
         crate::shortcuts::menu_label(label, action, "DiffView", cx)
     };
+    // A folder row right-clicked, marked files: their actions first.
+    let menu = match app.upgrade() {
+        Some(a) if worktree => a.read(cx).marks_menu_items(menu, app),
+        _ => menu,
+    };
     let mut menu = menu
         .item(
             item(keys("Copy", &crate::CopySelection), app, |this, w, cx| {
@@ -432,6 +493,13 @@ pub(super) fn diff_menu(
             this.rebuild_rows();
             cx.notify();
         }));
+    // The working directory only (a commit's files stay a list).
+    if worktree {
+        menu = menu.item(
+            item("Show Changes as Tree", app, |this, _, cx| this.toggle_changes_tree(cx))
+                .checked(s.changes_as_tree),
+        );
+    }
     if worktree {
         menu = menu
             .separator()
@@ -488,6 +556,69 @@ pub(super) struct RefMenuCtx<'a> {
     pub upstream: Option<String>,
     /// The checked-out branch (`None`: HEAD is detached).
     pub head: Option<String>,
+}
+
+/// A ref's whole context menu — its sidebar row, its badge in the commit list: [`ref_menu`]
+/// with what it needs taken from the app's last refresh (no git runs on open), then the
+/// custom commands of its kind (a branch's — a remote branch's by its name there, with
+/// its remote —, a tag's).
+pub(super) fn ref_context_menu(
+    menu: PopupMenu,
+    app: &AppHandle,
+    r: &RefInfo,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let Some(this) = app.upgrade() else {
+        return menu;
+    };
+    let local = r.kind == RefKind::LocalBranch;
+    let (is_head, elsewhere, remotes, upstream, head) = {
+        let a = this.read(cx);
+        let upstream = local
+            .then(|| a.tracking.iter().find(|t| t.branch == r.short_name))
+            .flatten()
+            .and_then(|t| t.upstream.clone());
+        (
+            local && a.head.branch.as_deref() == Some(&r.short_name),
+            local.then(|| a.other_worktree_of(&r.short_name).cloned()).flatten(),
+            a.remotes.iter().map(|r| r.name.clone()).collect::<Vec<String>>(),
+            upstream,
+            a.head.branch.clone(),
+        )
+    };
+    let ctx = RefMenuCtx {
+        is_head,
+        elsewhere: elsewhere.as_ref(),
+        remotes: &remotes,
+        upstream,
+        head,
+    };
+    let menu = ref_menu(menu, app, r, &ctx, window, cx);
+    let commit = Some(r.target.to_string());
+    let (kind, given) = match r.kind {
+        RefKind::LocalBranch => (Menu::Branch, Given {
+            commit,
+            branch: Some(r.short_name.clone()),
+            ..Default::default()
+        }),
+        RefKind::RemoteBranch => {
+            let (remote, branch) = gitti_core::custom_command::split_remote_branch(&r.short_name, &remotes);
+            (Menu::Branch, Given {
+                commit,
+                branch: Some(branch),
+                remote,
+                ..Default::default()
+            })
+        }
+        RefKind::Tag => (Menu::Tag, Given {
+            commit,
+            tag: Some(r.short_name.clone()),
+            ..Default::default()
+        }),
+        _ => return menu,
+    };
+    super::custom_commands::menu_items(menu, app, kind, given, cx)
 }
 
 /// A ref's menu (sidebar row, commit list badge): every entry of

@@ -22,6 +22,7 @@ pub fn main() {
         ("staging_in_a_file_tab_updates_the_tabs", staging_in_a_file_tab_updates_the_tabs),
         ("staging_keys", staging_keys),
         ("unstaged_groups_fold_and_stage_cheaply", unstaged_groups_fold_and_stage_cheaply),
+        ("changes_as_tree_and_marked_files", changes_as_tree_and_marked_files),
         ("watcher_rereads_only_what_changed", watcher_rereads_only_what_changed),
         ("prefetch_is_one_git_process", prefetch_is_one_git_process),
         ("file_tabs_and_more_lines_run_no_git", file_tabs_and_more_lines_run_no_git),
@@ -36,6 +37,14 @@ pub fn main() {
     common::run(tests, |name| {
         counter.set(counter.get() + 1);
         let dir = make_repo(&base.join(format!("repo{}", counter.get())));
+        if name == "changes_as_tree_and_marked_files" {
+            // Untracked files in folders (no git: just files).
+            for f in ["src/app/a.rs", "src/app/b.rs", "docs/x.md"] {
+                let p = dir.join(f);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, format!("{f}\n")).unwrap();
+            }
+        }
         if name == "non_utf8_line_stages_exactly" {
             // big.txt as committed (`line {i} `) with one Latin-1 line: one hunk.
             let mut big = Vec::new();
@@ -140,6 +149,7 @@ fn worktree(ui: &mut Ui) {
 }
 
 /// big.txt has 16 hunks (`make_repo`): staging one moves it over at once.
+/// Workflow: ST-01
 fn stage_hunk_is_quick(ui: &mut Ui) {
     worktree(ui);
     let start = working(ui);
@@ -159,6 +169,7 @@ fn stage_hunk_is_quick(ui: &mut Ui) {
 }
 
 /// Whole files: modified, staged, untracked.
+/// Workflow: ST-07
 fn stage_and_unstage_files_are_quick(ui: &mut Ui) {
     worktree(ui);
     let (cmds, wall) = quick_step(ui, "stagefile:big.txt");
@@ -176,6 +187,7 @@ fn stage_and_unstage_files_are_quick(ui: &mut Ui) {
 }
 
 /// A line selection inside the first hunk, staged with the `s` key path.
+/// Workflow: ST-02
 fn stage_lines_is_quick(ui: &mut Ui) {
     worktree(ui);
     let rows = ui.metrics().diff_rows;
@@ -197,6 +209,7 @@ fn stage_lines_is_quick(ui: &mut Ui) {
 
 /// A stage-all key pressed while a stage still runs is not refused ("Busy") but runs
 /// after it.
+/// Workflow: ST-15
 fn key_during_an_operation_waits_for_it(ui: &mut Ui) {
     worktree(ui);
     ui.focus_list();
@@ -219,6 +232,7 @@ fn key_during_an_operation_waits_for_it(ui: &mut Ui) {
 
 /// A full refresh (here: `r`) that started before a stage finishes after it: its older
 /// working state must not replace the newer one, not even for one frame.
+/// Workflow: ST-16, EX-19
 fn refresh_racing_a_stage_shows_no_old_state(ui: &mut Ui) {
     worktree(ui);
     ui.focus_list();
@@ -355,6 +369,7 @@ fn expect_tab(ui: &mut Ui, what: &str, label: &str, active: Option<&str>, files:
 /// Staging / unstaging hunks, lines and the file inside a file tab: the work_op fast path
 /// (no full refresh), the tab stays and its mark follows; a tab whose file has no changes
 /// any more falls back to all changes.
+/// Workflow: ST-14
 fn staging_in_a_file_tab_updates_the_tabs(ui: &mut Ui) {
     worktree(ui);
     ui.click_on("file-tab:1", MouseButton::Left);
@@ -437,6 +452,7 @@ fn select_row(ui: &mut Ui, ix: usize) {
 /// s / u on a selected line, d asking first (Cancel keeps, Discard drops), S / U for
 /// everything, D asking first — each a cheap work_op (its own command + path-limited
 /// re-reads), the result in the first frames.
+/// Workflow: ST-03, ST-08, ST-18, DC-01, DC-03
 fn staging_keys(ui: &mut Ui) {
     worktree(ui);
     let dir = ui.workdir();
@@ -512,6 +528,7 @@ fn staging_keys(ui: &mut Ui) {
 /// The unstaged section in groups (`make_repo` has the untracked new.txt). Folding
 /// a group runs no git; its Stage button is one `git add` of the group's paths and the
 /// usual path-limited re-read.
+/// Workflow: ST-09
 fn unstaged_groups_fold_and_stage_cheaply(ui: &mut Ui) {
     worktree(ui);
     let rows = ui.metrics().diff_rows;
@@ -544,11 +561,133 @@ fn unstaged_groups_fold_and_stage_cheaply(ui: &mut Ui) {
     }
 }
 
+/// The tree of the working directory: switching it and folding a folder run no git and
+/// switching back gives the flat rows again; a folder's Stage is one `git add` of exactly
+/// its files plus a path-limited re-read. Marked files (⌘-click, shift-click on file
+/// headers): `s` stages them, `u` unstages them, Esc clears the marks.
+fn changes_as_tree_and_marked_files(ui: &mut Ui) {
+    worktree(ui);
+    let flat = ui.metrics().diff_rows;
+    let n = ui.n_git();
+    ui.step("action:gitti::ToggleChangesTree");
+    ui.no_git_since(n, "switching to the tree");
+    // Folder rows keep the layout's invariants (inside the list, no overlap).
+    ui.check("tree view");
+    let rows = ui.metrics().diff_rows;
+    // Untracked: docs/, src/app/ (one row for the chain).
+    let folders = rows.iter().filter(|k| **k == "folder").count();
+    if folders != 2 {
+        ui.fail(format!("expected two folder rows: {rows:?}"));
+        return;
+    }
+    // Off again: exactly the flat rows.
+    ui.step("action:gitti::ToggleChangesTree");
+    let back = ui.metrics().diff_rows;
+    if back != flat {
+        ui.fail(format!("the list after the tree differs: {flat:?} → {back:?}"));
+    }
+    ui.step("action:gitti::ToggleChangesTree");
+    let marks = |ui: &mut Ui| {
+        let ws = ui.ws.clone();
+        ui.cx.update(|cx| testing::marks(&ws, cx))
+    };
+    // The file header probes shown, top to bottom.
+    let file_rows = |ui: &mut Ui| -> Vec<String> {
+        let mut v: Vec<(usize, String)> = ui
+            .frame()
+            .iter()
+            .filter(|p| p.name.starts_with("diff-row:") && p.name.ends_with(":file") && p.visible().is_some())
+            .filter_map(|p| Some((p.name.split(':').nth(1)?.parse().ok()?, p.name.clone())))
+            .collect();
+        v.sort();
+        v.dedup();
+        v.into_iter().map(|(_, n)| n).collect()
+    };
+    // Fold big.txt (a plain click on its header folds) so the other headers are on screen.
+    let files = file_rows(ui);
+    let Some(big) = files.first().cloned() else {
+        ui.fail("no file header shown".into());
+        return;
+    };
+    ui.click_on(&big, MouseButton::Left);
+    let n = ui.n_git();
+    ui.click_on("folder:unstaged/src/app", MouseButton::Left);
+    ui.no_git_since(n, "folding a folder");
+    if ui.metrics().diff_rows.len() >= rows.len() {
+        ui.fail("the folder did not fold".into());
+    }
+    let n = ui.n_git();
+    let t = Instant::now();
+    ui.click_on("folder-stage:unstaged/src/app", MouseButton::Left);
+    let wall = t.elapsed();
+    let cmds = ui.git_since(n);
+    expect_cheap(ui, "stage folder", &cmds, wall);
+    if cmds.first().map(String::as_str) != Some("add -A -- src/app/a.rs src/app/b.rs") {
+        ui.fail(format!("stage folder: expected `git add -A -- src/app/a.rs src/app/b.rs` first: {cmds:?}"));
+    }
+    expect_state(ui, "stage folder", &["S src/app/a.rs 1", "S src/app/b.rs 1", "U docs/x.md 1"], &["U src/app/a.rs 1"]);
+
+    // Shown in order: big.txt, docs/ x.md, new.txt (untracked), then the staged files.
+    let files = file_rows(ui);
+    if files.len() < 3 {
+        ui.fail(format!("expected file rows: {files:?}"));
+        return;
+    }
+    // ⌘-click the first header, shift-click the third: the three of them.
+    let n = ui.n_git();
+    ui.click_on_with(&files[0], MouseButton::Left, Modifiers::secondary_key());
+    ui.click_on_with(&files[2], MouseButton::Left, Modifiers::shift());
+    ui.no_git_since(n, "marking files");
+    let marked = marks(ui);
+    if marked != ["unstaged:big.txt", "unstaged:docs/x.md", "unstaged:new.txt"] {
+        ui.fail(format!("marks after ⌘-click + shift-click: {marked:?}"));
+    }
+    ui.quick("focusdiff");
+    let n = ui.n_git();
+    ui.stroke("s");
+    ui.settle();
+    let cmds = ui.git_since(n);
+    if !cmds.first().is_some_and(|c| c == "add -A -- big.txt docs/x.md new.txt") {
+        ui.fail(format!("s with marked files: expected one `git add` of them first: {cmds:?}"));
+    }
+    expect_state(ui, "stage marked", &["S big.txt 16", "S docs/x.md 1", "S new.txt 1"], &["U big.txt 16"]);
+    // Staged: their marks went (marks are per section).
+    let left = marks(ui);
+    if !left.is_empty() {
+        ui.fail(format!("marks of staged files stayed: {left:?}"));
+    }
+    // ⌘-click a staged file, Esc clears the mark, ⌘-click again, u unstages it.
+    let files = file_rows(ui);
+    // The staged section is the last one.
+    let Some(first) = files.last().cloned() else {
+        ui.fail("no staged file header".into());
+        return;
+    };
+    ui.click_on_with(&first, MouseButton::Left, Modifiers::secondary_key());
+    if marks(ui).len() != 1 {
+        let m = marks(ui);
+        ui.fail(format!("⌘-click marked {m:?}"));
+    }
+    ui.stroke("escape");
+    if !marks(ui).is_empty() {
+        ui.fail("Esc did not clear the marks".into());
+    }
+    ui.click_on_with(&first, MouseButton::Left, Modifiers::secondary_key());
+    let n = ui.n_git();
+    ui.stroke("u");
+    ui.settle();
+    let cmds = ui.git_since(n);
+    if !cmds.first().is_some_and(|c| c.starts_with("restore --staged -- ")) {
+        ui.fail(format!("u with a marked file: expected `git restore --staged` first: {cmds:?}"));
+    }
+}
+
 /// Our own writes (a stage, a commit) reach the fs watcher too but cause no refresh; an
 /// editor saving one file re-reads that path only (status + diffs limited to it — no
 /// whole-repository status, refs, remotes, stashes), a new directory with a file likewise;
 /// a ref moved by someone else refreshes the whole snapshot. Waits only until each expected
 /// re-read happened (real time: the watcher).
+/// Workflow: EX-01
 fn watcher_rereads_only_what_changed(ui: &mut Ui) {
     worktree(ui);
     let path = ui.workdir();
@@ -639,6 +778,7 @@ fn history(ui: &mut Ui) -> (usize, String) {
 /// The working state doesn't wait for the history. With history loads held back,
 /// a commit made outside (and a new file) shows its working state; released, the commit
 /// is added on top of the loaded rows (only it is read and sorted).
+/// Workflow: EX-22
 fn working_state_does_not_wait_for_the_history(ui: &mut Ui) {
     worktree(ui);
     let path = ui.workdir();
@@ -674,6 +814,7 @@ fn working_state_does_not_wait_for_the_history(ui: &mut Ui) {
 /// A commit adding a huge file shows it in its file list with a "Load anyway" row — its
 /// path left out of the commit's `git show` — and a click loads its diff. A huge binary
 /// file gets no "Load anyway"; both headers show the size.
+/// Workflow: BN-03
 fn huge_file_in_a_commit_loads_on_demand(ui: &mut Ui) {
     let path = ui.workdir();
     let huge: String = (0..60_000).map(|i| format!("generated line {i}, long enough to pass the cap\n")).collect();
@@ -724,6 +865,7 @@ fn huge_file_in_a_commit_loads_on_demand(ui: &mut Ui) {
 /// A commit too big for the core's commit cache (over 100 000 diff lines; e.g. a merge
 /// of 1700 files) shows after one load — it was looked up in the cache again and
 /// loaded forever ("Loading…") — and selecting its neighbour doesn't prefetch it again.
+/// Workflow: BG-01
 fn huge_commit_shows_after_one_load(ui: &mut Ui) {
     let path = ui.workdir();
     let lines: String = (0..100_001).map(|i| format!("{i}\n")).collect();
@@ -857,6 +999,7 @@ impl UiExt for Ui {
 /// A file that is not UTF-8 (`big.txt` here, Latin-1 "äö" in line 3): the file row names
 /// the encoding, the line shows (and copies) the right characters, and staging only the
 /// added line puts its exact bytes into the index, cheaply.
+/// Workflow: EX-09, NU-01
 fn non_utf8_line_stages_exactly(ui: &mut Ui) {
     worktree(ui);
     let start = working(ui);

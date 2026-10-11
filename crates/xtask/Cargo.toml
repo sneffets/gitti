@@ -4,9 +4,11 @@ edition.workspace = true
 version = "0.1.0"
 license.workspace = true
 publish = false
-description = "Dev tasks: `cargo xtask worktree` (agent worktree slots)"
+description = "Dev tasks: `cargo xtask worktree` (agent worktree slots), `cargo xtask licenses`"
 
 [dependencies]
+# `cargo metadata` output (`licenses.rs`).
+serde_json = "1"
 
 [dev-dependencies]
 gitti-test.workspace = true

@@ -574,6 +574,7 @@ fn status_bar_click(ui: &mut Ui) {
 /// The shortcut list and the palette's key hints come from the live bindings and the shared
 /// tables (not hand-written): spot checks per platform; `SHORTCUTS_DUMP=1` prints the list.
 /// ⌘⇧B creates a branch and runs no git.
+/// Workflow: BR-01
 fn shortcut_list(ui: &mut Ui) {
     let lines = ui.cx.update(|cx| testing::shortcut_list(cx));
     if std::env::var_os("SHORTCUTS_DUMP").is_some() {
@@ -1145,6 +1146,7 @@ fn diff_nav(ui: &mut Ui) {
 /// branch switcher (b, ⌘B), Enter switches; settings (⌘, and ? → shortcuts, Esc); the stash
 /// dialog (z, ⌘⇧S; Esc, Enter stashes); error details (e), with the pane keys dead behind
 /// the dialog. Everything but switching / stashing without git.
+/// Workflow: SH-01, BR-03
 fn overlay_keys(ui: &mut Ui) {
     let dir = ui.repo.clone();
     ui.step("select:0");
@@ -1249,6 +1251,7 @@ fn command_line_keys(ui: &mut Ui) {
 
 /// c / ⌘L select the working directory and focus the message; typing; ⇧A toggles amend (an
 /// empty message takes HEAD's); ⌘↩ commits the staged change.
+/// Workflow: CM-01, CM-02
 fn message_keys(ui: &mut Ui) {
     let dir = ui.repo.clone();
     for key in ["c", "secondary-l"] {
@@ -1290,6 +1293,7 @@ fn message_keys(ui: &mut Ui) {
 /// Wrap (w, ⌥Z), whitespace (⇧W, ⌘⇧W — a whitespace-only change hidden / shown), context (+
 /// −), order (⇧T, ⌘T), zoom (⌘= ⌘+ ⌘− ⌘⌥= ⌘⌥+ ⌘⌥− ⌃⌘= ⌃⌘+ ⌃⌘− ⌘0), the sidebar (⇧H),
 /// refresh (r, ⌘R, F5: a git status).
+/// Workflow: ST-12
 fn view_keys(ui: &mut Ui) {
     ui.step("select:0");
     ui.quick("focuslist");
@@ -1361,6 +1365,7 @@ fn view_keys(ui: &mut Ui) {
 }
 
 /// f / ⌘⇧F fetch, p / ⌘⌥↓ pull, ⇧P / ⌘⌥↑ push against a local bare remote.
+/// Workflow: RM-02, RM-03
 fn remote_keys(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let bare = dir.with_extension("remote.git");
@@ -2045,6 +2050,7 @@ fn escape_everywhere(ui: &mut Ui) {
 /// over a background refresh but goes with the next operation the user starts (a stage),
 /// its details stay reachable (e); one-line info messages fade after a while, errors and
 /// output of several lines don't.
+/// Workflow: RM-16
 fn warnings_clear(ui: &mut Ui) {
     let dir = ui.repo.clone();
     ui.step("cmd:no-such-command");

@@ -53,6 +53,7 @@ fn file_list_of_a_commit_and_the_conflict_letter() {
 /// During a merge the working-directory row is the pending merge commit — a
 /// dashed edge from it to MERGE_HEAD's commit (`feat`); the rows below it have none.
 /// `feat` says MERGE_HEAD, no other row does.
+/// Workflow: MG-13
 #[gitti_test::test]
 fn merge_preview_dashes_the_pending_merge() {
     let dir = import(&[
@@ -80,6 +81,7 @@ fn merge_preview_dashes_the_pending_merge() {
 /// each with the path it had; the line above says what was searched; ⏎ selects the
 /// commit with the file under the diff cursor. Plain words search messages without git;
 /// nothing found is said.
+/// Workflow: RN-03
 #[gitti_test::test]
 fn go_to_commit_finds_file_history_and_messages() {
     let body: String = (0..20).map(|i| format!("parser line {i}\n")).collect();
@@ -189,6 +191,7 @@ fn detail(screen: &str) -> Vec<String> {
 /// The unstaged section in groups with counts and line totals; ⏎ folds a group (no
 /// git), s stages a group (one `git add` of its paths, path-limited queries), without
 /// untracked files no group headers; d on a group asks with its own wording.
+/// Workflow: ST-09, DC-07
 #[gitti_test::test]
 fn unstaged_groups_fold_stage_and_discard_with_totals() {
     let dir = grouped_repo();
@@ -459,6 +462,7 @@ fn commit_list_layouts_from_the_palette() {
 /// pushed, ● uncommitted changes; a click on them says what they are; staging keeps ●.
 /// (A commit taking ● away and counting one more ○ is the same refresh path, covered by
 /// gitti's `layout::repo_tab_marks_follow`; a commit here costs ~0.6 s.)
+/// Workflow: RM-18
 #[gitti_test::test]
 fn repo_marks_after_the_name() {
     let dir = import_with(
@@ -499,6 +503,7 @@ fn repo_marks_after_the_name() {
 /// changes, ○ one whose branch has commits no remote has, none on gitty's own (clean,
 /// pushed); moving onto one says what its mark means. The other worktrees are read with
 /// one `git status` each, none while moving through the sidebar.
+/// Workflow: WT-06
 #[gitti_test::test]
 fn worktree_entries_carry_the_marks() {
     let dir = import_with(
@@ -537,6 +542,37 @@ fn worktree_entries_carry_the_marks() {
     let others = |c: &[String]| c.iter().filter(|c| c.starts_with("status ") && !c.contains("--branch")).count();
     assert_eq!(others(&c[0]), 2, "the start reads the two others: {out}");
     assert_eq!(others(&c[1]), 0, "moving through the sidebar reads none: {out}");
+}
+
+/// One source: gitty's top-line mark and its own WORKTREES entry are the same store entry;
+/// a change in another worktree shows after a refresh (`r`), a change in gitty's own on
+/// both places at once.
+#[gitti_test::test]
+fn top_line_and_worktree_entries_agree() {
+    let dir = import(&[Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "a\n")] }]);
+    let d = dir.path();
+    let wt = tempfile::tempdir().unwrap();
+    let other = wt.path().join("other-wt");
+    git(d, &["worktree", "add", "-q", "--detach", other.to_str().unwrap(), "main"]);
+    // `write:` is relative to gitty's folder.
+    let up = format!("../{}/other-wt", wt.path().file_name().unwrap().to_string_lossy());
+    let out = gitty(
+        d,
+        &format!("press:backtab;press:g;dump;write:{up}/n.txt=n;press:r;wait;dump;write:own.txt=o;press:r;wait;dump"),
+    );
+    let s = screens(&out);
+    let own = d.file_name().unwrap().to_string_lossy().to_string();
+    let row = |i: usize, name: &str| {
+        // The WORKTREES entry: the folder name, then what it has checked out.
+        let entry = |l: &&str| l.contains(&format!(" {name} ")) && (l.contains('⎇') || l.contains("detached"));
+        s[i].lines().skip(1).find(entry).unwrap_or_default().to_string()
+    };
+    let top = |i: usize| s[i].lines().next().unwrap_or_default().to_string();
+    assert!(!row(0, "other-wt").contains('●') && !top(0).contains(&format!("{own} ●")), "clean at the start: {out}");
+    assert!(row(1, "other-wt").contains("● detached"), "the other worktree's change after r: {out}");
+    assert!(!top(1).contains(&format!("{own} ●")), "gitty's own still clean: {out}");
+    assert!(top(2).contains(&format!("{own} ●")), "gitty's own change on the top line: {out}");
+    assert!(row(2, &own).contains("● ⎇ main"), "…and on its WORKTREES entry: {out}");
 }
 
 /// HEAD's refs in [`many_refs_repo`] (`main` checked out), in badge order.
@@ -648,6 +684,33 @@ fn header_follows_new_refs() {
     let block = refs_block(s[1]);
     assert!(block.contains("◆ fresh-tag") && block.contains("◆ v1.0.0"), "the new tag in the header:\n{block}\n{out}");
     assert!(out.contains("check: ok"), "{out}");
+}
+
+/// A right click on a ref's badge in the commit list opens that ref's menu (its sidebar
+/// entry's: a tag's Show Tag…, a branch's Checkout), elsewhere on the row the commit's.
+#[gitti_test::test]
+fn right_click_on_a_badge_opens_the_refs_menu() {
+    let dir = many_refs_repo();
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(dir.path(), config.path(), "160x40", "dump");
+    let screen = screens(&out)[0];
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("◆ only-tag"))
+        .unwrap_or_else(|| panic!("no row with only-tag: {out}"));
+    let col = |text: &str| line[..line.find(text).unwrap_or_else(|| panic!("no {text} in {line:?}"))].chars().count() + 1;
+    let (tag, branch, subject) = (col("only-tag"), col("b1 "), col("init"));
+    let out = gitty_with(
+        dir.path(),
+        config.path(),
+        "160x40",
+        &format!("rclick:{tag},{y};items;key:esc;state;rclick:{branch},{y};items;key:esc;state;rclick:{subject},{y};items"),
+    );
+    let lists = item_lists(&out);
+    assert!(lists[0].contains(&"Show Tag…") && !lists[0].iter().any(|i| i.starts_with("Cherry-pick")), "{out}");
+    assert!(lists[1].contains(&"Checkout b1") && !lists[1].contains(&"Show Tag…"), "{out}");
+    assert!(lists[2].iter().any(|i| i.starts_with("Cherry-pick")), "the commit's menu: {out}");
 }
 
 /// A click on a list row's "+N" selects the row and says which refs it hides (gitti: the

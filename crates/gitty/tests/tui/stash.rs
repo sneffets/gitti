@@ -9,6 +9,7 @@ use support::*;
 
 /// ] ] n j j j = d.txt's "-line 3"; space, j, space = it and "+LINE 3"; the palette's
 /// "Stash Selected Lines or File…" opens the dialog saying what stays, ⏎ stashes them.
+/// Workflow: SH-06
 #[gitti_test::test]
 fn stash_selected_lines() {
     let dir = two_file_repo();
@@ -33,6 +34,7 @@ fn stash_selected_lines() {
 
 /// Without a selection the palette entry takes the file at the cursor (d.txt's header);
 /// "Rename Stash…" picks the stash, says how git renames, and renames it.
+/// Workflow: SH-07, SH-10
 #[gitti_test::test]
 fn stash_file_and_rename() {
     let dir = two_file_repo();

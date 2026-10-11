@@ -67,6 +67,7 @@ const TEN: &str = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n";
 
 /// Lines of one hunk of the unstaged diff go into a stash; the file's other hunk, another
 /// file and the index stay; popping brings the lines back.
+/// Workflow: SH-06
 #[gitti_test::test]
 fn stash_unstaged_hunk_keeps_everything_else() {
     let (_tmp, r) = repo(&[("a.txt", TEN.as_bytes()), ("b.txt", b"b\n"), ("c.txt", b"c\n")]);
@@ -97,6 +98,7 @@ fn stash_unstaged_hunk_keeps_everything_else() {
 }
 
 /// Exact bytes: Latin-1 text with CRLF line ends and no newline at the end of the file.
+/// Workflow: SH-08
 #[gitti_test::test]
 fn stash_lines_keeps_exact_bytes() {
     let old: &[u8] = b"caf\xe9\r\none\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\nlast";
@@ -116,6 +118,7 @@ fn stash_lines_keeps_exact_bytes() {
 
 /// `eol=crlf` in `.gitattributes`: the index has LF, the working tree CRLF; the stash and
 /// what stays both come out right.
+/// Workflow: EX-06, SH-08
 #[gitti_test::test]
 fn stash_lines_with_eol_conversion() {
     let (_tmp, r) = repo(&[(".gitattributes", b"*.txt text eol=crlf\n"), ("e.txt", TEN.as_bytes())]);
@@ -133,6 +136,7 @@ fn stash_lines_with_eol_conversion() {
 /// Unstaged lines of a file that also has staged changes: the stash holds HEAD's version
 /// plus the lines (not the staged change); a selection on the same line as a staged
 /// change is refused before anything happens.
+/// Workflow: SH-06
 #[gitti_test::test]
 fn stash_unstaged_lines_over_staged_changes() {
     let (_tmp, r) = repo(&[("a.txt", TEN.as_bytes())]);
@@ -156,6 +160,7 @@ fn stash_unstaged_lines_over_staged_changes() {
 
 /// Staged lines: out of the index and the working tree, the file's unstaged change two
 /// lines further down stays (a plain reverse patch doesn't fit there: three-way merge).
+/// Workflow: SH-06
 #[gitti_test::test]
 fn stash_staged_lines_keeps_unstaged_changes() {
     let (_tmp, r) = repo(&[("a.txt", TEN.as_bytes()), ("b.txt", b"b\n")]);
@@ -180,6 +185,7 @@ fn stash_staged_lines_keeps_unstaged_changes() {
 }
 
 /// An untracked file: all its lines are a `-u` stash of the file; part of it is refused.
+/// Workflow: SH-07
 #[gitti_test::test]
 fn stash_lines_of_an_untracked_file() {
     let (_tmp, r) = repo(&[("a.txt", b"a\n")]);
@@ -197,6 +203,7 @@ fn stash_lines_of_an_untracked_file() {
 
 /// Chosen paths are literal (`[x] y.txt` is not a glob matching `x y.txt`), an untracked
 /// one goes with `-u`; `--all` takes ignored files.
+/// Workflow: SH-02, SH-03, SH-07
 #[gitti_test::test]
 fn stash_paths_literal_and_all() {
     let (_tmp, r) = repo(&[("[x] y.txt", b"1\n"), ("x y.txt", b"2\n"), (".gitignore", b"*.log\n")]);
@@ -218,6 +225,7 @@ fn stash_paths_literal_and_all() {
 
 /// "Only staged changes" when an unstaged change sits right next to a staged one: git
 /// would save the stash and fail to take the lines out — refused before.
+/// Workflow: SH-05
 #[gitti_test::test]
 fn stash_staged_only_refuses_what_git_cannot_finish() {
     let (_tmp, r) = repo(&[("a.txt", TEN.as_bytes())]);
@@ -253,6 +261,7 @@ fn rename_keeps_order(r: &Repo) {
     let _ = work;
 }
 
+/// Workflow: SH-10
 #[gitti_test::test]
 fn stash_rename_keeps_order() {
     let (_tmp, r) = repo(&[("a.txt", b"0\n")]);
@@ -260,6 +269,7 @@ fn stash_rename_keeps_order() {
 }
 
 /// The only stash (renaming empties the stash reflog first).
+/// Workflow: SH-10
 #[gitti_test::test]
 fn stash_rename_the_only_stash() {
     let (_tmp, r) = repo(&[("a.txt", b"0\n")]);
@@ -272,6 +282,7 @@ fn stash_rename_the_only_stash() {
 
 /// The same with the reftable ref backend (no `logs/refs/stash` file): the stash list is
 /// read again after every change.
+/// Workflow: SH-10
 #[gitti_test::test]
 fn stash_rename_in_a_reftable_repository() {
     if !gitti_core::caps::GitCaps::get().at_least(gitti_core::caps::GitVersion::new(2, 45, 0)) {

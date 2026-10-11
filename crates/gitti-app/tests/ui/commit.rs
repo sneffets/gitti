@@ -141,6 +141,7 @@ fn make_pick_repo(dir: &std::path::Path) -> PathBuf {
 /// user's own text in the box, the text stays and a note offers git's message: Keep Mine
 /// hides it (stored with the draft: the reopened repository shows no note), the
 /// palette's "Use the Message git Prepared" takes it (no git).
+/// Workflow: CP-03
 fn prepared_message_after_cherry_pick(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let note = |ui: &mut Ui| find(&ui.frame(), "prepared-note").is_some();
@@ -224,6 +225,7 @@ fn git_fails(dir: &std::path::Path, args: &[&str]) {
 /// box holds git's message; edited, the palette's Continue commits the resolution with it
 /// and picks the rest, the box empties. A merge whose conflict is resolved, concluded by
 /// Commit with the box emptied, gets git's message without its "# Conflicts:" lines.
+/// Workflow: CP-04, CP-07
 fn continue_with_the_edited_message(ui: &mut Ui) {
     let dir = ui.repo.clone();
     git_fails(&dir, &["cherry-pick", "side~1", "side"]);
@@ -280,6 +282,7 @@ fn type_message(ui: &mut Ui, text: &str) {
 /// The amend message edited is a draft for the commit it amends: turning amend on again
 /// after a reopen brings it back (not HEAD's message); once HEAD moved, amend starts
 /// with HEAD's message; the amend that succeeds drops it.
+/// Workflow: CM-05
 fn amend_draft_for_its_commit(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let head = git_out(&dir, &["rev-parse", "HEAD"]);
@@ -327,6 +330,7 @@ fn amend_draft_for_its_commit(ui: &mut Ui) {
 
 /// `make_repo` (small.rs staged; HEAD "Rework the frobnicator…" by the user) with a
 /// commit template (`.git/tmpl`, a relative path).
+/// Workflow: CM-12, CM-13, CM-18
 fn template_sign_off_and_earlier_messages(ui: &mut Ui) {
     let dir = ui.repo.clone();
     std::fs::write(dir.join(".git/tmpl"), "Area: \n\n# Explain why.\n").unwrap();
@@ -424,6 +428,7 @@ fn subjects(ui: &mut Ui) -> String {
 /// Typing writes the draft once it pauses (no git); closing the tab writes what was typed
 /// since; the repository opened again shows it. A failing pre-commit hook keeps it, the
 /// commit that works drops it.
+/// Workflow: CM-10
 fn draft_survives_a_restart(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let n = ui.n_git();
@@ -474,6 +479,7 @@ fn draft_survives_a_restart(ui: &mut Ui) {
 /// Empty Commit" is offered, and it makes one; the palette's entry refuses while files
 /// are staged. With an untracked file next to a changed one, "Stage Tracked Files and
 /// Commit" leaves the untracked file out.
+/// Workflow: CM-08
 fn nothing_staged_choices(ui: &mut Ui) {
     let dir = ui.repo.clone();
     ui.step("action:gitti::UnstageAll");
@@ -553,6 +559,7 @@ fn nothing_staged_choices(ui: &mut Ui) {
 /// `runner::hook_output_streams_while_the_commit_runs`, the status bar's look
 /// `toolbar::busy_area_shows_progress`, gitty's live view
 /// `progress::slow_hook_output_shows_while_committing`.
+/// Workflow: CM-11
 fn hook_output_shows_while_committing(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let hooks = dir.join(".git/hooks");
@@ -601,6 +608,7 @@ fn hook_output_shows_while_committing(ui: &mut Ui) {
 /// When Done waits for the commit, then quits; Stop and Quit quits once it stopped (the
 /// test executor runs a job to its end at once, so it can't be caught midway here — gitty's
 /// `cancel::stop_and_quit_stops_the_operation` stops a real one).
+/// Workflow: CM-21
 fn quit_while_git_runs_asks(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let ws = ui.ws.clone();
@@ -646,6 +654,7 @@ fn quit_while_git_runs_asks(ui: &mut Ui) {
 
 /// Closing the tab (⌘W) while an operation runs asks as quitting does; Cancel keeps the tab
 /// and the operation. An idle tab closes without asking.
+/// Workflow: CM-21
 fn close_tab_while_git_runs_asks(ui: &mut Ui) {
     let dir = ui.repo.clone();
     ui.quick("msg:Slow close");

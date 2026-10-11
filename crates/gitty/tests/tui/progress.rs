@@ -14,6 +14,7 @@ fn busy_line(out: &str) -> &str {
 
 /// A pre-commit hook prints, then works a while: its line shows in the status line while
 /// the commit runs, and the commit ends normally.
+/// Workflow: CM-11
 #[gitti_test::test]
 fn slow_hook_output_shows_while_committing() {
     let dir = repo();
@@ -38,6 +39,7 @@ fn slow_hook_output_shows_while_committing() {
 /// A fetch whose remote side lingers after sending the pack (the client waits for it):
 /// meanwhile the status line shows the fetch's last progress meter, and Esc still
 /// cancels it.
+/// Workflow: RM-02
 #[cfg(unix)]
 #[gitti_test::test]
 fn fetch_progress_shows_while_fetching() {

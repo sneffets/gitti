@@ -80,6 +80,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("RunCustomCommand", "Run Custom Command…"),
     both("CustomCommands", "Custom Commands…"),
     both("ToggleWrap", "Wrap Lines"),
+    both("ToggleChangesTree", "Changes as Tree"),
     both("ToggleWhitespace", "Ignore Whitespace"),
     both("MoreContext", "More Context Lines"),
     both("LessContext", "Fewer Context Lines"),
@@ -229,6 +230,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // Help
     both("ShowShortcuts", "Keyboard Shortcuts"),
     both("StartupTimings", "Start-up Timings…"),
+    both("ThirdPartyLicences", "Third-Party Licences…"),
     both("About", "About gitty"),
     both("ErrorDetails", "Show Error Details"),
 ];

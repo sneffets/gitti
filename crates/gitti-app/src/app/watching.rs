@@ -9,6 +9,9 @@ use gpui_kit::*;
 
 use super::{GittiApp, highlighting};
 
+/// How long the first read waits at most for the file watcher's first report.
+const FIRST_READ_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
 impl GittiApp {
     /// Starts the file watcher; its changes arrive here. It adds its watches on its own
     /// thread, so the first frame doesn't wait for it.
@@ -29,6 +32,10 @@ impl GittiApp {
         cx.spawn_in(window, async move |this, cx| {
             while let Ok(change) = rx.recv().await {
                 let alive = this.update_in(cx, |this, window, cx| {
+                    this.watch_ready |= change.armed;
+                    if change.armed && std::mem::take(&mut this.first_read_pending) {
+                        this.refresh(true, window, cx);
+                    }
                     if this.busy.is_none() {
                         this.on_watch(change, window, cx);
                     } else {
@@ -42,6 +49,30 @@ impl GittiApp {
                     break;
                 }
             }
+        })
+        .detach();
+    }
+
+    /// The first full read (working state, refs, history) — once the file watcher's
+    /// watches are in place: with a recursive OS watch (macOS, Windows) a change before
+    /// that point is never reported, so a read started earlier could miss it for good
+    /// (Linux finds such changes by their mtime). Waiting costs the watcher's setup time
+    /// (a few ms); without a report within [`FIRST_READ_WAIT`] it reads anyway (the
+    /// report then asks for a re-read).
+    pub(super) fn first_read(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self._watcher.is_none() || self.watch_ready {
+            self.refresh(true, window, cx);
+            return;
+        }
+        self.first_read_pending = true;
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(FIRST_READ_WAIT).await;
+            this.update_in(cx, |this, window, cx| {
+                if std::mem::take(&mut this.first_read_pending) {
+                    this.refresh(true, window, cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }

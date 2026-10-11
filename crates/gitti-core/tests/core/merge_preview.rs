@@ -54,6 +54,7 @@ fn assert_preview(h: &gitti_core::History, heads: &[ObjectId]) {
 
 /// `git merge side` stopped with conflicts: the preview, also in the quick first screen;
 /// gone when MERGE_HEAD goes (commit / abort); none for a cherry-pick.
+/// Workflow: MG-13
 #[gitti_test::test]
 fn merge_head_makes_the_worktree_row_the_pending_merge() {
     let mut h = History::new();
@@ -94,6 +95,7 @@ fn merge_head_makes_the_worktree_row_the_pending_merge() {
 
 /// `git merge <sha>` of a commit no ref reaches, plus a branch (octopus): both are
 /// loaded (with their metadata) as parents of the pending merge.
+/// Workflow: MG-13
 #[gitti_test::test]
 fn unreachable_merge_head_and_octopus() {
     let mut h = History::new();

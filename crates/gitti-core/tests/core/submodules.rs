@@ -216,6 +216,7 @@ fn list(repo: &Repo) -> Vec<gitti_core::submodule::Submodule> {
     repo.submodules(&ws.status)
 }
 
+/// Workflow: SM-01
 #[gitti_test::test]
 fn list_matches_git_and_follows_the_states() {
     let fx = setup();
@@ -266,6 +267,7 @@ fn list_matches_git_and_follows_the_states() {
     assert_eq!(subs[1].state, SubmoduleState::UpToDate);
 }
 
+/// Workflow: SM-02
 #[gitti_test::test]
 fn pointer_change_is_a_commit_summary_staged_as_one_unit() {
     let fx = setup_with(true);
@@ -340,6 +342,7 @@ fn dirty_submodule_diff_has_a_note() {
     assert_eq!(fs::read_to_string(fx.sub().join("l.txt")).unwrap(), "changed\n");
 }
 
+/// Workflow: SM-08
 #[gitti_test::test]
 fn uninitialised_after_plain_clone_and_recursive_clone() {
     let fx = setup();
@@ -363,6 +366,7 @@ fn uninitialised_after_plain_clone_and_recursive_clone() {
     assert!(subs.iter().all(|s| s.state == SubmoduleState::UpToDate), "{subs:#?}");
 }
 
+/// Workflow: SM-03
 #[gitti_test::test]
 fn pull_that_moves_the_pointer_makes_it_out_of_date() {
     let fx = setup();
@@ -395,6 +399,7 @@ fn pull_that_moves_the_pointer_makes_it_out_of_date() {
     assert_eq!(d.log.unwrap().added[0].1, "lib upstream");
 }
 
+/// Workflow: MG-21
 #[gitti_test::test]
 fn conflicting_pointers() {
     let fx = setup();
@@ -442,6 +447,7 @@ fn repos_without_submodules_pay_nothing() {
     assert_eq!(submodule_calls(&repo), 0);
 }
 
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_submodule_stages_it_with_its_default_path_and_branch() {
     let fx = setup();
@@ -478,6 +484,7 @@ fn add_submodule_stages_it_with_its_default_path_and_branch() {
 /// says so, a plain add fails with the refusal explained, an add the user allowed runs
 /// with `-c protocol.file.allow=always` and stores no such setting; `.gitmodules` records
 /// the path as typed.
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_submodule_from_a_local_path_asks_for_the_file_transport() {
     use gitti_core::submodule::add::FilePermission;
@@ -516,6 +523,76 @@ fn add_submodule_from_a_local_path_asks_for_the_file_transport() {
     assert_eq!(after.matches("always").count(), 1, "only this add allowed it: {after}");
 }
 
+/// git's environment without this machine's config, `protocol.file.allow` = `value`
+/// (`user`: git's default for what the user typed, refused for submodules), plus `extra`.
+fn file_env(value: &str, extra: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut env = vec![
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "protocol.file.allow"),
+        ("GIT_CONFIG_VALUE_0", value),
+    ];
+    env.extend(FILE_PROTOCOL[3..].iter().copied());
+    env.extend(extra.iter().copied());
+    env.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
+
+/// Update Submodules where `.gitmodules` names local paths and git refuses the `file`
+/// transport for submodules: a typed `FileRefused` naming the submodule, its URL and the
+/// setting; allowed once it runs with `-c protocol.file.allow=always` (nested ones too)
+/// and writes no such setting.
+#[gitti_test::test]
+fn update_from_a_local_path_explains_and_allows_once() {
+    use gitti_core::submodule::add::FileRefused;
+    let fx = setup();
+    let git = open(&fx.sup).git().clone();
+    let plain = gitti_core::create::clone_repo(&git, &slash(&fx.sup), &fx.base.join("plain"), &mut |_| {}).unwrap();
+    let mut repo = Repo::open(&plain).unwrap();
+    repo.set_env(file_env("user", &[]));
+    let err = repo.update_submodules(&[]).unwrap_err();
+    let refused = err.downcast_ref::<FileRefused>().expect("typed refusal").clone();
+    assert_eq!(refused.submodules, vec![("libs/lib".to_string(), slash(&fx.lib))]);
+    assert!(!refused.blocked);
+    assert!(refused.refused_by.contains("protocol.file.allow = user"), "{refused:?}");
+    let text = refused.explain(false);
+    assert!(text.contains("the submodule libs/lib (from ") && text.contains("Allow for This Update"), "{text}");
+    assert!(err.to_string().contains("transport 'file' not allowed"), "git's own words kept");
+    assert_eq!(list(&repo)[0].state, SubmoduleState::Uninitialized);
+
+    repo.update_submodules_with(&[], false, true).unwrap();
+    let subs = list(&repo);
+    assert_eq!(subs.len(), 2, "the nested one too: {subs:#?}");
+    assert!(subs.iter().all(|s| s.state == SubmoduleState::UpToDate), "{subs:#?}");
+    let config = fs::read_to_string(plain.join(".git/config")).unwrap();
+    assert!(!config.contains("always"), "nothing written: {config}");
+}
+
+/// A clone with `--recurse-submodules` whose submodules git refuses: the clone is kept
+/// with what was refused (the apps offer the update); refused by `GIT_ALLOW_PROTOCOL`
+/// even the repository itself fails, naming it.
+#[gitti_test::test]
+fn recursive_clone_from_local_paths_keeps_the_clone() {
+    let fx = setup();
+    let mut git = open(&fx.sup).git().clone();
+    git.set_env(file_env("user", &[]));
+    let dest = fx.base.join("deep");
+    let c = gitti_core::create::clone_repo_outcome(&git, &slash(&fx.sup), &dest, true, &mut |_| {}).unwrap();
+    let refused = c.refused.expect("refused submodules");
+    assert_eq!(refused.submodules[0].0, "libs/lib");
+    assert!(refused.explain(true).starts_with("The repository is cloned"), "{}", refused.explain(true));
+    assert!(c.dir.join(".git").is_dir() && c.dir.join("s.txt").is_file());
+    gitti_core::submodule::add::update_cloned(&git, &c.dir).unwrap();
+    let subs = list(&open(&c.dir));
+    assert!(subs.len() == 2 && subs.iter().all(|s| s.state == SubmoduleState::UpToDate), "{subs:#?}");
+
+    git.set_env(file_env("always", &[("GIT_ALLOW_PROTOCOL", "https:ssh")]));
+    let err = gitti_core::create::clone_repo_outcome(&git, &slash(&fx.sup), &fx.base.join("env"), true, &mut |_| {})
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("GIT_ALLOW_PROTOCOL=https:ssh") && err.contains("local path"), "{err}");
+}
+
 /// `git status` calls of the nested-submodule kind (`--untracked-files=normal`) so far.
 fn nested_status_calls(repo: &Repo) -> usize {
     repo.command_log()
@@ -525,6 +602,7 @@ fn nested_status_calls(repo: &Repo) -> usize {
         .count()
 }
 
+/// Workflow: SM-01
 #[gitti_test::test]
 fn nested_dirty_state_comes_from_a_status_in_its_dirty_parent() {
     let fx = setup();
@@ -565,6 +643,7 @@ fn nested_dirty_state_comes_from_a_status_in_its_dirty_parent() {
     assert_eq!(s[1].state, SubmoduleState::UpToDate, "{s:#?}");
 }
 
+/// Workflow: SM-03
 #[gitti_test::test]
 fn update_to_the_remote_branch() {
     let fx = setup();
@@ -585,6 +664,7 @@ fn update_to_the_remote_branch() {
 
 /// A nested submodule's path runs in its parent submodule (git of the top level doesn't
 /// know it).
+/// Workflow: SM-03
 #[gitti_test::test]
 fn update_and_sync_nested_paths() {
     let fx = setup();
@@ -597,6 +677,7 @@ fn update_and_sync_nested_paths() {
     repo.sync_submodules(&["libs/lib/vendor/inner", "libs/lib"]).unwrap();
 }
 
+/// Workflow: SM-05
 #[gitti_test::test]
 fn remove_submodule_warns_about_local_work_and_cleans_up() {
     let fx = setup();
@@ -637,6 +718,7 @@ fn remove_submodule_warns_about_local_work_and_cleans_up() {
     assert!(!config.contains("[submodule"), "{config}");
 }
 
+/// Workflow: SM-05
 #[gitti_test::test]
 fn remove_nested_and_uninitialised_submodules() {
     let fx = setup();
@@ -672,6 +754,7 @@ fn remove_nested_and_uninitialised_submodules() {
 /// "Check Out Commit in Submodule…" — the submodule's history (newest first, with
 /// what is recorded / checked out), the detached checkout, the pointer change it leaves in
 /// the superproject (staged and committed like any file, which records that commit).
+/// Workflow: SM-06
 #[gitti_test::test]
 fn check_out_a_commit_in_the_submodule_records_it() {
     let fx = setup_with(true);
@@ -729,6 +812,7 @@ fn check_out_a_commit_in_the_submodule_records_it() {
 /// uncommitted changes), git's refusal reaching the caller, nested submodules (checked
 /// out in their own repository, the pointer change shows in the parent submodule), and
 /// a clear error for an uninitialised one.
+/// Workflow: SM-06
 #[gitti_test::test]
 fn submodule_checkout_risks_nested_and_uninitialised() {
     let fx = setup();

@@ -14,7 +14,8 @@
 //! same as `git status` reports. A detached HEAD and a repository without any remote get
 //! no hollow circle: there is no branch to push, or nowhere to push it.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use gix::ObjectId;
 
@@ -278,10 +279,102 @@ fn worktree_status(repo: &Repo, wt: &Worktree) -> Option<Status> {
         })
         .unwrap_or_default();
     let git = repo.git().with_workdir(&wt.path);
-    let out = git
-        .run(&["status", "--porcelain=v2", "-z", untracked.arg()])
-        .ok()?;
+    let mut args = crate::status::STATUS_ARGS.to_vec();
+    args.push(untracked.arg());
+    let out = git.run(&args).ok()?;
     Some(parse_porcelain_v2(&out.stdout))
+}
+
+/// Who published a worktree's marks: an open tab (its entity id; gitty: 0).
+pub type Owner = u64;
+
+/// The marks of every worktree the app knows, by folder (canonical path): one source for
+/// the tab strip and every tab's WORKTREES section. An open tab's own entry is the truth
+/// (published after each of its refreshes); the others come from [`other_worktrees`],
+/// one read at a time per repository.
+#[derive(Debug, Default, Clone)]
+pub struct MarksStore {
+    entries: HashMap<PathBuf, (Marks, Option<Owner>)>,
+    /// Repositories (common git dirs) whose worktrees are being read; `true`: asked for
+    /// again meanwhile.
+    reading: HashMap<PathBuf, bool>,
+}
+
+impl MarksStore {
+    /// The marks of the worktree at `worktree` (`None`: never read).
+    pub fn get(&self, worktree: &Path) -> Option<&Marks> {
+        self.entries.get(worktree).map(|(m, _)| m)
+    }
+
+    /// Whether [`MarksStore::publish`] would change anything.
+    pub fn differs(&self, worktree: &Path, owner: Owner, marks: &Marks) -> bool {
+        self.entries.get(worktree) != Some(&(marks.clone(), Some(owner)))
+    }
+
+    /// `owner` (the open tab of `worktree`) read these marks; returns whether they changed.
+    pub fn publish(&mut self, worktree: &Path, owner: Owner, marks: Marks) -> bool {
+        let changed = self.differs(worktree, owner, &marks);
+        self.entries.insert(worktree.to_path_buf(), (marks, Some(owner)));
+        changed
+    }
+
+    /// `owner`'s tab closed: its worktree's marks stay as they were until the next read.
+    pub fn release(&mut self, owner: Owner) {
+        for (_, o) in self.entries.values_mut() {
+            if *o == Some(owner) {
+                *o = None;
+            }
+        }
+    }
+
+    /// Of `worktrees`, those to read: not this tab's (`is_current`), not bare, folder there,
+    /// and no open tab publishes them.
+    pub fn to_read(&self, worktrees: &[Worktree]) -> Vec<Worktree> {
+        worktrees
+            .iter()
+            .filter(|w| !w.is_current && !w.bare && w.prunable.is_none())
+            .filter(|w| !self.entries.get(&w.path).is_some_and(|(_, o)| o.is_some()))
+            .cloned()
+            .collect()
+    }
+
+    /// A read of the repository with common dir `common` starts; `false`: one runs already
+    /// (it runs once more when done).
+    pub fn begin_read(&mut self, common: &Path) -> bool {
+        match self.reading.get_mut(common) {
+            Some(again) => {
+                *again = true;
+                false
+            }
+            None => {
+                self.reading.insert(common.to_path_buf(), false);
+                true
+            }
+        }
+    }
+
+    /// The read's marks (a worktree a tab opened meanwhile keeps the tab's); returns
+    /// (anything changed, read again).
+    pub fn finish_read(&mut self, common: &Path, read: Vec<(PathBuf, Marks)>) -> (bool, bool) {
+        let again = self.reading.remove(common).unwrap_or(false);
+        let mut changed = false;
+        for (path, marks) in read {
+            match self.entries.get(&path) {
+                Some((_, Some(_))) => {}
+                Some((m, None)) if *m == marks => {}
+                _ => {
+                    self.entries.insert(path, (marks, None));
+                    changed = true;
+                }
+            }
+        }
+        (changed, again)
+    }
+
+    /// A read runs for the repository with common dir `common`.
+    pub fn reading(&self, common: &Path) -> bool {
+        self.reading.contains_key(common)
+    }
 }
 
 /// The branch's upstream is a branch of this repository: `branch.<name>.remote` is `.`.
@@ -420,5 +513,49 @@ mod tests {
             gone.describe(),
             "1 commit on no remote (the upstream origin/feature is gone)"
         );
+    }
+
+    #[gitti_test::test]
+    fn the_store_keeps_open_tabs_entries_and_reads_the_rest() {
+        let wt = |name: &str, current: bool| Worktree {
+            path: PathBuf::from(format!("/r/{name}")),
+            head: None,
+            branch: Some(name.into()),
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            is_main: name == "main",
+            is_current: current,
+            sparse: None,
+        };
+        let dirty = Marks { uncommitted: Some("Uncommitted changes in 1 file: 1 unstaged".into()), unpushed: None };
+        let clean = Marks::default();
+        let mut s = MarksStore::default();
+        let list = [wt("main", true), wt("a", false), wt("b", false)];
+        // Tab 1 (main) publishes; tab 2 has `a` open.
+        assert!(s.publish(Path::new("/r/main"), 1, clean.clone()));
+        assert!(!s.publish(Path::new("/r/main"), 1, clean.clone()), "unchanged");
+        assert!(s.publish(Path::new("/r/a"), 2, dirty.clone()));
+        let names = |v: Vec<Worktree>| v.into_iter().map(|w| w.name()).collect::<Vec<_>>();
+        assert_eq!(names(s.to_read(&list)), ["b"], "only the one no tab has open");
+        // One read at a time; asked again meanwhile: once more after.
+        let common = Path::new("/r/.git");
+        assert!(s.begin_read(common));
+        assert!(!s.begin_read(common));
+        // A read result never overwrites an open tab's entry.
+        let read = vec![(PathBuf::from("/r/a"), clean.clone()), (PathBuf::from("/r/b"), dirty.clone())];
+        assert_eq!(s.finish_read(common, read), (true, true));
+        assert_eq!(s.get(Path::new("/r/a")), Some(&dirty));
+        assert_eq!(s.get(Path::new("/r/b")), Some(&dirty));
+        assert!(!s.reading(common));
+        // Tab 2 closes: `a` keeps its marks, and is read from now on.
+        s.release(2);
+        assert_eq!(s.get(Path::new("/r/a")), Some(&dirty));
+        assert_eq!(names(s.to_read(&list)), ["a", "b"]);
+        assert!(s.begin_read(common));
+        let read = vec![(PathBuf::from("/r/a"), clean.clone()), (PathBuf::from("/r/b"), dirty.clone())];
+        assert_eq!(s.finish_read(common, read), (true, false));
+        assert_eq!(s.get(Path::new("/r/a")), Some(&clean));
     }
 }

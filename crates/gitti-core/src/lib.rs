@@ -95,6 +95,7 @@ pub mod tag;
 pub mod tab_marks;
 pub mod terminal;
 pub mod text_select;
+pub mod third_party;
 pub mod version_file;
 pub mod watch;
 pub mod worktree;

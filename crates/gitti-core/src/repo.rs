@@ -1144,7 +1144,8 @@ impl Repo {
     /// [`entry_order`] (git's own: tracked by path, then untracked by path).
     fn status_of(&self, pathspec: &[String]) -> Result<Status> {
         let untracked = self.untracked_files();
-        let mut args = vec!["status", "--porcelain=v2", "-z", "--branch", untracked.arg()];
+        let mut args = crate::status::STATUS_ARGS.to_vec();
+        args.extend(["--branch", untracked.arg()]);
         if !pathspec.is_empty() {
             args.push("--");
             args.extend(pathspec.iter().map(String::as_str));
@@ -1422,6 +1423,16 @@ impl Repo {
         Ok(())
     }
 
+    /// [`Self::unstage_paths`] for a list of any length (marked files, a folder): one git
+    /// call per 200 paths.
+    pub fn unstage_path_list(&self, paths: &[String]) -> Result<()> {
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        for chunk in paths.chunks(200) {
+            self.unstage_paths(chunk)?;
+        }
+        Ok(())
+    }
+
     pub fn stage_all(&self) -> Result<()> {
         self.git.run(&["add", "-A"])?;
         Ok(())
@@ -1554,7 +1565,12 @@ impl Repo {
         }
         match kind {
             CommitKind::Staged => {}
-            CommitKind::Amend => args.push("--amend"),
+            CommitKind::Amend => {
+                if let Some(why) = crate::ops::amend_blocker(self.state()) {
+                    anyhow::bail!(why);
+                }
+                args.push("--amend");
+            }
             CommitKind::StageAll => self.stage_all()?,
             // The whole tree (`:/`), as `git commit -a`: untracked files stay out.
             CommitKind::StageTracked => {

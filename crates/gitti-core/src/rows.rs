@@ -10,8 +10,12 @@ use crate::patch::Selection;
 
 mod anchor;
 mod groups;
+mod marks;
+mod tree;
 pub use anchor::{AnchorAt, AnchorHit, RowAnchor, RowFiles, find_anchor, reveal_above, row_anchor};
 pub use groups::{Group, LineTotals, WorktreeTotals, group_files, group_paths, grouped};
+pub use marks::{FileMarks, discard_question, file_order, files_word};
+pub use tree::{Folder, Folders, file_name, parent_folder};
 
 /// Where a diff comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,6 +33,12 @@ pub enum DiffRow {
     /// Sub header of a group of the unstaged section ([`Group`]): its files follow unless
     /// it is collapsed.
     Group(Group),
+    /// A folder of the tree view ([`Folders::get`] of the same build): its files and
+    /// folders follow unless it is collapsed.
+    Folder {
+        src: Src,
+        folder: usize,
+    },
     File {
         src: Src,
         file: usize,
@@ -98,6 +108,7 @@ impl DiffRow {
         match self {
             DiffRow::Section(_) => "section",
             DiffRow::Group(_) => "group",
+            DiffRow::Folder { .. } => "folder",
             DiffRow::File { .. } => "file",
             DiffRow::Hunk { .. } => "hunk",
             DiffRow::Line { .. } => "line",
@@ -182,6 +193,8 @@ pub struct Expansion {
     context: HashMap<(Src, String), FileContext>,
     /// Collapsed groups of the unstaged section (their header stays, the files are hidden).
     collapsed_groups: HashSet<Group>,
+    /// Collapsed folders of the tree view, by section, group and path.
+    collapsed_folders: HashSet<(Src, Option<Group>, String)>,
 }
 
 impl Expansion {
@@ -192,6 +205,27 @@ impl Expansion {
         // open (their file headers are the overview).
         if expanded {
             self.collapsed_groups.clear();
+            self.collapsed_folders.clear();
+        }
+    }
+
+    pub fn is_folder_collapsed(&self, src: Src, group: Option<Group>, path: &str) -> bool {
+        self.collapsed_folders.contains(&(src, group, path.to_string()))
+    }
+
+    /// Opens the collapsed folders `path` is in (any section) — to show that file; false
+    /// when none was collapsed.
+    pub fn open_folders_of(&mut self, path: &str) -> bool {
+        let before = self.collapsed_folders.len();
+        self.collapsed_folders
+            .retain(|(_, _, folder)| !path.strip_prefix(folder.as_str()).is_some_and(|rest| rest.starts_with('/')));
+        self.collapsed_folders.len() != before
+    }
+
+    pub fn toggle_folder(&mut self, src: Src, group: Option<Group>, path: &str) {
+        let key = (src, group, path.to_string());
+        if !self.collapsed_folders.remove(&key) {
+            self.collapsed_folders.insert(key);
         }
     }
 
@@ -539,7 +573,54 @@ pub fn build_worktree_rows_noted(
     wrap: Option<usize>,
     notes: &NoteWrap,
 ) -> Vec<DiffRow> {
+    build_worktree_view(ws, only, exp, wrap, notes, false).0
+}
+
+/// [`build_worktree_rows_noted`], as a tree of folders when `tree` is set (not for one file
+/// tab): the rows and their folders ([`Folders`], empty for the flat list).
+pub fn build_worktree_view(
+    ws: &crate::WorkingState,
+    only: Option<&str>,
+    exp: &Expansion,
+    wrap: Option<usize>,
+    notes: &NoteWrap,
+    tree: bool,
+) -> (Vec<DiffRow>, Folders) {
+    let tree = tree && only.is_none();
     let mut rows = Vec::new();
+    let mut folders = Folders::default();
+    // The files `members` of section `src` (one group of it, or all), flat or as a tree.
+    let mut push_files = |rows: &mut Vec<DiffRow>, src: Src, group: Option<Group>, members: &[usize]| {
+        let files = section(ws, src);
+        let file = |rows: &mut Vec<DiffRow>, i: usize| {
+            let f = &files[i];
+            rows.push(DiffRow::Spacer);
+            push_file(rows, src, i, f.diff.as_ref(), exp, wrap, &path_notes(ws, f, notes));
+        };
+        if !tree {
+            for &i in members {
+                file(rows, i);
+            }
+            return;
+        }
+        let collapsed = |path: &str| exp.is_folder_collapsed(src, group, path);
+        let build = tree::TreeBuild { src, group, files, collapsed: &collapsed };
+        for item in build.items(members, &mut folders) {
+            match item {
+                tree::TreeItem::Folder(folder) => {
+                    // A band between a file's diff and the next folder, none between headers.
+                    if !matches!(
+                        rows.last(),
+                        Some(DiffRow::Section(_) | DiffRow::Group(_) | DiffRow::Folder { .. })
+                    ) {
+                        rows.push(DiffRow::Spacer);
+                    }
+                    rows.push(DiffRow::Folder { src, folder });
+                }
+                tree::TreeItem::File(i) => file(rows, i),
+            }
+        }
+    };
     for (src, files) in [
         (Src::Conflicted, &ws.conflicted),
         (Src::Unstaged, &ws.unstaged),
@@ -556,8 +637,8 @@ pub fn build_worktree_rows_noted(
         // The unstaged section in groups, not for one file tab.
         if src == Src::Unstaged && only.is_none() && grouped(ws) {
             for group in Group::ALL {
-                let mut members = group_files(ws, group).peekable();
-                if members.peek().is_none() {
+                let members: Vec<usize> = group_files(ws, group).map(|(i, _)| i).collect();
+                if members.is_empty() {
                     continue;
                 }
                 if rows.last() != Some(&DiffRow::Section(src)) {
@@ -567,22 +648,14 @@ pub fn build_worktree_rows_noted(
                 if exp.is_group_collapsed(group) {
                     continue;
                 }
-                for (i, f) in members {
-                    rows.push(DiffRow::Spacer);
-                    push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, &path_notes(ws, f, notes));
-                }
+                push_files(&mut rows, src, Some(group), &members);
             }
             continue;
         }
-        for (i, f) in files.iter().enumerate() {
-            if !shown(f) {
-                continue;
-            }
-            rows.push(DiffRow::Spacer);
-            push_file(&mut rows, src, i, f.diff.as_ref(), exp, wrap, &path_notes(ws, f, notes));
-        }
+        let members: Vec<usize> = (0..files.len()).filter(|&i| shown(&files[i])).collect();
+        push_files(&mut rows, src, None, &members);
     }
-    rows
+    (rows, folders)
 }
 
 /// The explanation rows ([`DiffRow::PathNote`]) of a working-directory file: (line, part)
@@ -1221,6 +1294,192 @@ mod tests {
             build_worktree_rows(&ws, &exp, None)
         );
         assert!(build_worktree_rows_for(&ws, Some("gone"), &exp, None).is_empty());
+    }
+
+    /// Tracked, untracked and staged files in nested folders.
+    fn tree_state() -> crate::WorkingState {
+        crate::WorkingState {
+            unstaged: vec![
+                work_file("docs/new.md", None, None, true),
+                work_file("src/app/main.rs", None, Some('M'), false),
+                work_file("src/app/ui/new.rs", None, None, true),
+                work_file("src/app/ui/view.rs", None, Some('M'), false),
+                work_file("top.txt", None, Some('M'), false),
+            ],
+            staged: vec![work_file("src/core/lib.rs", Some('M'), None, false)],
+            ..Default::default()
+        }
+    }
+
+    /// The header rows of a tree as text: `S` section, `G` group, `D` folder (label at its
+    /// depth), `F` file (name at its depth).
+    fn tree_text(ws: &crate::WorkingState, rows: &[DiffRow], folders: &Folders) -> Vec<String> {
+        rows.iter()
+            .filter_map(|r| match *r {
+                DiffRow::Section(src) => Some(format!("S {src:?}")),
+                DiffRow::Group(g) => Some(format!("G {}", g.name())),
+                DiffRow::Folder { folder, .. } => {
+                    let f = folders.get(folder).unwrap();
+                    Some(format!("{}D {} ({})", "  ".repeat(f.depth as usize), f.label, f.files.len()))
+                }
+                DiffRow::File { src, file } => {
+                    let depth = folders.file_depth(src, file).unwrap();
+                    let path = section(ws, src)[file].path();
+                    Some(format!("{}F {}", "  ".repeat(depth as usize), file_name(path)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[gitti_test::test]
+    fn changes_as_a_tree() {
+        let ws = tree_state();
+        let mut exp = Expansion::default();
+        let flat = build_worktree_rows(&ws, &exp, None);
+        // Off: the flat rows exactly, no folders.
+        let (rows, folders) = build_worktree_view(&ws, None, &exp, None, &NoteWrap::None, false);
+        assert_eq!(rows, flat);
+        assert!(folders.is_empty());
+
+        let (rows, folders) = build_worktree_view(&ws, None, &exp, None, &NoteWrap::None, true);
+        assert_eq!(
+            tree_text(&ws, &rows, &folders),
+            [
+                "S Unstaged",
+                "G tracked",
+                "  D src/app (2)",
+                "    D ui (1)",
+                "      F view.rs",
+                "    F main.rs",
+                "  F top.txt",
+                "G untracked",
+                "  D docs (1)",
+                "    F new.md",
+                "  D src/app/ui (1)",
+                "    F new.rs",
+                "S Staged",
+                "D src/core (1)",
+                "  F lib.rs",
+            ]
+        );
+        // Every file row of the flat list is there, with the same indices.
+        let files = |rows: &[DiffRow]| {
+            let mut v: Vec<DiffRow> = rows.iter().filter(|r| matches!(r, DiffRow::File { .. })).copied().collect();
+            v.sort_by_key(|r| r.file_ref().map(|(s, f)| (s as u8, f)));
+            v
+        };
+        assert_eq!(files(&rows), files(&flat));
+        // A band between a file's diff and the next folder, none between header rows.
+        let at = |label: &str| {
+            rows.iter()
+                .position(|r| matches!(*r, DiffRow::Folder { folder, .. } if folders.get(folder).unwrap().label == label))
+                .unwrap()
+        };
+        assert_eq!(rows[at("ui") - 1], DiffRow::Folder { src: Src::Unstaged, folder: 0 });
+        assert_eq!(rows[at("docs") - 1], DiffRow::Group(Group::Untracked));
+        assert_eq!(rows[at("src/app/ui") - 1], DiffRow::Spacer);
+        assert_eq!(rows[at("src/core") - 1], DiffRow::Section(Src::Staged));
+        // Folder facts: path, files (indices of the section), totals.
+        let app = folders.get(0).unwrap();
+        assert_eq!((app.path.as_str(), app.group, app.depth), ("src/app", Some(Group::Tracked), 1));
+        assert_eq!(app.files, vec![3, 1]);
+        assert_eq!((app.totals.added, app.totals.removed, app.totals.files), (2, 2, 2));
+        assert_eq!(folders.position(Src::Unstaged, Some(Group::Untracked), "src/app/ui"), Some(3));
+
+        // Collapsed: the folder row stays (with all its files), its insides go.
+        exp.toggle_folder(Src::Unstaged, Some(Group::Tracked), "src/app");
+        let (rows, folders) = build_worktree_view(&ws, None, &exp, None, &NoteWrap::None, true);
+        let text = tree_text(&ws, &rows, &folders);
+        assert_eq!(text[2..4], ["  D src/app (2)", "  F top.txt"]);
+        assert!(text.contains(&"  D src/app/ui (1)".to_string()), "the other group's folder stays open");
+        assert!(!exp.open_folders_of("src/apple.rs"));
+        assert!(exp.open_folders_of("src/app/ui/view.rs"));
+        assert!(!exp.is_folder_collapsed(Src::Unstaged, Some(Group::Tracked), "src/app"));
+        exp.toggle_folder(Src::Unstaged, Some(Group::Tracked), "src/app");
+        exp.set_all(true);
+        assert!(!exp.is_folder_collapsed(Src::Unstaged, Some(Group::Tracked), "src/app"));
+
+        // One file tab: no tree.
+        let (tab, folders) = build_worktree_view(&ws, Some("top.txt"), &exp, None, &NoteWrap::None, true);
+        assert_eq!(tab, build_worktree_rows_for(&ws, Some("top.txt"), &exp, None));
+        assert!(folders.is_empty());
+    }
+
+    #[gitti_test::test]
+    fn tree_of_an_ungrouped_section_and_folder_entries() {
+        // Only tracked files (no groups); a path with a final slash (an untracked folder
+        // entry) is a file named `dir/`; a chain compacts at any level.
+        let ws = crate::WorkingState {
+            unstaged: vec![
+                work_file("a/b/c/d.txt", None, Some('M'), false),
+                work_file("a/x.txt", None, Some('M'), false),
+                work_file("e/dir/", None, Some('M'), false),
+            ],
+            ..Default::default()
+        };
+        let (rows, folders) =
+            build_worktree_view(&ws, None, &Expansion::default(), None, &NoteWrap::None, true);
+        assert_eq!(
+            tree_text(&ws, &rows, &folders),
+            ["S Unstaged", "D a (2)", "  D b/c (1)", "    F d.txt", "  F x.txt", "D e (1)", "  F dir/"]
+        );
+        assert_eq!(folders.get(1).unwrap().path, "a/b/c");
+    }
+
+    #[gitti_test::test]
+    fn marks_of_several_files() {
+        let ws = tree_state();
+        let (rows, _) = build_worktree_view(&ws, None, &Expansion::default(), None, &NoteWrap::None, true);
+        let order = file_order(&rows, &ws);
+        let names: Vec<&str> = order.iter().map(|(_, p)| file_name(p)).collect();
+        assert_eq!(names, ["view.rs", "main.rs", "top.txt", "new.md", "new.rs", "lib.rs"]);
+
+        let mut m = FileMarks::default();
+        m.toggle(Src::Unstaged, "src/app/main.rs");
+        // Range from the anchor in the order shown (across groups and sections).
+        m.extend_to(&order, Src::Staged, "src/core/lib.rs");
+        assert_eq!(m.len(), 5);
+        assert!(!m.contains(Src::Unstaged, "src/app/ui/view.rs"));
+        assert_eq!(
+            m.paths(&ws, Src::Unstaged),
+            ["docs/new.md", "src/app/main.rs", "src/app/ui/new.rs", "top.txt"]
+        );
+        assert_eq!(m.paths(&ws, Src::Staged), ["src/core/lib.rs"]);
+        // Toggle off; a folder's files toggle together (all marked → all unmarked).
+        m.toggle(Src::Unstaged, "top.txt");
+        assert!(!m.contains(Src::Unstaged, "top.txt"));
+        let folder = vec!["src/app/main.rs".to_string(), "src/app/ui/view.rs".to_string()];
+        m.toggle_all(Src::Unstaged, &folder);
+        assert!(m.contains(Src::Unstaged, "src/app/ui/view.rs"));
+        m.toggle_all(Src::Unstaged, &folder);
+        assert!(!m.contains(Src::Unstaged, "src/app/main.rs"));
+        // Discard takes unstaged entries; Stash / Copy all paths once.
+        assert_eq!(m.discard_entries(&ws).len(), 2);
+        assert_eq!(m.all_paths(), ["docs/new.md", "src/app/ui/new.rs", "src/core/lib.rs"]);
+        // A refresh drops files that left their section.
+        let mut after = ws.clone();
+        after.unstaged.retain(|f| f.path() != "docs/new.md");
+        assert!(m.retain(&after));
+        assert_eq!(m.all_paths(), ["src/app/ui/new.rs", "src/core/lib.rs"]);
+        assert!(!m.retain(&after));
+        // Shift-click without an anchor marks one file.
+        let mut m = FileMarks::default();
+        m.extend_to(&order, Src::Unstaged, "top.txt");
+        assert_eq!(m.all_paths(), ["top.txt"]);
+        assert!(m.clear());
+        assert!(m.is_empty());
+        assert_eq!(
+            discard_question(2, Some("src/app"), 0),
+            "Discard the unstaged changes of 2 files in src/app/?"
+        );
+        assert_eq!(
+            discard_question(1, None, 3),
+            "Discard the unstaged changes of the 1 file marked? 3 other marked files have no \
+             unstaged changes and stay as they are."
+        );
+        assert_eq!(files_word(1), "1 file");
+        assert_eq!(files_word(3), "3 files");
     }
 
     #[gitti_test::test]

@@ -7,6 +7,7 @@ use gitti_core::ops::ResetMode;
 
 use crate::fixture_kit::{History, f, repo_with, rev, sh, write_ref};
 
+/// Workflow: RS-04, RL-01
 #[gitti_test::test]
 fn heads_reflog_keeps_the_commit_a_reset_dropped() {
     let mut h = History::new();
@@ -45,6 +46,7 @@ fn heads_reflog_keeps_the_commit_a_reset_dropped() {
     assert!(repo.reflog_cli("refs/heads/unlogged").unwrap().is_empty());
 }
 
+/// Workflow: RS-09
 #[gitti_test::test]
 fn another_branch_moves_to_a_reflog_commit() {
     let mut h = History::new();

@@ -48,6 +48,19 @@ load): build fixtures with few of them (`git fast-import`, config written direct
 `GITTI_TEST_TIMES=1` prints every libtest test's time. Sweeps (sizes × fonts × …) check
 representative points; the whole matrix only with `GITTI_TEST_FULL=1`, now and then, never
 per merge.
+**Workflow tests** — realistic sequences of user actions (stage some hunks and commit,
+cherry-pick then merge, an editor changing line endings behind the app's back, …), each on
+three layers: core (`tests/core/wf_*.rs`, the `Repo` API), gitti (`tests/ui/wf_*.rs`,
+script steps) and gitty (`tests/tui/wf_*.rs`, one `GITTY_SCRIPT` run). Their shared part
+is the dev-only crate `crates/gitti-workflow` (std only): `Fixture` (a starting state in
+three git processes), `ext` ("another program" changing files), `Expect` / `Checks` (the
+repository afterwards with few git processes) and one module per workflow with
+`fixture(dir)` + `expect…(dir)`, used by all three drivers. The catalog of all workflows —
+IDs, steps, expected results, coverage per layer, how to add one — is
+`crates/gitti-workflow/WORKFLOWS.md`. Every test that covers a workflow carries its ID(s)
+in a doc-comment line `/// Workflow: ST-13` (several: `/// Workflow: ST-03, CP-07`);
+`cargo test --workspace --test core -- wf_catalog` checks that catalog and tags agree
+(keep both in sync when adding, renaming or moving a test).
 **Release tests: `release-tests/`** holds the old slow tests and long randomized ones
 (`staging_fuzz`). Not compiled by default (commented-out `[[test]]` blocks at the end of the
 crates' `Cargo.toml`). **Only before a release / overnight — never in daily work, never per
@@ -90,6 +103,9 @@ Don't pipe a build into `tail` and then run the binary — a failed build leaves
 
 - `Cargo.lock` must keep `cc` at 1.2.x (tree-sitter-sequel requires `~1.2`). If it drifts:
   `cargo update -p cc --precise 1.2.67`.
+- After `Cargo.lock` changed: `cargo xtask licenses` regenerates
+  `licenses/THIRD-PARTY-LICENSES.txt` (the third-party licence list both apps embed; it
+  also fails on a dependency that isn't GPL-3.0-compatible). A test fails until it's done.
 - Dev profile builds dependencies with `opt-level = 3`, own crates with `opt-level = 1`.
 
 ## Architecture

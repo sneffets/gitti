@@ -881,6 +881,7 @@ mod tests {
         assert_eq!(found, ["a.b_BACKUP_9.txt", "a.b_LOCAL_123.txt"]);
     }
 
+    /// Workflow: MG-24
     #[gitti_test::test]
     fn describes_the_merge_outcome() {
         let r = MergeToolResult {

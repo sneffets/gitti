@@ -239,7 +239,9 @@ fn run_shell_confirmed(ui: &mut Ui) {
 }
 
 /// A command with `{tag}` is in a tag's menu (not in the commit menu); run with a commit
-/// selected, `{tag}` is the tag on it.
+/// selected, `{tag}` is the tag on it. A right click on the tag's badge in the commit list
+/// opens the tag's menu too (Show Tag…, the command; no commit entries), the branch's
+/// badge the branch's menu — opening them runs no git.
 fn tag_menu(ui: &mut Ui) {
     define(ui, "Tag subject", "log -1 --format=%s {tag}", false, false);
     testing::menu_labels();
@@ -249,6 +251,25 @@ fn tag_menu(ui: &mut Ui) {
         fail!(ui, "tag menu lacks Tag subject: {labels:?}");
     }
     ui.quick("key:escape");
+    ui.step("select:1");
+    let n = ui.n_git();
+    testing::menu_labels();
+    ui.click_on("ref-badge:1:v1.0", MouseButton::Right);
+    let labels = testing::menu_labels();
+    let has = |l: &str| labels.iter().any(|x| x == l);
+    if !has("Tag subject") || !has("Show Tag…") || labels.iter().any(|l| l.starts_with("Cherry-pick")) {
+        fail!(ui, "tag badge menu: {labels:?}");
+    }
+    ui.quick("key:escape");
+    testing::menu_labels();
+    ui.click_on("ref-badge:1:main", MouseButton::Right);
+    let labels = testing::menu_labels();
+    if !labels.iter().any(|l| l.starts_with("Rename")) || labels.iter().any(|l| l == "Show Tag…") {
+        fail!(ui, "branch badge menu: {labels:?}");
+    }
+    ui.quick("key:escape");
+    ui.no_git_since(n, "badge menus");
+    // The row itself still has the commit's menu.
     testing::menu_labels();
     ui.click_on("commit-row:1", MouseButton::Right);
     let labels = testing::menu_labels();

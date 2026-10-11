@@ -27,6 +27,7 @@ fn last_message(p: &Path) -> String {
 
 /// The template is read as `git commit` reads it: a relative path from the work tree's
 /// top; `:(optional)` and missing = none; missing = a problem that says what to do.
+/// Workflow: CM-12
 #[gitti_test::test]
 fn the_template_is_found_as_git_finds_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -58,6 +59,7 @@ fn the_template_is_found_as_git_finds_it() {
 
 /// Committing the template unedited is refused before git runs; edited, its comment lines
 /// go (git's `strip` after the editor) while a `#` line of a typed message stays.
+/// Workflow: CM-12
 #[gitti_test::test]
 fn the_template_is_committed_only_edited_without_its_comments() {
     let dir = tempfile::tempdir().unwrap();
@@ -94,6 +96,7 @@ fn the_template_is_committed_only_edited_without_its_comments() {
 
 /// Sign Off is `git commit --signoff`: the trailer after the others, never twice (also
 /// when amending a signed-off commit); a merge concluded with git's message too.
+/// Workflow: CM-13
 #[gitti_test::test]
 fn sign_off_adds_the_trailer_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -113,6 +116,7 @@ fn sign_off_adds_the_trailer_once() {
 
 /// The user's earlier messages: newest first, each once, no merges, no one else's;
 /// matched by e-mail (any case), by name without one.
+/// Workflow: CM-18
 #[gitti_test::test]
 fn own_messages_are_the_users_newest() {
     let dir = tempfile::tempdir().unwrap();

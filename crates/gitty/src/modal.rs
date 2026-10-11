@@ -47,6 +47,16 @@ pub struct Extra {
     pub f: Action,
 }
 
+/// A key of a text window ([`Modal::with_text_keys`]), named on its bottom border:
+/// `keep` runs it with the window staying open (Copy), else the window closes first.
+#[derive(Clone, Copy)]
+pub struct TextKey {
+    pub key: char,
+    pub label: &'static str,
+    pub keep: bool,
+    pub run: fn(&mut App),
+}
+
 /// The key that opens a field's chooser ([`Modal::with_pick`]) and its label.
 pub const PICK_KEY: char = 'o';
 pub const PICK_KEY_LABEL: &str = "ctrl-o";
@@ -188,8 +198,10 @@ impl MenuItem {
         }
     }
 
-    /// `text` as explanation lines of at most `width` columns (wrapped at spaces).
+    /// `text` as explanation lines of at most `width` columns (wrapped at spaces; a longer
+    /// word — a path — split, not cut by the menu).
     pub fn notes(text: &str, width: usize) -> Vec<Self> {
+        let width = width.max(1);
         let mut out = Vec::new();
         let mut line = String::new();
         for word in text.split_whitespace() {
@@ -199,7 +211,11 @@ impl MenuItem {
             if !line.is_empty() {
                 line.push(' ');
             }
-            line.push_str(word);
+            let mut rest: Vec<char> = word.chars().collect();
+            while rest.len() > width {
+                out.push(Self::note(rest.drain(..width).collect::<String>()));
+            }
+            line.extend(rest);
         }
         if !line.is_empty() {
             out.push(Self::note(line));
@@ -341,6 +357,8 @@ pub enum Modal {
         title: String,
         body: String,
         scroll: usize,
+        /// Its own keys (About: copy the version, open the licences).
+        keys: Vec<TextKey>,
     },
     Ask {
         prompt: String,
@@ -574,7 +592,16 @@ impl Modal {
             title: title.into(),
             body: body.into(),
             scroll: 0,
+            keys: Vec::new(),
         }
+    }
+
+    /// A text window's own keys (see [`TextKey`]).
+    pub fn with_text_keys(mut self, new: Vec<TextKey>) -> Self {
+        if let Modal::Text { keys, .. } = &mut self {
+            *keys = new;
+        }
+        self
     }
 
     /// Re-runs the picker's fuzzy filter after the query changed.
@@ -657,5 +684,14 @@ mod tests {
             fuzzy_score("sb", "Switch Branch…").unwrap()
                 > fuzzy_score("sb", "Stash…").unwrap_or(-99)
         );
+    }
+
+    #[gitti_test::test]
+    fn notes_wrap_and_split_long_words() {
+        let lines: Vec<String> = super::MenuItem::notes("from /a/very/long/path) here", 8)
+            .into_iter()
+            .map(|n| n.label)
+            .collect();
+        assert_eq!(lines, ["from", "/a/very/", "long/pat", "h) here"]);
     }
 }

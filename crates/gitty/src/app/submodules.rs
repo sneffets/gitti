@@ -6,13 +6,28 @@
 //! comes with the refresh snapshot (`gitti_core::submodule`); the sidebar rows, the
 //! toolbar's out-of-date badge and the pointer-change rows of diffs are drawn in `ui.rs`.
 
+use std::path::PathBuf;
+
 use gitti_core::ObjectId;
-use gitti_core::submodule::add::FilePermission;
+use gitti_core::submodule::add::{ALLOW_UPDATE, FilePermission, FileRefused};
 use gitti_core::submodule::{HISTORY_LIMIT, SubmoduleCommit, SubmoduleState, short_id};
 
-use super::{After, App, Msg};
+use super::{After, App, FollowUp, Msg};
 use crate::edit::TextEdit;
 use crate::modal::{MenuItem, Modal, PickItem};
+
+/// Width of the refusal's explanation in its menu.
+const REFUSED_NOTE_WIDTH: usize = 64;
+
+/// What [`App::submodules_refused`] runs again with the `file` transport allowed.
+#[derive(Debug, Clone)]
+pub enum RetryUpdate {
+    /// Update Submodules of `paths` (empty = all), `remote`: to their remote branches.
+    Update { paths: Vec<String>, remote: bool },
+    /// The submodules of the clone at `dir`, just made with `--recurse-submodules`
+    /// (`note`: what else the clone has to say); gitty then offers to open it.
+    Clone { dir: PathBuf, note: Option<String> },
+}
 
 impl App {
     /// The actions on the submodule at `path`.
@@ -95,10 +110,81 @@ impl App {
 
     /// `git submodule update --init --recursive --remote [-- paths]` (empty = all).
     pub fn update_submodules_remote(&mut self, paths: Vec<String>) {
-        self.run_op("Update submodules to remote branches", true, After::Nothing, move |r| {
+        self.run_update(paths, true, false);
+    }
+
+    /// Update Submodules (`remote`: to their remote branches; `allow_file`: the user
+    /// agreed to clone from local paths this once). git's refusal of a local path comes
+    /// back as `FollowUp::SubmodulesRefused` ([`Self::submodules_refused`]).
+    fn run_update(&mut self, paths: Vec<String>, remote: bool, allow_file: bool) {
+        let label = if remote { "Update submodules to remote branches" } else { "Update submodules" };
+        self.run_op(label, true, After::Nothing, move |r| {
             let p: Vec<&str> = paths.iter().map(String::as_str).collect();
-            r.update_submodules_remote(&p)
+            r.update_submodules_with(&p, remote, allow_file).map_err(|e| match e.downcast::<FileRefused>() {
+                Ok(refused) => {
+                    let retry = RetryUpdate::Update { paths: paths.clone(), remote };
+                    FollowUp::SubmodulesRefused(Box::new(refused), retry).into()
+                }
+                Err(e) => e,
+            })
         });
+    }
+
+    /// git refused to clone submodules from a local path (Update Submodules, or a clone
+    /// with `--recurse-submodules`): which and why, and the update again with the `file`
+    /// transport allowed for that one command (nothing written to a config) — after a
+    /// clone, then the offer to open it, or open it without them. Refused by
+    /// `GIT_ALLOW_PROTOCOL`: only what to change.
+    pub(super) fn submodules_refused(&mut self, refused: FileRefused, retry: RetryUpdate) {
+        let cloned = matches!(retry, RetryUpdate::Clone { .. });
+        let mut text = refused.explain(cloned);
+        if let RetryUpdate::Clone { note: Some(n), .. } = &retry {
+            text = format!("{n}\n\n{text}");
+        }
+        let mut items = Vec::new();
+        for para in text.split("\n\n") {
+            if !items.is_empty() {
+                items.push(MenuItem::note(""));
+            }
+            items.extend(MenuItem::notes(para, REFUSED_NOTE_WIDTH));
+        }
+        items.push(MenuItem::separator());
+        let allow = !refused.blocked;
+        match retry {
+            RetryUpdate::Update { paths, remote } => {
+                if !allow {
+                    self.set_error("Submodules not cloned: GIT_ALLOW_PROTOCOL doesn't allow local paths".into());
+                    self.modal = Some(Modal::text("Submodules Not Cloned", text));
+                    return;
+                }
+                items.push(
+                    MenuItem::new(ALLOW_UPDATE, move |app: &mut App| app.run_update(paths, remote, true)).key('a'),
+                );
+                items.push(MenuItem::new("Not Now", |_: &mut App| {}).key('n'));
+            }
+            RetryUpdate::Clone { dir, .. } => {
+                if allow {
+                    let d = dir.clone();
+                    items.push(
+                        MenuItem::new(format!("{ALLOW_UPDATE}, Then Open"), move |app: &mut App| {
+                            let git = app.repo.git().clone();
+                            let shown = d.display().to_string();
+                            app.run_op("Update submodules", false, After::OfferOpen(d.clone()), move |_| {
+                                gitti_core::submodule::add::update_cloned(&git, &d)?;
+                                Ok(format!("cloned into {shown} with its submodules"))
+                            })
+                        })
+                        .key('a'),
+                    );
+                }
+                items.push(
+                    MenuItem::new("Open Without the Submodules", move |app: &mut App| app.reopen = Some(dir))
+                        .key('o'),
+                );
+            }
+        }
+        self.set_info("Submodules not cloned yet: git refuses local paths unless allowed");
+        self.modal = Some(Modal::menu("Clone submodules from local paths?", items));
     }
 
     /// Asks before removing the submodule at `path`: what goes, and the local work that
@@ -178,10 +264,7 @@ impl App {
 
     /// `git submodule update --init --recursive [-- paths]` (empty = all).
     pub fn update_submodules(&mut self, paths: Vec<String>) {
-        self.run_op("Update submodules", true, After::Nothing, move |r| {
-            let p: Vec<&str> = paths.iter().map(String::as_str).collect();
-            r.update_submodules(&p)
-        });
+        self.run_update(paths, false, false);
     }
 
     /// "Add Submodule…": URL, path (empty = git's default from the URL), branch to track

@@ -53,6 +53,7 @@ fn added_text(d: &FileDiff, n: usize) -> &str {
 /// Latin-1, Windows-1252 and a mixed file (UTF-8 lines and one that is not): the lines
 /// are shown decoded, named by their encoding; staging one line, discarding another and
 /// unstaging the staged one give exactly the expected bytes.
+/// Workflow: EX-09, NU-01
 #[gitti_test::test]
 fn eight_bit_lines_stage_unstage_discard_exactly() {
     struct Case {
@@ -129,6 +130,7 @@ fn utf16le(s: &str) -> Vec<u8> {
 /// UTF-16 LE with a byte order mark, shown as text by a `diff` attribute: git splits its
 /// lines at the byte 0x0A (the newline's NUL starts the next line). Lines are shown
 /// decoded; staging, discarding and unstaging a line move the exact bytes.
+/// Workflow: EX-10, NU-02
 #[gitti_test::test]
 fn utf16_lines_stage_unstage_discard_exactly() {
     let base = utf16le("\u{FEFF}a\nb\nz\n");
@@ -162,6 +164,7 @@ fn utf16_lines_stage_unstage_discard_exactly() {
 /// by git (asked via `check-attr`), so a staged line reaches the index as UTF-8, like
 /// `git add`. An untracked Latin-1 file without attributes is built in-process and stages
 /// its exact bytes.
+/// Workflow: NU-03
 #[gitti_test::test]
 fn working_tree_encoding_and_untracked_files() {
     let mut h = History::new();
@@ -193,6 +196,7 @@ fn working_tree_encoding_and_untracked_files() {
 
 /// Ignore whitespace: the shown diff is `-w`, staging maps the selection onto the exact
 /// diff (`map_selection`) — with lines that are not UTF-8 too.
+/// Workflow: ST-10
 #[gitti_test::test]
 fn ignore_whitespace_maps_lines_that_are_not_utf8() {
     let mut h = History::new();
@@ -214,6 +218,7 @@ fn ignore_whitespace_maps_lines_that_are_not_utf8() {
 
 /// A file *name* that is not UTF-8 is still refused, before any git runs: the patch's
 /// header would name another file (paths are strings).
+/// Workflow: NU-04
 #[gitti_test::test]
 fn names_that_are_not_utf8_are_refused() {
     let tmp = tempfile::tempdir().unwrap();
@@ -277,6 +282,7 @@ fn open_merge(r: &std::sync::Arc<Repo>, name: &str) -> gitti_core::merge_session
 /// back byte for byte: a Latin-1 conflict (git's markers on disk count as unedited), and a
 /// mixed file (UTF-8 and Latin-1 lines, Shift-JIS bytes) whose untouched lines keep their
 /// bytes whichever side is taken. `git add` then stores exactly those bytes.
+/// Workflow: MG-15
 #[gitti_test::test]
 fn merge_editor_writes_non_utf8_files_exactly() {
     let sjis: &[u8] = b"\x83\x5c\x83\x74\x83\x67"; // "ソフト": 0x5C (`\`) as a second byte
@@ -323,6 +329,7 @@ fn merge_editor_writes_non_utf8_files_exactly() {
 /// has them (`cat-file --filters`) and writes that form — CRLF with `core.autocrlf`, the
 /// `working-tree-encoding` (UTF-16 here, Latin-1 bytes in UTF-8 stages for ISO-8859-1) —
 /// so `git add` stores exactly what a resolution in the index would be.
+/// Workflow: MG-15
 #[gitti_test::test]
 fn merge_editor_writes_the_working_tree_form() {
     let attrs: &[u8] = b"u.txt working-tree-encoding=UTF-16LE-BOM\nl.txt working-tree-encoding=ISO-8859-1\n";
@@ -511,6 +518,7 @@ fn model(old: &[u8], new: &[u8], d: &FileDiff, sel: &Selection, mode: PatchMode)
 /// Random byte lines, fixed seeds: staging / unstaging / discarding random line
 /// selections gives exactly the model's bytes — a fast, deterministic cousin of the
 /// release suite's `staging_fuzz`, over bytes instead of text.
+/// Workflow: ST-20
 #[gitti_test::test]
 fn random_byte_lines_stage_exactly() {
     let tmp = tempfile::tempdir().unwrap();

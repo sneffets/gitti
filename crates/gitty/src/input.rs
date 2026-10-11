@@ -20,6 +20,8 @@ enum Outcome {
     Keep,
     Close,
     Run(crate::modal::Action),
+    /// Run it with the dialog staying open.
+    KeepRun(crate::modal::Action),
 }
 
 impl App {
@@ -500,7 +502,12 @@ impl App {
                     self.hscroll = self.hscroll.saturating_sub(8);
                 }
             }
-            KeyCode::Char(' ') if wt => self.toggle_line(),
+            // On a file / folder row: marks it (several files at once); on a line: selects it.
+            KeyCode::Char(' ') if wt => {
+                if !self.mark_at_cursor() {
+                    self.toggle_line()
+                }
+            }
             KeyCode::Enter if Some(self.diff_cursor) == self.signature_header_line() => {
                 self.show_signature()
             }
@@ -532,6 +539,7 @@ impl App {
                     self.toggle_file()
                 }
                 Some(DiffRow::Group(_)) => self.toggle_group(),
+                Some(DiffRow::Folder { .. }) => self.toggle_folder(),
                 Some(&DiffRow::Expand { src, file, gap }) => {
                     self.show_more_lines(src, file, Some(gap), gitti_core::context::Reveal::More)
                 }
@@ -543,6 +551,7 @@ impl App {
             // Changes Only"), ends compare mode, then back to the list.
             KeyCode::Esc => {
                 if self.line_sel.take().is_none()
+                    && !self.clear_marks()
                     && !self.show_changes_only(None)
                     && !self.end_compare()
                 {
@@ -831,12 +840,18 @@ impl App {
                     Outcome::Keep
                 }
             },
-            Modal::Text { scroll, body, .. } => {
-                // The window may be narrower (more wrapped lines); drawing clamps to the
-                // last line it can show.
-                let max = crate::ui::text_modal_lines(body, 10).len();
-                text_scroll(scroll, max, key)
-            }
+            Modal::Text {
+                scroll, body, keys, ..
+            } => match keys.iter().find(|k| key.code == KeyCode::Char(k.key)) {
+                Some(k) if k.keep => Outcome::KeepRun(Box::new(k.run)),
+                Some(k) => Outcome::Run(Box::new(k.run)),
+                None => {
+                    // The window may be narrower (more wrapped lines); drawing clamps to
+                    // the last line it can show.
+                    let max = crate::ui::text_modal_lines(body, 10).len();
+                    text_scroll(scroll, max, key)
+                }
+            },
             Modal::Edit { edit, submit, .. } => {
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                 let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -865,6 +880,10 @@ impl App {
             }
             Outcome::Close => {}
             Outcome::Run(action) => action(self),
+            Outcome::KeepRun(action) => {
+                self.modal = Some(modal);
+                action(self);
+            }
         }
         if search_before.is_some() && self.search_query().is_none() {
             self.stop_commit_search();
@@ -1045,8 +1064,15 @@ impl App {
                             .then(|| self.badge_more.iter().find(|(r, _)| r.contains(pos)))
                             .flatten()
                             .map(|(_, hidden)| hidden.clone());
+                        // A right click on a ref's badge: that ref's menu (as in gitti).
+                        let badge = right
+                            .then(|| self.badge_refs.iter().find(|(r, _)| r.contains(pos)))
+                            .flatten()
+                            .map(|(_, r)| r.clone());
                         self.select_row(row);
-                        if right {
+                        if let Some(r) = badge {
+                            self.ref_menu(&r);
+                        } else if right {
                             self.context_menu();
                         } else if let Some(hidden) = more {
                             self.set_info(hidden);

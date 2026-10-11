@@ -52,6 +52,7 @@ fn their_commit(remote: &Path, file: &str) -> String {
 /// Without an upstream (or detached, or without any remote) the main Push
 /// and Pull run no network command (before: `push -u` to a default remote / `git pull`
 /// fetching first, both asking for an ssh passphrase) but say why.
+/// Workflow: RM-08
 #[gitti_test::test]
 fn main_push_and_pull_without_upstream_never_reach_the_remote() {
     let dir = tempfile::tempdir().unwrap();
@@ -103,6 +104,7 @@ fn main_push_and_pull_without_upstream_never_reach_the_remote() {
 
 /// After that refusal the user picks a remote in "Push to…", which becomes the upstream;
 /// the plain Push and Pull go there from then on.
+/// Workflow: RM-08
 #[gitti_test::test]
 fn the_chosen_remote_becomes_the_upstream_of_push_and_pull() {
     let dir = tempfile::tempdir().unwrap();
@@ -138,6 +140,7 @@ fn the_chosen_remote_becomes_the_upstream_of_push_and_pull() {
 /// The dialog's push: several remotes, a new name on the remote, upstream from the first
 /// remote, follow-tags vs all tags; a failing remote doesn't stop the others; the
 /// sidebar's "Push All Tags".
+/// Workflow: TG-03, RM-11
 #[gitti_test::test]
 fn push_to_several_remotes_with_a_new_name_tags_and_a_failing_one() {
     let dir = tempfile::tempdir().unwrap();
@@ -257,6 +260,7 @@ fn rewritten_after_push(dir: &Path) -> (PathBuf, PathBuf, String) {
 /// a fetch in the background brought in commits the user never saw (the bare lease would
 /// have overwritten them); pinned to what is shown after the user looked again, it goes
 /// through.
+/// Workflow: RM-10
 #[gitti_test::test]
 fn force_push_pins_the_lease_the_user_saw() {
     let dir = tempfile::tempdir().unwrap();
@@ -305,6 +309,7 @@ fn force_push_pins_the_lease_the_user_saw() {
 /// Lease…): the old commit on origin (amended), nothing on a remote that doesn't have
 /// the branch yet (created, refused if it exists there); the leases are pinned to what the
 /// list was read from, and the request goes through as listed — no network before.
+/// Workflow: RM-10
 #[gitti_test::test]
 fn force_push_options_list_what_each_remote_loses() {
     let dir = tempfile::tempdir().unwrap();
@@ -343,6 +348,7 @@ fn force_push_options_list_what_each_remote_loses() {
 
 /// Rewritten history: a plain push is rejected, with lease it goes through; a refusing
 /// pre-push hook is skipped with no-verify.
+/// Workflow: RM-10
 #[gitti_test::test]
 fn force_with_lease_and_no_verify() {
     let dir = tempfile::tempdir().unwrap();
@@ -375,6 +381,7 @@ fn force_with_lease_and_no_verify() {
 
 /// "Pull from" one remote (not the upstream's), and the sidebar's "Prune": a branch gone
 /// on the remote loses its remote-tracking branch, the others stay.
+/// Workflow: RM-12
 #[gitti_test::test]
 fn pull_from_one_remote_and_prune_another() {
     let dir = tempfile::tempdir().unwrap();
@@ -416,6 +423,7 @@ fn pull_from_one_remote_and_prune_another() {
 /// ("diverged … (amended?)"), offers Push with Lease first and lists what origin/main
 /// loses, with the author. The main Push knows it before pushing (no network). Push with
 /// Lease goes through pinned to the commit listed.
+/// Workflow: CM-06
 #[gitti_test::test]
 fn refused_push_of_an_amended_branch_offers_push_with_lease() {
     let dir = tempfile::tempdir().unwrap();
@@ -454,6 +462,7 @@ fn refused_push_of_an_amended_branch_offers_push_with_lease() {
 /// lists their commit (author) and pins the lease to it; a lease pinned to the old
 /// commit is refused as "moved since you looked"; a Pull (merge) of the refusal joins
 /// their commit.
+/// Workflow: RM-09
 #[gitti_test::test]
 fn refused_push_after_someone_pushed() {
     let dir = tempfile::tempdir().unwrap();
@@ -506,6 +515,7 @@ fn refused_push_after_someone_pushed() {
 /// "Reset origin/main to Here…": origin's main moves back to an older commit, the lost
 /// commit listed, the local branch untouched; a server that denies non-fast-forwards
 /// refuses it — named as the server's setting.
+/// Workflow: RS-08
 #[gitti_test::test]
 fn reset_the_remote_branch_to_a_commit() {
     let dir = tempfile::tempdir().unwrap();

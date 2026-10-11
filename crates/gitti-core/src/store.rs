@@ -156,6 +156,9 @@ pub struct SharedSettings {
     pub branch_sort: crate::branch_order::BranchSort,
     /// The sidebar's remote branches: by name or last commit date.
     pub remote_branch_sort: crate::branch_order::BranchSort,
+    /// The working directory's changes as a tree of folders instead of a flat list of
+    /// paths (`rows::build_worktree_view`).
+    pub changes_as_tree: bool,
 }
 
 impl Default for SharedSettings {
@@ -178,6 +181,7 @@ impl Default for SharedSettings {
             show_main_worktree_alone: true,
             branch_sort: crate::branch_order::BranchSort::Name,
             remote_branch_sort: crate::branch_order::BranchSort::Name,
+            changes_as_tree: false,
         }
     }
 }
@@ -1129,6 +1133,7 @@ mod tests {
     /// The amend message: one per worktree for the commit it amends (a newer one for
     /// another commit replaces it), gone when blanked; a db of the level before (6) gets
     /// the table.
+    /// Workflow: CM-05
     #[gitti_test::test]
     fn amend_drafts_are_kept_per_worktree_for_their_commit() {
         let dir = tempfile::tempdir().unwrap();

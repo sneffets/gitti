@@ -508,7 +508,7 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
         }
         for part in probes.iter().filter(|q| {
             matches!(q.kind(), "modal-field" | "modal-check" | "modal-note" | "modal-option")
-                || matches!(q.name.as_str(), "modal-live" | "modal-text")
+                || matches!(q.name.as_str(), "modal-live" | "modal-text" | "modal-message")
         }) {
             if let Some(v) = part.visible()
                 && !contains(&body.bounds, &v)

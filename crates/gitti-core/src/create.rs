@@ -71,6 +71,38 @@ pub fn clone_repo_noted(
     recurse_submodules: bool,
     progress: &mut dyn FnMut(&str),
 ) -> Result<(PathBuf, Option<String>)> {
+    let c = clone_repo_outcome(git, url, dest, recurse_submodules, progress)?;
+    let refused = c.refused.map(|r| r.explain(true));
+    let note = match (c.note, refused) {
+        (Some(a), Some(b)) => Some(format!("{a}\n\n{b}")),
+        (a, b) => a.or(b),
+    };
+    Ok((c.dir, note))
+}
+
+/// A finished clone ([`clone_repo_outcome`]).
+#[derive(Debug, Clone)]
+pub struct Cloned {
+    /// The clone's (canonical) work dir.
+    pub dir: PathBuf,
+    /// What the user should know (see [`clone_repo_noted`]).
+    pub note: Option<String>,
+    /// `--recurse-submodules`, and git refused to clone submodules from local paths: the
+    /// clone is kept, its submodules are empty — the apps offer to update them with the
+    /// `file` transport allowed once (`submodule::add::ALLOW_UPDATE`).
+    pub refused: Option<crate::submodule::add::FileRefused>,
+}
+
+/// [`clone_repo_noted`] with git's refusal of submodules from local paths apart
+/// ([`Cloned::refused`]). A refused clone of the repository itself (`protocol.file.allow
+/// = never`, `GIT_ALLOW_PROTOCOL`) fails with the setting named.
+pub fn clone_repo_outcome(
+    git: &Git,
+    url: &str,
+    dest: &Path,
+    recurse_submodules: bool,
+    progress: &mut dyn FnMut(&str),
+) -> Result<Cloned> {
     let url = url.trim();
     if url.is_empty() {
         bail!("no repository URL given");
@@ -97,13 +129,39 @@ pub fn clone_repo_noted(
         args.push("--recurse-submodules");
     }
     args.extend(["--", url, &dest_arg]);
+    let cloned = |dir, note| Cloned { dir, note, refused: None };
     match git.with_workdir(parent).run_with_progress(&args, progress) {
-        Ok(out) => Ok((
+        Ok(out) => Ok(cloned(
             crate::paths::canonical(dest),
             crate::fs_paths::clone_note(&out.stderr),
         )),
         Err(e) => {
             let text = e.to_string();
+            let stderr = match &e {
+                crate::git_cli::GitError::Failed { stderr, .. } => stderr.as_str(),
+                _ => "",
+            };
+            let refused = crate::submodule::add::explain_refusal(stderr).is_some();
+            if refused && !dest.join(".git").exists() {
+                // The repository itself: only a setting refuses what the user typed.
+                let ctx = crate::submodule::add::file_context(git);
+                bail!(
+                    "git refused to clone from a local path: {} doesn't allow its \"file\" \
+                     transport. Change that setting, or use the repository's network \
+                     address.\n\n{text}",
+                    ctx.setting_name()
+                );
+            }
+            if refused && recurse_submodules {
+                let dir = crate::paths::canonical(dest);
+                let ctx = crate::submodule::add::file_context(&git.with_workdir(&dir));
+                let refused = crate::submodule::add::FileRefused::from_output(&ctx, stderr, &dir);
+                return Ok(Cloned {
+                    note: crate::fs_paths::clone_note(stderr),
+                    dir,
+                    refused,
+                });
+            }
             if !text.contains("Clone succeeded, but checkout failed") || !dest.join(".git").exists() {
                 return Err(e.into());
             }
@@ -113,10 +171,11 @@ pub fn clone_repo_noted(
                 .unwrap_or_default();
             let why = crate::fs_paths::explain_git_error(&text, &rules)
                 .unwrap_or_else(|| format!("git said: {text}"));
-            Ok((
+            Ok(cloned(
                 dir,
                 Some(format!(
-                    "Cloned, but git couldn't check out the files — the repository's files show                      as deleted until it can. {why}"
+                    "Cloned, but git couldn't check out the files — the repository's files show \
+                     as deleted until it can. {why}"
                 )),
             ))
         }

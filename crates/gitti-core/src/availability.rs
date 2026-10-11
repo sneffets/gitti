@@ -412,6 +412,7 @@ mod tests {
         }
     }
 
+    /// Workflow: CP-17
     #[gitti_test::test]
     fn changes_stashes_and_selection_turn_them_on() {
         let f = RepoFacts {

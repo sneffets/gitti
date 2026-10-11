@@ -14,6 +14,7 @@ mod config_ui;
 mod conflict_ui;
 mod diff_view;
 mod ext_tools;
+mod file_marks;
 mod file_tabs;
 mod folder_picker;
 mod from_commit;
@@ -63,7 +64,7 @@ mod worktree_tabs;
 mod worktrees;
 
 pub(crate) use overlay_keys::intercept as intercept_overlay_keys;
-pub(crate) use menus::take_menu_labels;
+pub(crate) use menus::{run_menu_entry, take_menu_labels};
 pub(crate) use signers::set_open_repos;
 pub(crate) use unavailable::set_tab_count;
 pub(crate) use startup_ui::WHERE as STARTUP_TIMINGS_WHERE;
@@ -108,6 +109,7 @@ pub use reflog::ReflogState;
 pub use modal::AskRequest;
 pub use settings_view::{ShortcutLine, shortcut_lines};
 pub use repo_actions::AppEvent;
+pub use submodules::RetryUpdate;
 pub use spell_ui::SpellTarget;
 pub(crate) use spell_ui::take_last_editor_menu;
 use modal::Modal;
@@ -218,11 +220,16 @@ pub struct GittiApp {
     tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the tab's hollow mark).
     unpushed: Option<gitti_core::tab_marks::Unpushed>,
-    /// The other worktrees' marks by folder (`tab_marks.rs`), a read running / asked for
-    /// again.
-    worktree_marks: Vec<(std::path::PathBuf, gitti_core::tab_marks::Marks)>,
+    /// The working state the shown rows were built from (working-directory view).
+    rows_for: Option<Arc<WorkingState>>,
+    /// The file watcher's first report arrived (its watches are in place; with a
+    /// recursive OS watch it asks for one more read of what it couldn't see before).
+    watch_ready: bool,
+    /// The first full read waits for the watcher's first report (`watching.rs`).
+    first_read_pending: bool,
+    /// A read of this repository's other worktrees' marks, started by this tab, runs
+    /// (`tab_marks.rs`; the marks are in the app-wide store).
     worktree_marks_loading: bool,
-    worktree_marks_queued: bool,
     /// Effective user.name / user.email.
     identity: (Option<String>, Option<String>),
     /// Names of "ours" / "theirs" while there are conflicted files.
@@ -263,6 +270,10 @@ pub struct GittiApp {
     /// Counts commit loads: the [`SLOW_LOAD`] timer of one that has ended does nothing.
     commit_load_gen: u64,
     rows: Arc<Vec<DiffRow>>,
+    /// The folder rows of `rows` (the working directory as a tree; empty when flat).
+    folders: gitti_core::rows::Folders,
+    /// Files marked for an action on several (⌘ / shift-click on file headers).
+    file_marks: gitti_core::rows::FileMarks,
     expansion: Expansion,
     line_sel: Option<LineSel>,
     dragging: bool,
@@ -601,6 +612,16 @@ impl GittiApp {
             },
             None => (None, None, None),
         };
+        // The worktree marks of every tab (`tab_marks.rs`): redraw when any changed; this
+        // tab's own entry goes when it closes (it stays as it was until read again).
+        cx.observe_global::<tab_marks::SharedMarks>(|_, cx| cx.notify()).detach();
+        let owner = cx.entity_id().as_u64();
+        cx.on_release(move |_, cx| {
+            if cx.has_global::<tab_marks::SharedMarks>() {
+                cx.global_mut::<tab_marks::SharedMarks>().0.release(owner);
+            }
+        })
+        .detach();
         cx.observe_window_activation(window, |this, window, cx| {
             this.sync_secure_input(window);
             cx.notify();
@@ -625,9 +646,10 @@ impl GittiApp {
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
             unpushed: None,
-            worktree_marks: Vec::new(),
             worktree_marks_loading: false,
-            worktree_marks_queued: false,
+            watch_ready: false,
+            rows_for: None,
+            first_read_pending: false,
             identity: (None, None),
             conflict_sides: None,
             worktrees: Vec::new(),
@@ -650,6 +672,8 @@ impl GittiApp {
             commit_loading: false,
             commit_load_gen: 0,
             rows: Arc::new(Vec::new()),
+            folders: Default::default(),
+            file_marks: Default::default(),
             expansion: Expansion::default(),
             line_sel: None,
             dragging: false,
@@ -787,7 +811,20 @@ impl GittiApp {
         self.restore_draft(window, cx);
         self.start_watcher(window, cx);
         self.load_quick_history(window, cx);
-        self.refresh(true, window, cx);
+        self.first_read(window, cx);
+    }
+
+    /// The tab comes to the front: what it shows is what it has read — a working-directory
+    /// view built from an older working state is built again (no git; its watcher kept
+    /// the state current in the background), and the view is drawn anew.
+    pub fn brought_to_front(&mut self, cx: &mut Context<Self>) {
+        let stale = matches!(self.detail, Detail::Worktree)
+            && !self.rows_for.as_ref().is_some_and(|w| Arc::ptr_eq(w, &self.working));
+        if stale {
+            self.rebuild_rows();
+            self.schedule_highlight(cx);
+        }
+        cx.notify();
     }
 
     /// A restored tab's turn to read its repository; whether that started now
@@ -1022,7 +1059,9 @@ impl GittiApp {
         self.apply_lfs_state(s.lfs, cx);
         // Only when HEAD moved (in-process, in the background).
         self.refresh_subtrees(false, cx);
-        // The other worktrees' sidebar marks (in the background, only when shown).
+        // This worktree's marks for every tab; the worktrees no tab has open (in the
+        // background).
+        self.publish_marks(cx);
         self.refresh_worktree_marks(cx);
         // Refs moved behind our back → the history may have changed too (the first
         // refresh loads it anyway).
@@ -1151,6 +1190,7 @@ impl GittiApp {
         }
         let anchor = self.worktree_anchor(prev);
         self.rows = Arc::new(self.worktree_rows(self.wrap()));
+        self.rows_for = Some(self.working.clone());
         if let Some(a) = anchor {
             self.follow_worktree_anchor(&a, prev);
         }
@@ -1189,6 +1229,8 @@ impl GittiApp {
         let wrap = self.wrap();
         let before = self.rows.clone();
         self.commit_fs = self.shown_commit_fs();
+        self.folders = Default::default();
+        self.rows_for = matches!(self.detail, Detail::Worktree).then(|| self.working.clone());
         self.rows = Arc::new(match &self.detail {
             Detail::Worktree => self.worktree_rows(wrap),
             Detail::Commit(cv) => {
@@ -2158,6 +2200,7 @@ impl GittiApp {
         if self.working.conflicted.is_empty() {
             self.conflict_sides = None;
         }
+        self.publish_marks(cx);
         self.rebuild_rows_if_worktree(prev_sel_diff, &prev_working);
         self.restore_worktree_view_anchor(cx);
         self.refresh_worktree_compare(cx);
@@ -2467,6 +2510,11 @@ impl GittiApp {
     }
 
     /// Stage/unstage the current line selection.
+    /// Whether selected lines of section `src` are what s / u act on.
+    fn has_line_selection(&self, src: Src) -> bool {
+        self.line_sel.as_ref().is_some_and(|s| s.src == src && !s.lines.is_empty())
+    }
+
     fn apply_line_selection(&mut self, want: Src, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sel) = self.line_sel.clone() else {
             return;
@@ -2601,12 +2649,7 @@ impl GittiApp {
             cx.notify();
             return;
         }
-        let plan = match &self.repo {
-            Some(r) => DiscardPlan::of(r.workdir(), &entries),
-            None => return,
-        };
         let n = entries.len();
-        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let (title, done) = match group {
             None => (
                 format!("Discard all unstaged changes in {n} file(s)?"),
@@ -2621,6 +2664,27 @@ impl GittiApp {
                 "Untracked files deleted",
             ),
         };
+        self.discard_entries(entries, title, done, "Discard All", window, cx);
+    }
+
+    /// The confirmation of discarding the unstaged changes of `entries` (several files: all,
+    /// a group, a folder, marked files): `title` asks, the detail says what happens to each
+    /// kind of file; then one discard and a re-read of those paths. `done` starts the status
+    /// bar's report, `button` confirms.
+    pub(super) fn discard_entries(
+        &mut self,
+        entries: Vec<gitti_core::status::StatusEntry>,
+        title: String,
+        done: &'static str,
+        button: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let plan = match &self.repo {
+            Some(r) => DiscardPlan::of(r.workdir(), &entries),
+            None => return,
+        };
+        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let run = move |this: &mut Self, opts: DiscardOptions, window: &mut Window, cx: &mut Context<Self>| {
             let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
             this.work_op_noted("Discarding", paths, window, cx, move |r| {
@@ -2633,7 +2697,7 @@ impl GittiApp {
             None => plan.detail(),
         };
         if plan.nested.is_empty() {
-            self.confirm(title, Some(detail), "Discard All", window, cx, move |this, w, cx| {
+            self.confirm(title, Some(detail), button, window, cx, move |this, w, cx| {
                 run(this, DiscardOptions::default(), w, cx)
             });
             return;
@@ -2642,7 +2706,7 @@ impl GittiApp {
         let spec = modal::ModalSpec::new(title)
             .message(detail)
             .check(plan.nested_check(), false)
-            .ok("Discard All")
+            .ok(button)
             .danger();
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let opts = DiscardOptions {
@@ -2745,11 +2809,17 @@ impl GittiApp {
         if self.defer_while_busy(|this, w, cx| this.stage_selection(w, cx)) {
             return;
         }
+        if !self.has_line_selection(Src::Unstaged) && self.marks_action(PatchMode::Stage, window, cx) {
+            return;
+        }
         self.apply_line_selection(Src::Unstaged, window, cx);
     }
 
     pub fn unstage_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.defer_while_busy(|this, w, cx| this.unstage_selection(w, cx)) {
+            return;
+        }
+        if !self.has_line_selection(Src::Staged) && self.marks_action(PatchMode::Unstage, window, cx) {
             return;
         }
         self.apply_line_selection(Src::Staged, window, cx);
@@ -2876,10 +2946,10 @@ impl GittiApp {
     }
 
     fn on_focus_list(&mut self, _: &FocusCommitList, window: &mut Window, cx: &mut Context<Self>) {
-        // Esc in the diff: hides revealed unchanged lines first ("Show Changes Only"),
-        // then ends compare mode (the focus stays).
+        // Esc in the diff: clears marked files first, then hides revealed unchanged lines
+        // ("Show Changes Only"), then ends compare mode (the focus stays).
         if self.diff_focus.is_focused(window)
-            && (self.esc_changes_only(cx) || self.end_compare(cx))
+            && (self.clear_marks(cx) || self.esc_changes_only(cx) || self.end_compare(cx))
         {
             return;
         }
@@ -3271,7 +3341,8 @@ impl GittiApp {
             && self.paths_queued.is_none()
             && !self.change_search.busy()
             && !self.worktree_marks_loading
-            && !self.worktree_marks_queued
+            // The watcher's first report (and the re-read it may ask for) is handled.
+            && (self._watcher.is_none() || self.watch_ready)
     }
 
     pub fn script_workdir(&self) -> PathBuf {
@@ -3662,6 +3733,7 @@ impl Render for GittiApp {
         let root = self.menu_cmd_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
+        let root = self.file_marks_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
         let root = self.branch_list_actions(root, cx);
         let root = self.worktree_actions(root, cx);

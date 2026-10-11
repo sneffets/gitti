@@ -33,6 +33,7 @@ fn lost_repo() -> (tempfile::TempDir, String) {
     (dir, lost)
 }
 
+/// Workflow: RS-04, RL-01
 #[gitti_test::test]
 fn reflog_lists_shows_navigates_and_recovers() {
     let (dir, lost) = lost_repo();

@@ -88,6 +88,9 @@ impl GittiApp {
                 .get(self.selected)
                 .filter(|c| !c.id.is_null())
                 .map(|c| c.id.to_string()),
+            selected_row: self.selected,
+            repo_state: format!("{:?}", self.repo_state).to_lowercase(),
+            conflicted: paths(&self.working.conflicted),
             unstaged: paths(&self.working.unstaged),
             staged: paths(&self.working.staged),
             stashes: self.stashes.len(),
@@ -101,6 +104,25 @@ impl GittiApp {
                 c
             },
         }
+    }
+
+    /// The shown diff's lines as `+text` / `-text` / ` text` (tests: is it current?).
+    pub fn script_line_texts(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter_map(|r| match *r {
+                DiffRow::Line { src, file, hunk, line, .. } => {
+                    let l = self.file_diff(src, file)?.hunks.get(hunk)?.lines.get(line)?;
+                    let mark = match l.kind {
+                        gitti_core::diff::LineKind::Added => '+',
+                        gitti_core::diff::LineKind::Removed => '-',
+                        _ => ' ',
+                    };
+                    Some(format!("{mark}{}", l.text))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// `kind src path [line kind]`, e.g. `line Unstaged big.txt Added`, `section Staged`,

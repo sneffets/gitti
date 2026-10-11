@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/gitti-core", "crates/gitti-app", "crates/gitty", "crates/gitti-test", "crates/xtask"]
+members = ["crates/gitti-core", "crates/gitti-app", "crates/gitty", "crates/gitti-test", "crates/gitti-workflow", "crates/xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 gitti-core = { path = "crates/gitti-core" }
 gitti-test = { path = "crates/gitti-test" }
+gitti-workflow = { path = "crates/gitti-workflow" }
 
 [profile.dev]
 opt-level = 1

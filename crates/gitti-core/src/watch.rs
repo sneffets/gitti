@@ -59,6 +59,9 @@ pub struct Change {
     /// The watcher can't see everything (the OS watch limit is reached) or failed to
     /// start: show it once.
     pub notice: Option<String>,
+    /// The watcher's first report: its watches are in place (or setting them up failed)
+    /// — changes from now on are reported. Sent on every platform, also without paths.
+    pub armed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +87,10 @@ pub enum PathKind {
 /// Why a batch can't be judged by its paths alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rescan {
+    /// A recursive OS watch (macOS, Windows) is in place from now on (the batch's `at`);
+    /// what changed between [`watch`] and this point was not reported: a read of the
+    /// working state that started before it may have missed it.
+    Armed,
     /// Part of the work tree isn't watched (watch limit): poll the working state.
     Working,
     /// Events were lost (queue overflow, a watcher error): everything.
@@ -109,6 +116,7 @@ impl Change {
             paths: Vec::new(),
             rescan: None,
             notice: None,
+            armed: false,
         }
     }
 
@@ -118,6 +126,7 @@ impl Change {
         self.paths.extend(other.paths);
         self.rescan = self.rescan.max(other.rescan);
         self.notice = self.notice.or(other.notice);
+        self.armed |= other.armed;
         self
     }
 }
@@ -209,6 +218,8 @@ impl WatchFilter {
         let mut whole = match change.rescan {
             Some(Rescan::All) => return Some(Refresh::Full),
             Some(Rescan::Working) => true,
+            // Covered by a read that started after the watch was in place.
+            Some(Rescan::Armed) => !self.working_read.is_some_and(|(at, _)| at > change.at),
             None => false,
         };
         let mut paths = Vec::new();
@@ -395,6 +406,17 @@ fn run(
 ) {
     let t0 = Instant::now();
     let setup = tree.setup(since);
+    // The first report: the watches are in place. A recursive OS watch has no catch-up
+    // (Linux: what changed since `since` is found by its mtime and reported next):
+    // changes between `watch` and now were missed — the working state is read again
+    // unless a read started after this point. Sent before the flag: whoever sees
+    // [`RepoWatcher::is_armed`] gets this report.
+    if setup.is_ok() {
+        let mut change = Change::new(Instant::now());
+        change.armed = true;
+        change.rescan = (!tree.per_dir).then_some(Rescan::Armed);
+        on_change(change);
+    }
     armed.store(true, Ordering::Release);
     if std::env::var_os("GITTI_PROFILE").is_some() {
         eprintln!(
@@ -409,6 +431,7 @@ fn run(
         Err(e) => {
             let mut change = Change::new(Instant::now());
             change.notice = Some(format!("file watcher failed: {e}"));
+            change.armed = true;
             on_change(change);
             return;
         }
@@ -1123,6 +1146,7 @@ mod tests {
             paths: files.iter().map(|(f, k)| (dir.join(f), k.clone())).collect(),
             rescan: None,
             notice: None,
+            armed: false,
         }
     }
 
@@ -1207,6 +1231,7 @@ mod tests {
         assert!(changed_before(t0, t0 + Duration::from_secs(2)));
     }
 
+    /// Workflow: EX-01
     #[gitti_test::test]
     fn worktree_changes_need_only_their_paths() {
         use PathKind::*;
@@ -1251,6 +1276,50 @@ mod tests {
         b.rescan = Some(Rescan::Working);
         let m = a.merge(b);
         assert_eq!((m.paths.len(), m.rescan, m.notice.as_deref()), (2, Some(Rescan::Working), Some("limit")));
+    }
+
+    /// The recursive watch went live after a read had started: one more read of the
+    /// working state — none when a read started after it.
+    #[gitti_test::test]
+    fn an_armed_watch_needs_a_read_started_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = WatchFilter::default();
+        let armed = |at: Instant| Change { at, paths: Vec::new(), rescan: Some(Rescan::Armed), notice: None, armed: true };
+        // Nothing read yet: read.
+        assert_eq!(f.needs(&armed(Instant::now()), || None), Some(Refresh::Snapshot));
+        f.read_started(true);
+        std::thread::sleep(Duration::from_millis(2));
+        let at = Instant::now();
+        assert_eq!(f.needs(&armed(at), || None), Some(Refresh::Snapshot), "the read began before");
+        std::thread::sleep(Duration::from_millis(2));
+        f.read_started(false);
+        assert_eq!(f.needs(&armed(at), || None), None, "a read began after");
+        // Merged with a path batch: still judged by the paths too.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        let mut c = change(dir.path(), &[("a.txt", wt("a.txt"))], at);
+        c.rescan = Some(Rescan::Armed);
+        assert_eq!(f.needs(&c, || None), paths(&["a.txt"]));
+    }
+
+    /// The first report says the watches are in place (before the flag is set); with a
+    /// recursive OS watch (macOS, Windows) it asks for a re-read, Linux's per-folder
+    /// watch finds the gap by mtime and doesn't.
+    #[gitti_test::test]
+    fn the_watch_reports_when_it_is_armed() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = crate::paths::canonical(dir.path());
+        assert!(Git::new(&d).run(&["init", "-q"]).is_ok());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let w = watch(&d, move |c| {
+            let _ = tx.send(c);
+        })
+        .unwrap();
+        let c = rx.recv_timeout(Duration::from_millis(1500)).expect("a report when armed");
+        assert!(w.is_armed() && c.armed && c.paths.is_empty());
+        // Linux finds the gap by mtime (reported next): no re-read for it.
+        let want = if PER_DIR { None } else { Some(Rescan::Armed) };
+        assert_eq!(c.rescan, want);
     }
 
     #[gitti_test::test]

@@ -600,6 +600,12 @@ pub mod testing {
         app.read(cx).script_git_commands()
     }
 
+    /// Tab `ix`'s git commands (each tab has its repository's own log).
+    pub fn tab_git_commands(ws: &Entity<Workspace>, ix: usize, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).script_tab_app(ix).expect("a repository tab");
+        app.read(cx).script_git_commands()
+    }
+
     pub use crate::app::{ChangeSearchState, ReflogState};
 
     /// The active tab's reflog view: open, title, entries, selection, the shown commit.
@@ -618,6 +624,12 @@ pub mod testing {
     pub fn working(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
         let app = ws.read(cx).active_app().expect("a repository tab");
         app.read(cx).script_working()
+    }
+
+    /// The active tab's marked files (`unstaged:path`, …), sorted.
+    pub fn marks(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_marks()
     }
 
     /// Rows of the active tab's history and how it was loaded (`HistoryLoad`).
@@ -895,6 +907,11 @@ pub mod testing {
         ws.read(cx).script_app()?.read(cx).script_modal_message()
     }
 
+    /// The text in the open dialog's text area (Edit Commit Message…, a tag's message).
+    pub fn modal_area_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        ws.read(cx).script_app()?.read(cx).script_modal_area_text(cx)
+    }
+
     /// The text of the open text window (About, Start-up Timings, …).
     pub fn modal_viewer_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
         ws.read(cx).script_app()?.read(cx).script_modal_viewer_text(cx)
@@ -1063,6 +1080,13 @@ pub mod testing {
         pub commits: usize,
         /// Id of the selected commit (`None` for the worktree row).
         pub selected_commit: Option<String>,
+        /// The selected row of the commit list (`commit-row:N`).
+        pub selected_row: usize,
+        /// The operation git left half-done: `clean`, `merging`, `rebasing`,
+        /// `cherrypicking`, `reverting` (as `gitti_workflow::OpState::name`).
+        pub repo_state: String,
+        /// Paths in the worktree view's conflicted list.
+        pub conflicted: Vec<String>,
         /// Paths in the worktree view's unstaged / staged lists.
         pub unstaged: Vec<String>,
         pub staged: Vec<String>,
@@ -1106,6 +1130,19 @@ pub mod testing {
         app.read(cx).script_state(window, cx)
     }
 
+    /// The active tab's shown diff lines (`+text`, `-text`, ` text`).
+    pub fn line_texts(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_line_texts()
+    }
+
+    /// Tab `ix`'s diff lines (also a tab in the background) and whether it is idle.
+    pub fn tab_line_texts(ws: &Entity<Workspace>, ix: usize, cx: &App) -> (Vec<String>, bool) {
+        let app = ws.read(cx).script_tab_app(ix).expect("a repository tab");
+        let app = app.read(cx);
+        (app.script_line_texts(), app.script_idle())
+    }
+
     /// (number of repository tabs, active tab).
     pub fn tabs(ws: &Entity<Workspace>, cx: &App) -> (usize, usize) {
         ws.read(cx).script_tabs()
@@ -1120,6 +1157,12 @@ pub mod testing {
     /// their tooltip.
     pub fn tab_marks(ws: &Entity<Workspace>, cx: &App) -> Vec<(String, String)> {
         ws.read(cx).script_tab_marks(cx)
+    }
+
+    /// Per repository tab: its WORKTREES section's marks (`folder glyph`, glyph "" for
+    /// none), whether the section is drawn or not — what each tab's sidebar would show.
+    pub fn sidebar_marks(ws: &Entity<Workspace>, cx: &App) -> Vec<Vec<String>> {
+        ws.read(cx).script_sidebar_marks(cx)
     }
 
     /// Restores `repos` as tabs the way a start does, the `active`th of them shown.
@@ -1318,6 +1361,7 @@ actions!(
         PopStash,
         GoToWorkingDirectory,
         About,
+        ThirdPartyLicences,
         StartupTimings,
         AddWorktree,
         PruneWorktrees,
@@ -1399,6 +1443,8 @@ actions!(
         CleanUpMergedBranches,
     ]
 );
+// View ▸ Show Changes as Tree; handler in `app/file_marks.rs`.
+actions!(gitti, [ToggleChangesTree]);
 
 // Repository ▸ Run Custom Command… / Custom Commands…; handlers in `app/custom_commands.rs`.
 actions!(gitti, [RunCustomCommand, CustomCommands]);
@@ -1591,6 +1637,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("More Context Lines", MoreContext),
                 MenuItem::action("Fewer Context Lines", LessContext),
                 MenuItem::action("Show Whole File", ShowWholeFile),
+                MenuItem::action("Show Changes as Tree", ToggleChangesTree),
                 MenuItem::separator(),
                 MenuItem::action("Bigger Font", ZoomIn),
                 MenuItem::action("Smaller Font", ZoomOut),
@@ -1771,6 +1818,7 @@ fn menu_bar() -> Vec<Menu> {
             vec![
                 MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
                 MenuItem::action("Start-up Timings…", StartupTimings),
+                MenuItem::action("Third-Party Licences…", ThirdPartyLicences),
                 MenuItem::action("About gitti", About),
             ],
         ),

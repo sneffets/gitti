@@ -20,6 +20,7 @@ fn untracked_repo() -> tempfile::TempDir {
 /// ] = the first file (build/x.o); m i = Add to .gitignore: the suggestions (this file,
 /// its folder, all *.o), the line prefilled and editable; the same pattern twice gives one
 /// line.
+/// Workflow: IG-01
 #[gitti_test::test]
 fn ignore_from_the_diff_menu() {
     let dir = untracked_repo();
@@ -46,6 +47,7 @@ fn ignore_from_the_diff_menu() {
 
 /// A tracked file: "Ignore (tracked file)", Stop tracking (git rm --cached) keeps the file;
 /// the palette's Add to .gitignore with the first checkbox writes .git/info/exclude.
+/// Workflow: IG-02
 #[gitti_test::test]
 fn ignore_a_tracked_file_and_info_exclude() {
     let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n"), ("build/x.o", "x")]);
@@ -69,18 +71,49 @@ fn ignore_a_tracked_file_and_info_exclude() {
     assert!(exclude.lines().any(|l| l == "/build/x.o" || l == "/.gitignore"), "{exclude}\n{out}");
 }
 
-/// Palette → About gitty names the git commit gitty was built from.
+/// Palette → About gitty names the git commit gitty was built from first; `y` copies the
+/// version line (the window stays open), `l` opens the third-party licences.
 #[gitti_test::test]
 fn about_names_the_build_commit() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
-    let out = gitty(dir.path(), &format!("press:ctrl-p;{}press:enter;dump", presses("about gitty")));
-    let screen = screens(&out)[0];
-    assert!(screen.contains("About gitty"), "{out}");
-    assert!(screen.contains(&format!("Built from git commit {}", env!("GITTI_BUILD"))), "{out}");
+    let script = format!("press:ctrl-p;{}press:enter;dump;press:y;state;dump;press:l;dump", presses("about gitty"));
+    let out = gitty(dir.path(), &script);
+    let s = screens(&out);
+    let build = env!("GITTI_BUILD");
+    assert!(s[0].contains("About gitty"), "{out}");
+    assert!(s[0].contains(&format!("gitty {}", env!("CARGO_PKG_VERSION"))), "{out}");
+    assert!(s[0].contains(&format!("Built from git commit {build}")), "{out}");
+    assert!(s[0].contains("y copy version · l third-party licences"), "{out}");
+    let copied = gitti_core::about::version_line("gitty", env!("CARGO_PKG_VERSION"), build);
+    assert!(states(&out)[0].contains(&format!("Copied {}", &copied[..20])), "{out}");
+    assert!(s[1].contains("About gitty"), "y closed About:\n{out}");
+    let os = gitti_core::third_party::os_name(std::env::consts::OS);
+    assert!(s[2].contains(" Third-Party Licences "), "{out}");
+    assert!(s[2].contains(&format!("Third-party licences of gitty on {os}")), "{out}");
+}
+
+/// `gitty --licenses` prints this binary's part of the third-party list: its components
+/// (no gitti-only ones like gpui or the icons), then the licence texts.
+#[gitti_test::test]
+fn licenses_flag_prints_this_binarys_list() {
+    let config = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_gitty"))
+        .arg("--licenses")
+        .env("GITTI_CONFIG_DIR", config.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    let os = gitti_core::third_party::os_name(std::env::consts::OS);
+    assert!(text.starts_with(&format!("Third-party licences of gitty on {os}\n\ngitty on {os} contains ")), "{}", &text[..500]);
+    assert!(text.contains("\nComponents\n  ") && text.contains("\n  ratatui "), "{}", &text[..2000]);
+    assert!(!text.contains("\n  gpui") && !text.contains("Lucide icons"), "gitti's components listed");
+    assert!(text.contains("\nLicence texts\n\n[1] used by "));
 }
 
 /// Clone (URL, parent folder; the name from the URL) offers the new repository — gitty
 /// would restart there.
+/// Workflow: RM-17
 #[gitti_test::test]
 fn clone_from_the_palette() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -221,6 +254,7 @@ fn init_offers_sha256() {
 
 /// A pull git refuses because the upstream has its own history offers "Merge
 /// anyway (allow unrelated histories)", which pulls with `--allow-unrelated-histories`.
+/// Workflow: MG-12
 #[gitti_test::test]
 fn pull_with_unrelated_histories_offers_merge_anyway() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -245,6 +279,7 @@ fn branch_exists(d: &Path, name: &str) -> bool {
 
 /// Add Worktree… (ctrl-alt-w): a new branch, the folder following it, sparse (only
 /// `sub`, marked with a sign in the sidebar).
+/// Workflow: WT-04
 #[gitti_test::test]
 fn add_a_sparse_worktree() {
     let dir = fixture(&[("a.txt", "a\n"), ("sub/s.txt", "s\n"), ("other/o.txt", "o\n")], &[]);
@@ -269,6 +304,7 @@ fn add_a_sparse_worktree() {
 /// Add Worktree says live what Enter does — nothing entered (why not), a new
 /// branch, the branch gitty runs on (refused: Enter keeps the dialog), matching existing
 /// branches, an existing branch (Check Out), the Detached HEAD checkbox.
+/// Workflow: WT-01
 #[gitti_test::test]
 fn add_worktree_says_what_happens() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -302,6 +338,7 @@ fn add_worktree_says_what_happens() {
 
 /// Remove Worktree with "also delete branch": the worktree's scratch file asks Force
 /// Remove, git's merged check Force Delete naming the lost commit.
+/// Workflow: WT-02
 #[gitti_test::test]
 fn remove_a_worktree_with_its_branch() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -326,6 +363,7 @@ fn remove_a_worktree_with_its_branch() {
 
 /// Removing the worktree gitty runs in (merged branch: -d) restarts gitty in the main
 /// one; moving it restarts gitty in the new folder.
+/// Workflow: WT-05
 #[gitti_test::test]
 fn remove_or_move_the_worktree_gitty_runs_in() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -350,6 +388,7 @@ fn remove_or_move_the_worktree_gitty_runs_in() {
 /// The commit list marks branches checked out in another worktree (`⌂`) and
 /// another worktree's detached HEAD (`⌂ <folder>`); m b on a commit creates a branch there
 /// and checks it out (badge in the graph).
+/// Workflow: BR-01
 #[gitti_test::test]
 fn commit_list_marks_worktrees_and_branches_from_the_commit_menu() {
     let dir = import(&[
@@ -381,6 +420,7 @@ fn feat_ahead() -> tempfile::TempDir {
 
 /// A switch blocked by an untracked file the other branch has: gitty asks, stashes it
 /// (a stash entry names it) and switches; other untracked files stay.
+/// Workflow: BR-07
 #[gitti_test::test]
 fn switch_blocked_by_an_untracked_file_stashes_it() {
     let dir = feat_ahead();
@@ -396,6 +436,7 @@ fn switch_blocked_by_an_untracked_file_stashes_it() {
 
 /// The blocked switch offers the three ways out, each explained; `d` (Delete & Switch)
 /// deletes only the blocking file and switches.
+/// Workflow: BR-08
 #[gitti_test::test]
 fn switch_blocked_offers_delete_and_force() {
     let dir = feat_ahead();
@@ -413,6 +454,7 @@ fn switch_blocked_offers_delete_and_force() {
 
 /// Switching from a branch that ignores `target/` to one without that rule: the build
 /// output shows as untracked there, and the status line says why.
+/// Workflow: BR-10
 #[gitti_test::test]
 fn switch_to_fewer_ignore_rules_says_why_files_are_untracked() {
     let dir = import(&[
@@ -432,6 +474,7 @@ fn switch_to_fewer_ignore_rules_says_why_files_are_untracked() {
 
 /// Deleting a branch not merged into HEAD (the sidebar's menu): git refuses, Force
 /// Delete is offered.
+/// Workflow: BR-13
 #[gitti_test::test]
 fn deleting_an_unmerged_branch_offers_force() {
     let dir = feat_ahead();
@@ -444,6 +487,7 @@ fn deleting_an_unmerged_branch_offers_force() {
 
 /// A file in a folder offers that folder's own .gitignore and every folder above it
 /// that has one (keys a, b, …), with the patterns relative to that folder.
+/// Workflow: IG-03
 #[gitti_test::test]
 fn ignore_into_a_folder_gitignore() {
     let dir = fixture(

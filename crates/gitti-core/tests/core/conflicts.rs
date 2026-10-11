@@ -39,6 +39,7 @@ fn diverged(p: &Path) {
     fx::checkout(p);
 }
 
+/// Workflow: SH-12
 #[gitti_test::test]
 fn stash_pop_conflict_abort_keeps_the_stash() {
     let dir = tempfile::tempdir().unwrap();
@@ -98,6 +99,7 @@ fn stash_pop_conflict_abort_keeps_the_stash() {
 
 /// A merge with open conflicts in a linked worktree: MERGE_HEAD lives in the worktree's
 /// own git dir (`.git/worktrees/<name>`), the main worktree stays clean.
+/// Workflow: MG-20
 #[gitti_test::test]
 fn merge_conflict_in_a_linked_worktree() {
     let dir = tempfile::tempdir().unwrap();
@@ -125,6 +127,7 @@ fn merge_conflict_in_a_linked_worktree() {
 
 /// All conflicts resolved and staged: committing with the prepared message concludes the
 /// merge (two parents, state clean), like the Commit button does.
+/// Workflow: MG-06
 #[gitti_test::test]
 fn committing_a_resolved_merge_concludes_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -156,6 +159,7 @@ fn committing_a_resolved_merge_concludes_it() {
 /// Two histories without a common commit: git refuses `merge` and `pull` with
 /// "refusing to merge unrelated histories"; the error is `UnrelatedHistories`, its retry
 /// (and the merge option) joins them with `--allow-unrelated-histories`.
+/// Workflow: MG-12
 #[gitti_test::test]
 fn unrelated_histories_merge_and_pull() {
     use gitti_core::ops::{MergeOptions, UnrelatedHistories, UnrelatedRetry};
@@ -216,6 +220,7 @@ fn unrelated_histories_merge_and_pull() {
 /// `conflict-marker-size`: git writes longer markers into such files; the
 /// "still has markers" check, the merge editor and its "unchanged since git wrote it"
 /// comparison use that size, and 7-character lookalikes in the content don't count.
+/// Workflow: MG-14
 #[gitti_test::test]
 fn conflict_marker_size_attribute() {
     let dir = tempfile::tempdir().unwrap();
@@ -274,6 +279,7 @@ fn picks(p: &Path) -> Vec<String> {
 /// `cherry-pick -n -x` (as gitti's Cherry-pick with Options runs it) leaves no
 /// CHERRY_PICK_HEAD, only MERGE_MSG: the picked message with "(cherry picked from commit
 /// <full id>)". Committing (`commit -F`, as gitti does) uses it, and git removes the file.
+/// Workflow: CP-03
 #[gitti_test::test]
 fn cherry_pick_no_commit_record_origin_prepares_the_message() {
     use gitti_core::ops::CherryPickOptions;
@@ -297,6 +303,7 @@ fn cherry_pick_no_commit_record_origin_prepares_the_message() {
 
 /// A conflicting `cherry-pick -x` (no -n: CHERRY_PICK_HEAD) with `core.commentChar = ;`:
 /// git's "; Conflicts:" lines go, the origin line stays; aborting removes the message.
+/// Workflow: CP-11
 #[gitti_test::test]
 fn conflicting_cherry_pick_strips_the_configured_comment_char() {
     let dir = tempfile::tempdir().unwrap();
@@ -318,6 +325,7 @@ fn conflicting_cherry_pick_strips_the_configured_comment_char() {
 /// git writes SQUASH_MSG and a MERGE_MSG of only "// Conflicts:" lines into the
 /// worktree's own git dir; `git commit` would start from both, the main worktree has
 /// none. Aborting the conflicts (`reset --merge`) removes both.
+/// Workflow: MG-03
 #[gitti_test::test]
 fn squash_merge_message_in_a_linked_worktree() {
     let dir = tempfile::tempdir().unwrap();
@@ -344,6 +352,7 @@ fn squash_merge_message_in_a_linked_worktree() {
 /// Concluding a resolved merge with git's message (Commit with an emptied box, Continue):
 /// git's "# Conflicts:" lines don't land in the commit. Continue with an edited message
 /// commits that one, a `#` line in it kept.
+/// Workflow: MG-11
 #[gitti_test::test]
 fn continue_concludes_a_merge_without_conflict_comments_or_with_the_edited_message() {
     let dir = tempfile::tempdir().unwrap();
@@ -386,6 +395,7 @@ fn sequence(p: &Path) -> (String, String) {
 
 /// A cherry-pick of two commits stops on the first; Continue with the edited message
 /// commits the resolution with it — the picked commit's author kept — and picks the rest.
+/// Workflow: CP-04, CP-07
 #[gitti_test::test]
 fn continue_a_cherry_pick_sequence_with_the_edited_message() {
     let dir = tempfile::tempdir().unwrap();
@@ -406,6 +416,7 @@ fn continue_a_cherry_pick_sequence_with_the_edited_message() {
 
 /// The stopped commit of a cherry-pick sequence committed by hand (as git suggests): the
 /// sequence still waits for `--continue` — the state says so, Continue picks the rest.
+/// Workflow: CP-07
 #[gitti_test::test]
 fn a_sequence_committed_by_hand_still_continues() {
     let dir = tempfile::tempdir().unwrap();
@@ -422,6 +433,7 @@ fn a_sequence_committed_by_hand_still_continues() {
 }
 
 /// A single conflicting revert: Continue with the edited message commits it.
+/// Workflow: RV-03
 #[gitti_test::test]
 fn continue_a_revert_with_the_edited_message() {
     let dir = tempfile::tempdir().unwrap();
@@ -442,6 +454,7 @@ fn continue_a_revert_with_the_edited_message() {
 /// A rebase stopped on a conflict: Continue with the edited message gives the rebased
 /// commit that message (author kept, a `#` line kept); when the next commit conflicts
 /// too, the error says the message was used. The apply backend refuses it up front.
+/// Workflow: RB-02, RB-04, RB-08
 #[gitti_test::test]
 fn continue_a_rebase_with_the_edited_message() {
     let dir = tempfile::tempdir().unwrap();
@@ -489,6 +502,7 @@ fn continue_a_rebase_with_the_edited_message() {
 /// `UA` for the new ones). Each kind gets its own choices; keep = `git add`, delete =
 /// `git rm`, restore = the base version; keeping a file that isn't there is refused (a
 /// plain `git add` would stage its deletion).
+/// Workflow: MG-08, MG-09
 #[gitti_test::test]
 fn delete_and_rename_conflicts_resolve_by_keeping_or_deleting() {
     use gitti_core::conflict::{ConflictAction as A, ConflictKind as K};
