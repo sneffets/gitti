@@ -311,10 +311,14 @@ impl Ui {
         ui.settle();
         // Outside writes of a scenario come after the file watcher's watches are in place
         // (before, macOS / Windows miss them: one recursive watch, no scan). A window
-        // without a repository tab has none.
+        // without a repository tab has none, nor has a tab on a plain folder (the repository
+        // is opened while the tab is made, so `has_repo` is final here).
         let ws = ui.ws.clone();
         ui.wait_real(3000, |ui| {
-            ui.cx.update(|cx| ws.read(cx).active_app().is_none() || testing::watcher_armed(&ws, cx))
+            ui.cx.update(|cx| {
+                ws.read(cx).active_app().is_none_or(|app| !app.read(cx).has_repo())
+                    || testing::watcher_armed(&ws, cx)
+            })
         });
         if step_times() {
             println!("    window {:.1} ms, first settle {:.1} ms", t1.as_secs_f64() * 1000., (t0.elapsed() - t1).as_secs_f64() * 1000.);
