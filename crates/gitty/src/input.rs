@@ -1036,8 +1036,15 @@ impl App {
                             .then(|| self.badge_more.iter().find(|(r, _)| r.contains(pos)))
                             .flatten()
                             .map(|(_, hidden)| hidden.clone());
+                        // A right click on a ref's badge: that ref's menu (as in gitti).
+                        let badge = right
+                            .then(|| self.badge_refs.iter().find(|(r, _)| r.contains(pos)))
+                            .flatten()
+                            .map(|(_, r)| r.clone());
                         self.select_row(row);
-                        if right {
+                        if let Some(r) = badge {
+                            self.ref_menu(&r);
+                        } else if right {
                             self.context_menu();
                         } else if let Some(hidden) = more {
                             self.set_info(hidden);

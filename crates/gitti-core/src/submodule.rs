@@ -1100,7 +1100,7 @@ impl Repo {
     /// `git submodule update --init --recursive [-- paths]`: checks out the recorded
     /// commits (cloning / fetching what is missing). Empty `paths` = all.
     pub fn update_submodules(&self, paths: &[&str]) -> Result<String> {
-        self.submodule_command(&["submodule", "update", "--init", "--recursive"], paths)
+        self.update_submodules_with(paths, false, false)
     }
 
     /// `git submodule update --init --recursive --remote [-- paths]`: checks out the tip
@@ -1108,10 +1108,25 @@ impl Repo {
     /// remote's HEAD) instead of the recorded commit — the new pointers show as changes,
     /// a commit records them. Empty `paths` = all.
     pub fn update_submodules_remote(&self, paths: &[&str]) -> Result<String> {
-        self.submodule_command(
-            &["submodule", "update", "--init", "--recursive", "--remote"],
-            paths,
-        )
+        self.update_submodules_with(paths, true, false)
+    }
+
+    /// [`Self::update_submodules`] (`remote`: [`Self::update_submodules_remote`]);
+    /// `allow_file`: the user agreed to clone submodules from local paths this once —
+    /// `git -c protocol.file.allow=always submodule update …`, no config written. git's
+    /// refusal of a local path comes back as a typed [`add::FileRefused`] the apps offer
+    /// that for.
+    pub fn update_submodules_with(&self, paths: &[&str], remote: bool, allow_file: bool) -> Result<String> {
+        let mut args = Vec::new();
+        if allow_file {
+            args.extend(["-c", add::ALLOW_FILE]);
+        }
+        args.extend(["submodule", "update", "--init", "--recursive"]);
+        if remote {
+            args.push("--remote");
+        }
+        self.submodule_command(&args, paths)
+            .map_err(|e| add::refused_or(self.git(), e))
     }
 
     /// `git submodule sync --recursive [-- paths]`: copies the URLs of `.gitmodules` into

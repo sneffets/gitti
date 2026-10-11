@@ -9,7 +9,9 @@ use gitti_core::{RefInfo, RefKind};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 
+use super::custom_commands::Given;
 use super::{GittiApp, last_line};
+use gitti_core::custom_command::Menu;
 use super::modal::{ModalLive, ModalSpec};
 
 type AppHandle = WeakEntity<GittiApp>;
@@ -487,6 +489,69 @@ pub(super) struct RefMenuCtx<'a> {
     pub upstream: Option<String>,
     /// The checked-out branch (`None`: HEAD is detached).
     pub head: Option<String>,
+}
+
+/// A ref's whole context menu — its sidebar row, its badge in the commit list: [`ref_menu`]
+/// with what it needs taken from the app's last refresh (no git runs on open), then the
+/// custom commands of its kind (a branch's — a remote branch's by its name there, with
+/// its remote —, a tag's).
+pub(super) fn ref_context_menu(
+    menu: PopupMenu,
+    app: &AppHandle,
+    r: &RefInfo,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let Some(this) = app.upgrade() else {
+        return menu;
+    };
+    let local = r.kind == RefKind::LocalBranch;
+    let (is_head, elsewhere, remotes, upstream, head) = {
+        let a = this.read(cx);
+        let upstream = local
+            .then(|| a.tracking.iter().find(|t| t.branch == r.short_name))
+            .flatten()
+            .and_then(|t| t.upstream.clone());
+        (
+            local && a.head.branch.as_deref() == Some(&r.short_name),
+            local.then(|| a.other_worktree_of(&r.short_name).cloned()).flatten(),
+            a.remotes.iter().map(|r| r.name.clone()).collect::<Vec<String>>(),
+            upstream,
+            a.head.branch.clone(),
+        )
+    };
+    let ctx = RefMenuCtx {
+        is_head,
+        elsewhere: elsewhere.as_ref(),
+        remotes: &remotes,
+        upstream,
+        head,
+    };
+    let menu = ref_menu(menu, app, r, &ctx, window, cx);
+    let commit = Some(r.target.to_string());
+    let (kind, given) = match r.kind {
+        RefKind::LocalBranch => (Menu::Branch, Given {
+            commit,
+            branch: Some(r.short_name.clone()),
+            ..Default::default()
+        }),
+        RefKind::RemoteBranch => {
+            let (remote, branch) = gitti_core::custom_command::split_remote_branch(&r.short_name, &remotes);
+            (Menu::Branch, Given {
+                commit,
+                branch: Some(branch),
+                remote,
+                ..Default::default()
+            })
+        }
+        RefKind::Tag => (Menu::Tag, Given {
+            commit,
+            tag: Some(r.short_name.clone()),
+            ..Default::default()
+        }),
+        _ => return menu,
+    };
+    super::custom_commands::menu_items(menu, app, kind, given, cx)
 }
 
 /// A ref's menu (sidebar row, commit list badge): every entry of

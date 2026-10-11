@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gitti_core::create::{expand_home, name_from_url};
+use gitti_core::create::{Cloned, expand_home, name_from_url};
 use gitti_core::git_cli::Git;
 use gitti_core::ignore::{IgnoreChoice, IgnoreFile, rule_dirs, suggestions_in};
 use gpui_kit::component::button::Button;
@@ -66,6 +66,9 @@ pub enum AppEvent {
     OpenRepository(PathBuf),
     /// Open it and show this note there (a clone's paths that collided).
     OpenRepositoryNoted(PathBuf, String),
+    /// A clone whose submodules git refused to clone from local paths: open it and ask
+    /// there whether to allow that for one update (`GittiApp::submodules_refused`).
+    OpenRepositoryRefused(PathBuf, Option<String>, gitti_core::submodule::add::FileRefused),
     /// The folder was deleted (a removed worktree): tabs on it close.
     RepositoryRemoved(PathBuf),
     /// A tab removes its own worktree: the tab of the main worktree `main` (opened
@@ -362,7 +365,7 @@ impl GittiApp {
             let dest = expand_home(&res.values[1]).join(name);
             let recurse = res.checks[0];
             this.create_repo("Cloning", w, cx, move |git, progress| {
-                gitti_core::create::clone_repo_noted(git, &url, &dest, recurse, progress)
+                gitti_core::create::clone_repo_outcome(git, &url, &dest, recurse, progress)
             });
         });
     }
@@ -408,21 +411,23 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) {
         self.create_repo("Initializing", window, cx, move |git, _| {
-            gitti_core::create::init_repo_as(git, &dir, format).map(|d| (d, None))
+            gitti_core::create::init_repo_as(git, &dir, format).map(|dir| Cloned {
+                dir,
+                note: None,
+                refused: None,
+            })
         });
     }
 
     /// Runs `job` (clone / init) in the background with the busy state; its progress lines
     /// show beside the busy label (`op_progress.rs`). On success the new repository opens
-    /// in a tab.
+    /// in a tab (with the clone's note, or the question about refused submodules).
     fn create_repo(
         &mut self,
         label: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-        job: impl FnOnce(&Git, &mut dyn FnMut(&str)) -> anyhow::Result<(PathBuf, Option<String>)>
-            + Send
-            + 'static,
+        job: impl FnOnce(&Git, &mut dyn FnMut(&str)) -> anyhow::Result<Cloned> + Send + 'static,
     ) {
         if let Some(b) = &self.busy {
             self.set_error(format!("Busy ({b}) — try again in a moment"));
@@ -460,11 +465,12 @@ impl GittiApp {
                 let cancelled = this.op_cancelled();
                 this.end_busy(window, cx);
                 match result {
-                    Ok((path, note)) => {
-                        this.set_info(format!("{label} done: {}", path.display()));
-                        cx.emit(match note {
-                            Some(note) => AppEvent::OpenRepositoryNoted(path, note),
-                            None => AppEvent::OpenRepository(path),
+                    Ok(Cloned { dir, note, refused }) => {
+                        this.set_info(format!("{label} done: {}", dir.display()));
+                        cx.emit(match (note, refused) {
+                            (note, Some(r)) => AppEvent::OpenRepositoryRefused(dir, note, r),
+                            (Some(note), None) => AppEvent::OpenRepositoryNoted(dir, note),
+                            (None, None) => AppEvent::OpenRepository(dir),
                         });
                     }
                     Err(_) if cancelled => this.set_info(format!("{label} cancelled")),

@@ -1236,6 +1236,7 @@ impl GittiApp {
             middle = middle.child(
                 div()
                     .id("modal-message")
+                    .probe("modal-message")
                     .flex_none()
                     .whitespace_normal()
                     .text_color(p.text)

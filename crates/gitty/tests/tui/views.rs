@@ -650,6 +650,33 @@ fn header_follows_new_refs() {
     assert!(out.contains("check: ok"), "{out}");
 }
 
+/// A right click on a ref's badge in the commit list opens that ref's menu (its sidebar
+/// entry's: a tag's Show Tag…, a branch's Checkout), elsewhere on the row the commit's.
+#[gitti_test::test]
+fn right_click_on_a_badge_opens_the_refs_menu() {
+    let dir = many_refs_repo();
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(dir.path(), config.path(), "160x40", "dump");
+    let screen = screens(&out)[0];
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("◆ only-tag"))
+        .unwrap_or_else(|| panic!("no row with only-tag: {out}"));
+    let col = |text: &str| line[..line.find(text).unwrap_or_else(|| panic!("no {text} in {line:?}"))].chars().count() + 1;
+    let (tag, branch, subject) = (col("only-tag"), col("b1 "), col("init"));
+    let out = gitty_with(
+        dir.path(),
+        config.path(),
+        "160x40",
+        &format!("rclick:{tag},{y};items;key:esc;state;rclick:{branch},{y};items;key:esc;state;rclick:{subject},{y};items"),
+    );
+    let lists = item_lists(&out);
+    assert!(lists[0].contains(&"Show Tag…") && !lists[0].iter().any(|i| i.starts_with("Cherry-pick")), "{out}");
+    assert!(lists[1].contains(&"Checkout b1") && !lists[1].contains(&"Show Tag…"), "{out}");
+    assert!(lists[2].iter().any(|i| i.starts_with("Cherry-pick")), "the commit's menu: {out}");
+}
+
 /// A click on a list row's "+N" selects the row and says which refs it hides (gitti: the
 /// tooltip); a click elsewhere on the row doesn't.
 #[gitti_test::test]

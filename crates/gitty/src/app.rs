@@ -236,6 +236,9 @@ pub enum FollowUp {
     },
     /// Fetch, Then Decide (a refused push): what a push with lease overwrites now.
     Overwrite(Box<gitti_core::overwrite::Overwrite>),
+    /// git refused to clone submodules from local paths (Update Submodules, a clone's
+    /// `--recurse-submodules`): allow it for one update? (`app/submodules.rs`)
+    SubmodulesRefused(Box<gitti_core::submodule::add::FileRefused>, submodules::RetryUpdate),
 }
 
 impl std::fmt::Display for FollowUp {
@@ -247,6 +250,7 @@ impl std::fmt::Display for FollowUp {
             FollowUp::UnmergedBranch { branch, .. } => write!(f, "{branch} is not fully merged"),
             FollowUp::SplitDone { message, .. } => write!(f, "{message}"),
             FollowUp::Overwrite(o) => write!(f, "{}", o.title()),
+            FollowUp::SubmodulesRefused(r, _) => write!(f, "{r}"),
         }
     }
 }
@@ -462,6 +466,9 @@ pub struct App {
     /// The commit list's "+N" badges as last drawn: where, and what they hide (one line,
     /// `ref_badges::ListBadges::hidden_summary`) — a click says it, as gitti's tooltip.
     pub badge_more: Vec<(Rect, String)>,
+    /// The commit list's ref badges as last drawn (the shown part of each): a right click
+    /// opens that ref's menu, as on its sidebar entry.
+    pub badge_refs: Vec<(Rect, RefInfo)>,
     /// Commits being prefetched (`prefetch_around`).
     prefetching: Arc<std::sync::Mutex<std::collections::HashSet<ObjectId>>>,
     /// Row of the commit shown before, for the prefetch direction.
@@ -795,6 +802,7 @@ impl App {
             note_cols: None,
             header_cols: 0,
             badge_more: Vec::new(),
+            badge_refs: Vec::new(),
             line_sel: None,
             message: TextEdit::multi(),
             message_view: Default::default(),
@@ -3318,6 +3326,7 @@ impl App {
         match f {
             FollowUp::SplitDone { prefix, id, message } => self.split_done(&prefix, id, &message),
             FollowUp::Overwrite(plan) => self.overwrite_confirm(*plan),
+            FollowUp::SubmodulesRefused(refused, retry) => self.submodules_refused(*refused, retry),
             FollowUp::Switch(target, block) => {
                 // What blocks, then one entry per way out, each explained.
                 let name = target.name().to_string();
@@ -3465,6 +3474,33 @@ impl App {
         if let Some((title, items)) = self.context_menu_spec() {
             self.modal = Some(Modal::menu(title, items));
         }
+    }
+
+    /// The menu of ref `r` (a right click on its badge in the commit list): its sidebar
+    /// entry's, custom commands included. No git.
+    pub fn ref_menu(&mut self, r: &RefInfo) {
+        let item = match r.kind {
+            RefKind::LocalBranch => SideItem::Branch {
+                current: self.current_branch() == Some(r.short_name.as_str()),
+                tracking: self.tracking_of(&r.short_name).cloned(),
+                name: r.short_name.clone(),
+            },
+            RefKind::RemoteBranch => SideItem::RemoteBranch {
+                full: r.short_name.clone(),
+                short: self
+                    .remotes
+                    .iter()
+                    .find_map(|rm| r.short_name.strip_prefix(&format!("{}/", rm.name)))
+                    .unwrap_or(&r.short_name)
+                    .to_string(),
+            },
+            RefKind::Tag => SideItem::Tag {
+                name: r.short_name.clone(),
+            },
+            _ => return self.context_menu(),
+        };
+        let items = self.side_menu_items(&item);
+        self.modal = Some(Modal::menu(item.title(), items));
     }
 
     /// The focused thing's context menu (title, items) — what `m` opens and the key bar
