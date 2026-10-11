@@ -1580,7 +1580,9 @@ fn odd_names_tracked_hunks_and_lines() {
         (d, s)
     });
     apply_all(&fx, sel.collect(), PatchMode::Stage);
-    let staged = one_hunk.replace("line 2\n", "line 2\nline two\n");
+    // `line 2` became `line 2b` (the similar pair), `line two` is new above it: it stays
+    // above (`patch::line_order`).
+    let staged = one_hunk.replace("line 2\n", "line two\nline 2\n");
     all_are(index_all(&fx, &names), Some(&staged), &names, "line staged");
     let state = fx.state();
     let sel = diffs(&state, true, &names).into_iter().map(|d| {

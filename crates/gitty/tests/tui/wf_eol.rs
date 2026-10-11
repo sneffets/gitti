@@ -22,8 +22,8 @@ fn down(n: usize) -> String {
     "press:j;".repeat(n)
 }
 
-/// EX-02: the note says every line changed its ending; the last line's `-` / `+` pair
-/// picked with space and staged (s), the first line's picked and discarded (d, y).
+/// EX-02: the note says every line changed its ending; a middle line's `-` / `+` pair
+/// picked with space and staged (s), another middle line's picked and discarded (d, y).
 /// Workflow: EX-02
 #[gitti_test::test]
 fn ex02_whole_file_to_crlf() {
@@ -33,21 +33,29 @@ fn ex02_whole_file_to_crlf() {
     wf::fixture(d);
     // n: the hunk; its lines are the N `-` lines, then the N `+` lines.
     let n = wf::N;
+    let (staged, discarded) = (wf::STAGED, wf::DISCARDED);
+    assert!(1 < staged && staged + 1 < discarded && discarded < n, "the fixture's lines");
+    // After staging: `-` / `+` of the lines before `staged`, `staged` as context, then the
+    // `-` lines of the rest, then their `+` lines.
+    let rest = n - staged;
+    let removed = 2 * (staged - 1) + 1 + (discarded - staged - 1);
+    let added = removed + rest;
     let script = format!(
         "press:enter;dump;press:n;{}press:space;{}press:space;state;key:s;state;\
-         press:g;press:n;press:j;press:space;{}press:space;state;press:d;key:y;state",
+         press:g;press:n;{}press:space;{}press:space;state;press:d;key:y;state",
+        down(staged),
         down(n),
-        down(n),
-        down(n - 1),
+        down(removed + 1),
+        down(rest),
     );
     let out = run(d, &script);
     assert!(screens(&out)[0].contains(wf::NOTE), "{out}");
     let st = states(&out);
-    let last = format!("hunk: 0, line: {}", 2 * n - 1);
-    assert!(st[0].contains(&last) && st[0].contains("sel_lines=2"), "{out}");
+    let pair = format!("hunk: 0, line: {}", n + staged - 1);
+    assert!(st[0].contains(&pair) && st[0].contains("sel_lines=2"), "{out}");
     assert!(st[1].contains("unstaged=1 staged=1"), "{out}");
-    let first_added = format!("hunk: 0, line: {}", n - 1);
-    assert!(st[2].contains(&first_added) && st[2].contains("sel_lines=2"), "{out}");
+    let pair = format!("hunk: 0, line: {added}");
+    assert!(st[2].contains(&pair) && st[2].contains("sel_lines=2"), "{out}");
     wf::expect(d).unwrap();
 }
 

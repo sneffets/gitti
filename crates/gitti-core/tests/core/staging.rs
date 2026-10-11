@@ -785,3 +785,143 @@ fn non_utf8_lines_stage_unstage_discard_byte_exact() {
     fx.repo.apply_selection(&d, &sel, PatchMode::Discard).unwrap();
     assert_eq!(fs::read(p.join("s.txt")).unwrap(), b"\x83\x5c\x83\x74\x83\x67\nkeep\n\x95\x5c\x8e\xa6\n");
 }
+
+/// `a 1` … `a 6`, LF, or with CRLF on the lines `crlf` says.
+fn a_lines(crlf: impl Fn(usize) -> bool) -> String {
+    (1..=6).map(|i| format!("a {i}{}\n", if crlf(i) { "\r" } else { "" })).collect()
+}
+
+/// The change lines of hunk `h` that are line `n` of `a_lines` (with or without CR), of
+/// the kinds `kinds` (`'-'`, `'+'`).
+fn a_line(f: &FileDiff, h: usize, n: usize, kinds: &str) -> Vec<usize> {
+    use gitti_core::diff::LineKind;
+    let want = format!("a {n}");
+    f.hunks[h]
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            let k = match l.kind {
+                LineKind::Removed => '-',
+                LineKind::Added => '+',
+                _ => ' ',
+            };
+            kinds.contains(k) && l.text.trim_end_matches('\r') == want
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// A replaced block (all `-` lines, then all `+` lines: every line ending changed) keeps
+/// each line in its place: staging, unstaging and discarding the `-` / `+` pair of a line
+/// in the middle, or only its `+` / `-` line, puts that line where it was — not after the
+/// block's last line.
+/// Workflow: EX-02, ST-02, DC-01
+#[gitti_test::test]
+fn replaced_block_lines_stay_in_place() {
+    let lf = a_lines(|_| false);
+    let fx = fixture(&[("s.txt", &lf), ("u.txt", &lf), ("d.txt", &lf)]);
+    let crlf = a_lines(|_| true);
+    for f in ["s.txt", "u.txt", "d.txt"] {
+        fx.write(f, &crlf);
+    }
+    let st = fx.state();
+    let un = |name: &str| st.unstaged.iter().find(|f| f.path() == name).unwrap().diff.clone().unwrap();
+    let (s, u, d) = (un("s.txt"), un("u.txt"), un("d.txt"));
+    fx.repo.apply_selection(&s, &Selection::lines(0, a_line(&s, 0, 2, "-+")), PatchMode::Stage).unwrap();
+    fx.repo.apply_selection(&u, &Selection::whole_hunk(0), PatchMode::Stage).unwrap();
+    fx.repo.apply_selection(&d, &Selection::lines(0, a_line(&d, 0, 4, "-+")), PatchMode::Discard).unwrap();
+
+    let st = fx.state();
+    let un = |name: &str| st.unstaged.iter().find(|f| f.path() == name).unwrap().diff.clone().unwrap();
+    let (s, d) = (un("s.txt"), un("d.txt"));
+    let u = st.staged.iter().find(|f| f.path() == "u.txt").unwrap().diff.clone().unwrap();
+    // Unstage line 3's pair of a fully staged block.
+    fx.repo.apply_selection(&u, &Selection::lines(0, a_line(&u, 0, 3, "-+")), PatchMode::Unstage).unwrap();
+    // Only the `+` line of line 5: added right after the old line 5.
+    let h = s.hunks.len() - 1;
+    fx.repo.apply_selection(&s, &Selection::lines(h, a_line(&s, h, 5, "+")), PatchMode::Stage).unwrap();
+    // Only the `-` line of line 2: restored right before the new line 2.
+    fx.repo.apply_selection(&d, &Selection::lines(0, a_line(&d, 0, 2, "-")), PatchMode::Discard).unwrap();
+
+    assert_eq!(fx.index("u.txt"), a_lines(|i| i != 3));
+    assert_eq!(fx.index("s.txt"), "a 1\na 2\r\na 3\na 4\na 5\na 5\r\na 6\n");
+    assert_eq!(fx.read("d.txt"), "a 1\r\na 2\na 2\r\na 3\r\na 4\na 5\r\na 6\r\n");
+}
+
+/// Blocks of uneven length and the ignore-whitespace view: a new line above a changed one
+/// is staged above it; a removed line of a longer `-` run comes back after the line paired
+/// with the run's first; a change next to a whitespace-only one (hidden with `-w`) stays
+/// before it.
+/// Workflow: ST-02, ST-10, DC-01
+#[gitti_test::test]
+fn uneven_blocks_and_hidden_whitespace_keep_lines_in_place() {
+    let fx = fixture(&[
+        ("n.txt", "top\nlet total = 1;\nend\n"),
+        ("r.txt", "top\nalpha\nbeta\ngamma\nend\n"),
+        ("w.txt", "top\nb\nc\nend\n"),
+    ]);
+    fx.write("n.txt", "top\n// comment here\nlet total = 2;\nend\n");
+    fx.write("r.txt", "top\nXYZ\nend\n");
+    fx.write("w.txt", "top\nB\nc  \nend\n");
+    let opts = gitti_core::DiffOptions { ignore_whitespace: true, ..Default::default() };
+    let st = fx.repo.working_state_with(&opts).unwrap();
+    let file = |name: &str| st.unstaged.iter().find(|f| f.path() == name).unwrap();
+    let real = |name: &str| file(name).patch_source().unwrap().clone();
+
+    let n = real("n.txt");
+    fx.repo.apply_selection(&n, &Selection::lines(0, pick(&n, 0, &["// comment here"])), PatchMode::Stage).unwrap();
+    let r = real("r.txt");
+    fx.repo.apply_selection(&r, &Selection::lines(0, pick(&r, 0, &["beta"])), PatchMode::Discard).unwrap();
+    let shown = file("w.txt").diff.clone().unwrap();
+    let w = real("w.txt");
+    let sel = gitti_core::patch::map_selection(&shown, &Selection::whole_hunk(0), &w).unwrap();
+    fx.repo.apply_selection(&w, &sel, PatchMode::Stage).unwrap();
+
+    assert_eq!(fx.index("n.txt"), "top\n// comment here\nlet total = 1;\nend\n");
+    assert_eq!(fx.read("r.txt"), "top\nXYZ\nbeta\nend\n");
+    assert_eq!(fx.index("w.txt"), "top\nB\nc\nend\n");
+}
+
+/// A CRLF file without a newline after its last line: when a partial patch gives that
+/// line a newline (stage only the new last line, discard / unstage only the old one's
+/// removal, stage a line appended after it), it gets CRLF like the rest of the file, not
+/// LF. The LF file gets LF.
+/// Workflow: EX-11, DC-01
+#[gitti_test::test]
+fn crlf_last_line_without_newline_gets_crlf() {
+    let old = "one\r\ntwo\r\nlast";
+    let fx = fixture(&[
+        ("s.txt", old),
+        ("d.txt", old),
+        ("u.txt", old),
+        ("l.txt", "one\ntwo\nlast"),
+        ("a.txt", "x\r\nlast"),
+    ]);
+    let new = "one\r\ntwo\r\nLAST";
+    for f in ["s.txt", "d.txt", "u.txt"] {
+        fx.write(f, new);
+    }
+    fx.write("l.txt", "one\ntwo\nLAST");
+    fx.write("a.txt", "x\r\nlast\r\nmore\r\n");
+    sh(fx.repo.workdir(), &["add", "u.txt"]);
+    let st = fx.state();
+    let un = |name: &str| st.unstaged.iter().find(|f| f.path() == name).unwrap().diff.clone().unwrap();
+    let u = st.staged.iter().find(|f| f.path() == "u.txt").unwrap().diff.clone().unwrap();
+
+    let s = un("s.txt");
+    fx.repo.apply_selection(&s, &Selection::lines(0, pick(&s, 0, &["LAST"])), PatchMode::Stage).unwrap();
+    let d = un("d.txt");
+    fx.repo.apply_selection(&d, &Selection::lines(0, pick(&d, 0, &["last"])), PatchMode::Discard).unwrap();
+    fx.repo.apply_selection(&u, &Selection::lines(0, pick(&u, 0, &["last"])), PatchMode::Unstage).unwrap();
+    let l = un("l.txt");
+    fx.repo.apply_selection(&l, &Selection::lines(0, pick(&l, 0, &["last"])), PatchMode::Discard).unwrap();
+    let a = un("a.txt");
+    fx.repo.apply_selection(&a, &Selection::lines(0, pick(&a, 0, &["more\r"])), PatchMode::Stage).unwrap();
+
+    assert_eq!(fx.index("s.txt"), "one\r\ntwo\r\nlast\r\nLAST");
+    assert_eq!(fx.read("d.txt"), "one\r\ntwo\r\nlast\r\nLAST");
+    assert_eq!(fx.index("u.txt"), "one\r\ntwo\r\nlast\r\nLAST");
+    assert_eq!(fx.read("l.txt"), "one\ntwo\nlast\nLAST");
+    assert_eq!(fx.index("a.txt"), "x\r\nlast\r\nmore\r\n");
+}

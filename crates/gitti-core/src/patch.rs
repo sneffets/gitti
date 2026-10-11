@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::diff::{FileChange, FileDiff, LineKind};
+use crate::diff::{DiffLine, FileChange, FileDiff, LineKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatchMode {
@@ -134,10 +134,18 @@ pub fn map_selection(shown: &FileDiff, sel: &Selection, real: &FileDiff) -> Opti
 
 /// One line of a hunk being built: `' '`, `'-'` or `'+'`, its exact bytes, and the `\ No
 /// newline at end of file` marker when it is the last line of its side(s) without a newline.
+/// `cr`: the line had no newline and gets one, in a CRLF file — a `\r` goes before it.
 struct Out<'a> {
     kind: char,
     text: &'a [u8],
     no_eol: Option<&'a [u8]>,
+    cr: bool,
+}
+
+impl<'a> Out<'a> {
+    fn new(kind: char, text: &'a [u8], no_eol: Option<&'a [u8]>) -> Self {
+        Out { kind, text, no_eol, cr: false }
+    }
 }
 
 /// Fixes up the "no newline at end of file" markers of a partial hunk. A marker says
@@ -146,6 +154,10 @@ struct Out<'a> {
 /// glued the next line onto it (`a` + `b` → `ab`). A context line that is last on one
 /// side only is split into `-line` / `+line` with the marker on the side that ends there;
 /// a change line that is no longer last loses its marker (its side gets the newline).
+///
+/// Such a line only ever gains its newline on the side the patch produces (the side it is
+/// applied to keeps its last line as it is), and it gets the line ending of its
+/// neighbours ([`gets_crlf`]): in a CRLF file `\r\n`, not a bare `\n`.
 fn fix_no_eol(lines: Vec<Out<'_>>) -> Vec<Out<'_>> {
     let n = lines.len();
     // Whether lines after index i exist on the old / new side.
@@ -155,6 +167,13 @@ fn fix_no_eol(lines: Vec<Out<'_>>) -> Vec<Out<'_>> {
         old_after[i] = old_after[i + 1] || lines[i].kind != '+';
         new_after[i] = new_after[i + 1] || lines[i].kind != '-';
     }
+    // Per marked line, whether it gets CRLF on the old / new side should it gain a newline.
+    let crlf: Vec<(bool, bool)> = (0..n)
+        .map(|i| match lines[i].no_eol {
+            Some(_) => (gets_crlf(&lines, i, true), gets_crlf(&lines, i, false)),
+            None => (false, false),
+        })
+        .collect();
     let mut out: Vec<Out<'_>> = Vec::with_capacity(n + 1);
     for (i, l) in lines.into_iter().enumerate() {
         let Some(marker) = l.no_eol else {
@@ -162,20 +181,116 @@ fn fix_no_eol(lines: Vec<Out<'_>>) -> Vec<Out<'_>> {
             continue;
         };
         let (old_more, new_more) = (old_after[i + 1], new_after[i + 1]);
+        let (old_cr, new_cr) = crlf[i];
+        let cr = |side_cr: bool| side_cr && !l.text.ends_with(b"\r");
         match l.kind {
             ' ' if new_more && !old_more => {
-                out.push(Out { kind: '-', text: l.text, no_eol: Some(marker) });
-                out.push(Out { kind: '+', text: l.text, no_eol: None });
+                out.push(Out::new('-', l.text, Some(marker)));
+                out.push(Out { cr: cr(new_cr), ..Out::new('+', l.text, None) });
             }
             ' ' if old_more && !new_more => {
-                out.push(Out { kind: '-', text: l.text, no_eol: None });
-                out.push(Out { kind: '+', text: l.text, no_eol: Some(marker) });
+                out.push(Out { cr: cr(old_cr), ..Out::new('-', l.text, None) });
+                out.push(Out::new('+', l.text, Some(marker)));
             }
+            // Last on neither side any more: can't happen (the side the patch applies to
+            // ends with it); kept byte for byte so `git apply` refuses rather than guesses.
             ' ' if old_more => out.push(Out { no_eol: None, ..l }),
-            '-' if old_more => out.push(Out { no_eol: None, ..l }),
-            '+' if new_more => out.push(Out { no_eol: None, ..l }),
+            '-' if old_more => out.push(Out { no_eol: None, cr: cr(old_cr), ..l }),
+            '+' if new_more => out.push(Out { no_eol: None, cr: cr(new_cr), ..l }),
             _ => out.push(l),
         }
+    }
+    out
+}
+
+/// Whether line `i` of a hunk being built, without a newline so far, gets `\r\n` when it
+/// gains one on the old (`old_side`) or new side: the line ending of the nearest line of
+/// that side that has a newline — before it, else after it, else any line of the hunk.
+/// Without any, LF.
+fn gets_crlf(lines: &[Out<'_>], i: usize, old_side: bool) -> bool {
+    let on_side = |l: &&Out<'_>| l.no_eol.is_none() && if old_side { l.kind != '+' } else { l.kind != '-' };
+    lines[..i]
+        .iter()
+        .rev()
+        .find(on_side)
+        .or_else(|| lines[i + 1..].iter().find(on_side))
+        .or_else(|| lines.iter().find(|l| l.no_eol.is_none()))
+        .is_some_and(|l| l.text.ends_with(b"\r"))
+}
+
+/// The order in which a patch carries the lines of a hunk (indices into `lines`, without
+/// the `\ No newline` markers, which stay with the line before them).
+///
+/// git writes a replaced block as all its `-` lines, then all its `+` lines. A partial
+/// patch that kept that order would move a line: staging the `-` / `+` pair of the 2nd of
+/// six replaced lines (every line of a file whose line endings changed) keeps the other
+/// five `-` lines as context and then adds the new line after them — at the block's end.
+/// So each block is reordered into pairs, every `-` line followed by the `+` line that
+/// replaces it, and a selected line (or a kept one) sits where its partner is:
+/// - the pairs are the ones the diff view marks ([`crate::intraline::pair_lines`]: a
+///   monotone alignment of similar lines, in order for big blocks), so a new line above a
+///   changed one stays above it (`-x +new +X` → `+new -x +X`);
+/// - the lines left between two such pairs (or before the first / after the last) are
+///   paired in order — the 1st `-` with the 1st `+`, … — and the extra lines of the longer
+///   side follow (`-a -b -c +X` → `-a +X -b -c`).
+///
+/// Each side keeps its own order, so the patch applies to exactly what it did before; only
+/// where the produced side's lines land among the kept ones changes. The same order for
+/// every mode and selection: unstage / discard (reverse) restore a line next to its
+/// partner too.
+pub fn line_order(lines: &[DiffLine]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        match lines[i].kind {
+            LineKind::Context | LineKind::Added => {
+                out.push(i);
+                i += 1;
+                continue;
+            }
+            LineKind::NoNewline => {
+                i += 1;
+                continue;
+            }
+            LineKind::Removed => {}
+        }
+        let mut removed = Vec::new();
+        while i < lines.len() && matches!(lines[i].kind, LineKind::Removed | LineKind::NoNewline) {
+            if lines[i].kind == LineKind::Removed {
+                removed.push(i);
+            }
+            i += 1;
+        }
+        let mut added = Vec::new();
+        while i < lines.len() && matches!(lines[i].kind, LineKind::Added | LineKind::NoNewline) {
+            if lines[i].kind == LineKind::Added {
+                added.push(i);
+            }
+            i += 1;
+        }
+        if added.is_empty() || removed.len() + added.len() == 2 {
+            out.extend(removed);
+            out.extend(added);
+            continue;
+        }
+        let pairs = crate::intraline::pair_lines(lines, &removed, &added);
+        // Positions in `removed` / `added`; the alignment is monotone.
+        let (mut r, mut a) = (0, 0);
+        let gap = |out: &mut Vec<usize>, rs: &[usize], ads: &[usize]| {
+            for k in 0..rs.len().max(ads.len()) {
+                out.extend(rs.get(k));
+                out.extend(ads.get(k));
+            }
+        };
+        for (pr, pa) in pairs {
+            let rp = r + removed[r..].iter().position(|&x| x == pr).expect("paired removed line");
+            let ap = a + added[a..].iter().position(|&x| x == pa).expect("paired added line");
+            gap(&mut out, &removed[r..rp], &added[a..ap]);
+            out.push(pr);
+            out.push(pa);
+            (r, a) = (rp + 1, ap + 1);
+        }
+        gap(&mut out, &removed[r..], &added[a..]);
     }
     out
 }
@@ -228,40 +343,36 @@ pub fn build_patch(file: &FileDiff, sel: &Selection, mode: PatchMode) -> Option<
     for (hi, hunk) in file.hunks.iter().enumerate() {
         let mut lines: Vec<Out<'_>> = Vec::with_capacity(hunk.lines.len());
         let mut changes = 0usize;
-        let mut last_dropped = false;
+        // A line's `\ No newline at end of file` marker is the line after it.
+        let marker = |li: usize| {
+            hunk.lines
+                .get(li + 1)
+                .filter(|l| l.kind == LineKind::NoNewline)
+                .map(|l| l.bytes())
+        };
 
-        for (li, line) in hunk.lines.iter().enumerate() {
+        for li in line_order(&hunk.lines) {
+            let line = &hunk.lines[li];
             let selected = sel.is_selected(hi, li);
             match line.kind {
-                LineKind::Context => {
-                    lines.push(Out { kind: ' ', text: line.bytes(), no_eol: None });
-                    last_dropped = false;
-                }
+                LineKind::Context => lines.push(Out::new(' ', line.bytes(), marker(li))),
                 LineKind::Added | LineKind::Removed => {
                     let added = line.kind == LineKind::Added;
                     if selected {
                         let kind = if added { '+' } else { '-' };
-                        lines.push(Out { kind, text: line.bytes(), no_eol: None });
+                        lines.push(Out::new(kind, line.bytes(), marker(li)));
                         changes += 1;
-                        last_dropped = false;
                         continue;
                     }
                     partial = true;
                     // Unselected: a line that exists on the side the patch is applied to
-                    // becomes context, the other one is dropped.
+                    // becomes context, the other one is dropped (with its marker).
                     let keep_as_context = if reverse { added } else { !added };
                     if keep_as_context {
-                        lines.push(Out { kind: ' ', text: line.bytes(), no_eol: None });
-                        last_dropped = false;
-                    } else {
-                        last_dropped = true;
+                        lines.push(Out::new(' ', line.bytes(), marker(li)));
                     }
                 }
-                LineKind::NoNewline => {
-                    if !last_dropped && let Some(last) = lines.last_mut() {
-                        last.no_eol = Some(line.bytes());
-                    }
-                }
+                LineKind::NoNewline => {}
             }
         }
 
@@ -310,6 +421,9 @@ pub fn build_patch(file: &FileDiff, sel: &Selection, mode: PatchMode) -> Option<
         for l in lines {
             body.push(l.kind as u8);
             body.extend_from_slice(l.text);
+            if l.cr {
+                body.push(b'\r');
+            }
             body.push(b'\n');
             if let Some(marker) = l.no_eol {
                 body.extend_from_slice(marker);
@@ -483,6 +597,83 @@ index 1..2 100644
         assert!(p.ends_with(b"@@ -1,2 +1,3 @@\n \xe9\n \xe4\n+\xf6\n"), "{}", String::from_utf8_lossy(&p));
         let p = super::build_patch(f, &Selection::lines(0, [1]), PatchMode::Discard).unwrap();
         assert!(p.ends_with(b"@@ -1,4 +1,3 @@\n \xe9\n-\xe4\n \xf6\n \xfc\n"), "{}", String::from_utf8_lossy(&p));
+    }
+
+    /// The kinds and texts of `d`'s first hunk in [`line_order`].
+    fn ordered(d: &str) -> Vec<String> {
+        let f = &parse_unified(d)[0];
+        let lines = &f.hunks[0].lines;
+        line_order(lines)
+            .into_iter()
+            .map(|i| {
+                let l = &lines[i];
+                let k = match l.kind {
+                    LineKind::Added => '+',
+                    LineKind::Removed => '-',
+                    _ => ' ',
+                };
+                format!("{k}{}", l.text)
+            })
+            .collect()
+    }
+
+    /// Replaced blocks come out as pairs: similar lines as the diff view pairs them, the
+    /// rest in order, extra lines of the longer side after.
+    #[gitti_test::test]
+    fn line_order_pairs_a_replaced_block() {
+        let h = "diff --git a/f b/f\n--- a/f\n+++ b/f\n";
+        // Every line's ending changed: each `-` line followed by its `+` line.
+        let d = format!("{h}@@ -1,4 +1,4 @@\n x\n-a 1\n-a 2\n-a 3\n+a 1\r\n+a 2\r\n+a 3\r\n");
+        assert_eq!(ordered(&d), [" x", "-a 1", "+a 1\r", "-a 2", "+a 2\r", "-a 3", "+a 3\r"]);
+        // Dissimilar lines: in order, the extra `-` lines after.
+        let d = format!("{h}@@ -1,3 +1,1 @@\n-alpha\n-beta\n-gamma\n+XYZ\n");
+        assert_eq!(ordered(&d), ["-alpha", "+XYZ", "-beta", "-gamma"]);
+        let d = format!("{h}@@ -1,1 +1,3 @@\n-alpha\n+XYZ\n+UVW\n+RST\n");
+        assert_eq!(ordered(&d), ["-alpha", "+XYZ", "+UVW", "+RST"]);
+        // A new line above a changed one: the changed line pairs with its new version, the
+        // new line goes before them.
+        let d = format!("{h}@@ -1,1 +1,2 @@\n-let total = 1;\n+// comment here\n+let total = 2;\n");
+        assert_eq!(ordered(&d), ["+// comment here", "-let total = 1;", "+let total = 2;"]);
+        // Markers stay out of the order (they go with their line).
+        let d = format!("{h}@@ -1,2 +1,2 @@\n-a\n-b\n\\ No newline at end of file\n+A\n+B\n\\ No newline at end of file\n");
+        assert_eq!(ordered(&d), ["-a", "+A", "-b", "+B"]);
+    }
+
+    /// Q29: the pair of a line in the middle of a replaced block stays in its place —
+    /// stage (forward) and discard (reverse).
+    #[gitti_test::test]
+    fn middle_pair_of_a_replaced_block_stays_in_place() {
+        let d = "diff --git a/f b/f\nindex 1..2 100644\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n-a 1\n-a 2\n-a 3\n+a 1\r\n+a 2\r\n+a 3\r\n";
+        let f = &parse_unified(d)[0];
+        let p = build_patch(f, &Selection::lines(0, [1, 4]), PatchMode::Stage).unwrap();
+        assert!(p.ends_with("@@ -1,3 +1,3 @@\n a 1\n-a 2\n+a 2\r\n a 3\n"), "{p}");
+        let p = build_patch(f, &Selection::lines(0, [1, 4]), PatchMode::Discard).unwrap();
+        assert!(p.ends_with("@@ -1,3 +1,3 @@\n a 1\r\n-a 2\n+a 2\r\n a 3\r\n"), "{p}");
+        // Only the `+` line: next to the kept old line, not after the block.
+        let p = build_patch(f, &Selection::lines(0, [4]), PatchMode::Stage).unwrap();
+        assert!(p.ends_with("@@ -1,3 +1,4 @@\n a 1\n a 2\n+a 2\r\n a 3\n"), "{p}");
+    }
+
+    /// A line without a newline that gets one in a CRLF file gets `\r\n` (it is restored
+    /// or kept before a line the patch adds after it).
+    #[gitti_test::test]
+    fn no_eol_line_gets_the_files_crlf() {
+        let nl = "\\ No newline at end of file";
+        let d = format!(
+            "diff --git a/f b/f\nindex 1..2 100644\n--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n x\r\n-last\n{nl}\n+LAST\n{nl}\n"
+        );
+        let f = &parse_unified(&d)[0];
+        // Stage only `+LAST`: the old last line stays and needs its newline.
+        let p = build_patch(f, &Selection::lines(0, [3]), PatchMode::Stage).unwrap();
+        assert!(p.ends_with(&format!("@@ -1,2 +1,3 @@\n x\r\n-last\n{nl}\n+last\r\n+LAST\n{nl}\n")), "{p:?}");
+        // Discard only `-last`: it comes back before `LAST`, with CRLF.
+        let p = build_patch(f, &Selection::lines(0, [1]), PatchMode::Discard).unwrap();
+        assert!(p.ends_with(&format!("@@ -1,3 +1,2 @@\n x\r\n-last\r\n LAST\n{nl}\n")), "{p:?}");
+        // LF file: LF.
+        let lf = d.replace("x\r\n", "x\n");
+        let f = &parse_unified(&lf)[0];
+        let p = build_patch(f, &Selection::lines(0, [1]), PatchMode::Discard).unwrap();
+        assert!(p.ends_with(&format!("@@ -1,3 +1,2 @@\n x\n-last\n LAST\n{nl}\n")), "{p:?}");
     }
 
     #[gitti_test::test]

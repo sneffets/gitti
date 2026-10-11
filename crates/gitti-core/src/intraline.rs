@@ -198,8 +198,9 @@ pub fn hunk_ranges(lines: &[DiffLine], ignore_ws: bool) -> Vec<Vec<Range<u32>>> 
     out
 }
 
-/// Pairs the removed lines with the added lines (indices into `lines`), in order.
-fn pair_lines(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<(usize, usize)> {
+/// Pairs the removed lines with the added lines (indices into `lines`), in order. Line
+/// staging keeps these pairs together too ([`crate::patch::line_order`]).
+pub(crate) fn pair_lines(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<(usize, usize)> {
     let (n, m) = (removed.len(), added.len());
     if n * m > MAX_ALIGN_CELLS {
         return removed.iter().copied().zip(added.iter().copied()).collect();
