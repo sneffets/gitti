@@ -49,6 +49,7 @@ fn new_branch(name: &str, start: &str) -> AddMode {
     AddMode::NewBranch { name: name.into(), start: start.into() }
 }
 
+/// Workflow: WT-01
 #[gitti_test::test]
 fn add_list_lock_remove_prune() {
     let (dir, p, repo) = repo();
@@ -131,6 +132,7 @@ fn add_list_lock_remove_prune() {
 /// The plan for a typed remote branch runs `worktree add --track -b`: a local
 /// branch tracking it; the same name again is then an existing branch, checked out
 /// already (blocked before git).
+/// Workflow: BR-14, WT-07
 #[gitti_test::test]
 fn plan_add_tracks_a_remote_branch() {
     let dir = tempfile::tempdir().unwrap();
@@ -235,6 +237,7 @@ fn list_is_cached_until_a_worktree_changes() {
 /// A worktree with only some folders: created sparse, listed with its folders, a
 /// clean status (files outside are not "deleted"), staging / committing inside, changing
 /// the folders, back to complete; the main worktree stays complete throughout.
+/// Workflow: WT-04
 #[gitti_test::test]
 fn sparse_worktree() {
     let (dir, p, repo) = repo();
@@ -310,6 +313,7 @@ fn sparse_worktree() {
     assert!(!bad.exists());
 }
 
+/// Workflow: BR-15
 #[gitti_test::test]
 fn switching_to_a_branch_of_another_worktree() {
     let (dir, _p, repo) = repo();
@@ -328,6 +332,7 @@ fn switching_to_a_branch_of_another_worktree() {
     assert_eq!(repo.head().unwrap().branch.as_deref(), Some("main"));
 }
 
+/// Workflow: WT-03
 #[gitti_test::test]
 fn repo_opened_in_a_linked_worktree() {
     let (dir, p, main) = repo();
@@ -383,6 +388,7 @@ fn repo_opened_in_a_linked_worktree() {
 /// Remove + "also delete branch". A merged branch goes with `-d`; an unmerged one
 /// stays and names the commits only it has; a dirty worktree is refused (listing its
 /// changes) until forced; a tab's own worktree removes itself via the main worktree.
+/// Workflow: WT-02
 #[gitti_test::test]
 fn remove_with_branch() {
     use gitti_core::worktree::{BranchDeletion, RemoveResult, remove_blocker};
@@ -547,6 +553,7 @@ fn tree_folders_for_the_picker() {
     assert_eq!(picker.text(), "Docs, nope, src/core");
 }
 
+/// Workflow: WT-05
 #[gitti_test::test]
 fn move_worktree() {
     let (dir, p, repo) = repo();
@@ -600,6 +607,7 @@ fn move_worktree() {
     assert_eq!(names(&repo.worktrees().unwrap())[1].0, "back");
 }
 
+/// Workflow: WT-05
 #[gitti_test::test]
 fn repair_worktrees_moved_by_hand() {
     let (dir, p, repo) = repo();

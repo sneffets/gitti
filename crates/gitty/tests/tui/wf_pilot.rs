@@ -12,6 +12,7 @@ use gitti_workflow::{cp, st};
 /// ST-13, the first commit: n / s stage the first hunk of `a.txt`; g ] ] n j j j j to the
 /// first added line of `b.txt`, space selects it, s stages it; c, the message, alt-⏎
 /// commits.
+/// Workflow: ST-13
 #[gitti_test::test]
 fn st13_split_a_change_into_two_commits() {
     use st::split_into_two_commits as wf;
@@ -36,6 +37,7 @@ fn st13_split_a_change_into_two_commits() {
 
 /// ST-13, the second commit (from the state after the first): S stages the rest; c, the
 /// message, alt-⏎ commits.
+/// Workflow: ST-13
 #[gitti_test::test]
 fn st13_split_a_change_second_commit() {
     use st::split_into_two_commits as wf;
@@ -52,6 +54,7 @@ fn st13_split_a_change_second_commit() {
 
 /// CP-12: j to `Fix a`, . opens the commit menu, c cherry-picks; ctrl-p "merge", ⏎,
 /// the picker filtered to `feat`, ⏎ merges.
+/// Workflow: CP-12
 #[gitti_test::test]
 fn cp12_pick_then_merge_the_source_branch() {
     use cp::pick_then_merge as wf;
@@ -75,6 +78,7 @@ fn cp12_pick_then_merge_the_source_branch() {
 
 /// CP-13: the merge of `feat` stops: gitty shows the merge in progress with one
 /// conflicted file and `b.txt` staged.
+/// Workflow: CP-13
 #[gitti_test::test]
 fn cp13_pick_edit_then_merge_conflicts_there() {
     use cp::pick_edit_then_merge as wf;

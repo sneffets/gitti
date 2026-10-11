@@ -57,6 +57,7 @@ fn expect(ui: &mut Ui, result: Result<(), String>) {
 
 /// ST-13: the hunk button stages the first hunk of `a.txt`, a line selection one added
 /// line of `b.txt`; Commit; Stage All; Commit.
+/// Workflow: ST-13
 fn st13_split_a_change_into_two_commits(ui: &mut Ui) {
     use st::split_into_two_commits as wf;
     let dir = ui.workdir();
@@ -95,6 +96,7 @@ fn st13_split_a_change_into_two_commits(ui: &mut Ui) {
 
 /// CP-12: the commit's context menu → Cherry-pick; then Merge Branch into Current… →
 /// `feat` → Merge: no conflict, nothing in progress.
+/// Workflow: CP-12
 fn cp12_pick_then_merge_the_source_branch(ui: &mut Ui) {
     use cp::pick_then_merge as wf;
     let s = CP12.with(|s| s.borrow_mut().take()).expect("the fixture's ids");
@@ -133,6 +135,7 @@ fn cp12_pick_then_merge_the_source_branch(ui: &mut Ui) {
 
 /// CP-13: Merge Branch into Current… → `feat` → Merge stops: the app shows the merge in
 /// progress with `a.txt` conflicted and `b.txt` staged.
+/// Workflow: CP-13
 fn cp13_pick_edit_then_merge_conflicts_there(ui: &mut Ui) {
     use cp::pick_edit_then_merge as wf;
     let s = CP13.with(|s| s.borrow_mut().take()).expect("the fixture's ids");

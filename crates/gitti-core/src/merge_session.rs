@@ -675,6 +675,7 @@ mod tests {
         assert_eq!(s.step_conflict(Some(1), -1), Some(1));
     }
 
+    /// Workflow: EX-24
     #[gitti_test::test]
     fn starts_from_an_edited_file_on_disk() {
         // Markers with git's labels count as unedited.
@@ -750,6 +751,7 @@ mod tests {
 
     /// A file with `conflict-marker-size=10`: git writes 10-character markers; 7-character
     /// "markers" are content (e.g. reStructuredText headings) and don't count.
+    /// Workflow: MG-14
     #[gitti_test::test]
     fn marker_size_attribute() {
         let mut s = session("a\nx\n", "a\no\n", "a\nt\n", None);

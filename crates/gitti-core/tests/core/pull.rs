@@ -124,6 +124,7 @@ fn divergent(e: &anyhow::Error) -> &DivergentPull {
 /// No configuration: git refuses, the error asks; each choice of the dialog joins what
 /// the refused pull fetched (no second fetch); a `FETCH_HEAD` changed since runs
 /// the whole pull again.
+/// Workflow: RB-09, RM-04
 #[gitti_test::test]
 fn a_diverged_pull_asks_and_each_choice_does_what_it_says() {
     let d = diverged();
@@ -167,6 +168,7 @@ fn a_diverged_pull_asks_and_each_choice_does_what_it_says() {
 /// The retry ends where `git pull` ends: the same merge commit (parents, tree, message
 /// "Merge branch 'main' of …"), the same rebase — after a force push upstream too, where
 /// the fork point leaves the rewritten commit out (`git rebase @{u}` would replay it).
+/// Workflow: RB-09
 #[gitti_test::test]
 fn the_retry_ends_where_git_pull_would() {
     let d = diverged_from(true);
@@ -195,6 +197,7 @@ fn the_retry_ends_where_git_pull_would() {
 }
 
 /// "Pull with…": the chosen strategy, whatever `pull.rebase` says.
+/// Workflow: RB-09
 #[gitti_test::test]
 fn pull_with_passes_the_choice_over_the_configuration() {
     let d = diverged();
@@ -206,6 +209,7 @@ fn pull_with_passes_the_choice_over_the_configuration() {
 
 /// A remembered strategy is passed without asking; a remembered "Fast-forward only" that
 /// can't asks again.
+/// Workflow: RM-04
 #[gitti_test::test]
 fn a_remembered_strategy_is_used_without_asking() {
     let d = diverged();
@@ -221,6 +225,7 @@ fn a_remembered_strategy_is_used_without_asking() {
 }
 
 /// "Pull from…" asks the same way and takes a remembered strategy.
+/// Workflow: RM-04
 #[gitti_test::test]
 fn pull_from_asks_and_takes_the_remembered_strategy() {
     let d = diverged();
@@ -234,6 +239,7 @@ fn pull_from_asks_and_takes_the_remembered_strategy() {
 }
 
 /// The user's `pull.rebase` decides over a remembered strategy: plain `git pull`.
+/// Workflow: RM-04
 #[gitti_test::test]
 fn git_config_decides_over_the_remembered_strategy() {
     let d = diverged();
@@ -245,6 +251,7 @@ fn git_config_decides_over_the_remembered_strategy() {
 }
 
 /// `branch.<name>.rebase` decides too; still: no upstream, no git pull.
+/// Workflow: RM-04
 #[gitti_test::test]
 fn branch_rebase_config_decides_and_no_upstream_runs_no_pull() {
     let d = diverged();

@@ -75,6 +75,7 @@ fn hook_background_job_does_not_hold_the_command() {
 
 /// Esc on the busy mark: a hanging hook is stopped, git cleans its index.lock up, the
 /// commit did not happen, and later commands of the operation don't start.
+/// Workflow: CM-21, RM-15
 #[cfg(unix)]
 #[gitti_test::test]
 fn cancel_stops_a_hanging_hook() {
@@ -128,6 +129,7 @@ fn uncancelled_scope_runs_normally() {
 
 /// Another git holds index.lock for a moment (an editor's git integration):
 /// our write waits for it instead of failing.
+/// Workflow: EX-21
 #[gitti_test::test]
 fn write_waits_for_a_lock_released_meanwhile() {
     let dir = repo();
@@ -153,6 +155,7 @@ fn write_waits_for_a_lock_released_meanwhile() {
 /// removing it lets the write through. Reads take no lock and don't wait for one. (That a
 /// write gives up after about a second of retries is not timed here: it would cost that
 /// second.)
+/// Workflow: EX-21
 #[gitti_test::test]
 fn lasting_lock_fails_then_old_one_is_stale_and_removable() {
     let dir = repo();
@@ -295,6 +298,7 @@ fn hook_output_streams_while_the_commit_runs() {
 /// A fetch inside a progress scope runs with `--progress`: its meters stream to
 /// the sink, the returned stderr has none (callers see what they saw before), the log
 /// keeps their final state without `\r` noise and names the command as written.
+/// Workflow: RM-02
 #[gitti_test::test]
 fn fetch_streams_progress_meters() {
     use std::sync::{Arc, Mutex};

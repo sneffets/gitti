@@ -220,6 +220,7 @@ fn go_to_commit_by_64_hex_prefixes_and_paths() {
     assert!(res.hits.iter().all(|x| x.reasons.iter().any(|r| matches!(r, MatchReason::Path { .. }))));
 }
 
+/// Workflow: MG-23
 #[gitti_test::test]
 fn merge_conflict_worktrees_and_branch_ops() {
     let mut h = History::new();

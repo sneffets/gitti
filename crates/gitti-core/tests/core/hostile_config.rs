@@ -148,6 +148,7 @@ fn assert_clean(f: &FileDiff) {
     assert!(!f.path().contains("SRC/") && !f.path().contains("DST/"), "{}", f.path());
 }
 
+/// Workflow: ST-19, DC-02
 #[gitti_test::test]
 fn stage_hunk_lines_unstage_and_discard() {
     let numbered = crate::fixture_kit::numbered(30);
@@ -182,6 +183,7 @@ fn stage_hunk_lines_unstage_and_discard() {
     assert!(fx.read("a.txt").contains("line 25!\nB2\nline 26\n"));
 }
 
+/// Workflow: ST-19
 #[gitti_test::test]
 fn untracked_deleted_and_trailing_whitespace() {
     let fx = fixture(&[("gone.txt", "one\ntwo\nthree\n"), ("ws.txt", "a\nb\n")]);
@@ -241,6 +243,7 @@ fn commit_stash_and_compare_diffs_parse() {
 
 /// Typed messages keep their `#` lines under `commit.cleanup=strip` — commit,
 /// amend, annotated tag, merge.
+/// Workflow: CM-03, CM-14
 #[gitti_test::test]
 fn typed_messages_keep_hash_lines() {
     let mut h = History::new();
@@ -268,6 +271,7 @@ fn typed_messages_keep_hash_lines() {
 }
 
 /// The same for "Edit Commit Message": an older commit (rebase) and HEAD (amend).
+/// Workflow: CM-16
 #[gitti_test::test]
 fn reworded_messages_keep_hash_lines() {
     let mut h = History::new();

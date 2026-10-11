@@ -141,6 +141,7 @@ fn hunk_stage_refused_whole_file_works(ui: &mut Ui) {
 
 /// git-lfs missing: a banner with the install hint from the start — not an error
 /// in the status bar — that stays over refreshes until ✕ hides it.
+/// Workflow: LF-05
 fn missing_git_lfs_banner(ui: &mut Ui) {
     let ws = ui.ws.clone();
     let issues = ui.cx.update(|cx| gitti_app::testing::lfs_issues(&ws, cx));
@@ -175,6 +176,7 @@ fn missing_git_lfs_banner(ui: &mut Ui) {
 /// A made-up health: git-lfs set up, no pre-push hook. The banner offers "Install LFS
 /// Hooks"; Push asks first, and with "install the hooks first" checked the hook is written
 /// before the push runs.
+/// Workflow: LF-03
 fn push_without_the_lfs_hook_asks(ui: &mut Ui) {
     let wd = ui.workdir();
     append_config(
@@ -229,6 +231,7 @@ fn push_without_the_lfs_hook_asks(ui: &mut Ui) {
 
 /// "Track with Git LFS…" without git-lfs says so and how to install it — nothing is
 /// written.
+/// Workflow: LF-02
 fn track_without_git_lfs(ui: &mut Ui) {
     ui.quick("lfstrack:doc.dat");
     let ws = ui.ws.clone();
@@ -254,6 +257,7 @@ fn track_without_git_lfs(ui: &mut Ui) {
 /// doc.dat's (local) doesn't. Without git-lfs the click says so before any git runs. Once
 /// the store has the object (however it came: a pull, a download outside gitti) the commit
 /// shows its content: the cached diff is annotated again.
+/// Workflow: LF-04
 fn download_missing_objects(ui: &mut Ui) {
     ui.step("select:1");
     let probes = ui.check("commit with a missing LFS object");
@@ -289,6 +293,7 @@ fn download_missing_objects(ui: &mut Ui) {
 /// The last LFS pattern and the LFS files removed (committed state untouched) while
 /// git-lfs's four hooks stay: after the refresh the banner says what they cost and offers
 /// "Remove LFS Hooks", which deletes them — the banner goes.
+/// Workflow: LF-05
 fn hooks_without_lfs_offer_removal(ui: &mut Ui) {
     let wd = ui.workdir();
     let hooks = wd.join(".git").join("hooks");

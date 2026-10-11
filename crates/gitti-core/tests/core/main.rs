@@ -41,6 +41,7 @@ mod subtrees;
 mod switching;
 mod tab_marks;
 mod unix_fs;
+mod wf_catalog;
 mod wf_pilot;
 mod worktrees;
 

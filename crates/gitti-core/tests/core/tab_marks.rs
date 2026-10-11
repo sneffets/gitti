@@ -21,6 +21,7 @@ fn set_head(work: &Path, to: &str) {
     fs::write(work.join(".git").join("HEAD"), format!("{to}\n")).unwrap();
 }
 
+/// Workflow: RM-18
 #[gitti_test::test]
 fn commits_not_pushed_with_and_without_an_upstream() {
     let dir = tempfile::tempdir().unwrap();
@@ -110,6 +111,7 @@ fn commits_not_pushed_with_and_without_an_upstream() {
 
 /// `branch.topic.remote = .`: the upstream is the local branch `main` — the commits `main`
 /// doesn't have, in words that say so; none once `main` has them; also without any remote.
+/// Workflow: RM-18
 #[gitti_test::test]
 fn a_local_upstream_compares_with_that_branch() {
     let dir = tempfile::tempdir().unwrap();
@@ -144,6 +146,7 @@ fn a_local_upstream_compares_with_that_branch() {
 /// The sidebar's worktree entries: the other worktrees' marks — one `git status` in each,
 /// unpushed commits counted in-process from the shared refs; the current one left out
 /// (its own come with the refresh).
+/// Workflow: WT-06
 #[gitti_test::test]
 fn other_worktrees_get_their_own_marks() {
     let dir = tempfile::tempdir().unwrap();

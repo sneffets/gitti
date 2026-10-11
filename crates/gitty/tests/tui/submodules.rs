@@ -70,6 +70,7 @@ fn super_repo() -> (tempfile::TempDir, std::path::PathBuf) {
 /// The SUBMODULES section with state marks; a pointer change shows as the submodule's
 /// commits (no raw "Subproject commit" lines) and s stages it as one unit without any
 /// submodule command; staged, the pointer counts as recorded.
+/// Workflow: SM-02
 #[gitti_test::test]
 fn submodule_pointer_change_shows_commits_and_stages_as_one_unit() {
     let (_tmp, sup) = super_repo();
@@ -93,6 +94,7 @@ fn submodule_pointer_change_shows_commits_and_stages_as_one_unit() {
 /// A submodule checked out at an older commit: "1 SUBMODULE OUT OF DATE" and ↓ in the
 /// sidebar; its menu copies the checked-out commit (h = Copy SHA) and offers the recorded
 /// one; the palette's Update Submodules runs `submodule update --init --recursive`.
+/// Workflow: SM-01, SM-03
 #[gitti_test::test]
 fn submodule_out_of_date_badge_and_update_from_the_palette() {
     let (_tmp, sup) = super_repo();
@@ -119,6 +121,7 @@ fn submodule_out_of_date_badge_and_update_from_the_palette() {
 
 /// An uninitialised submodule (a gitlink and `.gitmodules`, nothing cloned): its menu's
 /// Copy SHA copies the commit the parent records, and says so.
+/// Workflow: SM-08
 #[gitti_test::test]
 fn uninitialised_submodule_copies_the_recorded_sha() {
     let dir = fixture(&[(".gitmodules", "[submodule \"lib\"]\n\tpath = lib\n\turl = ../lib.git\n")], &[]);
@@ -141,6 +144,7 @@ fn submodule_commands_without_submodules_say_so() {
 
 /// Palette → Add Submodule…: the URL, the path; `submodule add` runs, the section and the
 /// files appear, .gitmodules and the submodule are staged.
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_a_submodule_from_the_palette() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -167,6 +171,7 @@ fn add_a_submodule_from_the_palette() {
 /// submodule's clone doesn't read it): the dialog says so
 /// while typed, Enter asks first with what allowing does and what lands in .gitmodules;
 /// "Allow for This Add" runs `git -c protocol.file.allow=always submodule add`.
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_a_submodule_from_a_local_path_asks_first() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);

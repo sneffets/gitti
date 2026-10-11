@@ -59,6 +59,7 @@ fn pointer_repo(lfsconfig: Option<&str>) -> (tempfile::TempDir, PathBuf) {
 
 /// The scan is in-process; one `git check-attr` sorts out the pointer that isn't under an
 /// LFS pattern. A file with its content in place (downloaded) isn't listed.
+/// Workflow: LF-05
 #[gitti_test::test]
 fn pointer_files_in_the_working_tree() {
     let (tmp, p) = pointer_repo(None);
@@ -79,6 +80,7 @@ fn pointer_files_in_the_working_tree() {
 /// Not set up (no filters in the user's config), no hooks, pointers left; `.lfsconfig`
 /// excludes `big/`. "Set Up Git LFS" writes the (test's) global config and the hooks,
 /// then only the download is left.
+/// Workflow: LF-05
 #[gitti_test::test]
 fn not_set_up_then_set_up() {
     if !LfsCaps::get().installed() {
@@ -178,6 +180,7 @@ fn worktree_hooks_live_in_the_common_dir() {
 /// Real git-lfs (where installed): a repository whose LFS file was checked out without
 /// git-lfs (as a clone with `GIT_LFS_SKIP_SMUDGE`) has the pointer; "Download LFS Files"
 /// (`git lfs pull` from a local bare remote holding the object) puts the content there.
+/// Workflow: LF-05
 #[gitti_test::test]
 fn download_replaces_the_pointers() {
     if !LfsCaps::get().installed() {

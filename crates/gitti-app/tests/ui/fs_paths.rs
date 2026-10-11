@@ -79,6 +79,7 @@ fn banner(ui: &mut Ui) -> Option<String> {
 }
 
 /// x.h: "⚠ collides with X.h" on its header, the explanation rows, the banner.
+/// Workflow: FS-01
 fn marked_explained_and_noted(ui: &mut Ui) {
     let working = ui.working();
     if !working.iter().any(|l| l.starts_with("U net/x.h")) {
@@ -105,6 +106,7 @@ fn marked_explained_and_noted(ui: &mut Ui) {
 }
 
 /// Stage File on x.h asks first — nothing runs before the answer — and stages on OK.
+/// Workflow: FS-01
 fn stage_asks_first(ui: &mut Ui) {
     let n = ui.n_git();
     ui.step("stagefile:net/x.h");
@@ -122,6 +124,7 @@ fn stage_asks_first(ui: &mut Ui) {
 
 /// "Hide Them" hides x.h (skip-worktree): it leaves the list, the banner goes; the undo
 /// brings it back.
+/// Workflow: FS-01
 fn hide_and_show_again(ui: &mut Ui) {
     ui.step("fspaths:hide");
     let working = ui.working();
@@ -241,6 +244,7 @@ fn menu_entries(ui: &mut Ui) {
 
 /// The side commit adds A.TXT: its header, rows, file tab and file list say it collides
 /// with a.txt before anything is checked out; showing it again runs no git.
+/// Workflow: FS-02
 fn history_commit_marked(ui: &mut Ui) {
     let side = std::fs::read_to_string(ui.workdir().join(".git/fixture-side")).unwrap();
     let row = (1..4).find(|&r| {

@@ -30,6 +30,7 @@ fn one_commit(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf,
     (tmp, p, repo)
 }
 
+/// Workflow: SH-01, BR-01, BR-02, BR-11, BR-12, TG-01, TG-04, RM-01
 #[gitti_test::test]
 fn branch_tag_stash_remote_ops() {
     let (_tmp, p, r) = one_commit(&[("a.txt", "1\n")]);
@@ -67,6 +68,7 @@ fn branch_tag_stash_remote_ops() {
     assert!(r.remotes().unwrap().is_empty());
 }
 
+/// Workflow: MG-10, CP-01, RV-01, RS-03
 #[gitti_test::test]
 fn cherry_pick_revert_reset_and_conflict_state() {
     let mut h = History::new();
@@ -91,6 +93,7 @@ fn cherry_pick_revert_reset_and_conflict_state() {
     assert_eq!(read(&p, "a.txt"), "main\n");
 }
 
+/// Workflow: MG-02, MG-03, MG-04, MG-05, CP-02
 #[gitti_test::test]
 fn merge_and_cherry_pick_options() {
     use gitti_core::ops::{CherryPickOptions, FastForward, MergeOptions};
@@ -145,6 +148,7 @@ fn merge_and_cherry_pick_options() {
 
 /// `git stash apply` that conflicts: no MERGE_HEAD, but an unmerged file shown as a
 /// conflict (diff with markers), resolved with the stash's side.
+/// Workflow: SH-13
 #[gitti_test::test]
 fn conflict_from_stash_apply() {
     let (_tmp, p, r) = one_commit(&[("a.txt", "1\n")]);
@@ -168,6 +172,7 @@ fn conflict_from_stash_apply() {
 
 /// A merge with a content conflict and a modify/delete conflict, resolved per side and
 /// concluded.
+/// Workflow: MG-07
 #[gitti_test::test]
 fn conflicts_from_a_merge_resolved_per_side() {
     let mut h = History::new();
@@ -189,6 +194,7 @@ fn conflicts_from_a_merge_resolved_per_side() {
     assert_eq!(r.state(), RepoState::Clean);
 }
 
+/// Workflow: MG-06
 #[gitti_test::test]
 fn merge_doc_from_conflict_stages() {
     use gitti_core::merge::{ChunkKind, Resolution};
@@ -231,6 +237,7 @@ fn branch(p: &Path) -> String {
 
 /// Unrelated untracked files never block a switch; one the target tracks does, and is
 /// moved into a stash (kept there) when switching anyway.
+/// Workflow: BR-07
 #[gitti_test::test]
 fn switch_moves_blocking_untracked_files_aside() {
     use gitti_core::switch::{SwitchOutcome, SwitchTarget};
@@ -257,6 +264,7 @@ fn switch_moves_blocking_untracked_files_aside() {
 
 /// A local change to a file the target changes too: stashed, switched, popped back —
 /// or, overlapping with the target's change, left conflicted with the stash kept.
+/// Workflow: BR-05, BR-06
 #[gitti_test::test]
 fn switch_moves_local_changes_aside() {
     use gitti_core::switch::{SwitchOutcome, SwitchTarget};
@@ -285,6 +293,7 @@ fn switch_moves_local_changes_aside() {
 
 /// "Edit Commit Message": HEAD is amended (`--only`: the staged file is not committed),
 /// an older commit reworded by a rebase; staged and unstaged work survives both.
+/// Workflow: CM-15, CM-16
 #[gitti_test::test]
 fn reword_head_and_older_commit_keeps_staged_and_unstaged_changes() {
     let mut h = History::new();
@@ -311,6 +320,7 @@ fn reword_head_and_older_commit_keeps_staged_and_unstaged_changes() {
 }
 
 /// The root commit is reworded with `rebase --root`; pushed commits are refused.
+/// Workflow: CM-17
 #[gitti_test::test]
 fn reword_the_root_commit_and_not_pushed_ones() {
     let mut h = History::new();
@@ -335,6 +345,7 @@ fn reword_the_root_commit_and_not_pushed_ones() {
 /// Rewording an older commit needs no sed / cp (a minimal Git for Windows has
 /// neither): git's PATH holds git alone, the message (backslash, indented line, no last
 /// newline) arrives as typed.
+/// Workflow: CM-16
 #[cfg(unix)]
 #[gitti_test::test]
 fn reword_needs_no_tools_but_git() {
@@ -359,6 +370,7 @@ fn reword_needs_no_tools_but_git() {
     );
 }
 
+/// Workflow: BR-17
 #[gitti_test::test]
 fn config_upstream_and_blobs() {
     use gitti_core::blobs::Version;
@@ -469,6 +481,7 @@ fn ssh_signed_commit_verification() {
 /// Commit" only the tracked ones (`add -u`, offered when untracked files would come along);
 /// "Create Empty Commit" makes a commit without changes; the plan says which applies, the
 /// question says in plain words what each one stages.
+/// Workflow: CM-08
 #[gitti_test::test]
 fn nothing_staged_stage_all_or_empty_commit() {
     use gitti_core::ops::{
@@ -559,6 +572,7 @@ fn nothing_staged_stage_all_or_empty_commit() {
 /// Show Tag: a lightweight tag says it is one; an annotated tag keeps its multi-line
 /// message as typed (`#` lines too) and has tagger and date; an SSH-signed tag's signature
 /// is verified like a commit's (not verifiable without an allowed signers file, good with).
+/// Workflow: TG-01, TG-02
 #[gitti_test::test]
 fn tag_details_lightweight_annotated_signed() {
     use gitti_core::signature::{SigKind, SigStatus};

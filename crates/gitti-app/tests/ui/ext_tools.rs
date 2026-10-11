@@ -139,6 +139,7 @@ fn diff_tool(ui: &mut Ui) {
 
 /// On a conflicted file the menu offers the merge tool; it resolves the file, git stages
 /// it, the status says so and that no conflict is left.
+/// Workflow: MG-24
 fn merge_tool(ui: &mut Ui) {
     let labels = diff_menu_labels(ui);
     if !labels.iter().any(|l| l == "Open in External Merge Tool") {

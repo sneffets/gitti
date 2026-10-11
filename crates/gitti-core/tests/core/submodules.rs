@@ -216,6 +216,7 @@ fn list(repo: &Repo) -> Vec<gitti_core::submodule::Submodule> {
     repo.submodules(&ws.status)
 }
 
+/// Workflow: SM-01
 #[gitti_test::test]
 fn list_matches_git_and_follows_the_states() {
     let fx = setup();
@@ -266,6 +267,7 @@ fn list_matches_git_and_follows_the_states() {
     assert_eq!(subs[1].state, SubmoduleState::UpToDate);
 }
 
+/// Workflow: SM-02
 #[gitti_test::test]
 fn pointer_change_is_a_commit_summary_staged_as_one_unit() {
     let fx = setup_with(true);
@@ -340,6 +342,7 @@ fn dirty_submodule_diff_has_a_note() {
     assert_eq!(fs::read_to_string(fx.sub().join("l.txt")).unwrap(), "changed\n");
 }
 
+/// Workflow: SM-08
 #[gitti_test::test]
 fn uninitialised_after_plain_clone_and_recursive_clone() {
     let fx = setup();
@@ -363,6 +366,7 @@ fn uninitialised_after_plain_clone_and_recursive_clone() {
     assert!(subs.iter().all(|s| s.state == SubmoduleState::UpToDate), "{subs:#?}");
 }
 
+/// Workflow: SM-03
 #[gitti_test::test]
 fn pull_that_moves_the_pointer_makes_it_out_of_date() {
     let fx = setup();
@@ -395,6 +399,7 @@ fn pull_that_moves_the_pointer_makes_it_out_of_date() {
     assert_eq!(d.log.unwrap().added[0].1, "lib upstream");
 }
 
+/// Workflow: MG-21
 #[gitti_test::test]
 fn conflicting_pointers() {
     let fx = setup();
@@ -442,6 +447,7 @@ fn repos_without_submodules_pay_nothing() {
     assert_eq!(submodule_calls(&repo), 0);
 }
 
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_submodule_stages_it_with_its_default_path_and_branch() {
     let fx = setup();
@@ -478,6 +484,7 @@ fn add_submodule_stages_it_with_its_default_path_and_branch() {
 /// says so, a plain add fails with the refusal explained, an add the user allowed runs
 /// with `-c protocol.file.allow=always` and stores no such setting; `.gitmodules` records
 /// the path as typed.
+/// Workflow: SM-04
 #[gitti_test::test]
 fn add_submodule_from_a_local_path_asks_for_the_file_transport() {
     use gitti_core::submodule::add::FilePermission;
@@ -525,6 +532,7 @@ fn nested_status_calls(repo: &Repo) -> usize {
         .count()
 }
 
+/// Workflow: SM-01
 #[gitti_test::test]
 fn nested_dirty_state_comes_from_a_status_in_its_dirty_parent() {
     let fx = setup();
@@ -565,6 +573,7 @@ fn nested_dirty_state_comes_from_a_status_in_its_dirty_parent() {
     assert_eq!(s[1].state, SubmoduleState::UpToDate, "{s:#?}");
 }
 
+/// Workflow: SM-03
 #[gitti_test::test]
 fn update_to_the_remote_branch() {
     let fx = setup();
@@ -585,6 +594,7 @@ fn update_to_the_remote_branch() {
 
 /// A nested submodule's path runs in its parent submodule (git of the top level doesn't
 /// know it).
+/// Workflow: SM-03
 #[gitti_test::test]
 fn update_and_sync_nested_paths() {
     let fx = setup();
@@ -597,6 +607,7 @@ fn update_and_sync_nested_paths() {
     repo.sync_submodules(&["libs/lib/vendor/inner", "libs/lib"]).unwrap();
 }
 
+/// Workflow: SM-05
 #[gitti_test::test]
 fn remove_submodule_warns_about_local_work_and_cleans_up() {
     let fx = setup();
@@ -637,6 +648,7 @@ fn remove_submodule_warns_about_local_work_and_cleans_up() {
     assert!(!config.contains("[submodule"), "{config}");
 }
 
+/// Workflow: SM-05
 #[gitti_test::test]
 fn remove_nested_and_uninitialised_submodules() {
     let fx = setup();
@@ -672,6 +684,7 @@ fn remove_nested_and_uninitialised_submodules() {
 /// "Check Out Commit in Submodule…" — the submodule's history (newest first, with
 /// what is recorded / checked out), the detached checkout, the pointer change it leaves in
 /// the superproject (staged and committed like any file, which records that commit).
+/// Workflow: SM-06
 #[gitti_test::test]
 fn check_out_a_commit_in_the_submodule_records_it() {
     let fx = setup_with(true);
@@ -729,6 +742,7 @@ fn check_out_a_commit_in_the_submodule_records_it() {
 /// uncommitted changes), git's refusal reaching the caller, nested submodules (checked
 /// out in their own repository, the pointer change shows in the parent submodule), and
 /// a clear error for an uninitialised one.
+/// Workflow: SM-06
 #[gitti_test::test]
 fn submodule_checkout_risks_nested_and_uninitialised() {
     let fx = setup();

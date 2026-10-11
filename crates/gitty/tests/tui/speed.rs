@@ -33,6 +33,7 @@ fn hunky_repo() -> tempfile::TempDir {
 /// Two hunks staged: each the operation plus path-limited queries; the watcher's report of
 /// our own index write (debounced, ~0.1 s later: inside the step's settling, or the next
 /// step's) refreshes nothing.
+/// Workflow: ST-18
 #[gitti_test::test]
 fn staging_runs_path_limited_git_and_its_own_writes_refresh_nothing() {
     let dir = hunky_repo();
@@ -50,6 +51,7 @@ fn staging_runs_path_limited_git_and_its_own_writes_refresh_nothing() {
 /// Another program saving one file re-reads that path only (status + diffs limited
 /// to it) — no whole-repository status, refs, remotes; a branch made outside refreshes
 /// everything.
+/// Workflow: EX-01
 #[gitti_test::test]
 fn outside_changes_refresh_only_what_they_touched() {
     let dir = hunky_repo();
@@ -91,6 +93,7 @@ fn prefetching_the_neighbours_is_one_git_show() {
 /// Refs moved outside update the history without reloading it — a commit on the
 /// current branch adds its row on top, a branch made on a loaded commit keeps the rows —
 /// while the working state is read beside it (the new file shows).
+/// Workflow: EX-22
 #[gitti_test::test]
 fn outside_ref_changes_update_the_history_in_place() {
     let dir = support::history_repo_fast(10);
@@ -127,6 +130,7 @@ fn outside_ref_changes_update_the_history_in_place() {
 /// A commit adding a huge file lists it with a "not loaded" note — its path left
 /// out of the commit's `git show` — and `x` loads its diff (one `git show` of it). A huge
 /// binary file says "Binary file (… MB)"; the headers show the size, not `-0 +0`.
+/// Workflow: BN-03
 #[gitti_test::test]
 fn huge_file_in_a_commit_loads_on_demand() {
     let huge: String = (0..60_000).map(|i| format!("generated line {i}, long enough to pass the cap\n")).collect();

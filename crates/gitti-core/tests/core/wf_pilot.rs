@@ -26,6 +26,7 @@ fn line_of(d: &FileDiff, h: usize, text: &str) -> usize {
 
 /// ST-13: the first hunk of `a.txt` and one added line of `b.txt` staged and committed,
 /// then the rest by Stage All.
+/// Workflow: ST-13
 #[gitti_test::test]
 fn st13_split_a_change_into_two_commits() {
     use st::split_into_two_commits as wf;
@@ -49,6 +50,7 @@ fn st13_split_a_change_into_two_commits() {
 }
 
 /// CP-12: the pick is a copy on `main`; merging `feat` later goes through cleanly.
+/// Workflow: CP-12
 #[gitti_test::test]
 fn cp12_pick_then_merge_the_source_branch() {
     use cp::pick_then_merge as wf;
@@ -65,6 +67,7 @@ fn cp12_pick_then_merge_the_source_branch() {
 
 /// CP-13: `main` changed the picked line again; merging `feat` stops with a conflict on
 /// exactly that line.
+/// Workflow: CP-13
 #[gitti_test::test]
 fn cp13_pick_edit_then_merge_conflicts_there() {
     use cp::pick_edit_then_merge as wf;

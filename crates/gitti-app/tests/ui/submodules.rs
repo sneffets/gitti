@@ -180,6 +180,7 @@ fn font_sweep(ui: &mut Ui, ctx: &str, must_show: &[&str]) {
 /// The section lists both submodules (nested one indented after its parent) as up to
 /// date; checking the submodule out at an older commit shows the banner, whose Update
 /// brings it back (and the banner goes); a double click opens the submodule in a tab.
+/// Workflow: SM-01, SM-03
 fn sidebar_banner_update(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let want = ["libs/lib up to date", "libs/lib/vendor/inner up to date"];
@@ -243,6 +244,7 @@ fn sidebar_banner_update(ui: &mut Ui) {
 /// Two new commits in the submodule: the working-directory diff shows the summary and
 /// both commit subjects as `submodule` rows (no hunk / line rows), staging the file moves
 /// it as a whole and runs no submodule command; the layout holds at every font size.
+/// Workflow: SM-02
 fn pointer_diff_rows(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let sub = sup.join("libs/lib");
@@ -326,6 +328,7 @@ fn no_submodules(ui: &mut Ui) {
 /// dialog says so under the fields, OK asks first — what allowing does, what lands in
 /// .gitmodules — and "Allow for This Add" adds it with `-c protocol.file.allow=always`. A
 /// URL gets no note.
+/// Workflow: SM-04
 fn add_local_path_asks(ui: &mut Ui) {
     let dir = workdir(ui);
     let config = dir.join(".git/config");
@@ -391,6 +394,7 @@ fn modal_message(ui: &mut Ui) -> String {
 /// to commit); the diff's menu on the pointer change ends with the submodule's actions
 /// (Remove Submodule… last), whose dialog names the local work that gets lost; removing
 /// stages `.gitmodules` + the pointer and the section goes.
+/// Workflow: SM-01, SM-05
 fn stage2_nested_remote_remove(ui: &mut Ui) {
     let sup = ui.repo.clone();
     // (The submodule's origin: the template's `lib`, shared — this scenario runs last.)
@@ -546,6 +550,7 @@ fn head(p: &Path) -> String {
 /// without the banner offering to undo it; staging + committing the pointer records it
 /// (the sidebar shows recorded → checked out until then); a detached commit nothing else
 /// has makes it ask first.
+/// Workflow: SM-06
 fn checkout_commit(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let sub = sup.join("libs/lib");
@@ -651,6 +656,7 @@ fn checkout_commit(ui: &mut Ui) {
 /// `.git/modules/` (`libs/lib` is on a branch: its branch ref moves; the nested `inner`
 /// is detached: its HEAD): the file watcher sees both and the superproject shows the
 /// new state without a refresh by hand.
+/// Workflow: SM-07
 fn own_commit_is_seen(ui: &mut Ui) {
     let sup = ui.repo.clone();
     let lib = sup.join("libs/lib");

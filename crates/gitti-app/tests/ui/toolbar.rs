@@ -176,6 +176,7 @@ fn is_network(cmd: &str) -> bool {
 /// Push… lists origin (the default remote) first, Set Upstream… while there is none;
 /// choosing origin pushes with -u. The dialog pushes to both remotes under another name
 /// with tags and remembers it.
+/// Workflow: TG-03, RM-08, RM-11
 fn push_steps_and_dialog(ui: &mut Ui) {
     let work = base().join("push_steps_and_dialog").join("work");
     ui.quick("focuslist");
@@ -245,6 +246,7 @@ fn push_steps_and_dialog(ui: &mut Ui) {
 /// -u` asked for an ssh passphrase before the user chose anything); they open the remote
 /// step with Set Upstream…, from the action and the palette alike; the chosen remote gets
 /// `push -u` and becomes the upstream. Detached: a message, no git.
+/// Workflow: RM-08
 fn pull_and_push_without_upstream(ui: &mut Ui) {
     let work = base().join("pull_and_push_without_upstream").join("work");
     ui.quick("focuslist");
@@ -356,6 +358,7 @@ fn pull_and_push_without_upstream(ui: &mut Ui) {
 /// next operation the user starts — any one, a fetch here — clears it too, with the error
 /// in the status bar; Show Error Details still shows it then; a successful pull clears it
 /// as well.
+/// Workflow: RM-16
 fn error_mark(ui: &mut Ui) {
     ui.quick("focuslist");
     ui.step("action:gitti::Pull");
@@ -406,6 +409,7 @@ fn error_mark(ui: &mut Ui) {
 /// After a failed pull every kind of operation clears the warning — Fetch, Fetch from… →
 /// one remote, Push… → a remote — and so does a fetch started while the pull still runs: it
 /// waits for the pull (before: refused as busy, so the pull's warning outlived it).
+/// Workflow: RM-16
 fn warnings_go_with_every_remote_op(ui: &mut Ui) {
     ui.quick("focuslist");
     let fail_pull = |ui: &mut Ui| {
@@ -436,6 +440,7 @@ fn warnings_go_with_every_remote_op(ui: &mut Ui) {
 /// The second half of [`warnings_go_with_every_remote_op`]: a fetch started while a failing
 /// pull still runs waits for it (before: refused as busy, so the pull's warning outlived
 /// it) and clears the warning.
+/// Workflow: RM-16
 fn a_fetch_waits_for_the_pull(ui: &mut Ui) {
     ui.quick("focuslist");
     let cleared = |ui: &mut Ui, what: &str| {
