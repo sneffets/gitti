@@ -75,6 +75,8 @@ pub struct Modal {
     /// was last scrolled into view: Tab to a field out of view scrolls it in.
     field_bounds: std::rc::Rc<std::cell::RefCell<Vec<Option<Bounds<Pixels>>>>>,
     focus_shown: Option<usize>,
+    /// The field the dialog started in, where its focus belongs (`ModalSpec::start_in`).
+    start: usize,
     ok_label: String,
     cancel_label: Option<String>,
     danger: bool,
@@ -166,6 +168,8 @@ pub struct ModalSpec {
     live: Option<LiveFn>,
     extra: Option<(String, ExtraFn)>,
     copy: Option<(String, String)>,
+    /// The field the dialog starts in (`ModalSpec::start_in`).
+    start: usize,
 }
 
 impl ModalSpec {
@@ -189,7 +193,14 @@ impl ModalSpec {
             live: None,
             extra: None,
             copy: None,
+            start: 0,
         }
+    }
+
+    /// The dialog starts in field `field` instead of the first.
+    pub fn start_in(mut self, field: usize) -> Self {
+        self.start = field;
+        self
     }
 
     /// A button (`label`, leftmost) that copies `text` to the clipboard; the dialog stays
@@ -400,10 +411,11 @@ impl Modal {
         self.has_focus(window, cx) || self.focus.contains_focused(window, cx)
     }
 
-    /// Where the focus belongs in the dialog: its first field, else its editable text,
-    /// else the dialog itself (`open_modal_full` / `show_edit_modal` focus the same).
+    /// Where the focus belongs in the dialog: the field it started in (its first unless
+    /// `ModalSpec::start_in`), else its editable text, else the dialog itself
+    /// (`open_modal_full` / `show_edit_modal` focus the same).
     pub(super) fn home_focus(&self, cx: &App) -> FocusHandle {
-        match (self.fields.first(), &self.text) {
+        match (self.fields.get(self.start).or(self.fields.first()), &self.text) {
             (Some((_, f)), _) => f.read(cx).focus_handle(cx),
             (None, Some(t)) if !self.viewer => t.read(cx).focus_handle(cx),
             _ => self.focus.clone(),
@@ -497,13 +509,14 @@ impl GittiApp {
             .map(|&ix| SpellTarget::ModalField(ix))
             .collect();
         let focus = cx.focus_handle();
-        match fields.first() {
+        let start = if spec.start < fields.len() { spec.start } else { 0 };
+        match fields.get(start) {
             Some((_, first)) => first.update(cx, |s, cx| s.focus(window, cx)),
             None => focus.focus(window, cx),
         }
         // The first field has the focus and stays where it is: a long message above it is
-        // read first.
-        let focus_shown = (!fields.is_empty()).then_some(0);
+        // read first. A later start field is scrolled into view if it isn't.
+        let focus_shown = (!fields.is_empty() && start == 0).then_some(0);
         self.modal = Some(Modal {
             secret: any_secret,
             title: spec.title,
@@ -516,6 +529,7 @@ impl GittiApp {
             body_scroll: ScrollHandle::new(),
             field_bounds: Default::default(),
             focus_shown,
+            start,
             ok_label: spec.ok_label,
             cancel_label: spec.cancel_label,
             danger: spec.danger,

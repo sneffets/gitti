@@ -848,6 +848,13 @@ pub mod testing {
         out
     }
 
+    /// The active tab's file watcher has reported `path` (relative to the work tree).
+    pub fn watch_seen(ws: &Entity<Workspace>, path: &str, cx: &App) -> bool {
+        ws.read(cx)
+            .active_app()
+            .is_some_and(|app| app.read(cx).script_watch_seen(path))
+    }
+
     /// The active tab's file watcher has its watches in place: an outside change from now
     /// on is seen.
     pub fn watcher_armed(ws: &Entity<Workspace>, cx: &App) -> bool {

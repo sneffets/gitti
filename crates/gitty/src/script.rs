@@ -5,7 +5,9 @@
 //! one that closes by itself; at most 5 s), `until:TEXT` (until the screen shows TEXT — a
 //! running operation's progress, instead of a guessed sleep; at most 5 s), `watched` /
 //! `watched:PATH` (until the file watcher reports a change — of PATH, a path relative to the
-//! work tree — after a `write:`, then as `wait`; at most 5 s), `key:SPEC` (e.g. `j`, `S`, `enter`,
+//! work tree — after a `write:`, then as `wait`; at most 5 s), `seen:PATH` (until the file
+//! watcher has reported PATH at any time in this run — also during an earlier step, e.g.
+//! the echo of the app's own deletion —, then as `wait`; an error after 5 s), `key:SPEC` (e.g. `j`, `S`, `enter`,
 //! `esc`, `tab`, `space`, `ctrl-p`, `alt-down`, `shift-up`, `f5`), `press:SPEC` (a key
 //! without waiting for the jobs it starts — e.g. Esc on a running operation), `type:TEXT`,
 //! `click:X,Y`, `rclick:X,Y`, `pressclick:X,Y` (a left click without waiting for the jobs
@@ -51,6 +53,17 @@ use crate::modal::Modal;
 
 /// The step a scripted run is at, for [`watchdog`].
 static STEP: Mutex<String> = Mutex::new(String::new());
+
+/// The paths the file watcher reported in this run (`seen:`).
+static FS_SEEN: Mutex<Vec<std::path::PathBuf>> = Mutex::new(Vec::new());
+
+/// Hands `msg` to the app, noting what the file watcher reported.
+fn handle(app: &mut App, msg: Msg) {
+    if let Msg::Fs(change) = &msg {
+        FS_SEEN.lock().unwrap().extend(change.paths.iter().map(|(p, _)| p.clone()));
+    }
+    app.handle(msg);
+}
 
 /// Ends the process when the run takes longer than its limit (see the module docs).
 fn watchdog() {
@@ -120,11 +133,22 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                             }
                             _ => false,
                         };
-                        app.handle(msg);
+                        handle(app, msg);
                         if fs {
                             break;
                         }
                     }
+                }
+                settle(app, &rx, &mut term, Duration::from_secs(20))?;
+            }
+            "seen" => {
+                let until = Instant::now() + Duration::from_secs(5);
+                let seen = || FS_SEEN.lock().unwrap().iter().any(|p| p.ends_with(arg));
+                while !seen() {
+                    if Instant::now() >= until {
+                        return Err(anyhow!("the file watcher did not report {arg} within 5 s"));
+                    }
+                    pump(app, &rx, Duration::from_millis(10));
                 }
                 settle(app, &rx, &mut term, Duration::from_secs(20))?;
             }
@@ -386,10 +410,10 @@ fn pump(app: &mut App, rx: &Receiver<Msg>, wait: Duration) -> bool {
     match rx.recv_timeout(wait) {
         Ok(msg) => {
             let mut active = !matches!(msg, Msg::Tick | Msg::DraftDue | Msg::DetailSlow(_));
-            app.handle(msg);
+            handle(app, msg);
             while let Ok(msg) = rx.try_recv() {
                 active |= !matches!(msg, Msg::Tick | Msg::DraftDue | Msg::DetailSlow(_));
-                app.handle(msg);
+                handle(app, msg);
             }
             active
         }

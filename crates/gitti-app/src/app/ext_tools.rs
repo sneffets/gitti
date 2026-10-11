@@ -333,6 +333,7 @@ impl GittiApp {
             )
             .field(tool_setup::DIFF_FIELD, init.diff.clone())
             .field(tool_setup::MERGE_FIELD, init.merge.clone())
+            .start_in(tool_setup::start_field(need))
             .check(tool_setup::KEEP_BACKUP_LABEL, init.keep_backup)
             .check(tool_setup::KEEP_TEMPORARIES_LABEL, init.keep_temporaries)
             .ok(if then.is_some() { "Save and Open" } else { "Save" })

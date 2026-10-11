@@ -213,6 +213,7 @@ impl App {
             },
         )
         .with_note(intro)
+        .with_focus(tool_setup::start_field(need))
         .with_live(move |values, checks| {
             let c = choice(values, checks);
             let ch = &live_choices;

@@ -177,6 +177,26 @@ impl WatchFilter {
             .extend(paths.iter().map(|p| (p.clone(), started)));
     }
 
+    /// The whole working state was read, starting at `started` (`Instant`, wall clock) — by
+    /// an operation of ours or a path-limited read that fell back to all of it: what
+    /// changed before is covered, as after [`Self::read_started`].
+    pub fn working_read(&mut self, started: (Instant, SystemTime)) {
+        if self.working_read.is_some_and(|(at, _)| at >= started.0) {
+            return;
+        }
+        self.working_read = Some(started);
+        self.path_reads.retain(|(_, wall)| *wall > started.1);
+    }
+
+    /// A re-read of ours ([`crate::Repo::working_state_reread`]) that started at
+    /// `started` read `scope`.
+    pub fn reread(&mut self, scope: &crate::ReadScope, started: (Instant, SystemTime)) {
+        match scope {
+            crate::ReadScope::Whole => self.working_read(started),
+            crate::ReadScope::Paths(paths) => self.paths_read(paths, started.1),
+        }
+    }
+
     /// The index as our own operation left it (its touched paths were re-read).
     pub fn own_index(&mut self, stamp: Option<IndexStamp>) {
         self.own_index = stamp;
@@ -1210,6 +1230,41 @@ mod tests {
         std::fs::write(d.join("wt-head"), "y").unwrap();
         assert_eq!(f.needs(&change(d, &[("wt-head", Worktrees)], late), || stamp), Some(Snapshot));
         assert_eq!(f.needs(&change(d, &[("wt-head", Rules)], late), || stamp), Some(Snapshot));
+    }
+
+    /// A whole working-state read of ours (an operation's re-read that fell back to all of
+    /// it) covers the folders the operation deleted, reported after it — also in a later
+    /// batch; a path read of the files in them alone doesn't, a read of the folders does.
+    /// An older whole read doesn't move the mark back.
+    /// Workflow: DC-04
+    #[gitti_test::test]
+    fn our_whole_reread_covers_deleted_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("t/d0")).unwrap();
+        std::fs::write(d.join("t/d0/f.o"), "x").unwrap();
+        let before = (Instant::now(), SystemTime::now());
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::remove_file(d.join("t/d0/f.o")).unwrap();
+        std::fs::remove_dir(d.join("t/d0")).unwrap();
+        std::fs::remove_dir(d.join("t")).unwrap();
+        let started = (Instant::now(), SystemTime::now());
+        let late = Instant::now() + Duration::from_millis(5);
+        let gone = [("t/d0/f.o", wt("t/d0/f.o")), ("t/d0", wt("t/d0")), ("t", wt("t"))];
+        let mut f = WatchFilter::default();
+        f.working_read(before);
+        f.reread(&crate::ReadScope::Paths(vec!["t/d0/f.o".into()]), started);
+        assert_eq!(f.needs(&change(d, &gone, late), || None), paths(&["t", "t/d0"]));
+        f.reread(&crate::ReadScope::Paths(vec!["t/d0/f.o".into(), "t/d0".into(), "t".into()]), started);
+        assert_eq!(f.needs(&change(d, &gone, late), || None), None);
+        let mut f = WatchFilter::default();
+        f.working_read(before);
+        assert_eq!(f.needs(&change(d, &gone[1..], late), || None), paths(&["t", "t/d0"]));
+        f.reread(&crate::ReadScope::Whole, started);
+        assert_eq!(f.needs(&change(d, &gone[..1], late), || None), None);
+        assert_eq!(f.needs(&change(d, &gone[1..], late), || None), None, "a later batch");
+        f.working_read(before);
+        assert_eq!(f.needs(&change(d, &gone, late), || None), None, "kept the later read");
     }
 
     /// A file written after the read started but with an old modification time (`cp -p`,

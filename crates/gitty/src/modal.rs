@@ -501,6 +501,16 @@ impl Modal {
         }
     }
 
+    /// An input dialog that starts in field `ix` instead of the first.
+    pub fn with_focus(mut self, ix: usize) -> Self {
+        if let Modal::Input { fields, focus, .. } = &mut self
+            && ix < fields.len()
+        {
+            *focus = ix;
+        }
+        self
+    }
+
     /// An input dialog with `text` above its fields (paragraphs split by blank lines).
     pub fn with_note(mut self, text: impl Into<String>) -> Self {
         if let Modal::Input { note, .. } = &mut self {

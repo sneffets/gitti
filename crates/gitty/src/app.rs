@@ -121,22 +121,22 @@ pub enum Msg {
         stale: Option<gitti_core::lock::StaleLock>,
     },
     /// A stage / unstage / discard finished: its result, the working state re-read for
-    /// `paths` (`None`: all of it) and those files' highlights.
+    /// its paths (`scope`) and those files' highlights.
     WorkDone {
         label: String,
         /// `Some(note)`: what the status line says besides success.
         result: Result<Option<String>>,
         working: Result<WorkingState>,
         highlights: Option<HashMap<(Src, String), FileHighlight>>,
-        paths: Option<Vec<String>>,
-        /// The files `paths` cover before and after (`gitti_core::touched_files`): their
+        /// The files the operation's paths cover before and after (`gitti_core::touched_files`): their
         /// highlights are the new ones.
         touched: Option<Vec<String>>,
         /// The index as the operation left it (see `WatchFilter::own_index`).
         index: Option<gitti_core::watch::IndexStamp>,
         stale: Option<gitti_core::lock::StaleLock>,
-        /// When the re-read of `paths` started.
-        read_at: std::time::SystemTime,
+        /// When the re-read started and what it read (`WatchFilter::reread`).
+        read: (std::time::Instant, std::time::SystemTime),
+        scope: gitti_core::ReadScope,
     },
     /// Redraw (time-based display like the delayed busy label).
     Tick,
@@ -1278,20 +1278,22 @@ impl App {
                 result,
                 working,
                 highlights,
-                paths,
                 touched,
                 index,
                 stale,
-                read_at,
+                read,
+                scope,
             } => {
                 self.busy = None;
                 self.op_output = None;
                 let cancelled = self.op_cancel.take().is_some_and(|t| t.is_cancelled());
                 self.working_gen += 1;
                 self.watch_filter.own_index(index);
-                // Our own writes to those files (discard) are read already.
-                if let (Some(p), Ok(_)) = (&paths, &working) {
-                    self.watch_filter.paths_read(p, read_at);
+                // Our own writes to those files (discard) are read already — also the
+                // folders a discard left empty and deleted, and everything where the
+                // re-read took the whole working state.
+                if working.is_ok() {
+                    self.watch_filter.reread(&scope, read);
                 }
                 match result {
                     Ok(note) => {
@@ -2491,10 +2493,13 @@ impl App {
                 let stale = (result.as_ref().err())
                     .and_then(|e| gitti_core::lock::stale_lock(e, repo.workdir()));
                 let index = repo.index_stamp();
-                let read_at = std::time::SystemTime::now();
-                let working = match &paths {
-                    Some(p) => repo.working_state_after(&opts, &prev, p),
-                    None => repo.working_state_with(&opts),
+                let read = (std::time::Instant::now(), std::time::SystemTime::now());
+                let (working, scope) = match &paths {
+                    Some(p) => match repo.working_state_reread(&opts, &prev, p) {
+                        Ok((w, scope)) => (Ok(w), scope),
+                        Err(e) => (Err(e), gitti_core::ReadScope::Whole),
+                    },
+                    None => (repo.working_state_with(&opts), gitti_core::ReadScope::Whole),
                 };
                 // A folder stands for the files below it (a restored folder): those are
                 // highlighted again.
@@ -2509,18 +2514,18 @@ impl App {
                     }
                     _ => None,
                 };
-                (label, result, working, highlights, (paths, touched), (index, stale), read_at)
+                (label, result, working, highlights, touched, (index, stale), (read, scope))
             },
-            |(label, result, working, highlights, (paths, touched), (index, stale), read_at)| Msg::WorkDone {
+            |(label, result, working, highlights, touched, (index, stale), (read, scope))| Msg::WorkDone {
                 label,
                 result,
                 working,
                 highlights,
-                paths,
                 touched,
                 index,
                 stale,
-                read_at,
+                read,
+                scope,
             },
         );
     }

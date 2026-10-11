@@ -41,6 +41,16 @@ pub const BACKUPS_NOTE: &str = "Backups: after a tool merged a file, git keeps t
 /// What the fill-in buttons / ctrl-n lists are.
 pub const FILLS_LABEL: &str = "Installed:";
 
+/// The field the dialog starts in — its fields are [`DIFF_FIELD`] (0), then
+/// [`MERGE_FIELD`] (1): the merge tool's when it was opened for a merge (the first
+/// "Installed" fill then sets `merge.tool`), else the diff tool's.
+pub fn start_field(need: Option<ToolKind>) -> usize {
+    match need {
+        Some(ToolKind::Merge) => 1,
+        Some(ToolKind::Diff) | None => 0,
+    }
+}
+
 const KEEP_BACKUP: &str = "mergetool.keepBackup";
 const KEEP_TEMPORARIES: &str = "mergetool.keepTemporaries";
 

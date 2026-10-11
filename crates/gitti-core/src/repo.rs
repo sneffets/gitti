@@ -252,6 +252,15 @@ fn folds_untracked(part: &Status, prev: &Status, paths: &[String]) -> bool {
 /// More paths than this are re-read with a full status instead of a pathspec list.
 const PATHSPEC_LIMIT: usize = 64;
 
+/// What a re-read of the working state read ([`Repo::working_state_reread`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadScope {
+    /// All of it.
+    Whole,
+    /// These paths (a folder: everything below it).
+    Paths(Vec<String>),
+}
+
 const UNTRACKED_PREVIEW_LIMIT: usize = 200;
 const UNTRACKED_PREVIEW_MAX_BYTES: u64 = 1024 * 1024;
 
@@ -927,6 +936,17 @@ impl Repo {
         prev: &WorkingState,
         paths: &[String],
     ) -> Result<WorkingState> {
+        self.working_after_noting(opts, prev, paths, &mut false)
+    }
+
+    /// [`Self::working_state_after`]; `whole` set when it read the whole working state.
+    fn working_after_noting(
+        &self,
+        opts: &DiffOptions,
+        prev: &WorkingState,
+        paths: &[String],
+        whole: &mut bool,
+    ) -> Result<WorkingState> {
         let set: HashSet<&str> = paths.iter().map(String::as_str).collect();
         let touched = Touched(&set);
         let renamed = |e: &StatusEntry| {
@@ -934,12 +954,14 @@ impl Repo {
                 || (e.orig_path.is_some() && touched.contains(e.path.as_str()))
         };
         if paths.len() > PATHSPEC_LIMIT || prev.status.entries.iter().any(renamed) {
+            *whole = true;
             return self.read_working(opts, None);
         }
         let part = self.read_working(opts, Some(paths))?;
         if part.status.entries.iter().any(|e| e.orig_path.is_some())
             || folds_untracked(&part.status, &prev.status, paths)
         {
+            *whole = true;
             return self.read_working(opts, None);
         }
         let keep = |f: &WorkFile| !touched.contains(f.path());
@@ -991,6 +1013,38 @@ impl Repo {
                 v
             },
         })
+    }
+
+    /// [`Self::working_state_after`] for the file watcher's filter
+    /// ([`crate::watch::WatchFilter::reread`]): also re-reads the folders of `paths` that
+    /// are gone now (an operation deleted the last files in them; the watcher reports
+    /// the folders too, after the files), and says what it read — those paths, or the
+    /// whole working state where it fell back to that.
+    pub fn working_state_reread(
+        &self,
+        opts: &DiffOptions,
+        prev: &WorkingState,
+        paths: &[String],
+    ) -> Result<(WorkingState, ReadScope)> {
+        let mut all: Vec<String> = paths.to_vec();
+        let mut seen: HashSet<String> = paths.iter().map(|p| p.trim_end_matches('/').to_string()).collect();
+        for p in paths {
+            let mut rel = p.trim_end_matches('/');
+            while let Some((dir, _)) = rel.rsplit_once('/') {
+                if seen.contains(dir)
+                    || crate::paths::join_repo_path(&self.workdir, dir).symlink_metadata().is_ok()
+                {
+                    break;
+                }
+                seen.insert(dir.to_string());
+                all.push(dir.to_string());
+                rel = dir;
+            }
+        }
+        let mut whole = false;
+        let working = self.working_after_noting(opts, prev, &all, &mut whole)?;
+        let scope = if whole { ReadScope::Whole } else { ReadScope::Paths(all) };
+        Ok((working, scope))
     }
 
     /// Status + diffs (all of them, or limited to `paths`), the git calls in parallel.

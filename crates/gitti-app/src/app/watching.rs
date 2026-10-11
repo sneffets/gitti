@@ -2,7 +2,7 @@
 //! files re-reads just those paths, the index or worktree metadata the working state, refs
 //! everything (`gitti_core::watch::WatchFilter::needs`).
 
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use gitti_core::watch::{Change, Refresh};
 use gpui_kit::*;
@@ -32,6 +32,12 @@ impl GittiApp {
         cx.spawn_in(window, async move |this, cx| {
             while let Ok(change) = rx.recv().await {
                 let alive = this.update_in(cx, |this, window, cx| {
+                    if crate::probe::enabled() {
+                        if this.watch_seen.len() > 4096 {
+                            this.watch_seen.clear();
+                        }
+                        this.watch_seen.extend(change.paths.iter().map(|(p, _)| p.clone()));
+                    }
                     this.watch_ready |= change.armed;
                     if change.armed && std::mem::take(&mut this.first_read_pending) {
                         this.refresh(true, window, cx);
@@ -125,33 +131,33 @@ impl GittiApp {
             .then(|| self.hl_cache.clone());
         let prev_subs = self.submodules.clone();
         let task = cx.background_executor().spawn(async move {
-            let started = SystemTime::now();
-            let working = repo.working_state_after(&opts, &prev, &paths);
+            let started = (Instant::now(), SystemTime::now());
+            let working = repo.working_state_reread(&opts, &prev, &paths);
             // A directory stands for the files below it: those are highlighted again.
             let touched = working
                 .as_ref()
                 .ok()
-                .map(|w| gitti_core::touched_files(&prev, w, &paths));
+                .map(|(w, _)| gitti_core::touched_files(&prev, w, &paths));
             let styles = match (&working, &touched, cache) {
-                (Ok(w), Some(t), Some(cache)) => highlighting::highlight_paths(&repo, w, t, &cache),
+                (Ok((w, _)), Some(t), Some(cache)) => highlighting::highlight_paths(&repo, w, t, &cache),
                 _ => None,
             };
             let subs = working
                 .as_ref()
                 .ok()
-                .map(|w| repo.submodules_after(&w.status, &prev_subs));
-            (working, styles, touched, subs, started, paths, opts)
+                .map(|(w, _)| repo.submodules_after(&w.status, &prev_subs));
+            (working, styles, touched, subs, started, opts)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (working, styles, touched, subs, started, paths, read_with) = task.await;
+            let (working, styles, touched, subs, started, read_with) = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.paths_in_flight = false;
                 let current = this.working_generation == generation
                     && this.settings.diff_options() == read_with;
                 match working {
-                    Ok(w) if current => {
+                    Ok((w, scope)) if current => {
                         this.working_generation += 1;
-                        this.watch_filter.paths_read(&paths, started);
+                        this.watch_filter.reread(&scope, started);
                         if let Some(subs) = subs {
                             this.submodules = subs;
                         }

@@ -77,8 +77,9 @@ fn discard_all(ui: &mut Ui, title: &str, detail: &str) {
 }
 
 /// DC-04: Discard All with 1 000 untracked files in a build folder: the question counts
-/// them and says ignored files stay; one go — no `git clean`, the files deleted in-process
-/// — and nothing left listed; the ignored file stays.
+/// them and says ignored files stay; one go — no `git clean`, the files deleted in-process,
+/// the file watcher's echo of it re-reads nothing — and nothing left listed; the ignored
+/// file stays.
 /// Workflow: DC-04
 fn dc04_discard_thousands_of_untracked_files(ui: &mut Ui) {
     use dc::thousands_of_untracked as wf;
@@ -93,11 +94,27 @@ fn dc04_discard_thousands_of_untracked_files(ui: &mut Ui) {
         &format!("Discard all unstaged changes in {} file(s)?", wf::UNTRACKED + 1),
         &format!("{} untracked files will be deleted (ignored files stay)", wf::UNTRACKED),
     );
+    // The file watcher's echo of the deletions (the emptied folders last, then the
+    // restored a.txt) has come before the commands are counted.
+    let ws = ui.ws.clone();
+    let echoed = ui.wait_real(5000, |ui| {
+        ui.is_idle()
+            && ui.cx.update(|cx| {
+                testing::watch_seen(&ws, "target/debug", cx) && testing::watch_seen(&ws, "a.txt", cx)
+            })
+    });
+    if !echoed {
+        fail!(ui, "the file watcher did not report target/debug and a.txt within 5 s");
+    }
+    ui.settle();
     let ran = ui.git_since(before);
     // One go: one `git restore` for the tracked file, the untracked files deleted
-    // in-process (no `git clean`, nothing per file), then the re-read.
-    let restores = ran.iter().filter(|c| c.starts_with("restore")).count();
-    if restores != 1 || ran.iter().any(|c| c.starts_with("clean")) || ran.len() >= 10 {
+    // in-process (no `git clean`, nothing per file), then the re-read (status and both
+    // diffs) — and nothing for the watcher's echo of the deletions: the re-read covers
+    // them (the same four as gitty).
+    let mut kinds: Vec<&str> = ran.iter().map(|c| c.split(' ').next().unwrap_or_default()).collect();
+    kinds.sort();
+    if kinds != ["diff", "diff", "restore", "status"] {
         fail!(ui, "Discard All ran {} git commands: {ran:?}", ran.len());
     }
     let s = ui.ui_state();
