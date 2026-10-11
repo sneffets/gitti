@@ -813,6 +813,14 @@ pub mod testing {
         out
     }
 
+    /// The active tab's file watcher has its watches in place: an outside change from now
+    /// on is seen.
+    pub fn watcher_armed(ws: &Entity<Workspace>, cx: &App) -> bool {
+        ws.read(cx)
+            .active_app()
+            .is_some_and(|app| app.read(cx).script_watcher_armed())
+    }
+
     /// No operation, refresh or reload of the active tab is running or queued (true without
     /// a repository tab).
     pub fn idle(ws: &Entity<Workspace>, cx: &App) -> bool {

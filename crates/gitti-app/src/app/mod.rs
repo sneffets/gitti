@@ -3225,6 +3225,11 @@ impl GittiApp {
         (self.history.commits.len(), format!("{:?}", self.history.load))
     }
 
+    /// The file watcher's watches are in place (tests).
+    pub fn script_watcher_armed(&self) -> bool {
+        self._watcher.as_ref().is_some_and(|w| w.is_armed())
+    }
+
     pub fn script_idle(&self) -> bool {
         self.busy.is_none()
             && !self.refresh_in_flight

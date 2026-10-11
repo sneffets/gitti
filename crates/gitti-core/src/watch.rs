@@ -15,6 +15,8 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -27,6 +29,16 @@ use crate::git_cli::Git;
 /// Keeps the watcher alive; drop it to stop watching.
 pub struct RepoWatcher {
     stop: Sender<Ev>,
+    armed: Arc<AtomicBool>,
+}
+
+impl RepoWatcher {
+    /// The watches are in place: changes from now on are reported. On Linux what changed
+    /// since [`watch`] was called is found by its mtime; with a recursive OS watch (macOS,
+    /// Windows) a change before this point is not seen.
+    pub fn is_armed(&self) -> bool {
+        self.armed.load(Ordering::Acquire)
+    }
 }
 
 impl Drop for RepoWatcher {
@@ -316,6 +328,8 @@ pub fn watch(workdir: &Path, on_change: impl Fn(Change) + Send + 'static) -> Res
         }
     })?;
     let workdir = workdir.to_path_buf();
+    let armed = Arc::new(AtomicBool::new(false));
+    let armed_flag = armed.clone();
     std::thread::Builder::new()
         .name("gitti-watch".into())
         .spawn(move || {
@@ -328,14 +342,21 @@ pub fn watch(workdir: &Path, on_change: impl Fn(Change) + Send + 'static) -> Res
                 watched: HashSet::new(),
                 limited: false,
             };
-            run(tree, since, rx, on_change)
+            run(tree, since, rx, &armed_flag, on_change)
         })?;
-    Ok(RepoWatcher { stop: tx })
+    Ok(RepoWatcher { stop: tx, armed })
 }
 
-fn run(mut tree: Tree, since: SystemTime, rx: Receiver<Ev>, on_change: impl Fn(Change)) {
+fn run(
+    mut tree: Tree,
+    since: SystemTime,
+    rx: Receiver<Ev>,
+    armed: &AtomicBool,
+    on_change: impl Fn(Change),
+) {
     let t0 = Instant::now();
     let setup = tree.setup(since);
+    armed.store(true, Ordering::Release);
     if std::env::var_os("GITTI_PROFILE").is_some() {
         eprintln!(
             "[profile] watcher setup: {} dirs watched in {:?}{}",
