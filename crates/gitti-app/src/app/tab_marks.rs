@@ -1,6 +1,7 @@
 //! The mark right of a repository tab's name (`gitti_core::tab_marks`): a filled circle
 //! while the working tree has uncommitted changes, else a hollow one while the branch has
-//! commits that are not pushed; the tooltip names both when both hold. The sidebar's
+//! commits that are not pushed; the circle's tooltip names both when both hold, the tab's
+//! tooltip says the same under the folder, each line behind the glyph it explains. The sidebar's
 //! worktree entries carry the same mark.
 //!
 //! One source for all of them: the app-wide [`SharedMarks`] (a `MarksStore` keyed by the
@@ -79,18 +80,19 @@ impl TabMarks {
         self.marks.mark()
     }
 
-    pub fn any(&self) -> bool {
-        self.mark().is_some()
-    }
-
     /// The mark as text ("●", "○"; empty without one): the tab list menu, tests.
     pub fn glyphs(&self) -> &'static str {
         self.mark().map_or("", Mark::glyph)
     }
 
-    /// What they mean, one line each (the tooltip).
+    /// What they mean, one line each (the circle's tooltip).
     pub fn describe(&self) -> String {
         self.marks.describe()
+    }
+
+    /// What they mean behind their glyphs, one line each (the tab's tooltip).
+    pub fn legend(&self) -> String {
+        self.marks.legend()
     }
 
     /// The circle of tab `ix` (probes `tab-marks:N` and `tab-dirty:N` or `tab-unpushed:N`),

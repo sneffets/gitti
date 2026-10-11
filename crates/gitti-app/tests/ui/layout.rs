@@ -43,6 +43,8 @@ pub fn main() {
         ("spell_marks", spell_marks),
         ("panes_restore_after_resize", panes_restore_after_resize),
         ("panes_first_frame_after_resize", panes_first_frame_after_resize),
+        ("panes_drag_edges", panes_drag_edges),
+        ("sidebar_minimum_width", sidebar_minimum_width),
         ("worktree_sweep", worktree_sweep),
         ("file_tabs_sweep", file_tabs_sweep),
         ("repo_tabs_reorder_and_list", repo_tabs_reorder_and_list),
@@ -843,6 +845,196 @@ fn panes_first_frame_after_resize(ui: &mut Ui) {
     ui.step("action:gitti::ToggleGitLog");
 }
 
+/// Dragging the sidebar's right edge moves the commit list: it keeps its width in every
+/// frame of the drag, the detail gives way (wider and narrower). Dragging the list's right
+/// edge resizes it. The stored fractions are those of the panes drawn (shared with gitty:
+/// the list's share of the whole row); Toggle Sidebar keeps working.
+fn panes_drag_edges(ui: &mut Ui) {
+    use gitti_core::store::{PaneLayout, load_settings};
+    let widths = |p: &[Probe]| -> Option<[f32; 3]> {
+        let w = |n: &str| find(p, n).map(|q| f32::from(q.bounds.size.width));
+        Some([w("sidebar")?, w("commit-list")?, w("detail")?])
+    };
+    let Some(start) = widths(&ui.check("before")) else {
+        ui.fail("panes missing".into());
+        return;
+    };
+    let total: f32 = start.iter().sum();
+    // (pane dragged: 0 = the sidebar's edge, 1 = the list's; by; widths expected after)
+    let [s0, l0, d0] = start;
+    let drags: [(usize, f32, [f32; 3]); 3] = [
+        (0, 90., [s0 + 90., l0, d0 - 90.]),
+        (0, -150., [s0 - 60., l0, d0 + 60.]),
+        (1, -100., [s0 - 60., l0 - 100., d0 + 160.]),
+    ];
+    for (edge, by, want) in drags {
+        let p = ui.check("before the drag");
+        let Some(now) = widths(&p) else { return };
+        let name = if edge == 0 { "sidebar" } else { "commit-list" };
+        let Some(b) = find(&p, name).map(|q| q.bounds) else { return };
+        let from = point(b.right(), b.center().y);
+        let ctx = format!("{name}'s edge by {by}");
+        let frames = drag_by(ui, from, by);
+        for (k, f) in frames.iter().enumerate() {
+            for e in testing::check(f) {
+                ui.fail(format!("{ctx}: frame {k}: {e}"));
+            }
+            // No frame draws the list at another width while the sidebar's edge moves.
+            match widths(f) {
+                Some(w) if edge == 1 || (w[1] - now[1]).abs() < 1. => {}
+                other => ui.fail(format!("{ctx}: frame {k} has panes {other:?}, list {}", now[1])),
+            }
+        }
+        let after = widths(&ui.check(&ctx));
+        match after {
+            Some(w) if w.iter().zip(&want).all(|(a, b)| (a - b).abs() < 1.5) => {}
+            other => ui.fail(format!("{ctx}: panes {other:?}, want {want:?}")),
+        }
+        let stored = load_settings::<PaneLayout>();
+        let got = [stored.pane_sidebar * total, stored.pane_list * total];
+        if (got[0] - want[0]).abs() > 1.5 || (got[1] - want[1]).abs() > 1.5 {
+            ui.fail(format!("{ctx}: stored sidebar / list {got:?}, want {want:?}"));
+        }
+    }
+    // Toggle Sidebar: the list keeps its share of the whole row.
+    ui.step("action:gitti::ToggleSidebar");
+    let hidden = widths(&ui.check("sidebar hidden"));
+    let list = find(&ui.frame(), "commit-list").map(|q| f32::from(q.bounds.size.width));
+    if hidden.is_some() || list.is_none_or(|l| (l - (l0 - 100.)).abs() > 1.5) {
+        ui.fail(format!("sidebar hidden: list {list:?}, want {}", l0 - 100.));
+    }
+    ui.step("action:gitti::ToggleSidebar");
+    match widths(&ui.check("sidebar shown")) {
+        Some(w) if (w[0] - (s0 - 60.)).abs() < 1.5 && (w[1] - (l0 - 100.)).abs() < 1.5 => {}
+        other => ui.fail(format!("sidebar shown again: {other:?}")),
+    }
+    let unset = PaneLayout::default();
+    gitti_core::store::save_changed_settings(&load_settings::<PaneLayout>(), &unset);
+}
+
+/// Presses at `from`, moves `by` px right (negative: left) in three steps, releases; a
+/// frame or two after each event. Returns those frames (then settles).
+fn drag_by(ui: &mut Ui, from: Point<Pixels>, by: f32) -> Vec<Vec<Probe>> {
+    testing::clear_probes();
+    let mut frames = Vec::new();
+    let steps = [(Some(true), 0.), (None, by / 3.), (None, by * 2. / 3.), (None, by), (Some(false), by)];
+    for (down, dx) in steps {
+        ui.cx
+            .update_window(ui.window, |_, window, cx| {
+                let position = point(from.x + px(dx), from.y);
+                let event = match down {
+                    Some(true) => PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    Some(false) => PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    }),
+                    None => PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Modifiers::default(),
+                    }),
+                };
+                window.dispatch_event(event, cx);
+            })
+            .unwrap();
+        for _ in 0..2 {
+            ui.cx.executor().advance_clock(std::time::Duration::from_millis(20));
+            ui.cx.run_until_parked();
+            ui.render();
+        }
+        frames.extend(testing::take_frames());
+    }
+    ui.settle();
+    frames
+}
+
+/// The sidebar drags down to a strip about three characters of the UI font wide (default
+/// and biggest fonts): it shows the sections' initials only — no entry cut in the middle,
+/// every frame of the drag keeps the invariants —, its edge still drags it back wide (names
+/// again). The width is stored and a new window starts with it; a smaller window keeps it
+/// at least that wide.
+fn sidebar_minimum_width(ui: &mut Ui) {
+    use gitti_core::store::{PaneLayout, load_settings, save_changed_settings};
+    let side = |ui: &mut Ui| find(&ui.frame(), "sidebar").map(|q| q.bounds);
+    for (font_ui, font_diff) in fonts() {
+        ui.step(&format!("fonts:{font_ui},{font_diff}"));
+        let min = (font_ui * 2.).round();
+        let ctx = format!("fonts {font_ui}/{font_diff}");
+        let Some(b) = side(ui) else {
+            ui.fail(format!("{ctx}: no sidebar"));
+            return;
+        };
+        let from = point(b.right(), b.center().y);
+        for (k, f) in drag_by(ui, from, -f32::from(b.right())).iter().enumerate() {
+            for e in testing::check(f) {
+                ui.fail(format!("{ctx}: drag frame {k}: {e}"));
+            }
+        }
+        let p = ui.check(&format!("{ctx}, narrowest"));
+        let vis = |n: &str| p.iter().filter(|q| q.name.starts_with(n) && q.visible().is_some()).count();
+        match find(&p, "sidebar").map(|q| f32::from(q.bounds.size.width)) {
+            Some(w) if (w - min).abs() < 1. => {}
+            other => ui.fail(format!("{ctx}: narrowest sidebar {other:?}, want {min}")),
+        }
+        if vis("side-section:") < 4 || vis("side:") > 0 {
+            ui.fail(format!(
+                "{ctx}: a strip shows the sections' initials only: {} sections, {} entries",
+                vis("side-section:"),
+                vis("side:")
+            ));
+        }
+        let stored = load_settings::<PaneLayout>().pane_sidebar;
+        let total: f32 = ["sidebar", "commit-list", "detail"]
+            .iter()
+            .filter_map(|n| find(&p, n).map(|q| f32::from(q.bounds.size.width)))
+            .sum();
+        if (stored * total - min).abs() > 1.5 {
+            ui.fail(format!("{ctx}: stored sidebar {stored} of {total}, want {min} px"));
+        }
+        // Still grabbable: back to the narrowest with names (`panes.rs` `COMPACT_EMS`:
+        // 6.5 UI font sizes), names cut with "…".
+        let Some(b) = side(ui) else { return };
+        let want = (font_ui * 6.5).ceil() + 2.;
+        let frames = drag_by(ui, point(b.right() - px(1.), b.center().y), want - min + 1.);
+        for (k, f) in frames.iter().enumerate() {
+            for e in testing::check(f) {
+                ui.fail(format!("{ctx}: drag back, frame {k}: {e}"));
+            }
+        }
+        let p = ui.check(&format!("{ctx}, dragged back"));
+        let w = find(&p, "sidebar").map(|q| f32::from(q.bounds.size.width));
+        let names = p.iter().any(|q| q.name.starts_with("side:") && q.visible().is_some());
+        if w.is_none_or(|w| (w - want).abs() > 1.5) || !names {
+            ui.fail(format!("{ctx}: dragged back to {w:?}, want {want} with names"));
+        }
+    }
+    // Narrowest at the default font: a new window starts with it; a smaller one keeps it.
+    ui.step(&format!("fonts:{},{}", FONTS[1].0, FONTS[1].1));
+    let Some(b) = side(ui) else { return };
+    drag_by(ui, point(b.right(), b.center().y), -f32::from(b.right()));
+    let min = (FONTS[1].0 * 2.).round();
+    *ui = Ui::new(&ui.repo.clone(), 1500., 950.);
+    match side(ui).map(|b| f32::from(b.size.width)) {
+        Some(w) if (w - min).abs() < 1.5 => {}
+        other => ui.fail(format!("restored narrowest sidebar {other:?}, want {min}")),
+    }
+    ui.resize(800., 500.);
+    let p = ui.check("narrowest sidebar, 800x500");
+    match find(&p, "sidebar").map(|q| f32::from(q.bounds.size.width)) {
+        Some(w) if w >= min - 0.5 => {}
+        other => ui.fail(format!("narrowest sidebar in a smaller window {other:?}, at least {min}")),
+    }
+    save_changed_settings(&load_settings::<PaneLayout>(), &PaneLayout::default());
+}
+
 /// `make_repo` in `<dir>/repo` plus two linked worktrees next to it (one with long names,
 /// one detached at `HEAD~1`, sparse and locked — the most words on a sidebar row).
 fn make_worktrees_repo(dir: &std::path::Path) -> std::path::PathBuf {
@@ -1538,6 +1730,7 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     if marks != [("○".to_string(), "1 commit not pushed to origin/main".to_string())] {
         ui.fail(format!("ahead of origin/main, clean: {marks:?}"));
     }
+    expect_tab_tooltip(ui, "ahead, clean", "○ 1 commit not pushed to origin/main");
     // With a recursive OS watch (macOS, Windows) a write before the watches are in place is
     // not seen; the scenario writes right after opening.
     let ws = ui.ws.clone();
@@ -1551,6 +1744,11 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     if !seen || marks[0].1 != want {
         ui.fail(format!("after an outside change: {marks:?}"));
     }
+    expect_tab_tooltip(
+        ui,
+        "after an outside change",
+        "● Uncommitted changes in 1 file: 1 untracked\n○ 1 commit not pushed to origin/main",
+    );
     ui.step("stagefile:outside.txt");
     let marks = tab_marks(ui);
     if marks[0].0 != "●" || !marks[0].1.starts_with("Uncommitted changes in 1 file: 1 staged") {
@@ -1573,6 +1771,26 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     let marks = tab_marks(ui);
     if !seen || marks[1] != (String::new(), String::new()) {
         ui.fail(format!("a change in the background tab: {marks:?}"));
+    }
+    // The tab without a mark: its path alone. The ▾ list names the marks in words too.
+    let ws = ui.ws.clone();
+    let tips = ui.cx.update(|cx| testing::tab_tooltips(&ws, cx));
+    if tips.get(1) != Some(&gitti_core::paths::canonical(&other).display().to_string()) {
+        ui.fail(format!("the empty repository's tab tooltip: {tips:?}"));
+    }
+    let labels = ui.cx.update(|cx| testing::tab_list_labels(&ws, cx));
+    if labels != ["marks  ● uncommitted changes", "marks-other"] {
+        ui.fail(format!("the ▾ list: {labels:?}"));
+    }
+}
+
+/// Repository tab 0's tooltip is its folder, then `legend` (what its mark means).
+fn expect_tab_tooltip(ui: &mut Ui, ctx: &str, legend: &str) {
+    let ws = ui.ws.clone();
+    let tips = ui.cx.update(|cx| testing::tab_tooltips(&ws, cx));
+    let want = format!("{}\n{legend}", gitti_core::paths::canonical(&ui.repo).display());
+    if tips.first() != Some(&want) {
+        ui.fail(format!("{ctx}: tab tooltip {tips:?}, want {want:?}"));
     }
 }
 

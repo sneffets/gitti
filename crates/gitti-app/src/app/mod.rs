@@ -37,6 +37,7 @@ mod op_cancel;
 mod op_progress;
 mod op_stops;
 mod overlay_keys;
+mod panes;
 mod picker;
 mod push_ui;
 mod reflog;
@@ -498,6 +499,9 @@ pub struct PaneStates {
     vertical: Entity<ResizableState>,
     /// Commit list | detail while the sidebar is hidden (a group of two panes).
     main_no_sidebar: Entity<ResizableState>,
+    /// The commit list's width at a press on the sidebar's edge: while it is dragged, the
+    /// list keeps it and the detail gives way (`panes.rs`). `None` after any other press.
+    keep_list: Rc<Cell<Option<f32>>>,
 }
 
 impl PaneStates {
@@ -506,6 +510,7 @@ impl PaneStates {
             main: cx.new(|_| ResizableState::default()),
             vertical: cx.new(|_| ResizableState::default()),
             main_no_sidebar: cx.new(|_| ResizableState::default()),
+            keep_list: Rc::default(),
         }
     }
 }
@@ -3800,6 +3805,8 @@ impl GittiApp {
     fn render_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let size = self.body_size.clone();
         let app = cx.entity().downgrade();
+        let panes = self.panes.clone();
+        let sidebar_shown = self.settings.show_sidebar;
         let measure = canvas(
             move |bounds, window, cx| {
                 let new = (bounds.size, window.viewport_size());
@@ -3812,7 +3819,18 @@ impl GittiApp {
                     });
                 }
             },
-            |_, _, _, _| {},
+            // Before the handles see it: does a press start a drag of the sidebar's edge?
+            move |bounds, _, window, _| {
+                if !sidebar_shown {
+                    return;
+                }
+                let panes = panes.clone();
+                window.on_mouse_event(move |e: &MouseDownEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Capture && e.button == MouseButton::Left {
+                        panes.note_press(f32::from(e.position.x - bounds.left()), cx);
+                    }
+                });
+            },
         )
         .absolute()
         .inset_0();
@@ -3831,11 +3849,16 @@ impl GittiApp {
         let w = f32::from(body.width + now.width - viewport.width);
         let h = f32::from(body.height + now.height - viewport.height);
         let s = &self.settings;
-        let mut sidebar = PaneLayout::size(s.pane_sidebar, w, 230.);
+        let side_min = self.sidebar_min_width();
+        let mut sidebar = PaneLayout::size(s.pane_sidebar, w, 230.).max(side_min);
         let mut list = PaneLayout::size(s.pane_list, w, 640.);
         if self.settings.show_sidebar {
             if let Some(sizes) = rescale_panes(&self.panes.main, w, cx) {
                 (sidebar, list) = (sizes[0], sizes[1]);
+                self.panes.keep_list.set(None);
+            } else if let Some(sizes) = self.panes.keep_list_width(w, cx) {
+                // The sidebar's edge is dragged: the list keeps its width.
+                (sidebar, list) = sizes;
             }
         } else if let Some(sizes) = rescale_panes(&self.panes.main_no_sidebar, w, cx) {
             list = sizes[0];
@@ -3874,27 +3897,31 @@ impl GittiApp {
                 .child(commit_list)
                 .child(detail)
         } else {
+            let compact = self.sidebar_compact(sidebar, cx);
+            let panes = self.panes.clone();
             h_resizable("main")
                 .with_state(&self.panes.main)
             .on_resize(move |state, _, cx| {
                 let sizes: Vec<f32> = state.read(cx).sizes().iter().map(|&p| f32::from(p)).collect();
                 let total: f32 = sizes.iter().sum();
-                if sizes.len() < 3 {
+                let Some((side, list)) = panes.stored_main_sizes(&sizes, total) else {
                     return;
-                }
+                };
                 app.update(cx, |this, cx| {
                     this.update_settings(cx, |s| {
-                        s.pane_sidebar = PaneLayout::fraction(sizes[0], total);
-                        s.pane_list = PaneLayout::fraction(sizes[1], total);
-                    })
+                        s.pane_sidebar = PaneLayout::fraction(side, total);
+                        s.pane_list = PaneLayout::fraction(list, total);
+                    });
+                    // A release before the frame that corrects the last move.
+                    cx.notify();
                 })
                 .ok();
             })
             .child(
                 resizable_panel()
                     .size(px(sidebar))
-                    .size_range(px(120.)..px(700.))
-                    .child(div().size_full().probe("sidebar").child(self.render_sidebar(window, cx))),
+                    .size_range(px(side_min)..px(700.))
+                    .child(div().size_full().probe("sidebar").child(self.render_sidebar(window, compact, cx))),
             )
             .child(commit_list)
             .child(detail)

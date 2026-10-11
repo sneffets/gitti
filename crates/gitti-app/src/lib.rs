@@ -1175,6 +1175,16 @@ pub mod testing {
         ws.read(cx).script_tab_marks(cx)
     }
 
+    /// Per repository tab: its tooltip (path, then what its mark means).
+    pub fn tab_tooltips(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        ws.read(cx).script_tab_tooltips(cx)
+    }
+
+    /// The ▾ tab list menu's entries.
+    pub fn tab_list_labels(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        ws.read(cx).tab_list_labels(cx)
+    }
+
     /// Per repository tab: its WORKTREES section's marks (`folder glyph`, glyph "" for
     /// none), whether the section is drawn or not — what each tab's sidebar would show.
     pub fn sidebar_marks(ws: &Entity<Workspace>, cx: &App) -> Vec<Vec<String>> {

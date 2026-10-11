@@ -496,7 +496,7 @@ fn repo_marks_after_the_name() {
     assert!(top(0).contains(" ●  ⎇ main ↑1"), "{out}");
     let st = states(&out)[0];
     assert!(
-        st.contains("Uncommitted changes in 1 file: 1 untracked · 1 commit not pushed to origin/main"),
+        st.contains("● Uncommitted changes in 1 file: 1 untracked · ○ 1 commit not pushed to origin/main"),
         "a click on the mark names both: {out}"
     );
     assert!(top(1).contains(" ●  ⎇ main"), "staged: {out}");

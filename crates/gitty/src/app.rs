@@ -1531,9 +1531,10 @@ impl App {
         self.wt_marks.publish(&workdir, 0, marks);
     }
 
-    /// What the marks mean, in the status line (a click on them).
+    /// What the marks mean, each behind its glyph, in the status line (a click on them) —
+    /// the words of gitti's repository tab tooltip.
     pub fn explain_repo_marks(&mut self) {
-        let text = self.own_marks_shown().describe().replace('\n', " · ");
+        let text = self.own_marks_shown().legend().replace('\n', " · ");
         if !text.is_empty() {
             self.set_info(text);
         }
