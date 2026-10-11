@@ -48,9 +48,10 @@ fn big_diff_repo() -> tempfile::TempDir {
     fixture(&[("big.txt", &text("big line"))], &[("big.txt", &text("BIG LINE")), ("a.txt", "x\n")])
 }
 
-/// pgdn / pgup move cursor and view by a page; G puts the last row at the bottom (neither
-/// wheel nor j go further); wheel from the top keeps the file's header on the top row
-/// (sticky); home / end / ctrl-d.
+/// pgdn / pgup move cursor and view by a page (the cursor on the second row: the top one is
+/// under the file's sticky header); G puts the last row at the bottom (neither wheel nor j
+/// go further); wheel from the top keeps the file's header on the top row (sticky); home /
+/// end / ctrl-d.
 #[gitti_test::test]
 fn worktree_diff_pages_ends_wheel_and_sticky_file_header() {
     let dir = big_diff_repo();
@@ -65,9 +66,9 @@ fn worktree_diff_pages_ends_wheel_and_sticky_file_header() {
     let cur = |i: usize| num(st[i], "cursor");
     let off = |i: usize| num(st[i], "diff_offset");
     let page = cur(0);
-    assert!(page > 10 && off(0) == page, "{out}");
-    assert_eq!((cur(1), off(1)), (2 * page, 2 * page), "{out}");
-    assert_eq!((cur(2), off(2)), (page, page), "{out}");
+    assert!(page > 10 && off(0) == page - 1, "{out}");
+    assert_eq!((cur(1), off(1)), (2 * page, 2 * page - 1), "{out}");
+    assert_eq!((cur(2), off(2)), (page, page - 1), "{out}");
     let last = cur(3);
     assert_eq!(off(3), last + 1 - (page + 1), "G: {out}");
     let s = dumps(&out, 30);
@@ -259,7 +260,7 @@ fn picker_keeps_its_window_and_the_wheel_scrolls_it() {
     assert!(st[4].contains("Checkout br12"), "click after the wheel: {out}");
 }
 
-/// Hunk 5's header on top, the wheel up 3 rows; staging it keeps the rows above where
+/// Hunk 5's header on top (below the sticky file header), the wheel up 3 rows; staging it keeps the rows above where
 /// they were (the next hunk takes its place); a refresh keeps the view too.
 /// Workflow: ST-17
 #[gitti_test::test]
@@ -279,17 +280,17 @@ fn scroll_position_is_kept_across_staging_and_refresh() {
     let s = dumps(&out, 30);
     let off = |i: usize| num(st[i], "diff_offset");
     let cur = |i: usize| num(st[i], "cursor");
-    assert_eq!(cur(0), off(0) + 3, "{out}");
+    assert_eq!(cur(0), off(0) + 4, "{out}");
     assert!(st[1].contains("staged=1"), "{out}");
     assert_eq!((off(1), cur(1)), (off(0), cur(0)), "staged: {out}");
     assert_eq!((off(2), cur(2)), (off(0), cur(0)), "refreshed: {out}");
     let diff_rows = |s: &str| -> Vec<String> { body(s).iter().map(|l| l.chars().skip(69).collect()).collect() };
     let (before, after) = (diff_rows(&s[0]), diff_rows(&s[1]));
     let start = before.iter().position(|l| l.contains("M f.txt")).unwrap();
-    assert_eq!(before[start + 1], after[start + 1], "{out}");
-    assert!(before[start + 2].contains("Show 3 hidden lines"), "{out}");
-    assert!(after[start + 2].contains("Show 13 hidden lines"), "{out}");
-    assert!(before[start + 3].contains("@@ -57,7") && after[start + 3].contains("@@ -67,7"), "{out}");
+    assert_eq!(before[start + 1..start + 3], after[start + 1..start + 3], "{out}");
+    assert!(before[start + 3].contains("Show 3 hidden lines"), "{out}");
+    assert!(after[start + 3].contains("Show 13 hidden lines"), "{out}");
+    assert!(before[start + 4].contains("@@ -57,7") && after[start + 4].contains("@@ -67,7"), "{out}");
     assert_eq!(diff_rows(&s[2])[start..], after[start..], "{out}");
 }
 

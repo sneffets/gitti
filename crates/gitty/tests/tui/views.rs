@@ -139,8 +139,8 @@ fn ws_repo() -> tempfile::TempDir {
 #[gitti_test::test]
 fn toggles_keep_the_top_line_and_reveal_dropped_lines() {
     let dir = ws_repo();
-    // n×4 = ws.txt's third hunk (157…163) on top, j×5 = the added "line 160 ", one wheel
-    // step = line 159 on the top row.
+    // n×4 = ws.txt's third hunk (157…163) on top (below the sticky file header), j×5 = the
+    // added "line 160 ", one wheel step = line 158 on the top row (under the sticky header).
     let out = gitty(
         dir.path(),
         "press:enter;press:n;press:n;press:n;press:n;press:j;press:j;press:j;press:j;press:j;wheel:80,10,1;\
@@ -154,17 +154,17 @@ fn toggles_keep_the_top_line_and_reveal_dropped_lines() {
         rest[..rest.find(" sel_lines=").unwrap()].to_string()
     };
     let screen_row = |s: &str| num(s, "cursor") - num(s, "diff_offset");
-    assert_eq!(top(st[0]), "ws.txt:159.0+0", "{out}");
+    assert_eq!(top(st[0]), "ws.txt:158.0+0", "{out}");
     let added = "Line { src: Unstaged, file: 1, hunk: 2, line: 4,";
     assert!(cursor_row(st[0]).starts_with(added), "{out}");
-    assert_eq!(top(st[1]), "ws.txt:159.0+0", "W: {out}");
+    assert_eq!(top(st[1]), "ws.txt:158.0+0", "W: {out}");
     assert_eq!(cursor_row(st[1]), "Context { src: Unstaged, file: 1, line: 160, part: 0 }", "{out}");
-    assert_eq!(screen_row(st[1]), 1, "right below line 159: {out}");
-    assert_eq!(top(st[2]), "ws.txt:159.0+0", "{out}");
+    assert_eq!(screen_row(st[1]), 2, "right below line 159: {out}");
+    assert_eq!(top(st[2]), "ws.txt:158.0+0", "{out}");
     assert!(cursor_row(st[2]).starts_with(added), "{out}");
     assert_eq!(num(st[2], "diff_offset"), num(st[0], "diff_offset"), "{out}");
     for (i, what) in [(3, "more context"), (4, "fewer context"), (5, "wrap on"), (6, "wrap off")] {
-        assert_eq!(top(st[i]), "ws.txt:159.0+0", "{what}: {out}");
+        assert_eq!(top(st[i]), "ws.txt:158.0+0", "{what}: {out}");
         assert_eq!(screen_row(st[i]), screen_row(st[0]), "{what}: {out}");
     }
 }
@@ -783,4 +783,83 @@ fn plus_n_click_names_the_hidden_refs() {
         st[1].contains("2 more refs on this commit") && st[1].contains("b3 — branch") && st[1].contains("b4 — branch"),
         "{out}"
     );
+}
+
+/// The `cells:Y` blocks of a run, in order (runs of `A-B fg=… bg=…` lines).
+fn cell_blocks(out: &str) -> Vec<String> {
+    let is_run = |l: &str| {
+        l.trim_start().split_once(' ').is_some_and(|(r, rest)| {
+            r.split_once('-').is_some_and(|(a, _)| a.parse::<u16>().is_ok()) && rest.trim_start().starts_with("fg=")
+        })
+    };
+    let mut blocks: Vec<String> = Vec::new();
+    let mut in_block = false;
+    for l in out.lines() {
+        match (is_run(l), in_block) {
+            (true, true) => blocks.last_mut().unwrap().push_str(&format!("{l}\n")),
+            (true, false) => blocks.push(format!("{l}\n")),
+            _ => {}
+        }
+        in_block = is_run(l);
+    }
+    blocks
+}
+
+/// The run of a `cells` block that covers column `x`: (fg, bg, text).
+fn run_at(block: &str, x: usize) -> (String, String, String) {
+    let field = |l: &str, k: &str| l.split(k).nth(1).and_then(|r| r.split(") ").next()).map(|r| format!("{r})"));
+    block
+        .lines()
+        .find_map(|l| {
+            let (range, _) = l.trim_start().split_once(' ')?;
+            let (a, b) = range.split_once('-')?;
+            let (a, b): (usize, usize) = (a.parse().ok()?, b.trim().parse().ok()?);
+            (a..=b).contains(&x).then(|| {
+                let text = l.find('"').map_or("", |q| &l[q + 1..l.len() - 1]).to_string();
+                (field(l, "fg=").unwrap_or_default(), field(l, "bg=").unwrap_or_default(), text)
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// The diff pane's current line is always visible: on a commit's header lines (which carry
+/// no background of their own) it is lifted like on every other row, and moves with ↓.
+#[gitti_test::test]
+fn diff_cursor_on_commit_header_lines_is_highlighted() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    // 120x30, commit "init" in the detail pane (from column 69): header line 0 (blank) on
+    // row 2, "Commit Hash" on row 3.
+    let out = gitty(dir.path(), "press:j;wait;press:tab;wait;state;cells:2;cells:3;press:j;state;cells:2;cells:3");
+    let st = states(&out);
+    assert!(st[0].contains("focus=Detail") && st[0].contains("cursor=0 HeaderSpace"), "{out}");
+    assert!(st[1].contains("cursor=1 HeaderSpace"), "{out}");
+    let b = cell_blocks(&out);
+    assert_eq!(b.len(), 4, "{out}");
+    let (diff_bg, cursor_bg) = ("Rgb(51, 64, 78)", "Rgb(78, 89, 102)");
+    // The cursor's background under the whole row, also under the label's and value's text.
+    assert_eq!(run_at(&b[0], 100).1, cursor_bg, "blank header line 0: {out}");
+    assert_eq!(run_at(&b[1], 75).1, diff_bg, "{out}");
+    assert_eq!(run_at(&b[2], 100).1, diff_bg, "{out}");
+    let (fg, bg, text) = run_at(&b[3], 75);
+    assert_eq!((bg.as_str(), text.trim()), (cursor_bg, "Commit Hash"), "{out}");
+    assert_eq!(fg, "Rgb(118, 128, 139)", "the label keeps its colour: {out}");
+    assert_eq!(run_at(&b[3], 100).1, cursor_bg, "the hash: {out}");
+}
+
+/// Moving up through a file's lines: the cursor never hides under the sticky file header
+/// (the view keeps it on the row below).
+#[gitti_test::test]
+fn diff_cursor_never_hides_under_the_sticky_file_header() {
+    let text = |s: &str| -> String { (1..=60).map(|i| format!("{s} {i}\n")).collect() };
+    let dir = fixture(&[("big.txt", &text("line"))], &[("big.txt", &text("LINE"))]);
+    let ups = "press:k;".repeat(30);
+    let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "120x20", &format!("press:enter;press:G;{ups}state;dump"));
+    let st = states(&out)[0];
+    let (cursor, offset) = (num(st, "cursor"), num(st, "diff_offset"));
+    assert!(st.contains("cursor=") && st.contains(" Line {"), "{out}");
+    assert_eq!(cursor, offset + 1, "the cursor right below the sticky header: {out}");
+    // The diff's top row is the sticky header, the cursor's line right below it.
+    let lines: Vec<&str> = screens(&out)[0].lines().collect();
+    let sticky = lines.iter().position(|l| l.contains("▾ M big.txt")).unwrap_or_else(|| panic!("no sticky header: {out}"));
+    assert!(lines[sticky + 1].contains("+ LINE "), "{out}");
 }

@@ -1909,6 +1909,15 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         app.rows.len(),
         app.follow,
     );
+    // The sticky file header covers the top row: a cursor there (moving up through a
+    // file's lines) would be hidden behind it, so the view keeps one row more above.
+    if app.follow
+        && h > 1
+        && app.diff_cursor == app.diff_offset
+        && sticky_file_row(&app.rows, app.diff_offset).is_some()
+    {
+        app.diff_offset -= 1;
+    }
     let show_cursor = app.focus == Focus::Detail;
     let wrap = app.opts.wrap.then_some(text_cols);
     for i in app.diff_offset..(app.diff_offset + h).min(app.rows.len()) {
@@ -2252,15 +2261,19 @@ fn draw_diff_row(
     let wt = matches!(app.detail, Detail::Worktree);
     match app.rows[index] {
         DiffRow::HeaderSpace => {
-            // Leading rows: row index == header line.
+            // Leading rows: row index == header line. The cursor's background goes under
+            // the line's spans (they set only their foreground).
+            buf.set_style(area, Style::new().bg(cursor_bg(p.bg_diff)));
             if let Some(line) = app.header.get(index) {
                 buf.set_line(x, y, line, w);
             }
         }
         DiffRow::Spacer => {
-            buf.set_style(area, Style::new().bg(p.bg_section));
+            buf.set_style(area, Style::new().bg(cursor_bg(p.bg_section)));
         }
-        DiffRow::HunkGap => {}
+        DiffRow::HunkGap => {
+            buf.set_style(area, Style::new().bg(cursor_bg(p.bg_diff)));
+        }
         DiffRow::Section(src) => {
             let bg = cursor_bg(p.bg_section);
             buf.set_style(area, Style::new().bg(bg));
