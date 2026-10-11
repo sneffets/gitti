@@ -601,6 +601,23 @@ impl Workspace {
             .collect()
     }
 
+    /// Repository tab `ix`'s tooltip: its folder, then what its mark means, the glyph
+    /// first ("● Uncommitted changes in 2 files: …", "○ 1 commit not pushed to …"; both
+    /// lines when both hold). Built when the tooltip shows, so it names the current marks.
+    pub fn tab_tooltip(&self, ix: usize, cx: &App) -> String {
+        let Some(tab) = self.tabs.get(ix) else {
+            return String::new();
+        };
+        let path = tab.path.display().to_string();
+        let legend = tab.app.read(cx).tab_marks(cx).legend();
+        if legend.is_empty() { path } else { format!("{path}\n{legend}") }
+    }
+
+    /// Per tab: its tooltip ([`Self::tab_tooltip`]), for tests.
+    pub fn script_tab_tooltips(&self, cx: &App) -> Vec<String> {
+        (0..self.tabs.len()).map(|ix| self.tab_tooltip(ix, cx)).collect()
+    }
+
     /// Tab `ix`'s app, for tests.
     pub fn script_tab_app(&self, ix: usize) -> Option<Entity<GittiApp>> {
         self.tabs.get(ix).map(|t| t.app.clone())
@@ -909,10 +926,12 @@ impl Workspace {
                             this.request_close(ix, window, cx);
                         })),
                 )
+                // Read when it shows: the path and what the tab's mark means right then.
                 .tooltip({
-                    let path = tab.path.display().to_string();
+                    let ws = cx.entity().downgrade();
                     move |window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(path.clone()).build(window, cx)
+                        let text = ws.upgrade().map(|ws| ws.read(cx).tab_tooltip(ix, cx)).unwrap_or_default();
+                        gpui_kit::component::tooltip::Tooltip::new(text).build(window, cx)
                     }
                 })
                 .on_mouse_down(
@@ -1027,20 +1046,8 @@ impl Workspace {
             return menu;
         };
         let this = this.read(cx);
-        let titles: Vec<String> = this.tabs.iter().map(|t| t.app.read(cx).title()).collect();
         let mut menu = menu;
-        for (ix, tab) in this.tabs.iter().enumerate() {
-            // Two tabs of the same name (worktrees, clones) tell their paths.
-            let mut label = if titles.iter().filter(|t| **t == titles[ix]).count() > 1 {
-                format!("{} — {}", titles[ix], tab.path.display())
-            } else {
-                titles[ix].clone()
-            };
-            // The tab's mark: uncommitted ●, else not pushed ○.
-            let marks = tab.app.read(cx).tab_marks(cx);
-            if marks.any() {
-                label = format!("{label}  {}", marks.glyphs());
-            }
+        for (ix, label) in this.tab_list_labels(cx).into_iter().enumerate() {
             let ws = ws.clone();
             menu = menu.item(
                 PopupMenuItem::new(label)
@@ -1051,6 +1058,28 @@ impl Workspace {
             );
         }
         menu
+    }
+
+    /// The ▾ list's entries: each tab's name (with its path when two share it), then its
+    /// mark and what it means ("● uncommitted changes", "○ unpushed commits").
+    pub fn tab_list_labels(&self, cx: &App) -> Vec<String> {
+        let titles: Vec<String> = self.tabs.iter().map(|t| t.app.read(cx).title()).collect();
+        self.tabs
+            .iter()
+            .enumerate()
+            .map(|(ix, tab)| {
+                // Two tabs of the same name (worktrees, clones) tell their paths.
+                let mut label = if titles.iter().filter(|t| **t == titles[ix]).count() > 1 {
+                    format!("{} — {}", titles[ix], tab.path.display())
+                } else {
+                    titles[ix].clone()
+                };
+                if let Some(mark) = tab.app.read(cx).tab_marks(cx).mark() {
+                    label = format!("{label}  {} {}", mark.glyph(), mark.meaning());
+                }
+                label
+            })
+            .collect()
     }
 
     /// The menu bar's (and "+"'s, ▾'s) rem: the window's (UI font), but at most what lets the bar

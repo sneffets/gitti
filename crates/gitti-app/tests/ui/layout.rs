@@ -1538,6 +1538,7 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     if marks != [("○".to_string(), "1 commit not pushed to origin/main".to_string())] {
         ui.fail(format!("ahead of origin/main, clean: {marks:?}"));
     }
+    expect_tab_tooltip(ui, "ahead, clean", "○ 1 commit not pushed to origin/main");
     // With a recursive OS watch (macOS, Windows) a write before the watches are in place is
     // not seen; the scenario writes right after opening.
     let ws = ui.ws.clone();
@@ -1551,6 +1552,11 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     if !seen || marks[0].1 != want {
         ui.fail(format!("after an outside change: {marks:?}"));
     }
+    expect_tab_tooltip(
+        ui,
+        "after an outside change",
+        "● Uncommitted changes in 1 file: 1 untracked\n○ 1 commit not pushed to origin/main",
+    );
     ui.step("stagefile:outside.txt");
     let marks = tab_marks(ui);
     if marks[0].0 != "●" || !marks[0].1.starts_with("Uncommitted changes in 1 file: 1 staged") {
@@ -1573,6 +1579,26 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     let marks = tab_marks(ui);
     if !seen || marks[1] != (String::new(), String::new()) {
         ui.fail(format!("a change in the background tab: {marks:?}"));
+    }
+    // The tab without a mark: its path alone. The ▾ list names the marks in words too.
+    let ws = ui.ws.clone();
+    let tips = ui.cx.update(|cx| testing::tab_tooltips(&ws, cx));
+    if tips.get(1) != Some(&gitti_core::paths::canonical(&other).display().to_string()) {
+        ui.fail(format!("the empty repository's tab tooltip: {tips:?}"));
+    }
+    let labels = ui.cx.update(|cx| testing::tab_list_labels(&ws, cx));
+    if labels != ["marks  ● uncommitted changes", "marks-other"] {
+        ui.fail(format!("the ▾ list: {labels:?}"));
+    }
+}
+
+/// Repository tab 0's tooltip is its folder, then `legend` (what its mark means).
+fn expect_tab_tooltip(ui: &mut Ui, ctx: &str, legend: &str) {
+    let ws = ui.ws.clone();
+    let tips = ui.cx.update(|cx| testing::tab_tooltips(&ws, cx));
+    let want = format!("{}\n{legend}", gitti_core::paths::canonical(&ui.repo).display());
+    if tips.first() != Some(&want) {
+        ui.fail(format!("{ctx}: tab tooltip {tips:?}, want {want:?}"));
     }
 }
 

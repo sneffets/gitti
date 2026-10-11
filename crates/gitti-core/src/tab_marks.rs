@@ -94,6 +94,15 @@ impl Mark {
             Mark::Unpushed => "○",
         }
     }
+
+    /// What the glyph stands for, in two words: "uncommitted changes" / "unpushed
+    /// commits" (the tab list menu, beside the glyph).
+    pub fn meaning(self) -> &'static str {
+        match self {
+            Mark::Uncommitted => "uncommitted changes",
+            Mark::Unpushed => "unpushed commits",
+        }
+    }
 }
 
 /// Which mark to show: uncommitted outranks unpushed; `None` when the repository is clean
@@ -223,6 +232,24 @@ impl Marks {
     pub fn describe(&self) -> String {
         let mut lines: Vec<String> = self.uncommitted.iter().cloned().collect();
         lines.extend(self.unpushed.as_ref().map(Unpushed::describe));
+        lines.join("\n")
+    }
+
+    /// [`Marks::describe`] with each line behind the glyph it explains — "● Uncommitted
+    /// changes in 2 files: 2 unstaged", "○ 1 commit not pushed to origin/main" — so the
+    /// reader learns what the circle means (a repository tab's tooltip under its path;
+    /// gitty's status line). Empty without a mark.
+    pub fn legend(&self) -> String {
+        let mut lines: Vec<String> = self
+            .uncommitted
+            .iter()
+            .map(|u| format!("{} {u}", Mark::Uncommitted.glyph()))
+            .collect();
+        lines.extend(
+            self.unpushed
+                .as_ref()
+                .map(|u| format!("{} {}", Mark::Unpushed.glyph(), u.describe())),
+        );
         lines.join("\n")
     }
 }
@@ -471,6 +498,31 @@ mod tests {
         assert_eq!(mark(&status, Some(&up)), Some(Mark::Uncommitted));
         assert_eq!(Mark::Uncommitted.glyph(), "●");
         assert_eq!(Mark::Unpushed.glyph(), "○");
+    }
+
+    #[gitti_test::test]
+    fn the_legend_puts_each_line_behind_its_glyph() {
+        let up = Unpushed {
+            count: 2,
+            target: PushTarget::Upstream("origin/main".into()),
+        };
+        let mut status = Status::default();
+        assert_eq!(Marks::of(&status, None).legend(), "");
+        assert_eq!(
+            Marks::of(&status, Some(&up)).legend(),
+            "○ 2 commits not pushed to origin/main"
+        );
+        status.entries.push(entry("a", None, Some('M')));
+        assert_eq!(
+            Marks::of(&status, None).legend(),
+            "● Uncommitted changes in 1 file: 1 unstaged"
+        );
+        assert_eq!(
+            Marks::of(&status, Some(&up)).legend(),
+            "● Uncommitted changes in 1 file: 1 unstaged\n○ 2 commits not pushed to origin/main"
+        );
+        assert_eq!(Mark::Uncommitted.meaning(), "uncommitted changes");
+        assert_eq!(Mark::Unpushed.meaning(), "unpushed commits");
     }
 
     #[gitti_test::test]
