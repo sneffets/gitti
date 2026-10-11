@@ -133,7 +133,7 @@ impl GittiApp {
                 .ok()
                 .map(|w| gitti_core::touched_files(&prev, w, &paths));
             let styles = match (&working, &touched, cache) {
-                (Ok(w), Some(t), Some(cache)) => Some(highlighting::highlight_paths(&repo, w, t, &cache)),
+                (Ok(w), Some(t), Some(cache)) => highlighting::highlight_paths(&repo, w, t, &cache),
                 _ => None,
             };
             let subs = working

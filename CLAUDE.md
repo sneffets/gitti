@@ -61,6 +61,14 @@ IDs, steps, expected results, coverage per layer, how to add one — is
 in a doc-comment line `/// Workflow: ST-13` (several: `/// Workflow: ST-03, CP-07`);
 `cargo test --workspace --test core -- wf_catalog` checks that catalog and tags agree
 (keep both in sync when adding, renaming or moving a test).
+**Faults and stress** (`gitti-core/src/fault.rs`, debug builds only): tests inject faults
+into the git runner — a late pipe reader, cut output, a killed child, short output with
+exit code 0, a failed start, an exit without a message — per repository (`fault::inject`)
+or for a scripted gitty / gitti run (`GITTI_TEST_FAULT=show=kill*1`).
+`tests/core/faults.rs` holds the invariant of every cache of git output: a failed or short
+read is an error, never cached, and the next attempt reads again — a new cache gets its
+case there. `GITTI_TEST_STRESS=1` runs a suite under random reader delays and CPU hogs
+(time limits only reported there): now and then, never per merge; a failure is a finding.
 **Release tests: `release-tests/`** holds the old slow tests and long randomized ones
 (`staging_fuzz`). Not compiled by default (commented-out `[[test]]` blocks at the end of the
 crates' `Cargo.toml`). **Only before a release / overnight — never in daily work, never per

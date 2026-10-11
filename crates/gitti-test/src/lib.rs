@@ -6,6 +6,9 @@
 //! limits per scenario. Every test of the workspace uses this attribute instead of a plain
 //! `#[test]` (`tests/core/main.rs::every_test_has_the_time_limit` checks that).
 //! `GITTI_TEST_TIMES=1` prints every test's time to stderr (to find the slow ones).
+//! Under `GITTI_TEST_STRESS=1` (`gitti_core::fault`: late pipe readers, CPU hogs) a test
+//! over the limit is only reported on stderr — the mode looks for wrong results, not
+//! slow ones; the kill after [`KILL_MS`] stays.
 //!
 //! Hand-rolled on `proc_macro` (no syn): the attribute keeps the function's tokens and only
 //! puts a guard in front of its body.
@@ -65,7 +68,15 @@ fn guard_code(name: &str) -> String {
                             ::std::format!("{{:>6.2}} s  {{NAME}}\n", took.as_secs_f64()).as_bytes(),
                         );
                     }}
-                    if took > ::std::time::Duration::from_millis({LIMIT_MS}) && !::std::thread::panicking() {{
+                    let over = took > ::std::time::Duration::from_millis({LIMIT_MS}) && !::std::thread::panicking();
+                    // Stress mode (slow readers, CPU hogs): what fails counts, not the time.
+                    let stress = ::std::env::var_os("GITTI_TEST_STRESS").is_some_and(|v| !v.is_empty() && v != "0");
+                    if over && stress {{
+                        let _ = ::std::io::Write::write_all(
+                            &mut ::std::io::stderr(),
+                            ::std::format!("{{NAME}} took {{:.1}} s under GITTI_TEST_STRESS (over the {limit} s limit)\n", took.as_secs_f64()).as_bytes(),
+                        );
+                    }} else if over {{
                         ::core::panic!(
                             "{{NAME}} took {{:.1}} s, over the {limit} s limit of every test — make it cheaper",
                             took.as_secs_f64()

@@ -12,6 +12,7 @@ mod conflicts;
 mod custom_commands;
 mod discard;
 mod ext_tools;
+mod faults;
 mod fixture_kit;
 mod fs_paths;
 mod fx;

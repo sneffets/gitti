@@ -264,7 +264,7 @@ impl GittiApp {
             return;
         }
         self.reflog.loading = Some(id);
-        if matches!(self.detail, Detail::Worktree | Detail::Empty) {
+        if matches!(self.detail, Detail::Worktree | Detail::Empty | Detail::Failed(_)) {
             self.detail = Detail::Loading;
             self.rows = Arc::new(Vec::new());
         }
@@ -290,7 +290,13 @@ impl GittiApp {
                     Ok(_) => {
                         this.show_reflog_commit(cx);
                     }
-                    Err(e) => this.set_error(format!("{e:#}")),
+                    Err(e) if still => {
+                        let text = format!("{e:#}");
+                        this.detail = Detail::Failed(text.clone());
+                        this.rows = Arc::new(Vec::new());
+                        this.set_error(text);
+                    }
+                    Err(_) => this.show_reflog_commit(cx),
                 }
                 cx.notify();
             })

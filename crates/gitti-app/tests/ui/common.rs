@@ -32,6 +32,12 @@ pub fn budget() -> Duration {
     if full() { BUDGET * 10 } else { BUDGET }
 }
 
+/// `GITTI_TEST_STRESS=1` (`gitti_core::fault`): a scenario over [`budget`] is listed, not
+/// failed.
+pub fn stress() -> bool {
+    std::env::var_os(gitti_core::fault::ENV_STRESS).is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 /// `GITTI_TEST_FULL=1`: sweeps run their whole matrix (sizes × fonts × …).
 pub fn full() -> bool {
     std::env::var_os("GITTI_TEST_FULL").is_some_and(|v| v != "0")
@@ -96,6 +102,9 @@ pub fn run_with(tests: &[(&str, Scenario)], open: impl Fn(&str) -> Ui) {
         let secs = start.elapsed();
         if secs > budget() {
             slow.push(format!("{name} {:.1}s", secs.as_secs_f64()));
+        }
+        // Stress mode (`GITTI_TEST_STRESS`): what fails counts, not the time.
+        if secs > budget() && !stress() {
             fails.push(format!(
                 "took {:.1}s, over the {}s limit of every test — make it cheaper or split it",
                 secs.as_secs_f64(),

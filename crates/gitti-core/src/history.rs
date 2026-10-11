@@ -69,13 +69,12 @@ impl MetaStore {
         if let Some(m) = inner.cache.get(&id) {
             return m.clone();
         }
-        let meta = Arc::new(
-            inner
-                .repo
-                .as_ref()
-                .and_then(|r| read_meta(r, id))
-                .unwrap_or_default(),
-        );
+        // A commit that can't be read (yet: its pack arrived meanwhile) shows empty and is
+        // read again next time — never kept as an empty row.
+        let Some(meta) = inner.repo.as_ref().and_then(|r| read_meta(r, id)) else {
+            return Arc::default();
+        };
+        let meta = Arc::new(meta);
         if inner.cache.len() >= Self::MAX_CACHED {
             inner.cache.clear();
         }
@@ -835,6 +834,36 @@ mod tests {
         // No or an unknown encoding: replacement characters, as before.
         assert_eq!(decode_text(b"Caf\xe9", None), "Caf\u{fffd}");
         assert_eq!(decode_text(b"Caf\xe9", Some(b"KOI8-R")), "Caf\u{fffd}");
+    }
+
+    /// A commit that can't be read is shown empty but not kept: once its object is there
+    /// (a fetch's pack arrived after the history was loaded) the row reads it.
+    #[gitti_test::test]
+    fn unreadable_commit_meta_is_not_cached() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.com"])
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(a.path(), &["init", "-q"]);
+        git(b.path(), &["init", "-q"]);
+        git(b.path(), &["commit", "-q", "--allow-empty", "-m", "the subject"]);
+        let id = gix::open(b.path()).unwrap().head_id().unwrap().detach();
+        let store = MetaStore::new(gix::open(a.path()).unwrap());
+        assert_eq!(store.get(id).summary, "", "not in this repository yet");
+        let hex = id.to_string();
+        let (dir, file) = hex.split_at(2);
+        let to = a.path().join(".git/objects").join(dir);
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::copy(b.path().join(".git/objects").join(dir).join(file), to.join(file)).unwrap();
+        assert_eq!(store.get(id).summary, "the subject");
     }
 
     #[gitti_test::test]

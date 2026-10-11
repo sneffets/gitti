@@ -14,6 +14,9 @@
 //! in the group get it too), SIGKILL after [`KILL_AFTER`] or right away for reads — and
 //! every later git call of that operation fails at once with
 //! [`crate::git_cli::GitError::Cancelled`].
+//!
+//! Debug builds take faults injected by tests here ([`crate::fault`]: late readers, a
+//! killed child, short output, a failed start) and the stress mode's reader delays.
 
 use std::cell::RefCell;
 use std::io::{Read, Write as _};
@@ -157,15 +160,17 @@ enum Event {
     Eof,
 }
 
-/// Reads `pipe` on its own thread until EOF, sending what arrives.
-fn pump(mut pipe: impl Read + Send + 'static, which: Stream, tx: mpsc::Sender<Event>) {
+/// Reads `pipe` on its own thread until EOF, sending what arrives. `delay`: before the
+/// first read ([`crate::fault`]; zero outside tests).
+fn pump(mut pipe: impl Read + Send + 'static, which: Stream, tx: mpsc::Sender<Event>, delay: Duration) {
     std::thread::Builder::new()
         .name("git-pipe".into())
         .stack_size(64 * 1024)
         .spawn(move || {
             let mut buf = vec![0u8; 64 * 1024];
-            #[cfg(test)]
-            std::thread::sleep(Duration::from_millis(tests::READER_DELAY_MS.load(Ordering::Relaxed)));
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
             loop {
                 match pipe.read(&mut buf) {
                     Ok(0) => break,
@@ -201,6 +206,19 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
             cut: false,
         });
     }
+    let plan = crate::fault::plan(&cmd);
+    if plan.spawn_fails {
+        return Err(std::io::Error::other("injected fault: the process could not be started"));
+    }
+    if let Some(code) = plan.exit {
+        return Ok(Output {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            code,
+            cancelled: false,
+            cut: false,
+        });
+    }
     prepare_fork();
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if io.stdin.is_some() {
@@ -221,9 +239,15 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
                 let _ = pipe.write_all(&input);
             });
     }
+    if plan.kill {
+        kill_process_tree(&mut child);
+    }
     let (tx, rx) = mpsc::channel();
-    pump(child.stdout.take().expect("stdout piped"), Stream::Out, tx.clone());
-    pump(child.stderr.take().expect("stderr piped"), Stream::Err, tx);
+    let delay = plan.reader_delay;
+    pump(child.stdout.take().expect("stdout piped"), Stream::Out, tx.clone(), delay);
+    pump(child.stderr.take().expect("stderr piped"), Stream::Err, tx, delay);
+    // `Fault::Truncate`: how much more of stdout is taken.
+    let mut stdout_left = plan.truncate.unwrap_or(usize::MAX);
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -253,14 +277,18 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
                 None => TICK,
             };
             match rx.recv_timeout(wait) {
-                Ok(Event::Data(Stream::Out, bytes)) => match io.on_stdout.as_mut() {
-                    Some(f) => {
-                        if !stop && !f(&bytes) {
-                            stop = true;
+                Ok(Event::Data(Stream::Out, mut bytes)) => {
+                    bytes.truncate(stdout_left);
+                    stdout_left -= bytes.len();
+                    match io.on_stdout.as_mut() {
+                        Some(f) => {
+                            if !stop && !bytes.is_empty() && !f(&bytes) {
+                                stop = true;
+                            }
                         }
+                        None => stdout.extend_from_slice(&bytes),
                     }
-                    None => stdout.extend_from_slice(&bytes),
-                },
+                }
                 Ok(Event::Data(Stream::Err, bytes)) => {
                     if let Some(f) = io.on_stderr.as_mut() {
                         f(&bytes);
@@ -292,7 +320,11 @@ pub(crate) fn execute(mut cmd: Command, mut io: Io<'_>) -> std::io::Result<Outpu
                 last_poll = Instant::now();
                 if let Some(s) = child.try_wait()? {
                     status = Some(s);
-                    let grace = if io.whole_output { READ_PIPE_GRACE } else { PIPE_GRACE };
+                    let grace = plan.grace.unwrap_or(if io.whole_output {
+                        READ_PIPE_GRACE
+                    } else {
+                        PIPE_GRACE
+                    });
                     grace_until = Some(Instant::now() + grace);
                 }
             }
@@ -396,14 +428,11 @@ pub(crate) fn kill_process_tree(child: &mut Child) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
+    use crate::fault::{Fault, inject};
 
-    /// A delay before each reader thread's first read: a reader not scheduled in time.
-    pub(super) static READER_DELAY_MS: AtomicU64 = AtomicU64::new(0);
-
-    fn run(whole_output: bool) -> Output {
+    fn run(dir: &std::path::Path, whole_output: bool) -> Output {
         let mut cmd = Command::new("sh");
-        cmd.args(["-c", "printf 'the whole diff'"]);
+        cmd.args(["-c", "printf 'the whole diff'"]).current_dir(dir);
         execute(cmd, Io { whole_output, ..Default::default() }).unwrap()
     }
 
@@ -411,10 +440,10 @@ mod tests {
     /// without the wait the output is reported as cut, never as a short success.
     #[gitti_test::test]
     fn late_readers_lose_nothing_of_a_read() {
-        READER_DELAY_MS.store(400, Ordering::Relaxed);
-        let read = run(true);
-        let other = run(false);
-        READER_DELAY_MS.store(0, Ordering::Relaxed);
+        let dir = tempfile::tempdir().unwrap();
+        let _slow = inject(dir.path(), "sh", Fault::SlowReader(Duration::from_millis(400)), usize::MAX);
+        let read = run(dir.path(), true);
+        let other = run(dir.path(), false);
         assert_eq!((read.stdout.as_slice(), read.code, read.cut), (&b"the whole diff"[..], 0, false));
         assert!(other.cut, "a command that may leave its pipes to helpers says its output was cut");
     }

@@ -201,7 +201,7 @@ impl GittiApp {
             return true;
         }
         // Keep the previous diff while loading (no flicker when arrowing through).
-        if matches!(self.detail, Detail::Worktree | Detail::Empty) {
+        if matches!(self.detail, Detail::Worktree | Detail::Empty | Detail::Failed(_)) {
             self.detail = Detail::Loading;
             self.rows = Arc::new(Vec::new());
         }
@@ -223,8 +223,13 @@ impl GittiApp {
                     && this.settings.diff_options() == opts;
                 match result {
                     Ok(data) if current => this.show_compare_data(data, cx),
-                    Ok(_) => {}
-                    Err(e) => this.set_error(format!("{e:#}")),
+                    Err(e) if current => {
+                        let text = format!("{e:#}");
+                        this.detail = Detail::Failed(text.clone());
+                        this.rows = Arc::new(Vec::new());
+                        this.set_error(text);
+                    }
+                    _ => {}
                 }
                 // The selection moved on (or the working tree changed): load that.
                 if (!current || again) && this.compare_pair().is_some() {
@@ -319,8 +324,8 @@ impl GittiApp {
                     if highlight
                         && let Some(key) = hl_key(&data, opts)
                         && compare_hl.lock().expect("hl").get(&key).is_none()
+                        && let Some(out) = highlighting::compare_highlights(&repo, &data, &hl_cache)
                     {
-                        let out = highlighting::compare_highlights(&repo, &data, &hl_cache);
                         compare_hl.lock().expect("hl").insert(key, Arc::new(out));
                     }
                 }
