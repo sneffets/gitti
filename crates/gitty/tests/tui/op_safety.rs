@@ -1,7 +1,7 @@
 //! Operations that stop, are refused or would change more than shown, end to end: a merge
-//! that stops on a conflict says so (no "failed"), Stash is refused during it; Stage All
-//! asks about conflict markers and leaves hidden untracked files out; a cherry-pick with
-//! nothing to commit offers Skip; a merge refused for uncommitted changes offers Stash and
+//! that stops on a conflict says so (no "failed"), Stash is refused during it, Unstage All
+//! keeps it; Stage All asks about conflict markers and leaves hidden untracked files out;
+//! a cherry-pick with nothing to commit offers Skip; a merge refused for uncommitted changes offers Stash and
 //! Merge; a stage from a stale view is refused in plain words; line-ending-only changes
 //! are said.
 
@@ -78,6 +78,22 @@ fn during_a_merge_stash_waits_and_stage_all_asks() {
     assert!(!git(d, &["ls-files", "-u"]).is_empty(), "a.txt stays conflicted: {out}");
     assert!(d.join(".git/MERGE_HEAD").exists());
     assert_eq!(git(d, &["stash", "list"]), "");
+}
+
+/// During the merge (b.txt staged by it, a.txt conflicted): Unstage All (U) unstages b.txt
+/// and keeps the merge and a.txt's conflict.
+/// Workflow: MG-18
+#[gitti_test::test]
+fn unstage_all_keeps_the_merge() {
+    let dir = merging();
+    let d = dir.path();
+    let out = gitty(d, "state;press:U;state");
+    let st = states(&out);
+    assert!(st[0].contains("staged=1 "), "{out}");
+    assert!(st[1].contains("staged=0 ") && !st[1].contains("ERROR"), "{out}");
+    assert!(d.join(".git/MERGE_HEAD").exists(), "the merge stays: {out}");
+    assert_eq!(git(d, &["ls-files", "-u", "--", "a.txt"]).lines().count(), 3, "a.txt stays conflicted: {out}");
+    assert_eq!(std::fs::read_to_string(d.join("b.txt")).unwrap(), "ONE\n2\n3\n4\n5\n");
 }
 
 /// A merge refused for an uncommitted change of b.txt offers Stash and Merge: it merges

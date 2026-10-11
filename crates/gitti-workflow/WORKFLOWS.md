@@ -262,7 +262,7 @@ working tree or the index while the app shows an older state.
 | MG-15 | Conflict in a non-UTF-8 / CRLF file | Latin-1 conflict; autocrlf CRLF conflict | written back byte for byte in the working-tree form | `non_utf8::merge_editor_writes_non_utf8_files_exactly`, `non_utf8::merge_editor_writes_the_working_tree_form` | — | `merge_editor::merge_editor_saves_a_latin1_file_exactly` |
 | MG-16 | Merge into a dirty tree (overlapping) | local change in a file the merge changes | git refuses; the app says what blocks and offers a way out (stash first); nothing changed | — | `op_safety::blocked_merge_stash_and_merge` | `op_safety::a_blocked_merge_offers_ways_out` |
 | MG-17 | Merge into a dirty tree (not overlapping) | local change elsewhere; conflicting merge; abort | the local change survives merge and abort | — | — | — |
-| MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | `op_safety::unstage_all_keeps_a_merge_and_its_conflicts` | — | — |
+| MG-18 | Unstage All during a merge | conflicts resolved, files staged; Unstage All | files unstaged, **merge still in progress** (`MERGE_HEAD` kept) | `op_safety::unstage_all_keeps_a_merge_and_its_conflicts` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::unstage_all_keeps_the_merge` |
 | MG-19 | Stage All with markers left | a conflicted file still has `<<<<<<<`; Stage All | asks first like Mark Resolved does | `op_safety::conflict_markers_left_are_found_before_stage_all` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
 | MG-20 | Merge in a linked worktree | conflict in a linked worktree | state from its own git dir; main worktree clean | `conflicts::merge_conflict_in_a_linked_worktree` | — | — |
 | MG-21 | Submodule pointer conflict | both sides moved the pointer | listed as a conflict; resolving picks a commit | `submodules::conflicting_pointers` | — | — |
@@ -504,7 +504,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 13 | 6 | 7 |
 | BR branches | 17 | 8 | 5 | 9 |
-| MG merge | 26 | 20 | 8 | 10 |
+| MG merge | 26 | 20 | 9 | 11 |
 | CP cherry-pick | 18 | 9 | 3 | 3 |
 | RV revert | 6 | 2 | 0 | 0 |
 | RB rebase | 9 | 4 | 1 | 1 |
@@ -522,7 +522,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **261** | **179** | **102** | **114** |
+| **Total** | **261** | **179** | **103** | **115** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

@@ -1,6 +1,6 @@
 //! Operations that stop, are refused or would change more than shown: a merge that stops
 //! on a conflict says so in the status bar (not as an error), Stash Changes is refused
-//! during it and Stage All asks about the conflict markers; a cherry-pick with nothing to
+//! during it, Unstage All keeps it and Stage All asks about the conflict markers; a cherry-pick with nothing to
 //! commit asks Skip / Commit Empty, the banner has Skip; a merge refused for an
 //! uncommitted change offers Stash and Merge; Stage All leaves untracked files hidden by
 //! the config out; a stage from a stale view is refused in plain words; a line-ending-only
@@ -64,8 +64,9 @@ fn merge(ui: &mut Ui, branch: &str) {
 
 /// Merge feat: a stop, said plainly (no error, no error mark); Stash Changes says why it
 /// can't; Stage All asks about a.txt's markers (Cancel: nothing staged); the diff menu's
-/// stash entries are greyed. The line-ending change of w.txt has its note row.
-/// Workflow: EX-04, MG-19, SH-16
+/// and the palette's stash entries are greyed; Unstage All keeps the merge and the
+/// conflict. The line-ending change of w.txt has its note row.
+/// Workflow: EX-04, MG-18, MG-19, SH-16
 fn merge_stop_stash_and_stage_all(ui: &mut Ui) {
     let dir = ui.repo.clone();
     let probes = ui.check("worktree");
@@ -146,6 +147,20 @@ fn merge_stop_stash_and_stage_all(ui: &mut Ui) {
         ui.quick("key:escape");
     } else {
         ui.fail("no file tab".into());
+    }
+    // Unstage All during the merge: c.txt unstaged, the merge and a.txt's conflict stay.
+    std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+    git(&dir, &["add", "c.txt"]);
+    ui.step("action:gitti::Refresh");
+    ui.step("action:gitti::UnstageAll");
+    if !git_out(&dir, &["ls-files", "--", "c.txt"]).is_empty() {
+        ui.fail("Unstage All during the merge left c.txt staged".into());
+    }
+    if !dir.join(".git/MERGE_HEAD").exists() {
+        ui.fail("Unstage All ended the merge".into());
+    }
+    if git_out(&dir, &["ls-files", "-u", "--", "a.txt"]).lines().count() != 3 {
+        ui.fail("Unstage All resolved a.txt".into());
     }
 }
 
