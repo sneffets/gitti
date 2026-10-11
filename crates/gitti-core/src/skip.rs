@@ -95,7 +95,7 @@ impl EmptyPick {
              --skip).\n\
              Commit Empty records it anyway as a commit without changes, with its message \
              (git commit --allow-empty).\n\
-             Or do neither now: Abort in the banner ends the {op} and puts everything back.",
+             Or do neither now: Abort ends the {op} and puts everything back.",
             self.verb()
         )
     }
