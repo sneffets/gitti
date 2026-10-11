@@ -2882,9 +2882,7 @@ fn draw_diff_row(
                 (Some(d), _) if d.binary => "Binary file".to_string(),
                 // Line-ending / BOM-only changes, above the hunks.
                 (Some(d), _) if let Some(note) = gitti_core::eol_note::eol_note(d) => note,
-                (Some(d), _) if d.hunks.is_empty() => {
-                    "No content changes (mode / rename only)".to_string()
-                }
+                (Some(d), _) if d.hunks.is_empty() => d.no_lines_note().to_string(),
                 // A nested repository / an untracked folder entry: what it is (Enter:
                 // more).
                 (None, Some(wf)) if let Some((short, _)) =

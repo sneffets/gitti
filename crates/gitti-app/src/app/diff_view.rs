@@ -1428,7 +1428,7 @@ impl GittiApp {
                         Some(_) if self.settings.ignore_whitespace => {
                             "Only whitespace changes (hidden: ignore whitespace is on)"
                         }
-                        Some(_) => "No content changes (mode change or empty file)",
+                        Some(d) => d.no_lines_note(),
                     }
                     .to_string(),
                 };

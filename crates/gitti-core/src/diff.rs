@@ -132,6 +132,22 @@ impl FileDiff {
             .unwrap_or("")
     }
 
+    /// Why a text file's diff has no lines, in a few words (both frontends show it in
+    /// place of the hunks): an empty file added or deleted, a rename or copy without
+    /// content changes, a mode change only.
+    pub fn no_lines_note(&self) -> &'static str {
+        let mode = self.header.iter().any(|h| h.starts_with("old mode "));
+        match self.change {
+            FileChange::Added => "New empty file",
+            FileChange::Deleted => "Empty file deleted",
+            FileChange::Renamed if mode => "Renamed, mode changed — no content changes",
+            FileChange::Renamed => "Renamed — no content changes",
+            FileChange::Copied => "Copied — no content changes",
+            _ if mode => "Mode change only — no content changes",
+            _ => "No content changes",
+        }
+    }
+
     /// Added / removed lines (none for a submodule pointer: it has no lines of its own).
     pub fn added_removed(&self) -> (usize, usize) {
         if self.submodule.is_some() {
@@ -513,6 +529,20 @@ fn parse_range(s: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Files without lines say why: an empty file added / deleted, a rename, a mode change.
+    #[gitti_test::test]
+    fn no_lines_note_names_the_reason() {
+        let raw = "diff --git a/e b/e\nnew file mode 100644\nindex 0000000..e69de29\n\
+                   diff --git a/f b/f\ndeleted file mode 100644\nindex e69de29..0000000\n\
+                   diff --git a/g b/h\nsimilarity index 100%\nrename from g\nrename to h\n\
+                   diff --git a/x.sh b/x.sh\nold mode 100644\nnew mode 100755\n";
+        let notes: Vec<&str> = parse_unified(raw).iter().map(FileDiff::no_lines_note).collect();
+        assert_eq!(
+            notes,
+            ["New empty file", "Empty file deleted", "Renamed — no content changes", "Mode change only — no content changes"]
+        );
+    }
 
     const SAMPLE: &str = "diff --git a/src/x.rs b/src/x.rs
 index 111..222 100644
