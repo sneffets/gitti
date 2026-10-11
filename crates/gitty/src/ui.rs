@@ -2232,8 +2232,52 @@ fn draw_diff_row(
                 );
             }
         }
+        DiffRow::Folder { src, folder } => {
+            let Some(f) = app.folders.get(folder) else {
+                return;
+            };
+            let marked = !f.files.is_empty()
+                && f.files.iter().all(|&i| {
+                    work_files(&app.working, src)
+                        .get(i)
+                        .is_some_and(|w| app.marks.contains(src, w.path()))
+                });
+            let bg = cursor_bg(if marked { p.bg_list_selected } else { p.bg_section });
+            buf.set_style(area, Style::new().bg(bg));
+            let mark = if app.expansion.is_folder_collapsed(src, f.group, &f.path) {
+                "▸ "
+            } else {
+                "▾ "
+            };
+            let mut spans = vec![
+                Span::styled(mark, Style::new().fg(p.text_muted)),
+                Span::styled(format!("{}/", f.label), Style::new().fg(p.text_strong)),
+                Span::styled(format!(" ({})", f.files.len()), Style::new().fg(p.text_muted)),
+            ];
+            spans.extend(totals_spans(f.totals, p));
+            // Under its group header (3) or folder, two columns per level.
+            let indent = 3 + 2 * f.depth;
+            let end = put(buf, x + indent, y, w.saturating_sub(indent), spans);
+            let hint = match src {
+                Src::Unstaged => "⏎ fold · s stage · d discard · space mark",
+                Src::Staged => "⏎ fold · u unstage · space mark",
+                _ => "⏎ fold",
+            };
+            if cursor && end + hint.width() as u16 + 3 < x + w {
+                put_right(
+                    buf,
+                    x,
+                    y,
+                    w.saturating_sub(1),
+                    vec![Span::styled(hint, Style::new().fg(p.text_faint))],
+                );
+            }
+        }
         DiffRow::File { src, file } => {
-            let bg = cursor_bg(p.bg_file_header);
+            let marked = work_files(&app.working, src)
+                .get(file)
+                .is_some_and(|w| app.marks.contains(src, w.path()));
+            let bg = cursor_bg(if marked { p.bg_list_selected } else { p.bg_file_header });
             buf.set_style(area, Style::new().bg(bg));
             let diff = app.file_diff(src, file);
             let wf = work_files(&app.working, src).get(file);
@@ -2271,9 +2315,22 @@ fn draw_diff_row(
                 })
                 .or_else(|| wf.map(|w| w.path().to_string()))
                 .unwrap_or_default();
+            // The tree: the file's name under its folder (a rename says where from).
+            let depth = app.folders.file_depth(src, file);
+            let path = match (depth, diff) {
+                (None, _) => path,
+                (Some(_), Some(d)) if d.old_path.is_some() && d.old_path != d.new_path => format!(
+                    "{} ← {}",
+                    gitti_core::rows::file_name(d.path()),
+                    d.old_path.as_deref().unwrap_or_default()
+                ),
+                (Some(_), _) => gitti_core::rows::file_name(&path).to_string(),
+            };
             let expanded = diff.is_none_or(|d| app.expansion.is_expanded(src, d));
             let mut spans = vec![
                 Span::styled("▌", Style::new().fg(color)),
+                // The tree: the chevron one level right of its folder's.
+                Span::raw(depth.map_or(String::new(), |d| "  ".repeat(d as usize + 1))),
                 Span::styled(
                     if expanded { "▾ " } else { "▸ " },
                     Style::new().fg(p.text_muted),
@@ -2338,8 +2395,8 @@ fn draw_diff_row(
             let mut hint = String::new();
             if cursor && wt {
                 hint.push_str(match src {
-                    Src::Unstaged => "s stage file · d discard · ⏎ fold",
-                    Src::Staged => "u unstage file · ⏎ fold",
+                    Src::Unstaged => "s stage file · d discard · ⏎ fold · space mark",
+                    Src::Staged => "u unstage file · ⏎ fold · space mark",
                     Src::Conflicted => "s/m resolve",
                     Src::Commit => "",
                 });
@@ -3864,11 +3921,14 @@ Commit list
 Diff / working directory
   ↑ ↓  j k        move the cursor      pgup pgdn  g G
   n  N            next / previous hunk     ]  [   next / previous file
-  space           select the change line under the cursor
+  space           select the change line under the cursor; on a file / folder row: mark
+                  it — s / u / d and the menu (m) then act on the marked files, esc clears
   shift-↑ ↓  J K  extend the line selection
-  ⏎               on a file: fold / unfold; on a hunk or line: select the hunk
+  ⏎               on a file / folder: fold / unfold; on a hunk or line: select the hunk
                   on a conflicted file: resolve menu (e = merge editor, ? there)
-  s               stage the selected lines — or the hunk / file / section under the cursor
+  s               stage the selected lines, the marked files — or the hunk / file / folder /
+                  section under the cursor
+  ctrl-p          Changes as Tree: the working directory as folders (shared with gitti)
   u               unstage (same rules, staged side)
   d               discard (asks first)
   y               copy the selected lines / the line under the cursor (commit header:

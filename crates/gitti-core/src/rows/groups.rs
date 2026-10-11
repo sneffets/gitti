@@ -94,7 +94,7 @@ impl LineTotals {
         t
     }
 
-    fn of_work<'a>(files: impl IntoIterator<Item = &'a WorkFile>) -> LineTotals {
+    pub(super) fn of_work<'a>(files: impl IntoIterator<Item = &'a WorkFile>) -> LineTotals {
         let mut n = 0;
         let mut t = LineTotals::of(files.into_iter().filter_map(|f| {
             n += 1;

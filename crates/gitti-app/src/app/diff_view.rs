@@ -1283,6 +1283,7 @@ impl GittiApp {
             DiffRow::HunkGap => base.bg(p.bg_hunk_gap).into_any_element(),
             DiffRow::Section(src) => self.render_section_row(base, src, ix, &p, cx),
             DiffRow::Group(group) => self.render_group_row(base, group, ix, &p, cx),
+            DiffRow::Folder { src, folder } => self.render_folder_row(base, src, folder, ix, &p, cx),
             DiffRow::File { src, file } => self.render_file_row(base, src, file, ix, &p, cx),
             DiffRow::Note { src, file }
                 if let Some(size) = self
@@ -1681,10 +1682,13 @@ impl GittiApp {
             .and_then(|d| self.lfs_lock_of(d.path()))
             .map(gitti_core::lfs::lock_badge);
         let letter_color = super::file_tabs::letter_color(letter, conflicted, p);
+        // The tree: indented under its folder, the file's name only.
+        let indent = self.file_indent(src, file);
+        let path = self.tree_file_label(src, file, path);
         let mut el = base
             .pr_2()
             .gap_2()
-            .bg(p.bg_file_header)
+            .bg(if self.is_marked(src, file) { p.bg_list_selected } else { p.bg_file_header })
             .border_t_1()
             .border_b_1()
             .border_color(p.border)
@@ -1693,6 +1697,7 @@ impl GittiApp {
             .font_weight(FontWeight::SEMIBOLD)
             .cursor_pointer()
             .child(div().w(px(4.)).h_full().flex_none().bg(letter_color))
+            .when_some(indent, |d, w| d.child(div().w(w).flex_none()))
             .child(
                 div()
                     .w(px(12.))
@@ -1807,7 +1812,11 @@ impl GittiApp {
             )
             .child(div().flex_1())
             .children(self.render_hide_path_button(src, file, ix, cx))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                // ⌘ / ctrl / shift: marks files (several at once), a plain click folds.
+                if this.mark_click(src, file, ev.modifiers(), cx) {
+                    return;
+                }
                 if let Some(key) = this.file_path(src, file) {
                     this.expansion.toggle(src, &key);
                     this.rebuild_rows();

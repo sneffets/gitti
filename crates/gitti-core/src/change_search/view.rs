@@ -173,7 +173,9 @@ pub fn filter_rows(rows: &[DiffRow], filter: &HunkFilter) -> Vec<DiffRow> {
                     out.push(*row);
                 }
             }
-            DiffRow::Section(_) | DiffRow::Group(_) | DiffRow::HeaderSpace => out.push(*row),
+            DiffRow::Section(_) | DiffRow::Group(_) | DiffRow::Folder { .. } | DiffRow::HeaderSpace => {
+                out.push(*row)
+            }
         }
     }
     out

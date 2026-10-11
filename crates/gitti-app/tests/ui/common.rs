@@ -534,6 +534,11 @@ impl Ui {
 
     /// Press and release `button` in the middle of `target`.
     pub fn click_on(&mut self, target: &str, button: MouseButton) {
+        self.click_on_with(target, button, Modifiers::default());
+    }
+
+    /// [`Self::click_on`] with modifier keys held (⌘ / shift-click).
+    pub fn click_on_with(&mut self, target: &str, button: MouseButton, modifiers: Modifiers) {
         let p = self.frame();
         let Some(r) = find(&p, target).and_then(Probe::visible) else {
             self.fail(format!("click: no visible {target}"));
@@ -553,7 +558,7 @@ impl Ui {
                     PlatformInput::MouseDown(MouseDownEvent {
                         button,
                         position,
-                        modifiers: Modifiers::default(),
+                        modifiers,
                         click_count: 1,
                         first_mouse: false,
                     }),
@@ -563,7 +568,7 @@ impl Ui {
                     PlatformInput::MouseUp(MouseUpEvent {
                         button,
                         position,
-                        modifiers: Modifiers::default(),
+                        modifiers,
                         click_count: 1,
                     }),
                     cx,

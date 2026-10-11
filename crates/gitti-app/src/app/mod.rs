@@ -12,6 +12,7 @@ mod context_lines;
 mod config_ui;
 mod conflict_ui;
 mod diff_view;
+mod file_marks;
 mod file_tabs;
 mod folder_picker;
 mod from_commit;
@@ -258,6 +259,10 @@ pub struct GittiApp {
     /// Counts commit loads: the [`SLOW_LOAD`] timer of one that has ended does nothing.
     commit_load_gen: u64,
     rows: Arc<Vec<DiffRow>>,
+    /// The folder rows of `rows` (the working directory as a tree; empty when flat).
+    folders: gitti_core::rows::Folders,
+    /// Files marked for an action on several (⌘ / shift-click on file headers).
+    file_marks: gitti_core::rows::FileMarks,
     expansion: Expansion,
     line_sel: Option<LineSel>,
     dragging: bool,
@@ -638,6 +643,8 @@ impl GittiApp {
             commit_loading: false,
             commit_load_gen: 0,
             rows: Arc::new(Vec::new()),
+            folders: Default::default(),
+            file_marks: Default::default(),
             expansion: Expansion::default(),
             line_sel: None,
             dragging: false,
@@ -1165,6 +1172,7 @@ impl GittiApp {
     fn rebuild_rows(&mut self) {
         let wrap = self.wrap();
         let before = self.rows.clone();
+        self.folders = Default::default();
         self.rows = Arc::new(match &self.detail {
             Detail::Worktree => self.worktree_rows(wrap),
             Detail::Commit(cv) => {
@@ -2429,6 +2437,11 @@ impl GittiApp {
     }
 
     /// Stage/unstage the current line selection.
+    /// Whether selected lines of section `src` are what s / u act on.
+    fn has_line_selection(&self, src: Src) -> bool {
+        self.line_sel.as_ref().is_some_and(|s| s.src == src && !s.lines.is_empty())
+    }
+
     fn apply_line_selection(&mut self, want: Src, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sel) = self.line_sel.clone() else {
             return;
@@ -2563,12 +2576,7 @@ impl GittiApp {
             cx.notify();
             return;
         }
-        let plan = match &self.repo {
-            Some(r) => DiscardPlan::of(r.workdir(), &entries),
-            None => return,
-        };
         let n = entries.len();
-        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let (title, done) = match group {
             None => (
                 format!("Discard all unstaged changes in {n} file(s)?"),
@@ -2583,6 +2591,27 @@ impl GittiApp {
                 "Untracked files deleted",
             ),
         };
+        self.discard_entries(entries, title, done, "Discard All", window, cx);
+    }
+
+    /// The confirmation of discarding the unstaged changes of `entries` (several files: all,
+    /// a group, a folder, marked files): `title` asks, the detail says what happens to each
+    /// kind of file; then one discard and a re-read of those paths. `done` starts the status
+    /// bar's report, `button` confirms.
+    pub(super) fn discard_entries(
+        &mut self,
+        entries: Vec<gitti_core::status::StatusEntry>,
+        title: String,
+        done: &'static str,
+        button: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let plan = match &self.repo {
+            Some(r) => DiscardPlan::of(r.workdir(), &entries),
+            None => return,
+        };
+        let fs_warning = self.fs_discard_warning(entries.iter().map(|e| e.path.as_str()));
         let run = move |this: &mut Self, opts: DiscardOptions, window: &mut Window, cx: &mut Context<Self>| {
             let paths = Some(entries.iter().map(|e| e.path.clone()).collect());
             this.work_op_noted("Discarding", paths, window, cx, move |r| {
@@ -2595,7 +2624,7 @@ impl GittiApp {
             None => plan.detail(),
         };
         if plan.nested.is_empty() {
-            self.confirm(title, Some(detail), "Discard All", window, cx, move |this, w, cx| {
+            self.confirm(title, Some(detail), button, window, cx, move |this, w, cx| {
                 run(this, DiscardOptions::default(), w, cx)
             });
             return;
@@ -2604,7 +2633,7 @@ impl GittiApp {
         let spec = modal::ModalSpec::new(title)
             .message(detail)
             .check(plan.nested_check(), false)
-            .ok("Discard All")
+            .ok(button)
             .danger();
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let opts = DiscardOptions {
@@ -2707,11 +2736,17 @@ impl GittiApp {
         if self.defer_while_busy(|this, w, cx| this.stage_selection(w, cx)) {
             return;
         }
+        if !self.has_line_selection(Src::Unstaged) && self.marks_action(PatchMode::Stage, window, cx) {
+            return;
+        }
         self.apply_line_selection(Src::Unstaged, window, cx);
     }
 
     pub fn unstage_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.defer_while_busy(|this, w, cx| this.unstage_selection(w, cx)) {
+            return;
+        }
+        if !self.has_line_selection(Src::Staged) && self.marks_action(PatchMode::Unstage, window, cx) {
             return;
         }
         self.apply_line_selection(Src::Staged, window, cx);
@@ -2820,10 +2855,10 @@ impl GittiApp {
     }
 
     fn on_focus_list(&mut self, _: &FocusCommitList, window: &mut Window, cx: &mut Context<Self>) {
-        // Esc in the diff: hides revealed unchanged lines first ("Show Changes Only"),
-        // then ends compare mode (the focus stays).
+        // Esc in the diff: clears marked files first, then hides revealed unchanged lines
+        // ("Show Changes Only"), then ends compare mode (the focus stays).
         if self.diff_focus.is_focused(window)
-            && (self.esc_changes_only(cx) || self.end_compare(cx))
+            && (self.clear_marks(cx) || self.esc_changes_only(cx) || self.end_compare(cx))
         {
             return;
         }
@@ -3587,6 +3622,7 @@ impl Render for GittiApp {
         let root = self.menu_cmd_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
+        let root = self.file_marks_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
         let root = self.worktree_actions(root, cx);
         let root = self.submodule_actions(root, cx);

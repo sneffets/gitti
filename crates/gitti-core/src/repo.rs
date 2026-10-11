@@ -1417,6 +1417,16 @@ impl Repo {
         Ok(())
     }
 
+    /// [`Self::unstage_paths`] for a list of any length (marked files, a folder): one git
+    /// call per 200 paths.
+    pub fn unstage_path_list(&self, paths: &[String]) -> Result<()> {
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        for chunk in paths.chunks(200) {
+            self.unstage_paths(chunk)?;
+        }
+        Ok(())
+    }
+
     pub fn stage_all(&self) -> Result<()> {
         self.git.run(&["add", "-A"])?;
         Ok(())

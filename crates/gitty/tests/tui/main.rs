@@ -10,6 +10,7 @@ mod change_search;
 mod commit_box;
 mod config_safety;
 mod custom_commands;
+mod file_tree;
 mod fs_paths;
 mod keybar;
 mod lfs;

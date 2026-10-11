@@ -366,6 +366,11 @@ pub(super) fn diff_menu(
     let keys = |label: &str, action: &dyn Action| {
         crate::shortcuts::menu_label(label, action, "DiffView", cx)
     };
+    // A folder row right-clicked, marked files: their actions first.
+    let menu = match app.upgrade() {
+        Some(a) if worktree => a.read(cx).marks_menu_items(menu, app),
+        _ => menu,
+    };
     let mut menu = menu
         .item(
             item(keys("Copy", &crate::CopySelection), app, |this, w, cx| {
@@ -431,6 +436,13 @@ pub(super) fn diff_menu(
             this.rebuild_rows();
             cx.notify();
         }));
+    // The working directory only (a commit's files stay a list).
+    if worktree {
+        menu = menu.item(
+            item("Show Changes as Tree", app, |this, _, cx| this.toggle_changes_tree(cx))
+                .checked(s.changes_as_tree),
+        );
+    }
     if worktree {
         menu = menu
             .separator()

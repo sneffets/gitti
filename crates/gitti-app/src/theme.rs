@@ -249,6 +249,9 @@ pub struct Settings {
     /// The sidebar's WORKTREES section with the main worktree alone (shared with gitty,
     /// `gitti_core::worktree::section_shown`).
     pub show_main_worktree_alone: bool,
+    /// The working directory's changes as a tree of folders (shared with gitty,
+    /// `gitti_core::rows::build_worktree_view`).
+    pub changes_as_tree: bool,
     /// Pane sizes as fractions, shared with gitty (`gitti_core::store::PaneLayout`).
     pub pane_sidebar: f32,
     pub pane_list: f32,
@@ -277,6 +280,7 @@ impl Default for Settings {
             intraline_strength: gitti_core::intraline::DEFAULT_STRENGTH,
             commit_list_layout: gitti_core::list_layout::CommitListLayout::Auto,
             show_main_worktree_alone: true,
+            changes_as_tree: false,
             pane_sidebar: 0.,
             pane_list: 0.,
             pane_log: 0.,
