@@ -151,10 +151,11 @@ impl ConflictKind {
         }
         let (o, t) = (&sides.ours, &sides.theirs);
         format!(
-            "{o} and {t} both {} this binary file. git can't combine binary contents, so \
-             there is no merge editor for it: take one side's version, or replace the file \
-             (e.g. in the program that made it) and mark it resolved. The working directory \
-             has {o}'s version.",
+            "{o} and {t} both {} this binary file (binary by its contents, or by \
+             .gitattributes: -merge, merge=binary or the binary macro). git doesn't combine \
+             binary contents, so there is no merge editor for it: take one side's version, \
+             or replace the file (e.g. in the program that made it) and mark it resolved. \
+             The working directory has {o}'s version.",
             if self == Self::BothAdded { "added" } else { "changed" }
         )
     }
@@ -286,12 +287,37 @@ impl ConflictKind {
 }
 
 /// A binary conflict's note in the diff (where a text conflict shows its markers): git
-/// left the checked-out side's version in the working directory.
+/// left the checked-out side's version in the working directory. Binary by content or by
+/// `.gitattributes` alike ([`ConflictKind::explain_for`] says which ways there are).
 pub fn binary_note(sides: &ConflictSides) -> String {
     format!(
-        "Binary file changed on both sides — git can't merge it; the working directory has {}'s version",
+        "Binary file changed on both sides — git doesn't merge it; the working directory has {}'s version",
         sides.ours
     )
+}
+
+/// Whether git merges a file as binary — no markers, the checked-out side's version left —
+/// by its `merge` attribute, as `git check-attr` reports it: `unset` (`-merge`, also by the
+/// `binary` macro or a macro of the user's) always; the name `binary`, given or — the
+/// attribute `unspecified` — by `merge.default`, unless a merge driver of the user's
+/// (`merge.binary.*`, `user_driver`) takes that name; `set`, any other name (a driver of the
+/// user's, `text`, `union`, an unknown one: git's text merge) don't. Those still merge as
+/// binary when a side's content is binary ([`Repo::binary_conflict`]).
+pub fn merge_attr_is_binary(
+    value: &str,
+    default: Option<&str>,
+    user_driver: impl Fn(&str) -> bool,
+) -> bool {
+    let name = match value {
+        "unset" => return true,
+        "set" => return false,
+        "unspecified" => match default {
+            Some(d) => d,
+            None => return false,
+        },
+        v => v,
+    };
+    name == "binary" && !user_driver(name)
 }
 
 /// What a conflicted file's diff (against HEAD) shows when it has none: the file is not
@@ -352,47 +378,115 @@ impl Repo {
         }
     }
 
-    /// Whether a side of the conflicted `path` is binary — a NUL byte in the first 8000
-    /// bytes of its base, ours or theirs, as git decides before it merges: git then leaves
-    /// the checked-out side's version without markers, and the merge editor can't take it.
-    /// In-process (the index stages and their blobs), no git.
+    /// Whether git merges the conflicted `path` as binary: a side is binary by content
+    /// ([`Self::binary_by_content`]) or the file by its attributes ([`Self::merged_as_binary`]).
+    /// git then leaves the checked-out side's version without markers, and the apps offer
+    /// no merge editor for it.
     pub fn binary_conflict(&self, path: &str) -> bool {
-        use gix::bstr::ByteSlice;
-        use gix::index::entry::Stage;
-        let Ok(repo) = self.gix() else {
-            return false;
-        };
-        let Ok(index) = repo.index_or_empty() else {
-            return false;
-        };
-        [Stage::Base, Stage::Ours, Stage::Theirs].into_iter().any(|stage| {
-            index
-                .entry_by_path_and_stage(path.as_bytes().as_bstr(), stage)
-                .and_then(|e| repo.find_object(e.id).ok())
-                .is_some_and(|o| o.data.iter().take(8000).any(|b| *b == 0))
-        })
+        self.binary_by_content(&[path])[0] || !self.merged_as_binary(&[path]).is_empty()
     }
 
-    /// The diff of a conflicted file when the diff against HEAD shows nothing (the working
-    /// directory has ours): for a content conflict whose sides are binary
-    /// ([`Self::binary_conflict`]) a binary file's placeholder, so the apps say so and offer
-    /// no merge editor.
-    pub(crate) fn conflict_placeholder(&self, entry: &StatusEntry) -> Option<crate::diff::FileDiff> {
-        let path = entry.path.as_str();
-        let content = ConflictKind::of(entry).is_some_and(ConflictKind::is_content);
-        (content && self.binary_conflict(path)).then(|| crate::diff::FileDiff {
-            old_path: Some(path.to_string()),
-            new_path: Some(path.to_string()),
-            change: crate::diff::FileChange::Modified,
-            binary: true,
-            header: Vec::new(),
-            hunks: Vec::new(),
-            submodule: None,
-            too_large: None,
-            encoding: Default::default(),
-            lossy_name: false,
-            lfs: None,
-        })
+    /// For each of the conflicted `paths`, whether a side is binary — a NUL byte in the
+    /// first 8000 bytes of its base, ours or theirs, as git decides before it merges.
+    /// In-process (the index stages and their blobs, the index read once), no git.
+    fn binary_by_content(&self, paths: &[&str]) -> Vec<bool> {
+        use gix::bstr::ByteSlice;
+        use gix::index::entry::Stage;
+        let none = || vec![false; paths.len()];
+        let Ok(repo) = self.gix() else {
+            return none();
+        };
+        let Ok(index) = repo.index_or_empty() else {
+            return none();
+        };
+        let binary = |path: &str| {
+            [Stage::Base, Stage::Ours, Stage::Theirs].into_iter().any(|stage| {
+                index
+                    .entry_by_path_and_stage(path.as_bytes().as_bstr(), stage)
+                    .and_then(|e| repo.find_object(e.id).ok())
+                    .is_some_and(|o| o.data.iter().take(8000).any(|b| *b == 0))
+            })
+        };
+        paths.iter().map(|p| binary(p)).collect()
+    }
+
+    /// Those of `paths` git merges as binary by their attributes ([`merge_attr_is_binary`]):
+    /// one `git check-attr` for all — nested `.gitattributes`, `info/attributes`,
+    /// `core.attributesFile` and macros exactly as git's merge reads them — the config
+    /// (`merge.default`, `merge.<driver>.*`) in-process. A failure counts as "none".
+    fn merged_as_binary(&self, paths: &[&str]) -> std::collections::HashSet<String> {
+        let mut input = Vec::new();
+        for p in paths {
+            input.extend_from_slice(p.as_bytes());
+            input.push(0);
+        }
+        let Ok(out) = self.git().run_stdin(&["check-attr", "-z", "--stdin", "merge"], Some(&input))
+        else {
+            return Default::default();
+        };
+        let repo = self.gix().ok();
+        let snapshot = repo.as_ref().map(|r| r.config_snapshot());
+        let default = snapshot.as_ref().and_then(|c| c.string("merge.default")).map(|v| v.to_string());
+        let user_driver = |name: &str| {
+            snapshot.as_ref().is_some_and(|c| {
+                c.plumbing().sections_by_name("merge").into_iter().flatten().any(|s| {
+                    s.header().subsection_name().is_some_and(|n| n == name.as_bytes())
+                })
+            })
+        };
+        // `<path> NUL merge NUL <value> NUL` per path.
+        let fields: Vec<&[u8]> = out.stdout.split(|b| *b == 0).collect();
+        fields
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter(|c| merge_attr_is_binary(&String::from_utf8_lossy(c[2]), default.as_deref(), user_driver))
+            .map(|c| String::from_utf8_lossy(c[0]).into_owned())
+            .collect()
+    }
+
+    /// Gives each conflicted file of `files` whose diff against HEAD shows nothing (the
+    /// working directory has ours) a binary file's placeholder diff when git merged it as
+    /// binary ([`Self::binary_conflict`]; one `git check-attr` for all whose content is
+    /// text, none without such files), so the apps say so and offer no merge editor.
+    pub(crate) fn add_conflict_placeholders(&self, files: &mut [crate::WorkFile]) {
+        let empty: Vec<usize> = (0..files.len())
+            .filter(|&i| {
+                files[i].diff.is_none()
+                    && ConflictKind::of(&files[i].entry).is_some_and(ConflictKind::is_content)
+            })
+            .collect();
+        if empty.is_empty() {
+            return;
+        }
+        let paths: Vec<&str> = empty.iter().map(|&i| files[i].entry.path.as_str()).collect();
+        let by_content = self.binary_by_content(&paths);
+        let text: Vec<&str> =
+            paths.iter().zip(&by_content).filter(|(_, b)| !**b).map(|(p, _)| *p).collect();
+        let by_attributes =
+            if text.is_empty() { Default::default() } else { self.merged_as_binary(&text) };
+        let binary: Vec<usize> = empty
+            .iter()
+            .zip(&by_content)
+            .filter(|&(&i, &b)| b || by_attributes.contains(&files[i].entry.path))
+            .map(|(&i, _)| i)
+            .collect();
+        for i in binary {
+            let path = files[i].entry.path.clone();
+            files[i].diff = Some(crate::diff::FileDiff {
+                old_path: Some(path.clone()),
+                new_path: Some(path),
+                change: crate::diff::FileChange::Modified,
+                binary: true,
+                header: Vec::new(),
+                hunks: Vec::new(),
+                submodule: None,
+                too_large: None,
+                encoding: Default::default(),
+                lossy_name: false,
+                lfs: None,
+            });
+        }
     }
 
     fn out_text(&self, args: &[&str]) -> Result<String> {
@@ -424,6 +518,27 @@ mod tests {
         assert_eq!(k('D', 'D'), ConflictKind::BothDeleted);
         assert!(k('U', 'U').is_content() && k('A', 'A').is_content());
         assert!(!k('U', 'D').is_content() && !k('D', 'D').is_content());
+    }
+
+    /// git's choice of the binary merge driver by the `merge` attribute (`check-attr`'s
+    /// value) and the config, as `ll-merge.c` makes it.
+    #[gitti_test::test]
+    fn merge_attribute_picks_the_binary_driver() {
+        let no_driver = |_: &str| false;
+        let binary = |v: &str, d: Option<&str>| merge_attr_is_binary(v, d, no_driver);
+        // `-merge` (also through the `binary` macro), `merge=binary`.
+        assert!(binary("unset", None) && binary("binary", None));
+        // `merge`, no attribute, `merge=text` / `union` / an unknown name: the text merge.
+        for v in ["set", "unspecified", "text", "union", "nosuch"] {
+            assert!(!binary(v, None), "{v}");
+        }
+        // No attribute: `merge.default` names the driver.
+        assert!(binary("unspecified", Some("binary")) && !binary("unspecified", Some("union")));
+        assert!(!binary("set", Some("binary")));
+        // A driver of the user's called `binary` (`merge.binary.driver`) is not git's.
+        assert!(!merge_attr_is_binary("binary", None, |n| n == "binary"));
+        assert!(!merge_attr_is_binary("unspecified", Some("binary"), |n| n == "binary"));
+        assert!(merge_attr_is_binary("unset", None, |_| true));
     }
 
     /// The deletion kinds offer keep / delete naming the sides, no merge editor; the
