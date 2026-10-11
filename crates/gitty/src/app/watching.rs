@@ -13,6 +13,9 @@ use gitti_core::{DiffOptions, WorkingState};
 
 use super::{App, FileHighlight, Msg, compute_highlights, spawn, worktree_jobs};
 
+/// How long the first read waits at most for the file watcher's first report.
+const FIRST_READ_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// A path-limited re-read of an outside edit ([`App::refresh_paths`]).
 pub struct PathsRead {
     /// The working-state generation it started from.
@@ -29,6 +32,10 @@ pub struct PathsRead {
 impl App {
     /// A batch from the file watcher.
     pub(super) fn on_fs(&mut self, change: Change) {
+        self.watch_ready |= change.armed;
+        if change.armed && std::mem::take(&mut self.first_read_pending) {
+            self.refresh(true);
+        }
         self.merge_check_disk();
         if self.busy.is_some() {
             // The operation's own re-read decides when it ends.
@@ -38,6 +45,27 @@ impl App {
             });
         } else {
             self.on_watch(change);
+        }
+    }
+
+    /// The first full read (working state, refs, history) — once the file watcher's
+    /// watches are in place: with a recursive OS watch (macOS, Windows) a change before
+    /// that point is never reported, so a read started earlier could miss it for good
+    /// (Linux finds such changes by their mtime). Waiting costs the watcher's setup time
+    /// (a few ms); without a report within [`FIRST_READ_WAIT`] it reads anyway (the
+    /// report then asks for a re-read).
+    pub(super) fn first_read(&mut self) {
+        if self.watch_ready {
+            self.refresh(true);
+            return;
+        }
+        self.first_read_pending = true;
+        spawn(&self.tx, || std::thread::sleep(FIRST_READ_WAIT), |_| Msg::FirstReadDue);
+    }
+
+    pub(super) fn first_read_due(&mut self) {
+        if std::mem::take(&mut self.first_read_pending) {
+            self.refresh(true);
         }
     }
 

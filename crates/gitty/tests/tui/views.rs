@@ -544,6 +544,37 @@ fn worktree_entries_carry_the_marks() {
     assert_eq!(others(&c[1]), 0, "moving through the sidebar reads none: {out}");
 }
 
+/// One source: gitty's top-line mark and its own WORKTREES entry are the same store entry;
+/// a change in another worktree shows after a refresh (`r`), a change in gitty's own on
+/// both places at once.
+#[gitti_test::test]
+fn top_line_and_worktree_entries_agree() {
+    let dir = import(&[Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "a\n")] }]);
+    let d = dir.path();
+    let wt = tempfile::tempdir().unwrap();
+    let other = wt.path().join("other-wt");
+    git(d, &["worktree", "add", "-q", "--detach", other.to_str().unwrap(), "main"]);
+    // `write:` is relative to gitty's folder.
+    let up = format!("../{}/other-wt", wt.path().file_name().unwrap().to_string_lossy());
+    let out = gitty(
+        d,
+        &format!("press:backtab;press:g;dump;write:{up}/n.txt=n;press:r;wait;dump;write:own.txt=o;press:r;wait;dump"),
+    );
+    let s = screens(&out);
+    let own = d.file_name().unwrap().to_string_lossy().to_string();
+    let row = |i: usize, name: &str| {
+        // The WORKTREES entry: the folder name, then what it has checked out.
+        let entry = |l: &&str| l.contains(&format!(" {name} ")) && (l.contains('⎇') || l.contains("detached"));
+        s[i].lines().skip(1).find(entry).unwrap_or_default().to_string()
+    };
+    let top = |i: usize| s[i].lines().next().unwrap_or_default().to_string();
+    assert!(!row(0, "other-wt").contains('●') && !top(0).contains(&format!("{own} ●")), "clean at the start: {out}");
+    assert!(row(1, "other-wt").contains("● detached"), "the other worktree's change after r: {out}");
+    assert!(!top(1).contains(&format!("{own} ●")), "gitty's own still clean: {out}");
+    assert!(top(2).contains(&format!("{own} ●")), "gitty's own change on the top line: {out}");
+    assert!(row(2, &own).contains("● ⎇ main"), "…and on its WORKTREES entry: {out}");
+}
+
 /// HEAD's refs in [`many_refs_repo`] (`main` checked out), in badge order.
 const HEAD_REFS: &[&str] = &[
     "main",

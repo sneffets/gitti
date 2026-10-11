@@ -123,6 +123,9 @@ pub enum Msg {
     Tick,
     /// The commit message draft's write may be due (`app/commit_flow.rs`).
     DraftDue,
+    /// The first read waited this long for the file watcher's first report: it goes
+    /// ahead without (`app/watching.rs`).
+    FirstReadDue,
     /// The commit message draft stored for this worktree, read at start (and Sign Off).
     Draft(Option<gitti_core::store::Draft>, Option<gitti_core::store::AmendDraft>, bool),
     /// The user's own earlier commit messages, read at this HEAD (`app/commit_box.rs`).
@@ -443,11 +446,17 @@ pub struct App {
     pub tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the ○ after the repository name).
     pub unpushed: Option<gitti_core::tab_marks::Unpushed>,
-    /// The other worktrees' marks by folder (`app/worktrees.rs`), a read running / asked
-    /// for again.
-    pub worktree_marks: Vec<(std::path::PathBuf, gitti_core::tab_marks::Marks)>,
+    /// Every worktree's marks by folder (`app/worktrees.rs`): gitty's own published after
+    /// each read of the working state, the others read in the background — the top line
+    /// and the WORKTREES entries both read it. A read of the others runs.
+    pub wt_marks: gitti_core::tab_marks::MarksStore,
     worktree_marks_loading: bool,
-    worktree_marks_queued: bool,
+    /// The file watcher's first report arrived (watches in place; with a recursive OS
+    /// watch it asks for one more read) — or there is no watcher. Scripted steps wait for
+    /// it.
+    pub watch_ready: bool,
+    /// The first full read waits for the watcher's first report (`app/watching.rs`).
+    pub(super) first_read_pending: bool,
     pub identity: (Option<String>, Option<String>),
     pub conflict_sides: Option<ConflictSides>,
     pub loaded: bool,
@@ -782,9 +791,10 @@ impl App {
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
             unpushed: None,
-            worktree_marks: Vec::new(),
+            wt_marks: Default::default(),
             worktree_marks_loading: false,
-            worktree_marks_queued: false,
+            watch_ready: true,
+            first_read_pending: false,
             identity: (None, None),
             conflict_sides: None,
             loaded: false,
@@ -910,7 +920,7 @@ impl App {
             move || repo.history_newest(order, 500),
             Msg::QuickHistory,
         );
-        self.refresh(true);
+        self.first_read();
         self.load_draft();
         // A git older than the supported minimum: said once, stays until the next action.
         if let Some(warning) = gitti_core::caps::GitCaps::get().warning() {
@@ -1249,6 +1259,7 @@ impl App {
             }
             Msg::Tick => {}
             Msg::DraftDue => self.draft_due(),
+            Msg::FirstReadDue => self.first_read_due(),
             Msg::Draft(draft, amend, sign_off) => {
                 self.commit_box.sign_off = sign_off;
                 self.restore_draft(draft, amend)
@@ -1366,6 +1377,7 @@ impl App {
             && !self.paths_in_flight
             && self.paths_queued.is_none()
             && self.loads_in_flight == 0
+            && self.watch_ready
             && self.busy.is_none()
             && !self.detail_running
             && !self.detail_pending
@@ -1458,17 +1470,35 @@ impl App {
     /// The mark after the repository name: ● uncommitted changes, else ○ commits not
     /// pushed (`gitti_core::tab_marks::mark`, from what the refreshes read anyway).
     pub fn repo_mark(&self) -> Option<gitti_core::tab_marks::Mark> {
-        gitti_core::tab_marks::mark(&self.working.status, self.unpushed.as_ref())
+        self.own_marks_shown().mark()
+    }
+
+    /// gitty's own worktree's marks as the store has them (the same entry its WORKTREES
+    /// section shows).
+    fn own_marks_shown(&self) -> gitti_core::tab_marks::Marks {
+        self.wt_marks
+            .get(self.repo.workdir())
+            .cloned()
+            .unwrap_or_else(|| self.own_marks())
+    }
+
+    /// The marks of gitty's own working state.
+    pub(crate) fn own_marks(&self) -> gitti_core::tab_marks::Marks {
+        gitti_core::tab_marks::Marks::of(&self.working.status, self.unpushed.as_ref())
+    }
+
+    /// Puts gitty's own marks into the store (after each read of the working state).
+    fn publish_marks(&mut self) {
+        let marks = self.own_marks();
+        let workdir = self.repo.workdir().to_path_buf();
+        self.wt_marks.publish(&workdir, 0, marks);
     }
 
     /// What the marks mean, in the status line (a click on them).
     pub fn explain_repo_marks(&mut self) {
-        let parts: Vec<String> = gitti_core::tab_marks::describe_uncommitted(&self.working.status)
-            .into_iter()
-            .chain(self.unpushed.as_ref().map(|u| u.describe()))
-            .collect();
-        if !parts.is_empty() {
-            self.set_info(parts.join(" · "));
+        let text = self.own_marks_shown().describe().replace('\n', " · ");
+        if !text.is_empty() {
+            self.set_info(text);
         }
     }
 
@@ -1593,7 +1623,9 @@ impl App {
             self.subtrees_dirty = false;
         }
         self.refresh_subtrees(force);
-        // The other worktrees' sidebar marks (in the background, only when shown).
+        // gitty's own marks for the top line and its WORKTREES entry; the other
+        // worktrees' (in the background).
+        self.publish_marks();
         self.refresh_worktree_marks();
         // The working directory is row 0 of every history: its state shows before the
         // history has loaded.
@@ -2447,6 +2479,7 @@ impl App {
         let at = self.cursor_file();
         let regroup = self.regroup_anchor(&working);
         let prev = std::mem::replace(&mut self.working, Arc::new(working));
+        self.publish_marks();
         if self.working.conflicted.is_empty() {
             self.conflict_sides = None;
         }

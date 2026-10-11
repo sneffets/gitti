@@ -129,6 +129,8 @@ fn run() -> Result<()> {
     .ok();
 
     let mut app = App::new(repo, tx.clone());
+    // Its first report is still to come.
+    app.watch_ready = _watcher.is_none();
     app.pal.depth = theme::ColorDepth::detect(script.is_some());
     if let Some(script) = script {
         return script::run(app, rx, &script);

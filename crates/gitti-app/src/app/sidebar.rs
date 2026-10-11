@@ -410,7 +410,7 @@ impl GittiApp {
         let name = wt.name();
         let detail = wt.checkout_detail();
         let small = self.settings.ui_small();
-        let marks = self.worktree_marks(wi).and_then(|m| {
+        let marks = self.worktree_marks(wi, cx).and_then(|m| {
             let mark = m.mark()?;
             Some(super::tab_marks::mark_element(
                 ElementId::Name(format!("wt-marks:{name}").into()),
