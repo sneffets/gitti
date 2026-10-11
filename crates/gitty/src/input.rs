@@ -20,6 +20,8 @@ enum Outcome {
     Keep,
     Close,
     Run(crate::modal::Action),
+    /// Run it with the dialog staying open.
+    KeepRun(crate::modal::Action),
 }
 
 impl App {
@@ -831,12 +833,18 @@ impl App {
                     Outcome::Keep
                 }
             },
-            Modal::Text { scroll, body, .. } => {
-                // The window may be narrower (more wrapped lines); drawing clamps to the
-                // last line it can show.
-                let max = crate::ui::text_modal_lines(body, 10).len();
-                text_scroll(scroll, max, key)
-            }
+            Modal::Text {
+                scroll, body, keys, ..
+            } => match keys.iter().find(|k| key.code == KeyCode::Char(k.key)) {
+                Some(k) if k.keep => Outcome::KeepRun(Box::new(k.run)),
+                Some(k) => Outcome::Run(Box::new(k.run)),
+                None => {
+                    // The window may be narrower (more wrapped lines); drawing clamps to
+                    // the last line it can show.
+                    let max = crate::ui::text_modal_lines(body, 10).len();
+                    text_scroll(scroll, max, key)
+                }
+            },
             Modal::Edit { edit, submit, .. } => {
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                 let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -865,6 +873,10 @@ impl App {
             }
             Outcome::Close => {}
             Outcome::Run(action) => action(self),
+            Outcome::KeepRun(action) => {
+                self.modal = Some(modal);
+                action(self);
+            }
         }
         if search_before.is_some() && self.search_query().is_none() {
             self.stop_commit_search();

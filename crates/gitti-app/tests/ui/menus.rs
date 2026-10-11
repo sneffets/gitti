@@ -68,6 +68,7 @@ pub fn main() {
         ("sidebar_menus", sidebar_menus),
         ("tag_message_and_show_tag", tag_message_and_show_tag),
         ("startup_timings", startup_timings),
+        ("about_and_licences", about_and_licences),
         ("unavailable_commands", unavailable_commands),
         ("detached_head_greys_branch_commands", detached_head_greys_branch_commands),
         ("fresh_repository_greys_what_needs_a_commit", fresh_repository_greys_what_needs_a_commit),
@@ -316,6 +317,62 @@ fn startup_timings(ui: &mut Ui) {
     ui.quick("cancel");
 }
 
+/// Help ▸ About: the build commit first, licence and third-party summary; Copy Version
+/// copies the version line and leaves the window open; Third-Party Licences… opens the
+/// list of the components compiled into gitti on this platform, with their texts.
+fn about_and_licences(ui: &mut Ui) {
+    let ws = ui.ws.clone();
+    let viewer = |ui: &mut Ui| ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+    let (version, build) = (env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
+    let n = ui.git_commands().len();
+    ui.quick("focuslist");
+    ui.quick("action:gitti::About");
+    let text = viewer(ui);
+    if !text.starts_with(&format!("gitti {version}\nBuilt from git commit {build}\n")) {
+        fail!(ui, "About doesn't start with the version and build commit:\n{text}");
+    }
+    let os = gitti_core::third_party::os_name(std::env::consts::OS);
+    for part in [
+        "GNU General Public License",
+        "WITHOUT ANY WARRANTY",
+        "Source code: https://github.com/sneffets/gitti",
+        "Report a security issue (privately): ",
+        &format!("\nThird-party components\ngitti on {os} contains "),
+        "Their licences: the Third-Party Licences… button below",
+        "\nRuns git ",
+        "\nSettings and logs: ",
+    ] {
+        if !text.contains(part) {
+            fail!(ui, "About lacks `{part}`:\n{text}");
+        }
+    }
+    ui.cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+    ui.click_on("modal-copy", MouseButton::Left);
+    ui.settle();
+    let copied = ui.cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+    if copied != gitti_core::about::version_line("gitti", version, build) {
+        fail!(ui, "Copy Version copied {copied:?}");
+    }
+    if modal_title(ui).as_deref() != Some("About gitti") {
+        fail!(ui, "Copy Version closed About: {:?}", modal_title(ui));
+    }
+    ui.click_on("modal-extra", MouseButton::Left);
+    ui.settle();
+    if modal_title(ui).as_deref() != Some("Third-Party Licences") {
+        fail!(ui, "Third-Party Licences…: dialog {:?}", modal_title(ui));
+    }
+    let list = viewer(ui);
+    let head = format!("Third-party licences of gitti on {os}\n\ngitti on {os} contains ");
+    if !list.starts_with(&head) || !list.contains("\n  Lucide icons — ISC AND MIT [") || !list.contains("\nLicence texts\n\n[1] used by ") {
+        fail!(ui, "licence list:\n{}", &list[..list.len().min(2000)]);
+    }
+    let ran = ui.git_commands()[n..].to_vec();
+    if !ran.is_empty() {
+        fail!(ui, "About / licences ran git: {ran:?}");
+    }
+    ui.quick("cancel");
+}
+
 // ------------------------------------------------------------------ lean scenarios
 
 fn modal_title(ui: &mut Ui) -> Option<String> {
@@ -395,6 +452,7 @@ fn menu_entries(ui: &mut Ui) {
         ("Navigate", "Go to File…"),
         ("Help", "About gitti"),
         ("Help", "Start-up Timings…"),
+        ("Help", "Third-Party Licences…"),
     ] {
         if !has(menu, label) {
             fail!(ui, "no menu entry {menu} ▸ {label}");
@@ -409,6 +467,7 @@ fn menu_entries(ui: &mut Ui) {
         ("gitti::CreateTag", "Create tag at HEAD"),
         ("gitti::AddRemote", "Add remote"),
         ("gitti::About", "About gitti"),
+        ("gitti::ThirdPartyLicences", "Third-Party Licences"),
         ("gitti::StartupTimings", "Start-up Timings"),
         ("gitti::RepoGitSettings", "Git settings"),
         ("gitti::AddWorktree", "Add Worktree"),
@@ -427,6 +486,7 @@ fn menu_entries(ui: &mut Ui) {
         ("add to gitignore", "Add to .gitignore"),
         ("edit gitignore", "Edit .gitignore"),
         ("about gitti", "About gitti"),
+        ("third-party licences", "Third-Party Licences"),
         ("start-up timings", "Start-up Timings"),
         ("rename current branch", "Rename branch main"),
         ("add worktree", "Add Worktree"),

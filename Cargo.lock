@@ -10816,6 +10816,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "gitti-test",
+ "serde_json",
 ]
 
 [[package]]

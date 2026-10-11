@@ -17,6 +17,10 @@ for png in assets/icon/hicolor/*/apps/$ID.png; do
   install -Dm644 "$png" "$DATA/icons/hicolor/$size/apps/$ID.png"
 done
 install -Dm644 "assets/linux/$ID.desktop" "$DATA/applications/$ID.desktop"
+# Licences shipped with the binaries: our own, and every third-party component's.
+for f in COPYING LICENSE-MIT LICENSE-APACHE licenses/THIRD-PARTY-LICENSES.txt licenses/LUCIDE.txt; do
+  install -Dm644 "$f" "$DATA/doc/gitti/$(basename "$f")"
+done
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$DATA/icons/hicolor" || true
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$DATA/applications" || true
-echo "installed gitti + gitty into ~/.local/bin (make sure it is on PATH)"
+echo "installed gitti + gitty into ~/.local/bin (make sure it is on PATH), licences into $DATA/doc/gitti"

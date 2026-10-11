@@ -229,6 +229,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // Help
     both("ShowShortcuts", "Keyboard Shortcuts"),
     both("StartupTimings", "Start-up Timings…"),
+    both("ThirdPartyLicences", "Third-Party Licences…"),
     both("About", "About gitty"),
     both("ErrorDetails", "Show Error Details"),
 ];

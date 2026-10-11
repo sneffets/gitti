@@ -3624,8 +3624,14 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
             title,
             body,
             scroll,
+            keys,
         } => {
-            text_max = Some(draw_text_modal(f, screen, title, body, *scroll, false, p));
+            let hint = keys
+                .iter()
+                .map(|k| format!("{} {}", k.key, k.label))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            text_max = Some(draw_text_modal(f, screen, title, body, *scroll, &hint, false, p));
         }
         Modal::Help { scroll } => {
             text_max = Some(draw_text_modal(
@@ -3634,6 +3640,7 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                 "Keyboard Shortcuts",
                 &help_text(),
                 *scroll,
+                "",
                 true,
                 p,
             ));
@@ -3800,18 +3807,27 @@ pub fn text_modal_lines(body: &str, cols: usize) -> Vec<String> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_text_modal(
     f: &mut Frame,
     screen: Rect,
     title: &str,
     body: &str,
     scroll: usize,
+    keys_hint: &str,
     help: bool,
     p: &Palette,
 ) -> usize {
     let area = centered(screen, TEXT_MODAL_W, screen.height.saturating_sub(4));
     clear_popup(area, f.buffer_mut());
-    let block = modal_block(title, p);
+    let mut block = modal_block(title, p);
+    // The window's own keys on its bottom border (About: copy, licences).
+    if !keys_hint.is_empty() {
+        block = block.title_bottom(Span::styled(
+            format!(" {keys_hint} "),
+            Style::new().fg(p.text_faint),
+        ));
+    }
     let inner = block.inner(area);
     block.render(area, f.buffer_mut());
     let buf = f.buffer_mut();

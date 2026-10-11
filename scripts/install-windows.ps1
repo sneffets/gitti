@@ -24,6 +24,11 @@ foreach ($exe in 'gitti.exe', 'gitty.exe') {
     }
 }
 
+# Licences shipped with the binaries: our own, and every third-party component's.
+$licences = Join-Path $dest 'licenses'
+New-Item -ItemType Directory -Force $licences | Out-Null
+Copy-Item 'COPYING', 'LICENSE-MIT', 'LICENSE-APACHE', 'licenses\THIRD-PARTY-LICENSES.txt', 'licenses\LUCIDE.txt' $licences -Force
+
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $dest) {
     $newPath = if ($userPath) { "$userPath;$dest" } else { $dest }
