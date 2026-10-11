@@ -41,6 +41,7 @@ mod panes;
 mod picker;
 mod push_ui;
 mod reflog;
+mod renormalize;
 mod repo_actions;
 mod repo_stats;
 mod script_scroll;

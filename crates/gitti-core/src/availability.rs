@@ -158,6 +158,7 @@ pub const NO_KEY_MISSING: &str = "the shown commit has no signature whose key is
 pub const NO_FS_PATHS: &str = "every path fits this file system";
 pub const NO_FS_PATH_CHANGED: &str = "none of them shows as changed";
 pub const NO_HIDDEN_PATHS: &str = "no paths hidden";
+pub const UNRESOLVED: &str = "conflicted files are not resolved yet";
 
 /// "a merge is in progress" & co. (`None`: no operation half-done).
 pub fn in_progress(state: RepoState) -> Option<&'static str> {
@@ -233,6 +234,8 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "HideFsPaths" => check(f.fs_paths == 0, NO_FS_PATHS).or(check(f.fs_hidable == 0, NO_FS_PATH_CHANGED)),
         "ShowHiddenFsPaths" => check(f.fs_hidden == 0, NO_HIDDEN_PATHS),
         "PruneWorktrees" => check(f.prunable_worktrees == 0, NOTHING_TO_PRUNE),
+        // `git add --renormalize` would mark them resolved (`renormalize::CONFLICTS`).
+        "RenormalizeLineEndings" => check(f.conflicted > 0, UNRESOLVED),
         "UpdateSubmodules" | "UpdateSubmodulesRemote" | "CheckoutSubmoduleCommit"
         | "SyncSubmodules" | "RemoveSubmodule" | "ForeachSubmodule" => {
             check(f.submodules == 0, NO_SUBMODULES)
@@ -320,6 +323,7 @@ pub fn what_to_do(why: &str) -> Option<&'static str> {
         UNBORN => Some("commit something first"),
         DETACHED => Some("switch to a branch first"),
         NO_KEY_MISSING => Some("select a signed commit git can't verify yet"),
+        UNRESOLVED => Some("resolve them first"),
         _ if why.ends_with("in progress") => Some("continue or abort it first"),
         _ => None,
     }
@@ -606,5 +610,22 @@ mod tests {
         let l = with_reason("Pop Latest Stash", NO_STASHES);
         assert_eq!(l, "Pop Latest Stash (no stashes)");
         assert_eq!(normalize(&l), "pop latest stash");
+    }
+
+    /// Renormalize Line Endings stages every tracked file: not while conflicts would be
+    /// marked resolved by it; a merge without conflicts left is fine.
+    #[gitti_test::test]
+    fn renormalize_waits_for_resolved_conflicts() {
+        let mut f = plain();
+        assert_eq!(why_not("RenormalizeLineEndings", &f), None);
+        f.state = RepoState::Merging;
+        assert_eq!(why_not("RenormalizeLineEndings", &f), None);
+        f.conflicted = 1;
+        assert_eq!(why_not("RenormalizeLineEndings", &f), Some(UNRESOLVED));
+        assert_eq!(
+            refusal(crate::renormalize::MENU_LABEL, UNRESOLVED),
+            "Renormalize Line Endings is not available: conflicted files are not resolved yet — \
+             resolve them first"
+        );
     }
 }

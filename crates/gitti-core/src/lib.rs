@@ -66,6 +66,7 @@ pub mod progress;
 pub mod pull;
 pub mod push;
 pub mod redact;
+pub mod renormalize;
 pub mod reflog;
 pub mod reach;
 pub mod restore;
