@@ -134,6 +134,31 @@ impl ConflictKind {
         }
     }
 
+    /// [`Self::short`] of a file whose sides are `binary` ([`Repo::binary_conflict`]).
+    pub fn short_for(self, sides: &ConflictSides, binary: bool) -> String {
+        match self {
+            Self::BothModified if binary => "binary, changed on both sides".into(),
+            Self::BothAdded if binary => "binary, added on both sides".into(),
+            _ => self.short(sides),
+        }
+    }
+
+    /// [`Self::explain`] of a file whose sides are `binary` ([`Repo::binary_conflict`]):
+    /// a content conflict says there is no merge editor for it and what to do instead.
+    pub fn explain_for(self, sides: &ConflictSides, binary: bool) -> String {
+        if !(binary && self.is_content()) {
+            return self.explain(sides);
+        }
+        let (o, t) = (&sides.ours, &sides.theirs);
+        format!(
+            "{o} and {t} both {} this binary file. git can't combine binary contents, so \
+             there is no merge editor for it: take one side's version, or replace the file \
+             (e.g. in the program that made it) and mark it resolved. The working directory \
+             has {o}'s version.",
+            if self == Self::BothAdded { "added" } else { "changed" }
+        )
+    }
+
     /// What happened to the file and what the choices are, in plain words.
     pub fn explain(self, sides: &ConflictSides) -> String {
         let (o, t) = (&sides.ours, &sides.theirs);
@@ -175,6 +200,24 @@ impl ConflictKind {
 
     /// The ways to resolve it, the usual one first.
     pub fn choices(self, sides: &ConflictSides) -> Vec<ConflictChoice> {
+        self.choices_for(sides, false)
+    }
+
+    /// [`Self::choices`] of a file whose sides are `binary` ([`Repo::binary_conflict`]):
+    /// a content conflict then offers no merge editor (git can't combine binary contents,
+    /// nor can it) — take a side first, the external merge tool, or stage the file as it is
+    /// (e.g. after replacing it in another program).
+    pub fn choices_for(self, sides: &ConflictSides, binary: bool) -> Vec<ConflictChoice> {
+        let mut choices = self.all_choices(sides);
+        if binary && self.is_content() {
+            choices.retain(|c| c.action != ConflictAction::MergeEditor);
+            // The sides first: the usual way out of a binary conflict.
+            choices.sort_by_key(|c| !matches!(c.action, ConflictAction::TakeOurs | ConflictAction::TakeTheirs));
+        }
+        choices
+    }
+
+    fn all_choices(self, sides: &ConflictSides) -> Vec<ConflictChoice> {
         use ConflictAction as A;
         let (o, t) = (&sides.ours, &sides.theirs);
         let c = |action, label: String, detail: &str| ConflictChoice {
@@ -242,6 +285,15 @@ impl ConflictKind {
     }
 }
 
+/// A binary conflict's note in the diff (where a text conflict shows its markers): git
+/// left the checked-out side's version in the working directory.
+pub fn binary_note(sides: &ConflictSides) -> String {
+    format!(
+        "Binary file changed on both sides — git can't merge it; the working directory has {}'s version",
+        sides.ours
+    )
+}
+
 /// What a conflicted file's diff (against HEAD) shows when it has none: the file is not
 /// in the working directory (`exists` false), or is as HEAD (ours) has it.
 pub fn no_diff_note(sides: &ConflictSides, exists: bool) -> String {
@@ -300,6 +352,49 @@ impl Repo {
         }
     }
 
+    /// Whether a side of the conflicted `path` is binary — a NUL byte in the first 8000
+    /// bytes of its base, ours or theirs, as git decides before it merges: git then leaves
+    /// the checked-out side's version without markers, and the merge editor can't take it.
+    /// In-process (the index stages and their blobs), no git.
+    pub fn binary_conflict(&self, path: &str) -> bool {
+        use gix::bstr::ByteSlice;
+        use gix::index::entry::Stage;
+        let Ok(repo) = self.gix() else {
+            return false;
+        };
+        let Ok(index) = repo.index_or_empty() else {
+            return false;
+        };
+        [Stage::Base, Stage::Ours, Stage::Theirs].into_iter().any(|stage| {
+            index
+                .entry_by_path_and_stage(path.as_bytes().as_bstr(), stage)
+                .and_then(|e| repo.find_object(e.id).ok())
+                .is_some_and(|o| o.data.iter().take(8000).any(|b| *b == 0))
+        })
+    }
+
+    /// The diff of a conflicted file when the diff against HEAD shows nothing (the working
+    /// directory has ours): for a content conflict whose sides are binary
+    /// ([`Self::binary_conflict`]) a binary file's placeholder, so the apps say so and offer
+    /// no merge editor.
+    pub(crate) fn conflict_placeholder(&self, entry: &StatusEntry) -> Option<crate::diff::FileDiff> {
+        let path = entry.path.as_str();
+        let content = ConflictKind::of(entry).is_some_and(ConflictKind::is_content);
+        (content && self.binary_conflict(path)).then(|| crate::diff::FileDiff {
+            old_path: Some(path.to_string()),
+            new_path: Some(path.to_string()),
+            change: crate::diff::FileChange::Modified,
+            binary: true,
+            header: Vec::new(),
+            hunks: Vec::new(),
+            submodule: None,
+            too_large: None,
+            encoding: Default::default(),
+            lossy_name: false,
+            lfs: None,
+        })
+    }
+
     fn out_text(&self, args: &[&str]) -> Result<String> {
         let o = self.git().run(args)?;
         Ok(format!("{}{}", o.stdout_str(), o.stderr).trim().to_string())
@@ -354,6 +449,17 @@ mod tests {
                 .iter()
                 .all(|c| c.action != ConflictAction::MergeEditor && c.action != ConflictAction::Keep)
         );
+        // A binary content conflict: the sides first, no merge editor; other kinds as they are.
+        let binary: Vec<ConflictAction> =
+            ConflictKind::BothModified.choices_for(&s, true).into_iter().map(|c| c.action).collect();
+        assert_eq!(
+            binary,
+            [ConflictAction::TakeOurs, ConflictAction::TakeTheirs, ConflictAction::MergeTool, ConflictAction::MarkResolved]
+        );
+        assert_eq!(ConflictKind::DeletedByThem.choices_for(&s, true), ConflictKind::DeletedByThem.choices(&s));
+        assert_eq!(ConflictKind::BothModified.short_for(&s, true), "binary, changed on both sides");
+        assert!(ConflictKind::BothModified.explain_for(&s, true).contains("no merge editor"));
+        assert_eq!(ConflictKind::DeletedByThem.explain_for(&s, true), ConflictKind::DeletedByThem.explain(&s));
         assert_eq!(ConflictKind::DeletedByThem.short(&s), "deleted by feature, changed by main");
         assert!(ConflictKind::AddedByThem.explain(&s).starts_with("Only feature has"));
     }
