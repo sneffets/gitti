@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use gix::ObjectId;
 
 use crate::diff::{FileChange, FileDiff, parse_unified_bytes};
@@ -1488,10 +1488,19 @@ impl Repo {
         // An LFS file's index entry is its pointer: never a partial patch.
         crate::lfs::check_partial(file, mode)?;
         let patch = build_patch(file, sel, mode).ok_or_else(|| anyhow!("nothing selected"))?;
-        self.apply_patch(&patch, mode)
+        // A stale view: refused, nothing applied (`apply_check`).
+        self.check_shown(file, mode)?;
+        self.apply_patch_to(&patch, mode, Some(file.path()))
     }
 
     pub fn apply_patch(&self, patch: &[u8], mode: PatchMode) -> Result<()> {
+        self.apply_patch_to(patch, mode, None)
+    }
+
+    /// [`Self::apply_patch`]; a refusal says in plain words what could not be done to
+    /// `path` (git's reason and the patch follow for the details,
+    /// [`crate::apply_check::patch_failed`]).
+    fn apply_patch_to(&self, patch: &[u8], mode: PatchMode, path: Option<&str>) -> Result<()> {
         let mut args = vec!["apply", "--recount", "--whitespace=nowarn"];
         match mode {
             PatchMode::Stage => args.push("--cached"),
@@ -1499,10 +1508,13 @@ impl Repo {
             PatchMode::Discard => args.push("-R"),
         }
         args.push("-");
-        self.git
-            .run_stdin(&args, Some(patch))
-            .with_context(|| format!("patch was:\n{}", String::from_utf8_lossy(patch)))?;
-        Ok(())
+        match self.git.run_stdin(&args, Some(patch)) {
+            Ok(_) => Ok(()),
+            Err(crate::git_cli::GitError::Failed { stderr, .. }) => {
+                Err(crate::apply_check::patch_failed(path, mode, &stderr, patch))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn commit(&self, message: &str, amend: bool) -> Result<String> {
