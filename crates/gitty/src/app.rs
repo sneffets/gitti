@@ -116,6 +116,9 @@ pub enum Msg {
         working: Result<WorkingState>,
         highlights: Option<HashMap<(Src, String), FileHighlight>>,
         paths: Option<Vec<String>>,
+        /// The files `paths` cover before and after (`gitti_core::touched_files`): their
+        /// highlights are the new ones.
+        touched: Option<Vec<String>>,
         /// The index as the operation left it (see `WatchFilter::own_index`).
         index: Option<gitti_core::watch::IndexStamp>,
         stale: Option<gitti_core::lock::StaleLock>,
@@ -1242,6 +1245,7 @@ impl App {
                 working,
                 highlights,
                 paths,
+                touched,
                 index,
                 stale,
                 read_at,
@@ -1273,7 +1277,7 @@ impl App {
                 }
                 match working {
                     Ok(w) => {
-                        self.apply_working(w, highlights, paths);
+                        self.apply_working(w, highlights, touched);
                         self.refresh_submodule_states();
                     }
                     Err(e) => {
@@ -2396,8 +2400,9 @@ impl App {
         }
     }
 
-    /// A stage / unstage / discard: runs `op`, then re-reads the working state of `paths`
-    /// only (`None`: all of it, but nothing else) and highlights those files — in one
+    /// A stage / unstage / discard / restore: runs `op`, then re-reads the working state of
+    /// `paths` only (a folder: everything below it; `None`: all of it, but nothing else)
+    /// and highlights those files — in one
     /// background job, so the result shows a few ms later in one go, without the full
     /// refresh (refs, remotes, stashes, config, …) other operations do.
     pub fn work_op(
@@ -2451,21 +2456,28 @@ impl App {
                     Some(p) => repo.working_state_after(&opts, &prev, p),
                     None => repo.working_state_with(&opts),
                 };
-                let highlights = match (&working, &paths, cache) {
-                    (Ok(w), Some(p), Some(cache)) => {
-                        let only: HashSet<&str> = p.iter().map(String::as_str).collect();
+                // A folder stands for the files below it (a restored folder): those are
+                // highlighted again.
+                let touched = match (&working, &paths) {
+                    (Ok(w), Some(p)) => Some(gitti_core::touched_files(&prev, w, p)),
+                    _ => None,
+                };
+                let highlights = match (&working, &touched, cache) {
+                    (Ok(w), Some(t), Some(cache)) => {
+                        let only: HashSet<&str> = t.iter().map(String::as_str).collect();
                         Some(compute_highlights(&repo, worktree_jobs(w, Some(&only)), &cache))
                     }
                     _ => None,
                 };
-                (label, result, working, highlights, paths, (index, stale), read_at)
+                (label, result, working, highlights, (paths, touched), (index, stale), read_at)
             },
-            |(label, result, working, highlights, paths, (index, stale), read_at)| Msg::WorkDone {
+            |(label, result, working, highlights, (paths, touched), (index, stale), read_at)| Msg::WorkDone {
                 label,
                 result,
                 working,
                 highlights,
                 paths,
+                touched,
                 index,
                 stale,
                 read_at,

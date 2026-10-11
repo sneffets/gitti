@@ -6,12 +6,13 @@
 //! Both run on demand only, in the background: the containing refs come from the loaded
 //! history without git (a partial history: one `git for-each-ref`); a restore first reads
 //! what it would do (one `git status`) and shows it — what is written and deleted, which
-//! uncommitted changes are lost (then a check box must be ticked), what follows.
+//! uncommitted changes are lost (then a check box must be ticked), what follows. Running
+//! it re-reads only the restored paths, like a stage (`run_restore`).
 
 use std::rc::Rc;
 
 use gitti_core::ObjectId;
-use gitti_core::restore::{self, RestorePlan, RestoreTarget};
+use gitti_core::restore::{self, Reread, RestorePlan, RestoreTarget};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
@@ -279,8 +280,24 @@ impl GittiApp {
         }
         self.open_modal(spec, window, cx, move |this, r, w, cx| {
             let staged = r.option == 1;
-            let plan = (*plan).clone();
-            this.git_op("Restore", w, cx, move |repo| repo.restore(&plan, staged));
+            this.run_restore((*plan).clone(), staged, w, cx);
         });
+    }
+
+    /// Runs the restore, then re-reads only the paths it wrote and deleted in the same
+    /// background job, like a stage (`work_op`); where rule files change what git reports
+    /// elsewhere the snapshot instead (`RestorePlan::reread`). Never the history: no ref
+    /// moves.
+    fn run_restore(&mut self, plan: RestorePlan, staged: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let reread = plan.reread();
+        let op = move |repo: &gitti_core::Repo| repo.restore(&plan, staged);
+        match reread {
+            Reread::Paths(paths) => {
+                self.work_op_noted("Restore", Some(paths), window, cx, move |r| op(r).map(Some))
+            }
+            Reread::Snapshot => self.run_op("Restore", false, window, cx, op, |this, done, _, _| {
+                this.set_info(done)
+            }),
+        }
     }
 }

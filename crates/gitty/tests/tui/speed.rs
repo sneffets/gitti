@@ -168,3 +168,54 @@ fn the_key_bar_runs_no_git() {
     );
     assert_no_git(&cmds(&out)[1..], "key bar", &out);
 }
+
+/// The RS-07 commit (row 1) shown, the diff focused; `]` steps to the next file header
+/// (file 0: `added.txt`, file 1: `old.txt → new.txt`).
+const RS07_COMMIT: &str = "key:j;key:enter;";
+/// `.` + `down` + ⏎ on a file header: Restore Version Before This Commit… (the dialog
+/// reads one path-limited status).
+const BEFORE: &str = "key:.;key:down;key:enter;";
+
+/// A restore re-reads only the paths it wrote and deleted, in its own job: `git restore`
+/// plus status and two diffs of those paths — no whole-repository status, refs, remotes,
+/// history — and its own writes don't come back through the watcher. Here the version
+/// before a rename, working tree only: `old.txt` back, `new.txt` deleted.
+#[gitti_test::test]
+fn restore_runs_path_limited_git() {
+    use gitti_workflow::rs::restore_before as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    wf::fixture(d);
+    let out = gitty(d, &format!("{RS07_COMMIT}key:];key:];{BEFORE}cmds;key:r;cmds;wait;cmds;state"));
+    let blocks = cmds(&out);
+    assert_restore_cheap("restore", &blocks[1], &["old.txt", "new.txt"], &out);
+    assert!(blocks[2].is_empty(), "the watcher refreshed after the restore: {out}");
+    assert!(states(&out)[0].contains("unstaged=2 staged=0"), "{out}");
+    wf::expect_renamed(d).unwrap();
+}
+
+/// The same with the index (Restore and Stage): the added file leaves disk and index —
+/// still the restore plus status and two diffs of its path.
+#[gitti_test::test]
+fn restore_and_stage_runs_path_limited_git() {
+    use gitti_workflow::rs::restore_before as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    wf::fixture(d);
+    let out = gitty(d, &format!("{RS07_COMMIT}key:];{BEFORE}cmds;key:s;cmds;wait;cmds;state"));
+    let blocks = cmds(&out);
+    assert_restore_cheap("restore and stage", &blocks[1], &["added.txt"], &out);
+    assert!(blocks[2].is_empty(), "the watcher refreshed after the restore: {out}");
+    assert!(states(&out)[0].contains("unstaged=0 staged=1"), "{out}");
+    wf::expect_added(d).unwrap();
+}
+
+/// `git restore` first, then path-limited queries of `paths` only (status + two diffs).
+fn assert_restore_cheap(what: &str, cmds: &[String], paths: &[&str], out: &str) {
+    assert!(cmds.first().is_some_and(|c| c.starts_with("restore --source=")), "{what}: {cmds:#?}\n{out}");
+    assert_cheap(what, cmds, out);
+    assert_eq!(cmds.len(), 4, "{what}: the restore + status + two diffs: {cmds:#?}\n{out}");
+    for c in &cmds[1..] {
+        assert!(paths.iter().all(|p| c.contains(&format!(":(literal){p}"))), "{what}: `git {c}`\n{out}");
+    }
+}

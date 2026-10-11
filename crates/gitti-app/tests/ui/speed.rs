@@ -31,11 +31,18 @@ pub fn main() {
         ("huge_commit_shows_after_one_load", huge_commit_shows_after_one_load),
         ("non_utf8_line_stages_exactly", non_utf8_line_stages_exactly),
         ("restored_tabs_load_in_turn", restored_tabs_load_in_turn),
+        ("restore_rereads_only_its_paths", restore_rereads_only_its_paths),
     ];
     // Every scenario changes the repository: each gets a fresh one.
     let counter = std::cell::Cell::new(0);
     common::run(tests, |name| {
         counter.set(counter.get() + 1);
+        if name == "restore_rereads_only_its_paths" {
+            let dir = base.join(format!("repo{}", counter.get()));
+            let s = gitti_workflow::rs::restore_before::fixture(&dir);
+            RS07_COMMIT.with(|c| *c.borrow_mut() = Some(s.commit));
+            return dir;
+        }
         let dir = make_repo(&base.join(format!("repo{}", counter.get())));
         if name == "changes_as_tree_and_marked_files" {
             // Untracked files in folders (no git: just files).
@@ -59,6 +66,11 @@ pub fn main() {
         }
         dir
     });
+}
+
+thread_local! {
+    /// The commit of `restore_rereads_only_its_paths`' fixture (RS-07's).
+    static RS07_COMMIT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Git processes a stage / unstage may start: the operation, status + two diffs of the
@@ -1046,4 +1058,42 @@ fn non_utf8_line_stages_exactly(ui: &mut Ui) {
     if index != want {
         ui.fail(format!("index: {:?}", String::from_utf8_lossy(&index[..index.len().min(200)])));
     }
+}
+
+/// On the RS-07 commit, a file's Restore Version Before This Commit…: OK runs the
+/// restore and re-reads only the paths it wrote and deleted, in the same job — no
+/// whole-repository status, refs, remotes, history — like a stage; nothing changes after
+/// settling (its own writes don't come back through the watcher). First the renamed file
+/// (working tree only: `old.txt` back, `new.txt` deleted), then the added one with the
+/// index (gone from disk and index).
+fn restore_rereads_only_its_paths(ui: &mut Ui) {
+    let Some(commit) = RS07_COMMIT.with(|c| c.borrow_mut().take()) else {
+        return ui.fail("no fixture commit".into());
+    };
+    let before = gitti_core::restore::BEFORE_LABEL;
+    let restore = |ui: &mut Ui, path: &str, staged: bool, want: &[&str]| {
+        ui.step(&format!("select:{commit}"));
+        let rows = ui.ui_state().rows;
+        let Some(row) = rows.iter().position(|r| r.starts_with("file ") && r.ends_with(&format!(" {path}"))) else {
+            return ui.fail(format!("no file row of {path}: {rows:#?}"));
+        };
+        testing::menu_labels();
+        ui.click_on(&format!("diff-row:{row}:file"), MouseButton::Right);
+        if !testing::menu_labels().iter().any(|l| l == before) {
+            return ui.fail(format!("{path}'s menu lacks {before}"));
+        }
+        ui.step(&format!("menu:{before}"));
+        if staged {
+            ui.quick("option:1");
+        }
+        let what = format!("restore {path}");
+        let (cmds, wall) = quick_step(ui, "modalok");
+        if !cmds.first().is_some_and(|c| c.starts_with("restore --source=")) {
+            ui.fail(format!("{what}: expected `git restore` first: {cmds:?}"));
+        }
+        expect_cheap(ui, &what, &cmds, wall);
+        expect_state(ui, &what, want, &[]);
+    };
+    restore(ui, "new.txt", false, &["U new.txt 1", "U old.txt 1"]);
+    restore(ui, "added.txt", true, &["S added.txt 1"]);
 }

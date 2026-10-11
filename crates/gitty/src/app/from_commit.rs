@@ -7,9 +7,10 @@
 //! Both run on demand only, in the background. A restore first reads what it would do and
 //! shows it; when uncommitted changes would be lost, the entries say so in their labels
 //! ("Overwrite My Changes and Restore") — choosing one is the explicit confirmation.
+//! Running it re-reads only the restored paths, like a stage (`run_restore`).
 
 use gitti_core::ObjectId;
-use gitti_core::restore::{self, RestorePlan, RestoreTarget};
+use gitti_core::restore::{self, Reread, RestorePlan, RestoreTarget};
 use gitti_core::version_file::{DiffSource, version_sides};
 
 use super::{After, App, Detail, Msg};
@@ -227,15 +228,23 @@ impl App {
                 };
                 let plan = plan.clone();
                 items.push(
-                    MenuItem::new(label, move |app: &mut App| {
-                        app.run_op("Restore", true, After::Summary, move |r| {
-                            r.restore(&plan, staged)
-                        })
-                    })
-                    .key(key),
+                    MenuItem::new(label, move |app: &mut App| app.run_restore(plan, staged)).key(key),
                 );
             }
         }
         self.modal = Some(Modal::menu(plan.title(), items));
+    }
+
+    /// Runs the restore, then re-reads only the paths it wrote and deleted in the same
+    /// background job, like a stage (`work_op`); where rule files change what git reports
+    /// elsewhere the snapshot instead (`RestorePlan::reread`). Never the history: no ref
+    /// moves.
+    fn run_restore(&mut self, plan: RestorePlan, staged: bool) {
+        let reread = plan.reread();
+        let op = move |repo: &gitti_core::Repo| repo.restore(&plan, staged);
+        match reread {
+            Reread::Paths(paths) => self.work_op_noted("Restore", Some(paths), move |r| op(r).map(Some)),
+            Reread::Snapshot => self.run_op("Restore", false, After::Summary, op),
+        }
     }
 }

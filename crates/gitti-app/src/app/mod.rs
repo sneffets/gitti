@@ -2064,8 +2064,9 @@ impl GittiApp {
         }
     }
 
-    /// A stage / unstage / discard: runs `op`, then re-reads the working state of `paths`
-    /// only (`None`: all of it, but nothing else) and highlights those files — all in one
+    /// A stage / unstage / discard / restore: runs `op`, then re-reads the working state of
+    /// `paths` only (a folder: everything below it; `None`: all of it, but nothing else)
+    /// and highlights those files — all in one
     /// background task, so the result shows up in one go a few ms later, without the full
     /// refresh (refs, remotes, stashes, config, …) an op does otherwise.
     fn work_op(
@@ -2123,9 +2124,15 @@ impl GittiApp {
                 Some(p) => repo.working_state_after(&opts, &prev, p),
                 None => repo.working_state_with(&opts),
             };
-            let styles = match (&working, &paths, cache) {
-                (Ok(w), Some(p), Some(cache)) => {
-                    Some(highlighting::highlight_paths(&repo, w, p, &cache))
+            // A folder stands for the files below it (a restored folder): those are
+            // highlighted again.
+            let touched = match (&working, &paths) {
+                (Ok(w), Some(p)) => Some(gitti_core::touched_files(&prev, w, p)),
+                _ => None,
+            };
+            let styles = match (&working, &touched, cache) {
+                (Ok(w), Some(t), Some(cache)) => {
+                    Some(highlighting::highlight_paths(&repo, w, t, &cache))
                 }
                 _ => None,
             };
@@ -2135,10 +2142,11 @@ impl GittiApp {
                 .as_ref()
                 .ok()
                 .map(|w| repo.submodules_after(&w.status, &prev_subs));
-            (done, working.map(|w| (w, styles)), paths, index, subs, stale, read_at)
+            let read = (paths, touched, read_at);
+            (done, working.map(|w| (w, styles)), read, index, subs, stale)
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (done, working, paths, index, subs, stale, read_at) = task.await;
+            let (done, working, (paths, touched, read_at), index, subs, stale) = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.working_generation += 1;
                 // Only the touched paths were re-read: an index write of anyone else
@@ -2166,7 +2174,7 @@ impl GittiApp {
                     this.offer_stale_lock(&label, lock, window, cx);
                 }
                 match working {
-                    Ok((w, styles)) => this.apply_working(w, styles, paths, cx),
+                    Ok((w, styles)) => this.apply_working(w, styles, touched, cx),
                     Err(e) => {
                         this.set_error(format!("{e:#}"));
                         this.refresh(false, window, cx);
