@@ -38,6 +38,7 @@ mod wf_modules;
 mod wf_pilot;
 mod wf_remotes;
 mod wf_reset;
+mod wf_stash;
 mod wf_tags;
 mod worktrees;
 
@@ -71,6 +72,7 @@ const SUITES: &[(&str, fn())] = &[
     ("wf_commit", wf_commit::main),
     ("wf_branches", wf_branches::main),
     ("wf_reset", wf_reset::main),
+    ("wf_stash", wf_stash::main),
     ("wf_tags", wf_tags::main),
     ("wf_remotes", wf_remotes::main),
     ("wf_modules", wf_modules::main),

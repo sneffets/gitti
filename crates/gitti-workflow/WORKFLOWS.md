@@ -199,25 +199,25 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| SH-01 | **Stash and pop** | modified file; Stash Changes…; pop | tree clean after stash; pop restores; list empty | `repo_ops::branch_tag_stash_remote_ops` | ~`keys::overlay_keys` (stash only) | ~`menus::stash_dialog_fields_checkboxes_and_cancel` (stash only) |
-| SH-02 | Stash including untracked | a new file; "Include untracked" | the file goes into the stash and comes back on pop | ~`stash::stash_paths_literal_and_all` | `menus::branch_commit_stash_menus` | ~`menus::stash_dialog_fields_checkboxes_and_cancel` |
-| SH-03 | Stash `--all` | an ignored file too | ignored file stashed | `stash::stash_paths_literal_and_all` | — | — |
-| SH-04 | Stash keeping the index | staged + unstaged; keep index | staged part stays staged, the rest stashed | — | — | — |
-| SH-05 | Stash only staged | staged part only | refused when git couldn't finish; else only staged stashed | `stash::stash_staged_only_refuses_what_git_cannot_finish` | ~`menus::stash_dialogs` | — |
+| SH-01 | **Stash and pop** | modified file; Stash Changes…; pop | tree clean after stash; pop restores; list empty | `repo_ops::branch_tag_stash_remote_ops`, `wf_stash::sh01_stash_and_pop` | `wf_stash::sh01_stash_from_the_dialog_and_pop_from_its_menu`, ~`keys::overlay_keys` (stash only) | `wf_stash::sh01_stash`, `wf_stash::sh01_pop`, ~`menus::stash_dialog_fields_checkboxes_and_cancel` (stash only) |
+| SH-02 | Stash including untracked | a new file; "Include untracked" | the file goes into the stash and comes back on pop | `wf_stash::sh02_stash_and_pop_including_untracked`, ~`stash::stash_paths_literal_and_all` | `menus::branch_commit_stash_menus` | `wf_stash::sh02_stash_including_untracked`, `wf_stash::sh02_pop_including_untracked`, ~`menus::stash_dialog_fields_checkboxes_and_cancel` |
+| SH-03 | Stash `--all` | an ignored file too | ignored file stashed | `stash::stash_paths_literal_and_all`, `wf_stash::sh03_stash_and_pop_including_ignored` | `wf_stash::sh03_stash_including_ignored_files_and_pop` | `wf_stash::sh03_stash_including_ignored`, `wf_stash::sh03_pop_including_ignored` |
+| SH-04 | Stash keeping the index | staged + unstaged; keep index | staged part stays staged, the rest stashed | `wf_stash::sh04_stash_keeping_the_index` | `wf_stash::sh04_stash_keeping_the_index` | `wf_stash::sh04_stash_keeping_the_index` |
+| SH-05 | Stash only staged | staged part only | refused when git couldn't finish; else only staged stashed | `stash::stash_staged_only_refuses_what_git_cannot_finish` | `wf_stash::sh05_stash_only_the_staged_changes`, `wf_stash::sh05_staged_only_refused_next_to_unstaged_lines`, ~`menus::stash_dialogs` | `wf_stash::sh05_stash_only_the_staged_changes`, `wf_stash::sh05_staged_only_refused_next_to_unstaged_lines` |
 | SH-06 | Stash selected lines | select lines of one hunk; Stash Selected Lines | only those lines leave; other hunk, other file and index stay | `stash::stash_unstaged_hunk_keeps_everything_else`, `stash::stash_unstaged_lines_over_staged_changes`, `stash::stash_staged_lines_keeps_unstaged_changes` | `menus::stash_dialogs` | `stash::stash_selected_lines` |
 | SH-07 | Stash one file | cursor on a file; stash it | that file only; literal path | `stash::stash_paths_literal_and_all`, `stash::stash_lines_of_an_untracked_file` | `menus::stash_dialogs` | `stash::stash_file_and_rename` |
-| SH-08 | Stash lines with odd bytes / EOL | Latin-1 + CRLF + no final newline; `eol=crlf` | exact bytes in the stash and in what stays | `stash::stash_lines_keeps_exact_bytes`, `stash::stash_lines_with_eol_conversion` | — | — |
+| SH-08 | Stash lines with odd bytes / EOL | Latin-1 + CRLF + no final newline; `eol=crlf` | exact bytes in the stash and in what stays | `stash::stash_lines_keeps_exact_bytes`, `stash::stash_lines_with_eol_conversion` | `wf_stash::sh08_stash_lines_with_odd_bytes` | `wf_stash::sh08_stash_lines_with_odd_bytes` |
 | SH-09 | Stash lines from a stale view | file edited after it was shown; stash lines | refused: "changed since it was shown" | — | — | — |
 | SH-10 | Rename a stash | Rename Stash… | message changed, order kept (also the only stash, reftable) | `stash::stash_rename_keeps_order`, `stash::stash_rename_the_only_stash`, `stash::stash_rename_in_a_reftable_repository` | — | `stash::stash_file_and_rename` |
-| SH-11 | Drop a stash | sidebar menu Drop (asks) | that stash gone, others kept | — | ~`menus::branch_commit_stash_menus` | `menus::sidebar_menus_drop_a_stash_and_the_stashes_header` |
+| SH-11 | Drop a stash | sidebar menu Drop (asks) | that stash gone, others kept | `wf_stash::sh11_drop_one_stash_of_three` | `wf_stash::sh11_drop_one_stash_of_three`, ~`menus::branch_commit_stash_menus` | `menus::sidebar_menus_drop_a_stash_and_the_stashes_header` |
 | SH-12 | Pop that conflicts, abort | pop over a conflicting commit; Abort | files back to HEAD; the stash entry stays | `conflicts::stash_pop_conflict_abort_keeps_the_stash` | `layout::stash_conflict_abort` | `merge_editor::stash_pop_conflict_aborts_from_the_palette_and_keeps_the_stash` |
-| SH-13 | Apply that conflicts, resolve | apply conflicts; take the stash's side | resolved, no operation state left | `repo_ops::conflict_from_stash_apply` | — | — |
+| SH-13 | Apply that conflicts, resolve | apply conflicts; take the stash's side | resolved, no operation state left | `repo_ops::conflict_from_stash_apply`, `wf_stash::sh13_apply_conflicts_take_the_stash_side` | `wf_stash::sh13_apply_conflicts_take_the_stash_side` | `wf_stash::sh13_apply_stops_on_a_conflict`, `wf_stash::sh13_take_the_stash_side` |
 | SH-14 | Branch from a stash | Create Branch from Stash… | branch at the stash's base, stash applied and dropped | `sidebar_ops::stash_branch_checks_out_a_branch_with_the_stash` | `menus::sidebar_menus` | `menus::sidebar_menus_drop_a_stash_and_the_stashes_header` |
-| SH-15 | Look into a stash | select the stash row | its diff incl. untracked files; open a version | `history_diffs::stash_rows_in_history_and_stash_diff`, `navigate::stash_versions_include_untracked_files` | — | — |
+| SH-15 | Look into a stash | select the stash row | its diff incl. untracked files; open a version | `history_diffs::stash_rows_in_history_and_stash_diff`, `navigate::stash_versions_include_untracked_files` | `wf_stash::sh15_look_into_a_stash` | ~`wf_stash::sh15_look_into_a_stash` (no Open This Version in gitty) |
 | SH-16 | Stash while a merge is in progress | merge with conflicts resolved; Stash Changes | refused with the reason (a stash would end the merge) | `op_safety::no_stash_during_a_merge` | `op_safety::merge_stop_stash_and_stage_all` | `op_safety::during_a_merge_stash_waits_and_stage_all_asks` |
-| SH-17 | Pop with the index restored | staged + unstaged stashed; pop restoring the index | staged part staged again (`--index`) | — | — | — |
-| SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | `op_safety::stash_commands_act_on_the_chosen_stash` | — | — |
-| SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | — | — | — |
+| SH-17 | Pop with the index restored | staged + unstaged stashed; Pop with Index… (asks, naming what is staged again) | staged part staged again (`--index`); when it doesn't apply to the index git refuses: nothing changed, said with the ways out | `wf_stash::sh17_pop_restoring_the_index`, `wf_stash::sh17_pop_with_the_index_refused_changes_nothing`, `wf_stash::sh17_pop_with_the_index_that_conflicts_says_the_index_is_not_restored`, `wf_stash::sh17_nothing_staged_in_the_stash_is_said` | `wf_stash::sh17_pop_with_index_from_the_stash_menu`, `wf_stash::sh17_pop_with_index_refused` | `wf_stash::sh17_pop_with_index_from_the_stash_menu`, `wf_stash::sh17_pop_with_index_refused` |
+| SH-18 | Drop after the list changed outside | menu open on stash 1; a terminal `git stash` pushes another | the stash the user chose is dropped, or the action refuses | `op_safety::stash_commands_act_on_the_chosen_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` | `wf_stash::sh18_drop_after_a_terminal_stash` |
+| SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | `wf_stash::sh19_pop_blocked_by_an_untracked_file`, `wf_stash::sh19_what_is_in_the_way` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` |
 
 ## BR — Branches
 
@@ -383,7 +383,7 @@ working tree or the index while the app shows an older state.
 | WT-05 | Move / repair / remove own | move; repair after a manual move; remove from its own tab | tab follows / main tab takes over | `worktrees::move_worktree`, `worktrees::repair_worktrees_moved_by_hand` | `worktrees::move_and_repair`, `worktrees::remove_from_own_tab` | `repo_cmds::remove_or_move_the_worktree_gitty_runs_in` |
 | WT-06 | Worktree marks | dirty / unpushed worktrees | marks per entry | `tab_marks::other_worktrees_get_their_own_marks` | `worktrees::sidebar_marks` | `views::worktree_entries_carry_the_marks` |
 | WT-07 | Track a remote branch in a new worktree | type `origin/feat` | local branch tracking it | `worktrees::plan_add_tracks_a_remote_branch`, `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` | `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` | `wf_modules::wt07_track_a_remote_branch_in_a_new_worktree` |
-| WT-08 | Stash made in one worktree, popped in another | stash in A; pop in B | the shared stash list; applied in B | — | — | — |
+| WT-08 | Stash made in one worktree, popped in another | stash in A; pop in B | the shared stash list; applied in B | `wf_stash::wt08_stash_from_one_worktree_popped_in_another` | `wf_stash::wt08_pop_in_another_worktree` | `wf_stash::wt08_pop_in_another_worktree` |
 
 ## SM — Submodules
 
@@ -506,7 +506,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | ST staging | 21 | 14 | 11 | 9 |
 | EX external changes | 24 | 14 | 3 | 5 |
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
-| SH stash | 19 | 13 | 6 | 7 |
+| SH stash | 19 | 18 | 17 | 17 |
 | BR branches | 19 | 19 | 19 | 18 |
 | MG merge | 26 | 20 | 9 | 11 |
 | CP cherry-pick | 18 | 9 | 3 | 3 |
@@ -515,7 +515,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
 | RM remotes | 18 | 17 | 16 | 18 |
-| WT worktrees | 8 | 7 | 7 | 7 |
+| WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
 | DC discard | 9 | 6 | 3 | 4 |
@@ -526,7 +526,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **265** | **205** | **142** | **147** |
+| **Total** | **265** | **211** | **154** | **158** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

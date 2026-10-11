@@ -16,6 +16,8 @@
 //! `changes` (Search in Changes: query, toggles, scans, hits with why, note), `reflog`
 //! (the reflog view: title, note, selection, shown commit, entries),
 //! `write:PATH=TEXT` (writes a working-tree file as another program would; `\n` = newline),
+//! `git:ARGS` (a git command run in the work tree as from a terminal next to gitty — e.g.
+//! `git:stash push -q -m x`; arguments split at spaces; it must succeed),
 //! `clip:TEXT` (the clipboard's text as the Clone dialog reads it — a scripted run never
 //! reads the system clipboard, and copies land there too), `paste:TEXT` (a bracketed paste),
 //! `focus` (terminal focus gained), `cmds` (the git commands run since the previous `cmds`:
@@ -216,6 +218,16 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                     .ok_or_else(|| anyhow!("write:PATH=TEXT"))?;
                 let full = gitti_core::paths::join_repo_path(app.repo.workdir(), path);
                 std::fs::write(full, text.replace("\\n", "\n"))?;
+            }
+            "git" => {
+                let out = std::process::Command::new("git")
+                    .current_dir(app.repo.workdir())
+                    .args(arg.split(' ').filter(|a| !a.is_empty()))
+                    .stdin(std::process::Stdio::null())
+                    .output()?;
+                if !out.status.success() {
+                    return Err(anyhow!("git:{arg}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+                }
             }
             "clip" => App::set_script_clipboard(arg),
             "focus" => {
