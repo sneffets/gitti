@@ -21,6 +21,7 @@ mod keys;
 mod layout;
 mod lfs;
 mod menus;
+mod op_safety;
 mod reflog;
 mod render_linux;
 mod scroll;
@@ -58,6 +59,7 @@ const SUITES: &[(&str, fn())] = &[
     ("selection", selection::main),
     ("reflog", reflog::main),
     ("branches", branches::main),
+    ("op_safety", op_safety::main),
 ];
 
 fn main() {
