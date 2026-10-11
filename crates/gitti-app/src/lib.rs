@@ -4,6 +4,7 @@
 mod app;
 mod app_icon;
 mod assets;
+mod cli;
 mod graph_paint;
 mod highlight;
 mod menu_height;
@@ -120,6 +121,10 @@ pub fn run() {
     // Started by git/ssh as askpass helper? Then answer the prompt and exit.
     if let Some(code) = gitti_core::askpass::run_client_if_requested() {
         std::process::exit(code);
+    }
+    // `gitti --version` / `--licenses` / `--help` print (as gitty's) and open no window.
+    if cli::run_flag() {
+        return;
     }
     // Start-up timings: from here on, after the askpass helper path. Scripted runs
     // (tests, smoke) open off-screen and would only bury the real starts — unless

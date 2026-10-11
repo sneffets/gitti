@@ -26,8 +26,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSArray", "NSString", "NSRange", "NSLocale"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# Spell checking (`spell/win.rs`); the version gpui uses.
-windows = { version = "0.62", features = ["Win32_Globalization", "Win32_System_Com"] }
+# Spell checking (`spell/win.rs`); the version gpui uses. Console: `cli.rs`.
+windows = { version = "0.62", features = ["Win32_Globalization", "Win32_System_Com", "Win32_System_Console"] }
 
 # Headless UI tests: one binary, own main (no libtest harness — the platform text system
 # must be created on the main thread); suites in `tests/ui/*.rs`.
