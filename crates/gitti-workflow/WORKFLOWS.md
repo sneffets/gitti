@@ -273,6 +273,7 @@ working tree or the index while the app shows an older state.
 | MG-24 | Resolve with an external merge tool | conflicted file → Open in External Merge Tool | the tool's result staged; status says no conflict is left | ~`ext_tool::describes_the_merge_outcome` (unit) | `ext_tools::merge_tool` | `ext_tools::merge_tool_from_the_resolve_menu` |
 | MG-25 | First external merge tool, set up on the way | no merge tool set; Open in External Merge Tool; choose one in the set-up dialog (this repository) | the dialog lists git's tools (own first, installed, missing); the choice written to the named config file; the tool resolves the file right after | `ext_tools::without_a_tool_the_choices_come_first_then_the_chosen_tool_runs` | `ext_tools::merge_tool_set_up_first` | ~`ext_tools::set_up_dialog_then_the_diff_tool_runs` (diff tool) |
 | MG-26 | Resolve with a terminal merge tool | `merge.tool` runs vim; Open in External Merge Tool | gitty hands the tool its terminal; the file resolved and staged, backup kept; gitti refuses with the reason | `ext_tools::terminal_merge_tool_resolves_the_file` | n/a | `ext_tools::terminal_merge_tool_gets_the_terminal` |
+| MG-27 | Conflict in a file `.gitattributes` marks binary | a text file `binary` by a nested `.gitattributes` (also `-merge`, `merge=binary`, a macro, `info/attributes`, `core.attributesFile`, `merge.default`), both sides changed it; take ours; Continue | git left ours without markers; shown as a binary conflict, no merge editor, the menu says why; `-diff` / `-text` alone or a driver of the user's named `binary` don't count | `wf_merge::mg27_conflict_in_a_file_gitattributes_marks_binary` | `wf_merge::mg27_conflict_in_a_file_gitattributes_marks_binary` | `wf_merge::mg27_conflict_in_a_file_gitattributes_marks_binary` |
 
 ## CP — Cherry-pick
 
@@ -509,7 +510,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | CM commit / amend / reword | 21 | 21 | 20 | 21 |
 | SH stash | 19 | 18 | 17 | 17 |
 | BR branches | 19 | 19 | 19 | 18 |
-| MG merge | 26 | 25 | 21 | 22 |
+| MG merge | 27 | 26 | 22 | 23 |
 | CP cherry-pick | 18 | 16 | 16 | 16 |
 | RV revert | 7 | 7 | 7 | 7 |
 | RB rebase | 9 | 4 | 1 | 1 |
@@ -527,7 +528,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 4 | 2 | 1 |
 | NU non-UTF-8 | 5 | 5 | 2 | 2 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **266** | **242** | **209** | **209** |
+| **Total** | **267** | **243** | **210** | **210** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

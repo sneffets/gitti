@@ -127,6 +127,65 @@ fn mg22_binary_conflict_take_theirs() {
     wf::expect_concluded(&dir, &s).unwrap();
 }
 
+/// MG-27: a text file the nested `.gitattributes` marks `binary`: git merged it as binary
+/// (no markers, ours on disk), and the working state shows it as a binary conflict with no
+/// merge editor. Detection follows every place git reads the `merge` attribute from and the
+/// config that picks the driver — each variant written over the stopped merge and asked
+/// again; `-diff -text` alone don't make git's merge binary. Take Ours and Continue
+/// conclude the merge.
+/// Workflow: MG-27
+#[gitti_test::test]
+fn mg27_conflict_in_a_file_gitattributes_marks_binary() {
+    use mg::binary_attr as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    wf::expect_stopped(&dir, &s).unwrap();
+    let repo = Repo::open(&dir).unwrap();
+    let w = repo.working_state().unwrap();
+    let file = &w.conflicted[0];
+    assert!(file.diff.as_ref().is_some_and(|d| d.binary && d.hunks.is_empty()), "{:?}", file.diff);
+    let kind = ConflictKind::of(&file.entry).unwrap();
+    let actions: Vec<ConflictAction> =
+        kind.choices_for(&repo.conflict_sides(), true).iter().map(|c| c.action).collect();
+    assert!(!actions.contains(&ConflictAction::MergeEditor), "{actions:?}");
+
+    // Each variant: (root .gitattributes, nested, info/attributes, core.attributesFile's
+    // file, extra config) → merged as binary.
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
+    let config = std::fs::read_to_string(dir.join(".git/config")).unwrap();
+    let variants: [(&str, &str, &str, &str, &str, bool); 8] = [
+        ("", wf::RULE, "", "", "", true),
+        ("", "*.csv -merge\n", "", "", "", true),
+        ("", "", "data/*.csv merge=binary\n", "", "", true),
+        ("", "", "", "*.csv -merge\n", "", true),
+        ("[attr]nomerge -merge\ndata/*.csv nomerge\n", "", "", "", "", true),
+        ("", "*.csv -diff -text\n", "", "", "", false),
+        ("", "", "", "", "[merge]\n\tdefault = binary\n", true),
+        ("", "*.csv merge=binary\n", "", "", "[merge \"binary\"]\n\tdriver = false\n", false),
+    ];
+    std::fs::create_dir_all(dir.join(".git/info")).unwrap();
+    let global = dir.join(".git/global-attributes");
+    for (i, (root, nested, info, global_rules, extra, want)) in variants.into_iter().enumerate() {
+        write(".gitattributes", root);
+        write(wf::ATTRIBUTES, nested);
+        write(".git/info/attributes", info);
+        std::fs::write(&global, global_rules).unwrap();
+        let attributes_file = format!("[core]\n\tattributesFile = {}\n", global.display().to_string().replace('\\', "/"));
+        write(".git/config", &format!("{config}{attributes_file}{extra}"));
+        let repo = Repo::open(&dir).unwrap();
+        assert_eq!(repo.binary_conflict(wf::FILE), want, "variant {i}");
+    }
+    write(".gitattributes", "");
+    write(wf::ATTRIBUTES, wf::RULE);
+    write(".git/config", &config);
+    std::fs::remove_file(dir.join(".gitattributes")).unwrap();
+
+    let repo = Repo::open(&dir).unwrap();
+    repo.resolve_conflict(&[wf::FILE.to_string()], ConflictAction::TakeOurs).unwrap();
+    repo.continue_operation().unwrap();
+    wf::expect_concluded(&dir, &s).unwrap();
+}
+
 /// RN-05: `feat` renamed `a.txt`, `main` edited it: the merge follows the rename, no
 /// conflict, the edit lands in the new name.
 /// Workflow: RN-05

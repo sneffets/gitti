@@ -282,6 +282,29 @@ fn mg22_binary_conflict_take_theirs() {
     wf::expect_concluded(&d, &s).unwrap();
 }
 
+/// MG-27: a text file the nested .gitattributes marks `binary`: shown as a binary
+/// conflict (header, note); its resolve menu says why — .gitattributes — and offers no
+/// merge editor; Take Ours (o), Continue Merging.
+/// Workflow: MG-27
+#[gitti_test::test]
+fn mg27_conflict_in_a_file_gitattributes_marks_binary() {
+    use mg::binary_attr as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture(&d);
+    wf::expect_stopped(&d, &s).unwrap();
+    let out = run(&d, &format!("{FIRST_CONFLICT}dump;press:enter;dump;key:o;{}state", palette("Continue Merging")));
+    let sc = screens(&out);
+    // The header is cut at 120 columns.
+    assert!(sc[0].contains("data/table.csv  -0 +0  binary, changed on both"), "{out}");
+    assert!(sc[0].contains("Binary file changed on both sides"), "{out}");
+    assert!(sc[1].contains("Take Ours — main") && sc[1].contains(".gitattributes"), "{out}");
+    assert!(!sc[1].contains("Open in Merge Editor"), "{out}");
+    let st = states(&out)[0];
+    assert!(st.contains("repo_state=clean conflicted=0"), "{out}");
+    no_error(st, &out);
+    wf::expect_concluded(&d, &s).unwrap();
+}
+
 /// RN-05: the Merge dialog on feat, which renamed a.txt main edited: merged without a
 /// conflict, the edit in b.txt.
 /// Workflow: RN-05

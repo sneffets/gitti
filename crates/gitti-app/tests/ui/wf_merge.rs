@@ -36,6 +36,7 @@ enum Setup {
     /// The main worktree's folder too.
     Worktree(mg::worktree::Setup, PathBuf),
     Binary(mg::binary::Setup),
+    BinaryAttr(mg::binary_attr::Setup),
     AcrossRename(mg::across_rename::Setup),
 }
 
@@ -70,6 +71,7 @@ pub fn main() {
         ("mg17_dirty_tree_survives_merge_and_abort", mg17_dirty_tree_survives_merge_and_abort),
         ("mg20_merge_conflict_in_a_linked_worktree", mg20_merge_conflict_in_a_linked_worktree),
         ("mg22_binary_conflict_take_theirs", mg22_binary_conflict_take_theirs),
+        ("mg27_conflict_in_a_file_gitattributes_marks_binary", mg27_conflict_in_a_file_gitattributes_marks_binary),
         ("rn05_merge_across_a_rename", rn05_merge_across_a_rename),
     ];
     common::run(tests, |name| {
@@ -93,6 +95,9 @@ pub fn main() {
                 (Setup::Worktree(s, dir.clone()), Some(linked))
             }
             "mg22_binary_conflict_take_theirs" => (Setup::Binary(mg::binary::fixture(&dir)), None),
+            "mg27_conflict_in_a_file_gitattributes_marks_binary" => {
+                (Setup::BinaryAttr(mg::binary_attr::fixture(&dir)), None)
+            }
             "rn05_merge_across_a_rename" => (Setup::AcrossRename(mg::across_rename::fixture(&dir)), None),
             other => panic!("no fixture for {other}"),
         };
@@ -408,6 +413,35 @@ fn mg22_binary_conflict_take_theirs(ui: &mut Ui) {
     }
     conflict_button(ui, wf::FILE, "TakeTheirs");
     conflicts(ui, "merging", &[], "after Take Theirs");
+    ui.click_on("op-continue", MouseButton::Left);
+    info(ui, "after Continue");
+    expect(ui, wf::expect_concluded(&dir, &s));
+}
+
+/// MG-27: a text file the nested .gitattributes marks `binary`: shown as a binary conflict
+/// (the binary note, no merge editor split button, Take Ours / Take Theirs buttons); Take
+/// Ours, Continue.
+/// Workflow: MG-27
+fn mg27_conflict_in_a_file_gitattributes_marks_binary(ui: &mut Ui) {
+    use mg::binary_attr as wf;
+    let Setup::BinaryAttr(s) = setup() else { unreachable!() };
+    let dir = ui.workdir();
+    conflicts(ui, "merging", &[wf::FILE], "the stopped merge");
+    let note = format!("note Conflicted {}", wf::FILE);
+    if !ui.ui_state().rows.contains(&note) {
+        fail!(ui, "no binary note row: {:?}", ui.ui_state().rows);
+    }
+    let p = ui.check("conflict in a file marked binary");
+    if p.iter().any(|q| q.kind() == "resolve-split") {
+        ui.fail("a file .gitattributes marks binary offers the merge editor".into());
+    }
+    for want in ["TakeOurs", "TakeTheirs"] {
+        if !p.iter().any(|q| q.kind() == "conflict-choice" && q.detail() == want && q.visible().is_some()) {
+            fail!(ui, "no visible {want} button");
+        }
+    }
+    conflict_button(ui, wf::FILE, "TakeOurs");
+    conflicts(ui, "merging", &[], "after Take Ours");
     ui.click_on("op-continue", MouseButton::Left);
     info(ui, "after Continue");
     expect(ui, wf::expect_concluded(&dir, &s));

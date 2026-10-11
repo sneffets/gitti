@@ -1,9 +1,9 @@
 //! MG — merge: a fast-forward, a merge commit always (with a message), squash then commit,
 //! fast-forward only on diverged branches, a clean three-way merge, conflicts resolved by
-//! taking a side / after both sides renamed a file / in a binary file, abort, concluding
-//! with the commit box emptied or edited, unrelated histories, a merge into a dirty working
-//! tree (overlapping, not overlapping), a merge in a linked worktree; RN-05 (a merge across
-//! a rename) shares the module.
+//! taking a side / after both sides renamed a file / in a binary file / in a text file
+//! `.gitattributes` marks binary, abort, concluding with the commit box emptied or edited,
+//! unrelated histories, a merge into a dirty working tree (overlapping, not overlapping), a
+//! merge in a linked worktree; RN-05 (a merge across a rename) shares the module.
 
 use crate::expect::{Checks, Commit, Expect, OpState, conflicted};
 
@@ -780,6 +780,71 @@ pub mod binary {
         merge_commit(&mut k, &e, &[&s.main, &s.feat], MERGE);
         k.eq("committed p.bin", e.blobs(&[&format!("HEAD:{FILE}")]).pop().flatten(), Some(THEIRS.to_vec()));
         k.eq("p.bin on disk", e.file(FILE), Some(THEIRS.to_vec()));
+        k.eq("status", e.status_lines(), Vec::<String>::new());
+        k.done()
+    }
+}
+
+/// **MG-27 — a conflict in a text file `.gitattributes` marks binary.** `data/.gitattributes`
+/// (nested) gives `*.csv` the `binary` macro (`-diff -merge -text`); `main` and `feat`
+/// both changed line 2 of the text file [`FILE`]. The merge stops ([`fixture`]): git merged
+/// the file as binary — no markers, ours on disk ([`expect_stopped`]). The apps show it as
+/// a binary conflict with no merge editor; the user takes ours and continues
+/// ([`expect_concluded`]).
+pub mod binary_attr {
+    use std::path::Path;
+
+    use super::{MERGE, conflicted, merge_commit, on};
+    use crate::expect::{Checks, Expect, OpState};
+    use crate::fixture::{Fixture, put};
+
+    pub const TARGET: &str = "feat";
+    pub const FILE: &str = "data/table.csv";
+    /// The nested attributes file and its rule.
+    pub const ATTRIBUTES: &str = "data/.gitattributes";
+    pub const RULE: &str = "*.csv binary\n";
+    pub const BASE: &str = "id,name\n1,base\n";
+    pub const OURS: &str = "id,name\n1,main\n";
+    pub const THEIRS: &str = "id,name\n1,feat\n";
+
+    pub struct Setup {
+        pub main: String,
+        pub feat: String,
+    }
+
+    /// See the module docs; the merge stopped. Four git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        let init = fx.commit("main", "init", &[put(ATTRIBUTES, RULE), put(FILE, BASE), put("a.txt", "a\n")]);
+        let feat = fx.commit_from(TARGET, init, "Feat table", &[put(FILE, THEIRS)]);
+        let main = fx.commit("main", "Main table", &[put(FILE, OURS)]);
+        fx.git_after_stops(&["merge", TARGET]);
+        let ids = fx.build(dir);
+        Setup { main: ids[main].into(), feat: ids[feat].into() }
+    }
+
+    /// The merge stopped on the table only; the file on disk is ours as it was (no
+    /// markers: git merged it as binary). One git process.
+    pub fn expect_stopped(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-27 the stopped merge");
+        k.eq("state", e.state(), OpState::Merging);
+        k.eq("MERGE_HEAD", e.ref_id("MERGE_HEAD"), Some(s.feat.clone()));
+        k.eq("conflicted", conflicted(&e.status()), vec![FILE.to_string()]);
+        k.text("table on disk", e.file(FILE).as_deref(), Some(OURS));
+        k.done()
+    }
+
+    /// After taking ours and Continue: the merge commit with `main`'s table (committed and
+    /// on disk), clean. Three git processes.
+    pub fn expect_concluded(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("MG-27 after Take Ours and Continue");
+        on(&mut k, &e, "main");
+        merge_commit(&mut k, &e, &[&s.main, &s.feat], MERGE);
+        let committed = e.blobs(&[&format!("HEAD:{FILE}")]).pop().flatten();
+        k.text("committed table", committed.as_deref(), Some(OURS));
+        k.text("table on disk", e.file(FILE).as_deref(), Some(OURS));
         k.eq("status", e.status_lines(), Vec::<String>::new());
         k.done()
     }
