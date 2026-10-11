@@ -667,8 +667,13 @@ impl Repo {
     }
 
     pub fn commit_diff_with(&self, id: ObjectId, opts: &DiffOptions) -> Result<Vec<FileDiff>> {
+        // Never an empty diff for a commit git didn't report: that would be shown (and
+        // cached) as a commit without changes.
         let mut diffs = self.commit_diffs_with(&[id], opts)?;
-        Ok(diffs.pop().map(|(_, files)| files).unwrap_or_default())
+        diffs
+            .pop()
+            .map(|(_, files)| files)
+            .ok_or_else(|| anyhow::anyhow!("git show reported nothing for commit {id}"))
     }
 
     /// Diffs of several commits in one `git show` (a process costs ~5–10 ms; prefetching
@@ -1521,7 +1526,12 @@ impl Repo {
         }
         match kind {
             CommitKind::Staged => {}
-            CommitKind::Amend => args.push("--amend"),
+            CommitKind::Amend => {
+                if let Some(why) = crate::ops::amend_blocker(self.state()) {
+                    anyhow::bail!(why);
+                }
+                args.push("--amend");
+            }
             CommitKind::StageAll => self.stage_all()?,
             // The whole tree (`:/`), as `git commit -a`: untracked files stay out.
             CommitKind::StageTracked => {

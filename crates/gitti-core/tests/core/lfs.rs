@@ -471,18 +471,20 @@ fn global_config(dir: &Path, filters: bool) -> Vec<(String, String)> {
 /// The repository for "Track with Git LFS…": committed `.psd` files inside and outside
 /// `art/`, plain git (no LFS yet).
 fn track_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    track_repo_with(&[])
+}
+
+/// [`track_repo`] with more files in its commit.
+fn track_repo_with(more: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf) {
+    let mut files = vec![
+        ("art/x.psd", f("x\n")),
+        ("art/sub/y.psd", f("y\n")),
+        ("art/n.txt", f("n\n")),
+        ("top.psd", f("t\n")),
+    ];
+    files.extend(more.iter().map(|(path, text)| (*path, f(text))));
     let mut h = History::new();
-    h.commit(
-        "main",
-        &[],
-        "init",
-        &[
-            ("art/x.psd", f("x\n")),
-            ("art/sub/y.psd", f("y\n")),
-            ("art/n.txt", f("n\n")),
-            ("top.psd", f("t\n")),
-        ],
-    );
+    h.commit("main", &[], "init", &files);
     let (tmp, p, _) = repo_with(&h);
     (tmp, p)
 }
@@ -531,8 +533,25 @@ fn track_in_a_folder() {
     let again = r.lfs_track("art", "*.psd", opts).unwrap();
     assert!(!again.added && again.matching.is_empty());
     assert!(again.message().contains("already tracks"), "{}", again.message());
+}
 
-    // "Folder art/" also matches the files git reads itself: they stay plain.
+/// "Track with Git LFS…" of a whole folder (`/art/**`) also matches the files git reads
+/// itself (the folder's `.gitattributes`, committed here): they stay plain.
+/// Workflow: LF-02
+#[gitti_test::test]
+fn track_a_folder_keeps_its_attributes_plain() {
+    use gitti_core::lfs_track::LfsTrackOptions;
+    let (tmp, p) = track_repo_with(&[("art/.gitattributes", "*.psd filter=lfs diff=lfs merge=lfs -text\n")]);
+    let mut r = Repo::open(&p).unwrap();
+    r.set_env(global_config(tmp.path(), true));
+    if r.lfs_setup().version.is_none() {
+        println!("note: git-lfs isn't installed — tracking itself is not checked");
+        return;
+    }
+    let opts = LfsTrackOptions {
+        stage: true,
+        ..Default::default()
+    };
     let out = r.lfs_track("", "/art/**", opts).unwrap();
     assert_eq!(out.kept_plain, ["art/.gitattributes"]);
     assert_eq!(
@@ -624,7 +643,15 @@ fn push_uploads_to_a_local_remote() {
     fs::write(work.join("x.bin"), &content).unwrap();
     let mut r = Repo::open(&work).unwrap();
     r.set_env(env);
-    sh(&work, &["lfs", "update"]); // the hooks, as "Track with Git LFS…" installs them
+    // The hook "Track with Git LFS…" installs (`git lfs update` costs a dozen processes).
+    let hook = work.join(".git/hooks/pre-push");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, "#!/bin/sh\ngit lfs pre-push \"$@\"\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     r.stage_paths(&[".gitattributes", "x.bin"]).unwrap();
     assert!(sh(&work, &["show", ":x.bin"]).starts_with("version https://git-lfs"));
     r.commit("Add x.bin via LFS", false).unwrap();

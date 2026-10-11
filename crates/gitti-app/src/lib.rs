@@ -907,6 +907,11 @@ pub mod testing {
         ws.read(cx).script_app()?.read(cx).script_modal_message()
     }
 
+    /// The text in the open dialog's text area (Edit Commit Message…, a tag's message).
+    pub fn modal_area_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        ws.read(cx).script_app()?.read(cx).script_modal_area_text(cx)
+    }
+
     /// The text of the open text window (About, Start-up Timings, …).
     pub fn modal_viewer_text(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
         ws.read(cx).script_app()?.read(cx).script_modal_viewer_text(cx)
@@ -1460,6 +1465,10 @@ actions!(gitti, [ResetRemoteBranch]);
 // list; handler in `app/reflog.rs`.
 actions!(gitti, [ShowReflog]);
 
+// Commit ▸ Open in External Diff / Merge Tool (the file at the diff cursor), Repository ▸
+// Choose External Diff / Merge Tool…; handlers in `app/ext_tools.rs`.
+actions!(gitti, [OpenExternalDiffTool, OpenExternalMergeTool, ChooseExternalTool]);
+
 // The action of a greyed menu-bar entry. Nothing handles it, so macOS's menu validation
 // shows the entry disabled too (it asks gpui whether the action is handled).
 actions!(gitti, [MenuItemUnavailable]);
@@ -1700,6 +1709,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Git Settings: Global…", GlobalGitSettings),
                 MenuItem::action("Edit Repository Config File…", EditRepoConfig),
                 MenuItem::action("Edit Global Config File…", EditGlobalConfig),
+                MenuItem::action(gitti_core::tool_setup::CHOOSE_LABEL, ChooseExternalTool),
                 MenuItem::separator(),
                 MenuItem::action("Run Git Command…", RunGitCommand),
                 MenuItem::action("Run Custom Command…", RunCustomCommand),
@@ -1743,6 +1753,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Edit Commit Message…", EditCommitMessage),
                 MenuItem::action("Get Signing Keys from GitHub…", GetSigningKeys),
                 MenuItem::separator(),
+                MenuItem::action("Open in External Diff Tool", OpenExternalDiffTool),
+                MenuItem::action("Open in External Merge Tool", OpenExternalMergeTool),
                 MenuItem::action("Open This Version in Editor (read-only)", OpenThisVersion),
                 MenuItem::action("Open Old Version in Editor (read-only)", OpenOldVersion),
                 MenuItem::action(gitti_core::restore::MENU_LABEL, RestoreFromCommit),

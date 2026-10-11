@@ -605,7 +605,7 @@ pub fn checked_out_elsewhere(stderr: &str) -> Option<PathBuf> {
 pub(crate) fn git_stderr(err: &anyhow::Error) -> Option<&str> {
     match err.downcast_ref::<GitError>()? {
         GitError::Failed { stderr, .. } => Some(stderr),
-        GitError::Spawn(_) | GitError::Cancelled => None,
+        GitError::Spawn(_) | GitError::Cancelled | GitError::OutputCut { .. } => None,
     }
 }
 

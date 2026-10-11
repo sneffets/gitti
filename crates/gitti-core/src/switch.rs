@@ -122,7 +122,7 @@ impl SwitchBlock {
     pub fn from_error(err: &anyhow::Error) -> Option<SwitchBlock> {
         match err.downcast_ref::<GitError>()? {
             GitError::Failed { stderr, .. } => SwitchBlock::parse(stderr),
-            GitError::Spawn(_) | GitError::Cancelled => None,
+            GitError::Spawn(_) | GitError::Cancelled | GitError::OutputCut { .. } => None,
         }
     }
 

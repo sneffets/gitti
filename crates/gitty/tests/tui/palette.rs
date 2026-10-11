@@ -205,27 +205,27 @@ fn output_window_goes_to_its_ends() {
     assert!(cmds(&out)[1].is_empty(), "{out}");
 }
 
-/// The branch switcher (b): the keys move (↓ ↑ pgdn pgup ctrl-n ctrl-j ctrl-k tab
-/// shift-tab ctrl-p), typing filters, "no matches", ⏎ checks out, esc closes. Moving runs
-/// no git.
-/// Workflow: BR-03
-#[gitti_test::test]
-fn branch_switcher_picker_keys() {
-    let dir = import(&[
+/// Branches alpha, beta, gamma off main (checked out).
+fn switcher_repo() -> tempfile::TempDir {
+    import(&[
         Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", "a\n")] },
         Commit { branch: "alpha", from: Some(1), merge: None, msg: "a", files: &[("a.txt", "alpha\n")] },
         Commit { branch: "beta", from: Some(1), merge: None, msg: "b", files: &[("a.txt", "beta\n")] },
         Commit { branch: "gamma", from: Some(1), merge: None, msg: "g", files: &[("a.txt", "gamma\n")] },
-    ]);
+    ])
+}
+
+/// The branch switcher (b): ↓ ↑ move, typing filters, ⏎ checks out. Moving runs no git.
+/// Workflow: BR-03
+#[gitti_test::test]
+fn branch_switcher_moves_filters_and_checks_out() {
+    let dir = switcher_repo();
     let d = dir.path();
     // Items: alpha, beta, gamma, main (current). ↓ ↓ ↑ ⏎ → beta.
     let out = gitty(
         d,
         "cmds;press:b;dump;press:down;press:down;press:up;cmds;key:enter;state;\
-         press:ctrl-b;press:g;press:a;press:m;dump;key:enter;state;cmds;\
-         press:b;press:pagedown;press:pageup;press:ctrl-n;press:ctrl-j;press:ctrl-k;press:tab;press:backtab;\
-         press:down;press:ctrl-p;press:down;cmds;key:enter;state;\
-         press:b;press:z;press:z;press:z;dump;press:backspace;press:backspace;press:backspace;press:a;press:esc;state",
+         press:ctrl-b;press:g;press:a;press:m;dump;key:enter;state",
     );
     let s = screens(&out);
     assert!(s[0].contains("Switch Branch") && s[0].contains("current"), "{out}");
@@ -237,14 +237,31 @@ fn branch_switcher_picker_keys() {
     // Typing filters: only gamma is left.
     assert!(s[1].contains("› gam") && !s[1].contains("│  alpha"), "{out}");
     assert!(st[1].contains("Checkout gamma"), "{out}");
+    assert!(cmds(&out)[1].is_empty(), "moving in the picker ran git: {out}");
+}
+
+/// The branch switcher's other keys (pgdn pgup ctrl-n ctrl-j ctrl-k tab shift-tab
+/// ctrl-p), "no matches", esc closes. Moving runs no git.
+/// Workflow: BR-03
+#[gitti_test::test]
+fn branch_switcher_keys_no_matches_and_esc() {
+    let dir = switcher_repo();
+    let d = dir.path();
+    let out = gitty(
+        d,
+        "cmds;press:b;press:pagedown;press:pageup;press:ctrl-n;press:ctrl-j;press:ctrl-k;press:tab;press:backtab;\
+         press:down;press:ctrl-p;press:down;cmds;key:enter;state;\
+         press:b;press:z;press:z;press:z;dump;press:backspace;press:backspace;press:backspace;press:a;press:esc;state",
+    );
+    let s = screens(&out);
+    let st = states(&out);
     // pgdn 3, pgup 0, ctrl-n 1, ctrl-j 2, ctrl-k 1, tab 2, shift-tab 1, ↓ 2, ctrl-p 1, ↓ 2
-    // = gamma — already checked out.
-    assert!(st[2].contains("gamma"), "{out}");
-    assert!(s[2].contains("no matches"), "{out}");
-    assert!(!st[3].contains("modal=") && !st[3].contains("alpha"), "esc: {out}");
+    // = gamma.
+    assert!(st[0].contains("gamma"), "{out}");
+    assert!(s[0].contains("no matches"), "{out}");
+    assert!(!st[1].contains("modal=") && !st[1].contains("alpha"), "esc: {out}");
     assert_eq!(git(d, &["branch", "--show-current"]).trim(), "gamma");
-    let blocks = cmds(&out);
-    assert!(blocks[1].is_empty() && blocks[3].is_empty(), "moving in the picker ran git: {out}");
+    assert!(cmds(&out)[1].is_empty(), "moving in the picker ran git: {out}");
 }
 
 /// "merge" finds Merge Branch into Current…; ⏎ lists the other branches and the tags,

@@ -219,12 +219,19 @@ fn refusing_env(home: &Path) -> String {
 /// `lib` (one commit) and `super`, which records it as the submodule `libs/lib` by its
 /// local path — not checked out (as after a plain clone): eight git processes.
 fn uninitialised_super() -> (tempfile::TempDir, tempfile::TempDir) {
-    let lib = fixture(&[("l.txt", "1\n")], &[]);
+    let lib = import(&[Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("l.txt", "1\n")] }]);
     let modules = format!("[submodule \"libs/lib\"]\n\tpath = libs/lib\n\turl = {}\n", lib.path().display());
-    let sup = fixture(&[("s.txt", "s\n"), (".gitmodules", modules.as_str())], &[]);
-    let info = format!("160000,{},libs/lib", rev(lib.path(), "HEAD"));
-    git(sup.path(), &["update-index", "--add", "--cacheinfo", &info]);
-    git(sup.path(), &["commit", "-qm", "add lib"]);
+    // The pointer commit in the same fast-import (no update-index + commit processes).
+    let tip = std::fs::read_to_string(lib.path().join(".git/refs/heads/main")).unwrap();
+    let pointer = format!(
+        "commit refs/heads/main\ncommitter Tester <t@example.com> 1700000600 +0000\ndata 8\nadd lib\n\
+         M 160000 {} libs/lib\n\n",
+        tip.trim()
+    );
+    let sup = import_with(
+        &[Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("s.txt", "s\n"), (".gitmodules", modules.as_str())] }],
+        &pointer,
+    );
     (lib, sup)
 }
 

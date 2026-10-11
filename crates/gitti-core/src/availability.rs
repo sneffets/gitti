@@ -24,6 +24,18 @@ pub enum Selection {
     Stash,
 }
 
+/// The file at the diff's cursor, for "Open in External Diff / Merge Tool".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CursorFile {
+    /// None (no diff, or the cursor is not on a file's rows).
+    #[default]
+    None,
+    /// A changed file (working directory, a commit, a comparison).
+    Changed,
+    /// A conflicted file.
+    Conflicted,
+}
+
 /// The state an app is in, as far as the menu commands care (from its last refresh).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoFacts {
@@ -64,6 +76,8 @@ pub struct RepoFacts {
     /// as a read-only copy ("Open This / Old Version in Editor").
     pub this_version: bool,
     pub old_version: bool,
+    /// The file at the diff's cursor (the external tools act on it).
+    pub cursor_file: CursorFile,
     /// A remote points to github.com.
     pub github_remote: bool,
     /// The shown commit's signature can't be checked for a missing key that GitHub may
@@ -101,6 +115,7 @@ impl Default for RepoFacts {
             diff_file: false,
             this_version: false,
             old_version: false,
+            cursor_file: CursorFile::None,
             github_remote: false,
             signing_keys: false,
             fs_paths: 0,
@@ -134,6 +149,9 @@ pub const IS_HEAD: &str = "the selected commit is HEAD";
 pub const NO_FILE: &str = "no file shown";
 pub const NO_COMMIT_FILE: &str = "no commit's file shown";
 pub const NO_OLD_VERSION: &str = "the commit has no parent";
+pub const CONFLICTED_FILE: &str = "the file at the diff cursor is conflicted";
+pub const NO_CONFLICTS: &str = "no conflicts";
+pub const NO_CONFLICTED_FILE: &str = "no conflicted file at the diff cursor";
 pub const NO_OTHER_BRANCH: &str = "no other local branch";
 pub const NO_GITHUB_REMOTE: &str = "no GitHub remote";
 pub const NO_KEY_MISSING: &str = "the shown commit has no signature whose key is missing";
@@ -250,6 +268,10 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "OpenOldVersion" => {
             check(!f.this_version && !f.old_version, NO_COMMIT_FILE).or(check(!f.old_version, NO_OLD_VERSION))
         }
+        "OpenExternalDiffTool" => check(f.cursor_file == CursorFile::None, NO_FILE)
+            .or(check(f.cursor_file == CursorFile::Conflicted, CONFLICTED_FILE)),
+        "OpenExternalMergeTool" => check(f.conflicted == 0, NO_CONFLICTS)
+            .or(check(f.cursor_file != CursorFile::Conflicted, NO_CONFLICTED_FILE)),
         "SwapCompare" | "EndCompare" => check(!f.comparing, NOT_COMPARING),
         "GetSigningKeys" => {
             check(!f.github_remote, NO_GITHUB_REMOTE).or(check(!f.signing_keys, NO_KEY_MISSING))
@@ -289,6 +311,8 @@ pub fn what_to_do(why: &str) -> Option<&'static str> {
         WORKING_DIR_SELECTED | NO_COMMIT_SELECTED => Some("select a commit first"),
         STASH_SELECTED => Some("the Stash menu acts on stashes"),
         NO_COMMIT_FILE => Some("the working directory's files open with Open in Editor"),
+        CONFLICTED_FILE => Some("Open in External Merge Tool resolves it"),
+        NO_CONFLICTED_FILE => Some("go to a conflicted file in the working directory first"),
         MAIN_WORKTREE => Some("linked worktrees are moved or removed from the WORKTREES section"),
         NO_SUBMODULES => Some("Add Submodule… adds one"),
         NO_REMOTES => Some("Add Remote… adds one"),
@@ -429,6 +453,7 @@ mod tests {
             selection: Selection::Commit { head: false },
             this_version: true,
             old_version: true,
+            cursor_file: CursorFile::Changed,
             github_remote: true,
             signing_keys: true,
             fs_paths: 2,
@@ -436,6 +461,14 @@ mod tests {
             fs_hidden: 1,
             ..plain()
         };
+        // (The merge tool needs a conflicted file at the cursor: `external_tools_…`.)
+        assert_eq!(why_not("OpenExternalMergeTool", &f), Some(NO_CONFLICTS));
+        let unavailable = |f: &RepoFacts| {
+            let mut v = unavailable(f);
+            v.retain(|(a, _)| *a != "OpenExternalMergeTool");
+            v
+        };
+        let off = |f: &RepoFacts| unavailable(f).into_iter().map(|(a, _)| a).collect::<Vec<_>>();
         assert_eq!(off(&f), Vec::<&str>::new(), "{:?}", unavailable(&f));
         // Only staged changes: nothing to stage, the rest goes.
         let staged_only = RepoFacts { unstaged: 0, ..f.clone() };
@@ -453,6 +486,24 @@ mod tests {
         assert_eq!(why_not("GetSigningKeys", &elsewhere), Some(NO_GITHUB_REMOTE));
         let stash = RepoFacts { selection: Selection::Stash, ..f };
         assert_eq!(why_not("RevertCommit", &stash), Some(STASH_SELECTED));
+    }
+
+    #[gitti_test::test]
+    fn external_tools_follow_the_file_at_the_cursor() {
+        let tools = |f: &RepoFacts| {
+            ["OpenExternalDiffTool", "OpenExternalMergeTool"].map(|a| why_not(a, f))
+        };
+        assert_eq!(tools(&plain()), [Some(NO_FILE), Some(NO_CONFLICTS)]);
+        let changed = RepoFacts { cursor_file: CursorFile::Changed, ..plain() };
+        assert_eq!(tools(&changed), [None, Some(NO_CONFLICTS)]);
+        let elsewhere = RepoFacts { conflicted: 1, ..changed };
+        assert_eq!(tools(&elsewhere), [None, Some(NO_CONFLICTED_FILE)]);
+        let conflicted = RepoFacts { cursor_file: CursorFile::Conflicted, ..elsewhere };
+        assert_eq!(tools(&conflicted), [Some(CONFLICTED_FILE), None]);
+        let msg = refusal("Open in External Diff Tool", CONFLICTED_FILE);
+        assert!(msg.ends_with("— Open in External Merge Tool resolves it"), "{msg}");
+        // Choosing the tool needs a repository only.
+        assert_eq!(why_not("ChooseExternalTool", &plain()), None);
     }
 
     #[gitti_test::test]

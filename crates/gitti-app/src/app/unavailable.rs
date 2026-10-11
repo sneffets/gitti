@@ -7,7 +7,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gitti_core::RefKind;
-use gitti_core::availability::{self, RepoFacts, Selection};
+use gitti_core::availability::{self, CursorFile, RepoFacts, Selection};
 use gitti_core::palette::normalize;
 use gpui_kit::*;
 
@@ -43,6 +43,16 @@ impl GittiApp {
             Some((new, old)) => (new.is_some(), old.is_some()),
             None => (false, false),
         };
+        // The diff cursor's file as `diff_cursor_row` finds it, without its scan.
+        let cursor_src = match &self.line_sel {
+            Some(s) => Some(s.src),
+            None => self.rows.iter().find_map(|r| r.file_ref()).map(|(src, _)| src),
+        };
+        let cursor_file = match cursor_src {
+            Some(crate::rows::Src::Conflicted) => CursorFile::Conflicted,
+            Some(_) => CursorFile::Changed,
+            None => CursorFile::None,
+        };
         RepoFacts {
             repo: self.repo.is_some(),
             tabs: TABS.with(Cell::get),
@@ -69,6 +79,7 @@ impl GittiApp {
             diff_file: self.rows.iter().any(|r| r.file_ref().is_some()),
             this_version,
             old_version,
+            cursor_file,
             github_remote: gitti_core::signing_keys::github_repo(&self.remotes).is_some(),
             signing_keys: self.signing_key_offer().is_some(),
             fs_paths: self.working.fs_paths.shown().count(),

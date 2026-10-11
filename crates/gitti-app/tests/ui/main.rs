@@ -31,6 +31,7 @@ mod submodules;
 mod subtrees;
 mod toolbar;
 mod tooltips;
+mod wf_commit;
 mod wf_pilot;
 mod wf_reset;
 mod wf_tags;
@@ -62,6 +63,7 @@ const SUITES: &[(&str, fn())] = &[
     ("reflog", reflog::main),
     ("branches", branches::main),
     ("wf_pilot", wf_pilot::main),
+    ("wf_commit", wf_commit::main),
     ("wf_reset", wf_reset::main),
     ("wf_tags", wf_tags::main),
 ];

@@ -2,12 +2,15 @@
 //! into an in-memory terminal (`GITTY_SIZE=WxH`, default 160x45) instead of the real one.
 //!
 //! Steps: `wait` (until no job is running), `sleep:MS`, `closed` (until no dialog is open —
-//! one that closes by itself; at most 5 s), `key:SPEC` (e.g. `j`, `S`, `enter`,
+//! one that closes by itself; at most 5 s), `until:TEXT` (until the screen shows TEXT — a
+//! running operation's progress, instead of a guessed sleep; at most 5 s), `watched` /
+//! `watched:PATH` (until the file watcher reports a change — of PATH, a path relative to the
+//! work tree — after a `write:`, then as `wait`; at most 5 s), `key:SPEC` (e.g. `j`, `S`, `enter`,
 //! `esc`, `tab`, `space`, `ctrl-p`, `alt-down`, `shift-up`, `f5`), `press:SPEC` (a key
 //! without waiting for the jobs it starts — e.g. Esc on a running operation), `type:TEXT`,
 //! `click:X,Y`, `rclick:X,Y`, `pressclick:X,Y` (a left click without waiting for the jobs
 //! — e.g. on a running operation's status line), `wheel:X,Y,DY`, `answer:TEXT` (askpass), `dump` (screen as
-//! text), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status;
+//! text, after a `=== dump ===` line), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status;
 //! `repo_state=` the operation in progress — `clean`, `merging`, `rebasing`,
 //! `cherrypicking`, `reverting` — and `conflicted=` the number of conflicted files),
 //! `changes` (Search in Changes: query, toggles, scans, hits with why, note), `reflog`
@@ -102,6 +105,36 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                     pump(app, &rx, Duration::from_millis(10));
                 }
                 term.draw(|f| crate::ui::draw(f, app))?;
+            }
+            "watched" => {
+                let until = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < until {
+                    if let Ok(msg) = rx.recv_timeout(Duration::from_millis(10)) {
+                        let fs = match &msg {
+                            Msg::Fs(change) => {
+                                arg.is_empty()
+                                    || change.rescan.is_some()
+                                    || change.paths.iter().any(|(p, _)| p.ends_with(arg))
+                            }
+                            _ => false,
+                        };
+                        app.handle(msg);
+                        if fs {
+                            break;
+                        }
+                    }
+                }
+                settle(app, &rx, &mut term, Duration::from_secs(20))?;
+            }
+            "until" => {
+                let until = Instant::now() + Duration::from_secs(5);
+                loop {
+                    term.draw(|f| crate::ui::draw(f, app))?;
+                    if screen_text(term.backend().buffer()).contains(arg) || Instant::now() >= until {
+                        break;
+                    }
+                    pump(app, &rx, Duration::from_millis(10));
+                }
             }
             "key" => {
                 app.on_event(Event::Key(parse_key(arg)?));
@@ -199,7 +232,8 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
             }
             "dump" => {
                 term.draw(|f| crate::ui::draw(f, app))?;
-                println!("{}", screen_text(term.backend().buffer()));
+                // A line of its own to split at: a dialog can cover any of the screen's rows.
+                println!("=== dump ===\n{}", screen_text(term.backend().buffer()));
             }
             "cells" => {
                 term.draw(|f| crate::ui::draw(f, app))?;
@@ -304,6 +338,18 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                 .stdout(std::process::Stdio::null())
                 .status();
             app.terminal_editor_done(&argv[0], status);
+            settle(app, &rx, &mut term, Duration::from_secs(20))?;
+        }
+        // The same for a terminal diff / merge tool.
+        if let Some(run) = app.run_tool_in_terminal.take() {
+            println!("(terminal tool: {})", run.command_line());
+            let start = std::time::Instant::now();
+            let status = run
+                .command()
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .status();
+            app.terminal_tool_done(*run, status, start.elapsed());
             settle(app, &rx, &mut term, Duration::from_secs(20))?;
         }
         // Like the terminal loop: a quit key / command ends the run.
