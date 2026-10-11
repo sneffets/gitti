@@ -1038,9 +1038,42 @@ impl Repo {
         self.stash_push(message, flags, &[])
     }
 
+    /// `git stash apply` / `pop` of `stash` ([`Self::stash_apply_with`] without the index).
     pub fn stash_apply(&self, stash: StashRef, pop: bool) -> Result<String> {
+        self.stash_apply_with(stash, pop, false)
+    }
+
+    /// `git stash apply` / `pop` of `stash`, with `index` restoring its index (`--index`:
+    /// what was staged is staged again; see [`crate::stash`]). Refused before anything
+    /// changes when the stash's untracked files exist in the working tree
+    /// ([`Self::stash_untracked_in_the_way`]: git would stop half-way) and, with `index`,
+    /// when git refuses the staged part ([`crate::stash::index_refusal`]). Conflicts end
+    /// in [`crate::stopped::stop_line`] (plus, with `index`, that the index was not
+    /// restored).
+    pub fn stash_apply_with(&self, stash: StashRef, pop: bool, index: bool) -> Result<String> {
         let name = self.stash_name(stash)?;
-        self.stop_on_conflicts(|| self.out(&["stash", if pop { "pop" } else { "apply" }, &name]))
+        let blocked = self.stash_untracked_in_the_way(stash.id)?;
+        if !blocked.is_empty() {
+            anyhow::bail!(crate::stash::untracked_refusal(&name, &blocked));
+        }
+        let mut args = vec!["stash", if pop { "pop" } else { "apply" }];
+        if index {
+            args.push("--index");
+        }
+        args.push(&name);
+        let result = self.stop_on_conflicts(|| self.out(&args));
+        if !index {
+            return result;
+        }
+        match result {
+            Err(e) if format!("{e:#}").contains("Try without --index") => {
+                anyhow::bail!(crate::stash::index_refusal(&name, pop))
+            }
+            Ok(text) if self.unmerged_index_paths().is_ok_and(|u| !u.is_empty()) => {
+                Ok(format!("{text} {}", crate::stash::INDEX_NOT_RESTORED))
+            }
+            other => other,
+        }
     }
 
     pub fn stash_drop(&self, stash: StashRef) -> Result<String> {

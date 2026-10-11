@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use gitti_core::keys::Command;
+use gitti_core::stash;
 use gitti_core::switch::SwitchTarget;
 use gitti_core::worktree::{Worktree, move_blocker, remove_blocker};
 use gitti_core::{RefKind, ops::StashFlags};
@@ -511,6 +512,12 @@ impl App {
                 MenuItem::new("Pop Latest Stash", |app| app.latest_stash(true))
                     .key('p')
                     .unless(self.why_not("PopStash")),
+                MenuItem::new(stash::APPLY_LATEST_INDEX_LABEL, |app| app.latest_stash_index(false))
+                    .key('A')
+                    .unless(self.why_not("ApplyStashIndex")),
+                MenuItem::new(stash::POP_LATEST_INDEX_LABEL, |app| app.latest_stash_index(true))
+                    .key('P')
+                    .unless(self.why_not("PopStashIndex")),
             ],
             "worktrees" => vec![
                 MenuItem::new("Add Worktree…", |app| app.add_worktree_dialog())
@@ -622,6 +629,8 @@ pub(super) fn stash_items(stash: gitti_core::ops::StashRef) -> Vec<MenuItem> {
             })
         })
         .key('p'),
+        MenuItem::new(stash::APPLY_INDEX_LABEL, move |app| app.stash_index_dialog(stash, false)).key('A'),
+        MenuItem::new(stash::POP_INDEX_LABEL, move |app| app.stash_index_dialog(stash, true)).key('P'),
         MenuItem::new("Create Branch from Stash…", move |app| app.stash_branch_dialog(stash)).key('b'),
         MenuItem::new("Rename…", move |app| app.rename_stash_dialog(stash)).key('r'),
         MenuItem::new("Copy Message", move |app| {

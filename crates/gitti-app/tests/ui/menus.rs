@@ -1941,10 +1941,7 @@ fn sidebar_menus(ui: &mut Ui) {
         ui.quick("key:escape");
     }
     ui.click_on("side:stash-0", MouseButton::Right);
-    for _ in 0..3 {
-        ui.quick("key:down");
-    }
-    ui.quick("key:enter");
+    ui.quick("menu:Create Branch from Stash…");
     match modal_title(ui) {
         Some(t) if t == "Create branch from stash@{0}" => {}
         other => fail!(ui, "Create Branch from Stash…: {other:?}"),

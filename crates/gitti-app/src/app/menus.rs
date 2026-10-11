@@ -1204,6 +1204,18 @@ pub(super) fn section_menu(
                 })
                 .disabled(none.is_some()),
             )
+            .item(
+                item(why_label(gitti_core::stash::APPLY_LATEST_INDEX_LABEL, none), app, |this, w, cx| {
+                    this.latest_stash_index(false, w, cx)
+                })
+                .disabled(none.is_some()),
+            )
+            .item(
+                item(why_label(gitti_core::stash::POP_LATEST_INDEX_LABEL, none), app, |this, w, cx| {
+                    this.latest_stash_index(true, w, cx)
+                })
+                .disabled(none.is_some()),
+            )
         }
         "branches" => {
             let menu = menu
@@ -1257,6 +1269,12 @@ pub(super) fn stash_menu(menu: PopupMenu, app: &AppHandle, stash: StashRef) -> P
     }))
     .item(item("Pop", app, move |this, w, cx| {
         this.git_op("Stash pop", w, cx, move |r| r.stash_apply(stash, true))
+    }))
+    .item(item(gitti_core::stash::APPLY_INDEX_LABEL, app, move |this, w, cx| {
+        this.stash_index_dialog(stash, false, w, cx)
+    }))
+    .item(item(gitti_core::stash::POP_INDEX_LABEL, app, move |this, w, cx| {
+        this.stash_index_dialog(stash, true, w, cx)
     }))
     .item(item("Create Branch from Stash…", app, move |this, w, cx| {
         this.stash_branch_dialog(stash, w, cx)

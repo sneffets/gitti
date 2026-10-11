@@ -6,6 +6,11 @@
 //! Reached from the Stash menu ("Stash Selected Lines or File…", "Rename Stash…"), the
 //! palette, the diff's context menu (lines / hunk / file / group), a file tab's menu and
 //! a stash's menu ("Rename…").
+//!
+//! Also the apply / pop that restores a stash's index ("Apply with Index…", "Pop with
+//! Index…" of a stash's menu, "… Latest Stash with Index…" of the Stash menu and the
+//! stashes section): it asks first with what comes back staged and when git refuses
+//! (`gitti_core::stash::IndexPlan`).
 
 use std::rc::Rc;
 
@@ -285,6 +290,40 @@ impl GittiApp {
             return;
         }
         self.open_picker("Rename stash…", items, window, cx);
+    }
+
+    /// Applies / pops `stash` restoring its index: reads what was staged in it (in the
+    /// background), then asks with [`stash::IndexPlan`]'s text; OK runs it. A stash with
+    /// nothing staged says so in the status line instead.
+    pub(super) fn stash_index_dialog(
+        &mut self,
+        stash: gitti_core::ops::StashRef,
+        pop: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let job = cx.background_executor().spawn(async move { repo.stash_index_plan(stash, pop) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = job.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(plan) => {
+                        let spec = ModalSpec::new(plan.title()).message(plan.describe()).ok(plan.ok_label());
+                        let label = if pop { "Stash pop with index" } else { "Stash apply with index" };
+                        this.open_modal(spec, window, cx, move |this, _, w, cx| {
+                            this.git_op(label, w, cx, move |r| r.stash_apply_with(stash, pop, true))
+                        });
+                    }
+                    Err(e) => this.set_info(format!("{e:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Renames `stash@{index}`: the message field holds the part the user wrote; the

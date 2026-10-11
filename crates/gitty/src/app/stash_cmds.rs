@@ -1,14 +1,16 @@
 //! The stash dialogs beyond the plain "Stash…", as in gitti (`gitti-app/src/app/
 //! stash_ui.rs`): stash chosen files (a file, a group of the unstaged section), stash
 //! selected lines or a hunk (a partial stash), rename a stash. Texts, check boxes and
-//! refusals from `gitti_core::stash`.
+//! refusals from `gitti_core::stash`. Also the apply / pop that restores a stash's index
+//! (a stash's menu A / P, the STASHES header's menu, the palette): it asks first with
+//! what comes back staged and when git refuses (`gitti_core::stash::IndexPlan`).
 
 use gitti_core::ops::StashFlags;
 use gitti_core::patch::Selection;
 use gitti_core::rows::{DiffRow, Src};
 use gitti_core::stash::{self, Scope};
 
-use super::{After, App, work_files};
+use super::{After, App, Msg, work_files};
 use crate::modal::{Live, MenuItem, Modal, PickItem};
 
 fn lines_word(n: usize) -> String {
@@ -199,6 +201,42 @@ impl App {
             )
             .with_note(note),
         );
+    }
+
+    /// Applies / pops `stash` restoring its index: reads what was staged in it (in the
+    /// background), then asks with [`stash::IndexPlan`]'s text; ⏎ runs it. A stash with
+    /// nothing staged says so in the status line instead.
+    pub fn stash_index_dialog(&mut self, stash: gitti_core::ops::StashRef, pop: bool) {
+        let repo = self.repo.clone();
+        self.start_load(
+            move || repo.stash_index_plan(stash, pop),
+            move |result| {
+                Msg::Apply(Box::new(move |app: &mut App| match result {
+                    Ok(plan) => {
+                        let label = if pop { "Pop stash with index" } else { "Apply stash with index" };
+                        app.modal = Some(Modal::confirm(
+                            plan.title(),
+                            plan.describe(),
+                            plan.ok_label(),
+                            move |app: &mut App| {
+                                app.run_op(label, true, After::Nothing, move |r| {
+                                    r.stash_apply_with(stash, pop, true)
+                                })
+                            },
+                        ));
+                    }
+                    Err(e) => app.set_info(format!("{e:#}")),
+                }))
+            },
+        );
+    }
+
+    /// [`Self::stash_index_dialog`] of `stash@{0}` — the latest one as shown.
+    pub(super) fn latest_stash_index(&mut self, pop: bool) {
+        let Some(stash) = self.stashes.iter().find(|s| s.index == 0).map(|s| s.target()) else {
+            return self.set_info("No stashes");
+        };
+        self.stash_index_dialog(stash, pop);
     }
 
     /// "Rename Stash…": picks the stash, then [`Self::rename_stash_dialog`].

@@ -23,9 +23,9 @@ use crate::probe::ProbeExt as _;
 use crate::rows::Src;
 use crate::theme::PaletteExt as _;
 use crate::{
-    About, AddRemote, AddToGitignore, ApplyStash, CreateBranch, CreateTag, EditGitattributes,
+    About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, CreateBranch, CreateTag, EditGitattributes,
     EditGitignore, EditGlobalConfig, EditRepoConfig, GlobalGitSettings, GoToWorkingDirectory,
-    MergeBranch, OpenInFileManager, OpenTerminal, PopStash, RepoGitSettings, RepositoryStatistics,
+    MergeBranch, OpenInFileManager, OpenTerminal, PopStash, PopStashIndex, RepoGitSettings, RepositoryStatistics,
     StartupTimings,
     ThirdPartyLicences, TrackWithLfs, WriteCommitGraph,
 };
@@ -154,6 +154,10 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &AddRemote, w, cx| this.add_remote_dialog(w, cx)))
         .on_action(cx.listener(|this, _: &ApplyStash, w, cx| this.latest_stash(false, w, cx)))
         .on_action(cx.listener(|this, _: &PopStash, w, cx| this.latest_stash(true, w, cx)))
+        .on_action(cx.listener(|this, _: &ApplyStashIndex, w, cx| {
+            this.latest_stash_index(false, w, cx)
+        }))
+        .on_action(cx.listener(|this, _: &PopStashIndex, w, cx| this.latest_stash_index(true, w, cx)))
         .on_action(cx.listener(|this, _: &GoToWorkingDirectory, w, cx| {
             this.select_row(0, w, cx);
             this.message.update(cx, |m, cx| m.focus(w, cx));
@@ -300,6 +304,14 @@ impl GittiApp {
             entry("Pop Latest Stash", "", |t, w, cx| {
                 t.latest_stash(true, w, cx)
             }),
+            entry(gitti_core::stash::APPLY_LATEST_INDEX_LABEL, "staged changes come back staged", |t, w, cx| {
+                t.latest_stash_index(false, w, cx)
+            })
+            .act(&ApplyStashIndex),
+            entry(gitti_core::stash::POP_LATEST_INDEX_LABEL, "staged changes come back staged", |t, w, cx| {
+                t.latest_stash_index(true, w, cx)
+            })
+            .act(&PopStashIndex),
             keyed("Next Tab", &crate::NextTab, cx, |_, w, cx| {
                 w.dispatch_action(Box::new(crate::NextTab), cx)
             }),
@@ -730,6 +742,17 @@ impl GittiApp {
         };
         let label = if pop { "Stash pop" } else { "Stash apply" };
         self.git_op(label, window, cx, move |r| r.stash_apply(stash, pop));
+    }
+
+    /// Applies / pops `stash@{0}` restoring its index — asks first
+    /// ([`GittiApp::stash_index_dialog`]).
+    pub(super) fn latest_stash_index(&mut self, pop: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(stash) = self.stashes.iter().find(|s| s.index == 0).map(|s| s.target()) else {
+            self.set_info("No stashes");
+            cx.notify();
+            return;
+        };
+        self.stash_index_dialog(stash, pop, window, cx);
     }
 
     /// Help ▸ About: version and build commit first (Copy Version), licence, the

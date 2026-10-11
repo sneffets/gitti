@@ -201,6 +201,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("StashSelection", crate::stash::SELECTION_LABEL),
     both("ApplyStash", "Apply Latest Stash"),
     both("PopStash", "Pop Latest Stash"),
+    both("ApplyStashIndex", crate::stash::APPLY_LATEST_INDEX_LABEL),
+    both("PopStashIndex", crate::stash::POP_LATEST_INDEX_LABEL),
     gitti("DropLatestStash", "gitty gap: the stash's menu (m) has it"),
     gitti("DropStash", "gitty gap: the stash's menu (m) has it"),
     both("RenameStash", "Rename Stash…"),
