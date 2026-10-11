@@ -206,3 +206,52 @@ fn other_worktrees_get_their_own_marks() {
     let main = marks.iter().find(|(p, _)| *p == gitti_core::paths::canonical(&work));
     assert_eq!(main.map(|(_, m)| m.mark()), Some(None), "main: clean and pushed");
 }
+
+/// One definition: a worktree's marks read by its own tab (snapshot → `Marks::of`) equal
+/// what another worktree's tab reads of it (`other_worktrees`) — untracked files in a new
+/// folder, ignored files, a stash, staged changes, a branch ahead of its upstream, and with
+/// `status.showUntrackedFiles=no`.
+#[gitti_test::test]
+fn a_worktrees_own_marks_equal_what_the_others_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    fx::init(&work);
+    fx::remote(&work, "origin", &dir.path().join("origin.git"));
+    fx::upstream(&work, "feature", "origin");
+    let mut i = Import::new();
+    let one = i.commit("main", None, &[], "one", &[put("a.txt", "one\n"), put(".gitignore", "*.log\n")]);
+    i.reset("refs/remotes/origin/feature", &one);
+    i.commit("feature", Some(&one), &[], "two", &[put("b.txt", "two\n")]);
+    i.reset("refs/stash", &one);
+    i.run(&work);
+    fx::checkout(&work);
+    let repo = Repo::open(&work).unwrap();
+    let wt = dir.path().join("wt");
+    repo.add_worktree(&wt, &AddMode::Existing("feature".into())).unwrap();
+    let wt = gitti_core::paths::canonical(&wt);
+    let own = Repo::open(&wt).unwrap();
+    let compare = |what: &str| {
+        let snap = own.snapshot(&Default::default()).unwrap();
+        let mine = Marks::of(&snap.working.status, snap.unpushed.as_ref());
+        let main = repo.snapshot(&Default::default()).unwrap();
+        let read = tab_marks::other_worktrees(&repo, &main.worktrees, &main.tracking);
+        let theirs = read.iter().find(|(p, _)| *p == wt).map(|(_, m)| m.clone());
+        assert_eq!(Some(mine.clone()), theirs, "{what}");
+        mine
+    };
+    let m = compare("clean, one commit ahead of origin/feature");
+    assert_eq!(m.mark(), Some(Mark::Unpushed));
+    fs::create_dir_all(wt.join("new/deep")).unwrap();
+    fs::write(wt.join("new/deep/x.txt"), "x\n").unwrap();
+    fs::write(wt.join("new/y.txt"), "y\n").unwrap();
+    fs::write(wt.join("debug.log"), "ignored\n").unwrap();
+    let m = compare("untracked folder + ignored file");
+    assert_eq!(m.uncommitted.as_deref(), Some("Uncommitted changes in 2 files: 2 untracked"));
+    fs::write(wt.join("b.txt"), "changed\n").unwrap();
+    fx::git(&wt, &["add", "b.txt"]);
+    compare("staged");
+    fx::config(&work, "[status]\n\tshowUntrackedFiles = no\n");
+    fx::git(&wt, &["reset", "-q", "--hard"]);
+    let m = compare("untracked hidden by the config");
+    assert_eq!(m.mark(), Some(Mark::Unpushed), "only untracked files left, hidden: {m:?}");
+}

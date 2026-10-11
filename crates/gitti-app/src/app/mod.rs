@@ -216,11 +216,9 @@ pub struct GittiApp {
     tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the tab's hollow mark).
     unpushed: Option<gitti_core::tab_marks::Unpushed>,
-    /// The other worktrees' marks by folder (`tab_marks.rs`), a read running / asked for
-    /// again.
-    worktree_marks: Vec<(std::path::PathBuf, gitti_core::tab_marks::Marks)>,
+    /// A read of this repository's other worktrees' marks, started by this tab, runs
+    /// (`tab_marks.rs`; the marks are in the app-wide store).
     worktree_marks_loading: bool,
-    worktree_marks_queued: bool,
     /// Effective user.name / user.email.
     identity: (Option<String>, Option<String>),
     /// Names of "ours" / "theirs" while there are conflicted files.
@@ -597,6 +595,16 @@ impl GittiApp {
             },
             None => (None, None, None),
         };
+        // The worktree marks of every tab (`tab_marks.rs`): redraw when any changed; this
+        // tab's own entry goes when it closes (it stays as it was until read again).
+        cx.observe_global::<tab_marks::SharedMarks>(|_, cx| cx.notify()).detach();
+        let owner = cx.entity_id().as_u64();
+        cx.on_release(move |_, cx| {
+            if cx.has_global::<tab_marks::SharedMarks>() {
+                cx.global_mut::<tab_marks::SharedMarks>().0.release(owner);
+            }
+        })
+        .detach();
         cx.observe_window_activation(window, |this, window, cx| {
             this.sync_secure_input(window);
             cx.notify();
@@ -621,9 +629,7 @@ impl GittiApp {
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
             unpushed: None,
-            worktree_marks: Vec::new(),
             worktree_marks_loading: false,
-            worktree_marks_queued: false,
             identity: (None, None),
             conflict_sides: None,
             worktrees: Vec::new(),
@@ -1015,7 +1021,9 @@ impl GittiApp {
         self.apply_lfs_state(s.lfs, cx);
         // Only when HEAD moved (in-process, in the background).
         self.refresh_subtrees(false, cx);
-        // The other worktrees' sidebar marks (in the background, only when shown).
+        // This worktree's marks for every tab; the worktrees no tab has open (in the
+        // background).
+        self.publish_marks(cx);
         self.refresh_worktree_marks(cx);
         // Refs moved behind our back → the history may have changed too (the first
         // refresh loads it anyway).
@@ -2146,6 +2154,7 @@ impl GittiApp {
         if self.working.conflicted.is_empty() {
             self.conflict_sides = None;
         }
+        self.publish_marks(cx);
         self.rebuild_rows_if_worktree(prev_sel_diff, &prev_working);
         self.restore_worktree_view_anchor(cx);
         self.refresh_worktree_compare(cx);
@@ -3241,7 +3250,6 @@ impl GittiApp {
             && self.paths_queued.is_none()
             && !self.change_search.busy()
             && !self.worktree_marks_loading
-            && !self.worktree_marks_queued
     }
 
     pub fn script_workdir(&self) -> PathBuf {

@@ -1,15 +1,18 @@
 //! The mark right of a repository tab's name (`gitti_core::tab_marks`): a filled circle
 //! while the working tree has uncommitted changes, else a hollow one while the branch has
-//! commits that are not pushed; the tooltip names both when both hold. Read from what the
-//! tab's refreshes keep current anyway — its file watcher runs also while the tab is in
-//! the background — so drawing them costs no git process. The sidebar's worktree entries
-//! carry the same mark: this tab's own on its worktree, the others' read in the
-//! background ([`GittiApp::refresh_worktree_marks`]).
+//! commits that are not pushed; the tooltip names both when both hold. The sidebar's
+//! worktree entries carry the same mark.
+//!
+//! One source for all of them: the app-wide [`SharedMarks`] (a `MarksStore` keyed by the
+//! worktree's folder). Each tab publishes its own worktree's marks after every read of its
+//! working state (its file watcher runs also while the tab is in the background); the
+//! worktrees no tab has open are read in the background when a tab of that repository
+//! refreshes ([`GittiApp::refresh_worktree_marks`]). The tab strip and every tab's
+//! WORKTREES section read the store, so they agree; drawing costs no git process.
 
-use std::sync::Arc;
+use std::path::Path;
 
-use gitti_core::WorkingState;
-use gitti_core::tab_marks::{Mark, Marks, Unpushed, describe_uncommitted, mark};
+use gitti_core::tab_marks::{Mark, Marks, MarksStore};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -19,19 +22,53 @@ use super::GittiApp;
 use crate::probe::ProbeExt as _;
 use crate::theme::Palette;
 
+/// The marks of every worktree, app-wide (all windows, all tabs).
+#[derive(Default)]
+pub(crate) struct SharedMarks(pub MarksStore);
+
+impl Global for SharedMarks {}
+
+/// The store's marks of the worktree at `path`.
+pub(crate) fn shared_marks(path: &Path, cx: &App) -> Option<Marks> {
+    cx.try_global::<SharedMarks>().and_then(|s| s.0.get(path).cloned())
+}
+
 /// What one tab's marks show.
 #[derive(Clone)]
 pub struct TabMarks {
-    working: Arc<WorkingState>,
-    unpushed: Option<Unpushed>,
+    marks: Marks,
 }
 
 impl GittiApp {
-    /// This repository's marks for its tab (nothing before its first read).
-    pub fn tab_marks(&self) -> TabMarks {
-        TabMarks {
-            working: self.working.clone(),
-            unpushed: self.unpushed.clone(),
+    /// This repository's marks for its tab: its worktree's entry in the store (nothing
+    /// before the first read).
+    pub fn tab_marks(&self, cx: &App) -> TabMarks {
+        let marks = self
+            .repo
+            .as_ref()
+            .and_then(|r| shared_marks(r.workdir(), cx))
+            .unwrap_or_else(|| self.own_marks());
+        TabMarks { marks }
+    }
+
+    /// The marks of this tab's own working state.
+    fn own_marks(&self) -> Marks {
+        Marks::of(&self.working.status, self.unpushed.as_ref())
+    }
+
+    /// Puts this tab's own marks into the store (after each read of the working state);
+    /// every tab and the tab strip redraw when they changed.
+    pub(super) fn publish_marks(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let marks = self.own_marks();
+        let owner = cx.entity_id().as_u64();
+        let differs = cx
+            .try_global::<SharedMarks>()
+            .is_none_or(|s| s.0.differs(repo.workdir(), owner, &marks));
+        if differs {
+            cx.default_global::<SharedMarks>().0.publish(repo.workdir(), owner, marks);
         }
     }
 }
@@ -39,7 +76,7 @@ impl GittiApp {
 impl TabMarks {
     /// The one mark shown: uncommitted outranks unpushed.
     pub fn mark(&self) -> Option<Mark> {
-        mark(&self.working.status, self.unpushed.as_ref())
+        self.marks.mark()
     }
 
     pub fn any(&self) -> bool {
@@ -53,10 +90,7 @@ impl TabMarks {
 
     /// What they mean, one line each (the tooltip).
     pub fn describe(&self) -> String {
-        let mut lines = Vec::new();
-        lines.extend(describe_uncommitted(&self.working.status));
-        lines.extend(self.unpushed.as_ref().map(Unpushed::describe));
-        lines.join("\n")
+        self.marks.describe()
     }
 
     /// The circle of tab `ix` (probes `tab-marks:N` and `tab-dirty:N` or `tab-unpushed:N`),
@@ -123,54 +157,55 @@ pub(super) fn mark_element(
 }
 
 impl GittiApp {
-    /// The mark of the sidebar's worktree entry `wi`: this tab's own for its worktree,
-    /// else what [`GittiApp::refresh_worktree_marks`] read last.
-    pub(super) fn worktree_marks(&self, wi: usize) -> Option<Marks> {
+    /// The mark of the sidebar's worktree entry `wi`, from the store (this tab's own one
+    /// before its first publish).
+    pub(crate) fn worktree_marks(&self, wi: usize, cx: &App) -> Option<Marks> {
         let wt = self.worktrees.get(wi)?;
-        if wt.is_current {
-            return Some(Marks::of(&self.working.status, self.unpushed.as_ref()));
-        }
-        self.worktree_marks
-            .iter()
-            .find(|(p, _)| *p == wt.path)
-            .map(|(_, m)| m.clone())
+        shared_marks(&wt.path, cx).or_else(|| wt.is_current.then(|| self.own_marks()))
     }
 
-    /// Reads the other worktrees' marks in the background (one `git status` each,
-    /// `gitti_core::tab_marks::other_worktrees`) — after a refresh of this repository and
-    /// when the WORKTREES section unfolds; only while it is shown unfolded with other
-    /// worktrees in it. Never on navigation. One read at a time; asked for meanwhile, it
-    /// runs once more afterwards.
+    /// The WORKTREES section's marks: `folder glyph` per worktree (tests).
+    pub fn script_worktree_marks(&self, cx: &App) -> Vec<String> {
+        (0..self.worktrees.len())
+            .map(|wi| {
+                let glyph = self.worktree_marks(wi, cx).and_then(|m| m.mark()).map_or("", Mark::glyph);
+                format!("{} {glyph}", self.worktrees[wi].name()).trim_end().to_string()
+            })
+            .collect()
+    }
+
+    /// Reads the marks of this repository's worktrees no tab has open, in the background
+    /// (one `git status` each, `gitti_core::tab_marks::other_worktrees`) — after a refresh
+    /// of any tab of the repository, and when the WORKTREES section unfolds. Never on
+    /// navigation. One read per repository at a time (whichever tab asks); asked for
+    /// meanwhile, it runs once more afterwards.
     pub(super) fn refresh_worktree_marks(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let shown = gitti_core::worktree::section_shown(
-            &self.worktrees,
-            self.settings.show_main_worktree_alone,
-        ) && !self.collapsed.contains("worktrees");
-        let others = self
-            .worktrees
-            .iter()
-            .any(|w| !w.is_current && !w.bare && w.prunable.is_none());
-        if !shown || !others {
+        let to_read = match cx.try_global::<SharedMarks>() {
+            Some(s) => s.0.to_read(&self.worktrees),
+            None => MarksStore::default().to_read(&self.worktrees),
+        };
+        if to_read.is_empty() {
             return;
         }
-        if self.worktree_marks_loading {
-            self.worktree_marks_queued = true;
+        let common = repo.common_dir();
+        if !cx.default_global::<SharedMarks>().0.begin_read(&common) {
             return;
         }
         self.worktree_marks_loading = true;
-        let (worktrees, tracking) = (self.worktrees.clone(), self.tracking.clone());
+        let tracking = self.tracking.clone();
         let task = cx.background_executor().spawn(async move {
-            gitti_core::tab_marks::other_worktrees(&repo, &worktrees, &tracking)
+            gitti_core::tab_marks::other_worktrees(&repo, &to_read, &tracking)
         });
         cx.spawn(async move |this, cx| {
             let marks = task.await;
+            // Also when this tab closed meanwhile: the repository's next read must run.
+            let again = cx.update(|cx| cx.default_global::<SharedMarks>().0.finish_read(&common, marks).1);
             this.update(cx, |this, cx| {
                 this.worktree_marks_loading = false;
-                this.worktree_marks = marks;
-                if std::mem::take(&mut this.worktree_marks_queued) {
+                if again {
                     this.refresh_worktree_marks(cx);
                 }
                 cx.notify();

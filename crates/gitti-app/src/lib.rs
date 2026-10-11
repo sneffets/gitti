@@ -1122,6 +1122,12 @@ pub mod testing {
         ws.read(cx).script_tab_marks(cx)
     }
 
+    /// Per repository tab: its WORKTREES section's marks (`folder glyph`, glyph "" for
+    /// none), whether the section is drawn or not — what each tab's sidebar would show.
+    pub fn sidebar_marks(ws: &Entity<Workspace>, cx: &App) -> Vec<Vec<String>> {
+        ws.read(cx).script_sidebar_marks(cx)
+    }
+
     /// Restores `repos` as tabs the way a start does, the `active`th of them shown.
     pub fn restore_tabs(
         ws: &Entity<Workspace>,

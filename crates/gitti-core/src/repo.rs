@@ -1140,7 +1140,8 @@ impl Repo {
     /// [`entry_order`] (git's own: tracked by path, then untracked by path).
     fn status_of(&self, pathspec: &[String]) -> Result<Status> {
         let untracked = self.untracked_files();
-        let mut args = vec!["status", "--porcelain=v2", "-z", "--branch", untracked.arg()];
+        let mut args = crate::status::STATUS_ARGS.to_vec();
+        args.extend(["--branch", untracked.arg()]);
         if !pathspec.is_empty() {
             args.push("--");
             args.extend(pathspec.iter().map(String::as_str));

@@ -128,44 +128,36 @@ impl App {
         }
     }
 
-    /// The mark of the sidebar's worktree entry `index`: gitty's own for its worktree,
-    /// else what [`App::refresh_worktree_marks`] read last.
+    /// The mark of the sidebar's worktree entry `index`, from the store (gitty's own one
+    /// before its first publish).
     pub fn worktree_marks(&self, index: usize) -> Option<Marks> {
         let wt = self.worktrees.get(index)?;
-        if wt.is_current {
-            return Some(Marks::of(&self.working.status, self.unpushed.as_ref()));
-        }
-        self.worktree_marks
-            .iter()
-            .find(|(p, _)| *p == wt.path)
-            .map(|(_, m)| m.clone())
+        self.marks
+            .get(&wt.path)
+            .cloned()
+            .or_else(|| wt.is_current.then(|| self.own_marks()))
     }
 
-    /// Reads the other worktrees' marks in the background (one `git status` each,
+    /// Reads the marks of the other worktrees in the background (one `git status` each,
     /// `gitti_core::tab_marks::other_worktrees`) — after a refresh and when the WORKTREES
-    /// section unfolds; only while it is shown unfolded with other worktrees in it. Never
-    /// on navigation. One read at a time; asked for meanwhile, it runs once more after.
+    /// section unfolds. Never on navigation. One read at a time; asked for meanwhile, it
+    /// runs once more afterwards.
     pub(crate) fn refresh_worktree_marks(&mut self) {
-        let shown = gitti_core::worktree::section_shown(&self.worktrees, self.main_worktree_alone)
-            && !self.collapsed.contains("worktrees");
-        let others = self
-            .worktrees
-            .iter()
-            .any(|w| !w.is_current && !w.bare && w.prunable.is_none());
-        if !shown || !others {
+        let to_read = self.marks.to_read(&self.worktrees);
+        if to_read.is_empty() {
             return;
         }
-        if self.worktree_marks_loading {
-            self.worktree_marks_queued = true;
+        let common = self.repo.common_dir();
+        if !self.marks.begin_read(&common) {
             return;
         }
         self.worktree_marks_loading = true;
         self.loads_in_flight += 1;
         let repo = self.repo.clone();
-        let (worktrees, tracking) = (self.worktrees.clone(), self.tracking.clone());
+        let tracking = self.tracking.clone();
         super::spawn(
             &self.tx,
-            move || gitti_core::tab_marks::other_worktrees(&repo, &worktrees, &tracking),
+            move || gitti_core::tab_marks::other_worktrees(&repo, &to_read, &tracking),
             Msg::WorktreeMarks,
         );
     }
@@ -174,8 +166,9 @@ impl App {
     pub(super) fn on_worktree_marks(&mut self, marks: Vec<(PathBuf, Marks)>) {
         self.loads_in_flight -= 1;
         self.worktree_marks_loading = false;
-        self.worktree_marks = marks;
-        if std::mem::take(&mut self.worktree_marks_queued) {
+        let common = self.repo.common_dir();
+        let (_, again) = self.marks.finish_read(&common, marks);
+        if again {
             self.refresh_worktree_marks();
         }
     }

@@ -49,6 +49,7 @@ pub fn main() {
         ("move_and_repair", move_and_repair),
         ("live_plan", live_plan),
         ("sidebar_marks", sidebar_marks),
+        ("tabs_and_sidebars_agree", tabs_and_sidebars_agree),
         // Last: it switches the shared setting off (and on again).
         ("main_worktree_alone", main_worktree_alone),
     ];
@@ -1091,8 +1092,8 @@ fn main_worktree_alone(ui: &mut Ui) {
 
 /// The sidebar's worktree entries carry the tab marks: this tab's own (the fixture's
 /// working directory has changes), a linked worktree with an untracked file, none on a
-/// clean one. A refresh reads the others with one `git status` each; folded, nothing is
-/// read; unfolding reads them again; moving through the sidebar reads none.
+/// clean one. A refresh reads the others with one `git status` each (folded too: the
+/// marks serve every tab); moving through the sidebar reads none.
 fn sidebar_marks(ui: &mut Ui) {
     let repo = base().join("sidebar_marks");
     let clean = base().join("sidebar_marks-clean");
@@ -1141,22 +1142,75 @@ fn sidebar_marks(ui: &mut Ui) {
         fail!(ui, "selecting worktree entries read a status: {ran:?}");
     }
 
-    // Folded: a refresh reads no other worktree; unfolded: read again.
+    // Folded too, a refresh reads them (the store serves every tab and the tab strip).
     ui.click_on("side-section:worktrees", MouseButton::Left);
+    std::fs::remove_file(dirty.join("new.txt")).unwrap();
     let n = ui.n_git();
     ui.step("key:secondary-r");
     let ran = ui.git_since(n);
-    if others(&ran) != 0 {
-        fail!(ui, "folded, a refresh read the worktrees' marks: {ran:?}");
-    }
-    std::fs::remove_file(dirty.join("new.txt")).unwrap();
-    let n = ui.n_git();
-    ui.click_on("side-section:worktrees", MouseButton::Left);
-    let ran = ui.git_since(n);
     if others(&ran) != 2 {
-        fail!(ui, "unfolding didn't read the worktrees' marks: {ran:?}");
+        fail!(ui, "folded, a refresh didn't read the worktrees' marks: {ran:?}");
     }
+    ui.click_on("side-section:worktrees", MouseButton::Left);
     if find(&ui.frame(), "wt-marks:sidebar_marks-dirty").is_some() {
         ui.fail("the worktree is clean again, its mark stays".into());
     }
+}
+
+/// One source per worktree: the main worktree and two linked ones open as tabs, a third
+/// linked one without a tab. Each change — in a tab's worktree (its watcher), in the one
+/// without a tab (read when any tab of the repository refreshes) — shows the same in the
+/// tab strip and in every tab's WORKTREES section.
+fn tabs_and_sidebars_agree(ui: &mut Ui) {
+    let repo = base().join("tabs_and_sidebars_agree");
+    let names = ["a", "b", "c"].map(|n| format!("tabs_and_sidebars_agree-{n}"));
+    let dirs = names.clone().map(|n| base().join(n));
+    for d in &dirs {
+        git(&repo, &["worktree", "add", "-q", "--detach", d.to_str().unwrap(), "HEAD"]);
+    }
+    ui.step("key:secondary-r");
+    ui.step(&format!("open:{}", dirs[0].display()));
+    ui.step(&format!("open:{}", dirs[1].display()));
+    // Tab i's folder → the mark every place shows for it.
+    let tab_folders = ["tabs_and_sidebars_agree".to_string(), names[0].clone(), names[1].clone()];
+    let state = |ui: &mut Ui| {
+        let ws = ui.ws.clone();
+        let tabs = ui.cx.update(|cx| testing::tab_marks(&ws, cx));
+        let sidebars = ui.cx.update(|cx| testing::sidebar_marks(&ws, cx));
+        (tabs, sidebars)
+    };
+    // `want`: glyph per folder (main, a, b, c). True when the tab strip and every
+    // sidebar show exactly that.
+    let agree = |ui: &mut Ui, want: [&str; 4]| {
+        let (tabs, sidebars) = state(ui);
+        let folders = [tab_folders[0].as_str(), &names[0], &names[1], &names[2]];
+        let entry = |f: &str, g: &str| if g.is_empty() { f.to_string() } else { format!("{f} {g}") };
+        let mut wanted: Vec<String> = folders.iter().zip(want).map(|(f, g)| entry(f, g)).collect();
+        wanted.sort();
+        tabs.len() == 3
+            && (0..3).all(|i| tabs[i].0 == want[i])
+            && sidebars.iter().all(|s| {
+                let mut s = s.clone();
+                s.sort();
+                s == wanted
+            })
+    };
+    let check = |ui: &mut Ui, what: &str, want: [&str; 4]| {
+        if !ui.wait_real(1500, |ui| ui.is_idle() && agree(ui, want)) {
+            let st = state(ui);
+            ui.fail(format!("{what}: want {want:?} everywhere, got {st:?}"));
+        }
+    };
+    // The fixture's working directory has changes (main ●); the linked ones are clean.
+    check(ui, "at the start", ["●", "", "", ""]);
+    std::fs::write(dirs[0].join("new.txt"), "x\n").unwrap();
+    check(ui, "a change in tab a's worktree", ["●", "●", "", ""]);
+    std::fs::write(dirs[2].join("new.txt"), "x\n").unwrap();
+    ui.step("tab:2");
+    ui.step("key:secondary-r");
+    check(ui, "a change in c (no tab), read by tab b's refresh", ["●", "●", "", "●"]);
+    std::fs::remove_file(dirs[0].join("new.txt")).unwrap();
+    check(ui, "tab a's worktree clean again", ["●", "", "", "●"]);
+    std::fs::write(dirs[1].join("new.txt"), "x\n").unwrap();
+    check(ui, "a change in tab b's worktree", ["●", "", "●", "●"]);
 }

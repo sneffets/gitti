@@ -110,6 +110,10 @@ impl UntrackedFiles {
     }
 }
 
+/// `git status` as both the working state and the worktree marks read it (then the
+/// untracked-files argument; the working state adds `--branch` and pathspecs).
+pub const STATUS_ARGS: [&str; 3] = ["status", "--porcelain=v2", "-z"];
+
 /// The note both apps show while untracked files are hidden (under "Nothing to commit").
 pub const UNTRACKED_HIDDEN_NOTE: &str =
     "Untracked files are hidden by your git config (status.showUntrackedFiles=no)";

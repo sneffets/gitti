@@ -587,10 +587,15 @@ impl Workspace {
         self.tabs
             .iter()
             .map(|t| {
-                let m = t.app.read(cx).tab_marks();
+                let m = t.app.read(cx).tab_marks(cx);
                 (m.glyphs().to_string(), m.describe())
             })
             .collect()
+    }
+
+    /// Per tab: its WORKTREES section's marks, for tests.
+    pub fn script_sidebar_marks(&self, cx: &App) -> Vec<Vec<String>> {
+        self.tabs.iter().map(|t| t.app.read(cx).script_worktree_marks(cx)).collect()
     }
 
     /// The tabs' paths in their order, for tests.
@@ -822,7 +827,7 @@ impl Workspace {
             let active = ix == self.active;
             let title = tab.app.read(cx).title();
             let busy = tab.app.read(cx).busy_label().map(str::to_string);
-            let marks = tab.app.read(cx).tab_marks();
+            let marks = tab.app.read(cx).tab_marks(cx);
             let dragged = DraggedTab {
                 ix,
                 title: title.clone().into(),
@@ -1018,7 +1023,7 @@ impl Workspace {
                 titles[ix].clone()
             };
             // The tab's mark: uncommitted ●, else not pushed ○.
-            let marks = tab.app.read(cx).tab_marks();
+            let marks = tab.app.read(cx).tab_marks(cx);
             if marks.any() {
                 label = format!("{label}  {}", marks.glyphs());
             }
