@@ -340,6 +340,18 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
             app.terminal_editor_done(&argv[0], status);
             settle(app, &rx, &mut term, Duration::from_secs(20))?;
         }
+        // The same for a terminal diff / merge tool.
+        if let Some(run) = app.run_tool_in_terminal.take() {
+            println!("(terminal tool: {})", run.command_line());
+            let start = std::time::Instant::now();
+            let status = run
+                .command()
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .status();
+            app.terminal_tool_done(*run, status, start.elapsed());
+            settle(app, &rx, &mut term, Duration::from_secs(20))?;
+        }
         // Like the terminal loop: a quit key / command ends the run.
         if app.quit {
             println!("(quit)");

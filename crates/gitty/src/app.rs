@@ -246,6 +246,12 @@ pub enum FollowUp {
     /// git refused to clone submodules from local paths (Update Submodules, a clone's
     /// `--recurse-submodules`): allow it for one update? (`app/submodules.rs`)
     SubmodulesRefused(Box<gitti_core::submodule::add::FileRefused>, submodules::RetryUpdate),
+    /// No external diff / merge tool set up: the set-up dialog, then the tool
+    /// (`app/ext_tools.rs`).
+    ChooseTool(Box<gitti_core::tool_setup::ToolChoices>, Option<ext_tools::ToolJob>),
+    /// A terminal diff / merge tool: it runs with the terminal handed over
+    /// (`run_tool_in_terminal`, `app/ext_tools.rs`).
+    ToolInTerminal(Box<gitti_core::ext_tool::TerminalRun>),
 }
 
 impl std::fmt::Display for FollowUp {
@@ -258,6 +264,8 @@ impl std::fmt::Display for FollowUp {
             FollowUp::SplitDone { message, .. } => write!(f, "{message}"),
             FollowUp::Overwrite(o) => write!(f, "{}", o.title()),
             FollowUp::SubmodulesRefused(r, _) => write!(f, "{r}"),
+            FollowUp::ChooseTool(..) => write!(f, "choose an external diff / merge tool"),
+            FollowUp::ToolInTerminal(run) => write!(f, "{} runs in the terminal", run.command_line()),
         }
     }
 }
@@ -624,6 +632,9 @@ pub struct App {
     pub merge_single: bool,
     /// A terminal editor to run with the terminal handed over (the main loop does it).
     pub run_in_terminal: Option<(Vec<String>, std::path::PathBuf)>,
+    /// A terminal diff / merge tool to run with the terminal handed over (the main loop
+    /// does it, then [`App::terminal_tool_done`]).
+    pub run_tool_in_terminal: Option<Box<gitti_core::ext_tool::TerminalRun>>,
     pub cmd_history: Vec<String>,
     /// Switch to this repository: the main loop restarts gitty in it (one repository per
     /// process; `repo_cmds::reopen`).
@@ -888,6 +899,7 @@ impl App {
             settings,
             merge: None,
             run_in_terminal: None,
+            run_tool_in_terminal: None,
             layout: store::load_settings(),
             highlights: HashMap::new(),
             hl_gen: 0,
@@ -1129,6 +1141,8 @@ impl App {
                 // The output window goes with its operation.
                 self.op_output = None;
                 let cancelled = self.op_cancel.take().is_some_and(|t| t.is_cancelled());
+                // Set false by a follow-up that changed nothing yet.
+                let mut refresh = true;
                 match result {
                     Ok(out) => {
                         let summary = matches!(after, After::Summary);
@@ -1168,6 +1182,9 @@ impl App {
                     Err(_) if cancelled => self.set_info(format!("{label} cancelled")),
                     Err(e) => {
                         if let Some(f) = e.downcast_ref::<FollowUp>() {
+                            // The external tool's set-up dialog / terminal run: nothing
+                            // changed yet (the tool's end refreshes).
+                            refresh = !matches!(f, FollowUp::ChooseTool(..) | FollowUp::ToolInTerminal(_));
                             self.follow_up(f.clone());
                         } else if let Some(block) = e.downcast_ref::<PullBlock>() {
                             // The upstream went since the last refresh: no git ran.
@@ -1203,7 +1220,9 @@ impl App {
                         }
                     }
                 }
-                self.refresh(full);
+                if refresh {
+                    self.refresh(full);
+                }
                 self.run_deferred();
             }
             Msg::WorkDone {
@@ -3463,6 +3482,8 @@ impl App {
             FollowUp::SplitDone { prefix, id, message } => self.split_done(&prefix, id, &message),
             FollowUp::Overwrite(plan) => self.overwrite_confirm(*plan),
             FollowUp::SubmodulesRefused(refused, retry) => self.submodules_refused(*refused, retry),
+            FollowUp::ChooseTool(choices, job) => self.tool_dialog(*choices, job),
+            FollowUp::ToolInTerminal(run) => self.tool_to_terminal(*run),
             FollowUp::Switch(target, block) => {
                 // What blocks, then one entry per way out, each explained.
                 let name = target.name().to_string();
@@ -4286,6 +4307,7 @@ impl App {
         items.extend(self.change_search_palette_items());
         items.extend(self.reflog_palette_items());
         items.extend(self.repo_palette_items());
+        items.extend(self.ext_tool_palette_items());
         items.extend(self.terminal_palette_items());
         items.extend(self.submodule_palette_items());
         items.extend(self.lfs_palette_items());

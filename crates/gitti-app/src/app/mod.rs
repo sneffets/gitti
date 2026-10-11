@@ -3699,6 +3699,7 @@ impl Render for GittiApp {
         let root = self.reflog_actions(root, cx);
         let root = self.navigate_actions(root, cx);
         let root = self.menu_cmd_actions(root, cx);
+        let root = self.ext_tool_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
         let root = self.file_marks_actions(root, cx);
