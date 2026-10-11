@@ -103,7 +103,7 @@ impl GittiApp {
         let staged = self.working.staged.len();
         let busy = self.busy_visible;
         let merging = self.repo_state == gitti_core::ops::RepoState::Merging;
-        let no_message = self.message.read(cx).value().trim().is_empty();
+        let no_message = self.message_counts_as_blank(cx);
         self.message_was_blank.set(no_message);
         let blocker =
             gitti_core::ops::commit_blocker(self.repo_state, self.working.conflicted.len());
@@ -139,6 +139,8 @@ impl GittiApp {
             .child(
                 div()
                     .relative()
+                    // ↑ / ↓ recall earlier messages in an untouched box (`commit_box`).
+                    .key_context("GittiMessage")
                     .font_family(mono_font())
                     .probe("commit-editor")
                     .child(
@@ -172,6 +174,7 @@ impl GittiApp {
                     }),
             )
             .children(self.render_prepared_note(cx))
+            .children(self.render_template_problem(cx))
             .child({
                 let (name, mail) = &self.identity;
                 let (text, color) = match (name, mail) {
@@ -223,6 +226,12 @@ impl GittiApp {
                             .tooltip(tips::AMEND.text(cx))
                             .on_click(cx.listener(|this, _, w, cx| this.toggle_amend(w, cx))),
                     ))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(self.render_sign_off_toggle(cx)),
+                    )
                     .child(
                         // Conflicts left: why Commit is off instead of the count.
                         match blocker.clone() {

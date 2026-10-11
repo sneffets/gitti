@@ -1959,7 +1959,9 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
     };
     // git's prepared message next to the user's own text: a note row under the text.
     let note = app.prepared_note();
-    let note_h = u16::from(note.is_some());
+    // Else a commit.template that can't be read: what is wrong.
+    let problem = if note.is_none() { app.template_problem() } else { None };
+    let note_h = u16::from(note.is_some() || problem.is_some());
     let total = (text_h + 2 + note_h).min(area.height);
     let box_area = Rect::new(area.x, area.y, area.width, total);
     let buf = f.buffer_mut();
@@ -2045,7 +2047,14 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
         let room = x.saturating_sub(area.x + 3);
         let text = Span::styled(fit_width(&note, room), Style::new().fg(p.text_muted));
         put(buf, area.x + 2, y, room, vec![text]);
+    } else if let Some(problem) = problem
+        && total > text_h
+    {
+        let room = area.width.saturating_sub(3);
+        let text = Span::styled(fit_width(&problem, room), Style::new().fg(p.warning));
+        put(buf, area.x + 2, area.y + text_h, room, vec![text]);
     }
+    app.areas.sign_off = Rect::default();
     if total > text_h + note_h {
         let y = area.y + text_h + note_h;
         let (name, mail) = &app.identity;
@@ -2079,7 +2088,10 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
                 } else {
                     " Commit ctrl-s "
                 },
-                if blocker.is_none() && (staged > 0 || app.amend || merging) {
+                if blocker.is_none()
+                    && (staged > 0 || app.amend || merging)
+                    && !app.message_is_unedited_template()
+                {
                     Style::new().fg(p.accent_text).bg(p.accent)
                 } else {
                     Style::new().fg(p.text_faint).bg(p.bg_file_header)
@@ -2092,13 +2104,27 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
                 if app.amend { "☑ amend" } else { "☐ amend" },
                 Style::new().fg(if app.amend { p.warning } else { p.text_faint }),
             ),
-            Span::styled(" (A)   ", Style::new().fg(p.text_faint)),
+            Span::styled(" (A)  ", Style::new().fg(p.text_faint)),
+        ];
+        let on = app.commit_box.sign_off;
+        let sign_off = vec![
+            Span::styled(
+                if on { "☑ sign off" } else { "☐ sign off" },
+                Style::new().fg(if on { p.text } else { p.text_faint }),
+            ),
+            Span::raw("  "),
         ];
         let left_w = area.width.saturating_sub(rw + 4);
         let aw = Line::from(amend.clone()).width() as u16;
-        let x = put(buf, area.x + 2, y, left_w, amend);
-        if left_w > aw + 10 {
-            put(buf, x, y, left_w - aw, vec![who]);
+        let sw = Line::from(sign_off.clone()).width() as u16;
+        let mut x = put(buf, area.x + 2, y, left_w, amend);
+        if left_w > aw + sw {
+            app.areas.sign_off = Rect::new(x, y, sw.saturating_sub(2), 1);
+            x = put(buf, x, y, left_w - aw, sign_off);
+        }
+        let used = x.saturating_sub(area.x + 2);
+        if left_w > used + 10 {
+            put(buf, x, y, left_w - used, vec![who]);
         }
         put_right(buf, area.x, y, area.width.saturating_sub(1), right);
     }

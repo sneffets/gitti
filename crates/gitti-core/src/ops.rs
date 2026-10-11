@@ -745,7 +745,16 @@ impl Repo {
     /// does: without it `--no-edit` would keep the `# Conflicts:` lines in the commit),
     /// the others with `--continue`, the editor answered at once.
     pub fn continue_operation(&self) -> Result<String> {
+        self.continue_operation_with(crate::commit_message::CommitOptions::default())
+    }
+
+    /// [`Self::continue_operation`]; the merge commit with Sign Off when `opts` says so
+    /// (git's own `--continue` of the others takes no `--signoff`).
+    pub fn continue_operation_with(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
         match self.state().command() {
+            Some("merge") if opts.sign_off => {
+                self.out(&["commit", "--no-edit", "--cleanup=strip", "--signoff"])
+            }
             Some("merge") => self.out(&["commit", "--no-edit", "--cleanup=strip"]),
             Some(cmd) => self.out(&["-c", "core.editor=true", cmd, "--continue"]),
             None => Ok(String::new()),
@@ -770,21 +779,31 @@ impl Repo {
     /// When git stops after the commit with the message was made (the next commit of a
     /// sequence conflicts), the error carries [`MessageCommitted`]: the box can empty.
     pub fn continue_with(&self, message: Option<&str>) -> Result<String> {
+        self.continue_with_options(message, crate::commit_message::CommitOptions::default())
+    }
+
+    /// [`Self::continue_with`]; the commit made with the box's message (and a merge's)
+    /// with Sign Off when `opts` says so.
+    pub fn continue_with_options(
+        &self,
+        message: Option<&str>,
+        opts: crate::commit_message::CommitOptions,
+    ) -> Result<String> {
         let Some(message) = message.filter(|m| !m.trim().is_empty()) else {
-            return self.continue_operation();
+            return self.continue_operation_with(opts);
         };
         let dir = self.git_dir();
         let has = |name: &str| dir.as_ref().is_some_and(|d| d.join(name).exists());
         match self.state() {
             RepoState::Clean => Ok(String::new()),
-            RepoState::Merging => self.commit_as(message, CommitKind::Staged),
+            RepoState::Merging => self.commit_with(message, CommitKind::Staged, opts),
             RepoState::CherryPicking | RepoState::Reverting => {
                 // A sequence whose stopped commit was committed already: nothing takes
                 // the message.
                 if !has("CHERRY_PICK_HEAD") && !has("REVERT_HEAD") {
                     return self.continue_operation();
                 }
-                let committed = self.commit_as(message, CommitKind::Staged)?;
+                let committed = self.commit_with(message, CommitKind::Staged, opts)?;
                 if self.state() == RepoState::Clean {
                     return Ok(committed);
                 }

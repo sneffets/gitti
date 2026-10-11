@@ -11,7 +11,11 @@
 //! The hooks' output shows in the status bar while the commit runs.
 //! Continue of a cherry-pick commits the message edited in the box; a merge concluded
 //! with the box emptied leaves git's "# Conflicts:" lines out. An edited amend message is
-//! a draft for its commit: back after a reopen while that commit is HEAD.
+//! a draft for its commit: back after a reopen while that commit is HEAD. The commit
+//! template fills the empty box (no draft), is refused unedited before git runs and loses
+//! its comment lines when committed; Sign Off adds the trailer; ↑ in the empty box brings
+//! back earlier messages (not in the template: the cursor moves), "Recent Commit
+//! Messages…" lists them and asks before replacing typed text.
 //!
 //! Own `main` like `layout.rs`: `cargo test --workspace --test ui -- commit[::FILTER]`.
 
@@ -40,6 +44,7 @@ pub fn main() {
         ("hook_output_shows_while_committing", hook_output_shows_while_committing),
         ("continue_with_the_edited_message", continue_with_the_edited_message),
         ("amend_draft_for_its_commit", amend_draft_for_its_commit),
+        ("template_sign_off_and_earlier_messages", template_sign_off_and_earlier_messages),
     ];
     common::run(tests, |name| {
         let dir = BASE.with(|b| b.borrow().join(name));
@@ -317,6 +322,86 @@ fn amend_draft_for_its_commit(ui: &mut Ui) {
     if subject != "Moved on, edited" || amend_draft(ui).is_some() {
         let d = amend_draft(ui);
         ui.fail(format!("after the amend: HEAD {subject:?}, amend draft {d:?}"));
+    }
+}
+
+/// `make_repo` (small.rs staged; HEAD "Rework the frobnicator…" by the user) with a
+/// commit template (`.git/tmpl`, a relative path).
+fn template_sign_off_and_earlier_messages(ui: &mut Ui) {
+    let dir = ui.repo.clone();
+    std::fs::write(dir.join(".git/tmpl"), "Area: \n\n# Explain why.\n").unwrap();
+    append_config(&dir, "[commit]\n\ttemplate = .git/tmpl\n");
+    ui.step("key:f5");
+    let tmpl = "Area: \n\n# Explain why.";
+    if message(ui) != tmpl || draft(ui).is_some() {
+        let (m, d) = (message(ui), draft(ui));
+        ui.fail(format!("the template fills the box, no draft: box {m:?}, draft {d:?}"));
+    }
+    ui.check("the commit template in the box");
+    let n = ui.n_git();
+    ui.step("commit");
+    let status = ui.status().map(|s| s.0).unwrap_or_default();
+    ui.no_git_since(n, "Commit of the unedited template");
+    if !status.contains("still the commit template") {
+        ui.fail(format!("refused unedited: status {status:?}"));
+    }
+    // Edited (the box started as the template): every comment line goes.
+    ui.step("msg:Area: parser\n\n# Explain why. Edited.");
+    ui.step("palette:sign off commits");
+    ui.step("commit");
+    let body = git_out(&dir, &["log", "-1", "--format=%B"]);
+    let want = "Area: parser\n\nSigned-off-by: Layout Test <layout@example.com>";
+    if body != want {
+        ui.fail(format!("committed: {body:?}"));
+    }
+    if message(ui) != tmpl {
+        let m = message(ui);
+        ui.fail(format!("the template again after the commit: {m:?}"));
+    }
+    // ↑ in the template moves the cursor; in the empty box it brings earlier messages.
+    ui.quick("focusmsg");
+    ui.step("key:up");
+    if message(ui) != tmpl {
+        let m = message(ui);
+        ui.fail(format!("↑ in the template: {m:?}"));
+    }
+    ui.step("msg:");
+    ui.step("key:up");
+    if message(ui) != want {
+        let m = message(ui);
+        ui.fail(format!("↑ in the empty box (this session's commit): {m:?}"));
+    }
+    ui.step("key:up");
+    if !message(ui).starts_with("Rework the frobnicator") {
+        let m = message(ui);
+        ui.fail(format!("↑↑ (the user's commit from history): {m:?}"));
+    }
+    ui.step("key:down");
+    ui.step("key:down");
+    if !message(ui).is_empty() {
+        let m = message(ui);
+        ui.fail(format!("↓↓ back to the empty box: {m:?}"));
+    }
+    // The picker: the template first, then the messages; over typed text it asks.
+    ui.step("msg:typed");
+    ui.step("action:gitti::RecentMessages");
+    let labels = ui.ui_state().picker.map(|p| p.labels).unwrap_or_default();
+    let first = ["Start from the Commit Template", "Area: parser", "Rework the frobnicator"];
+    if labels.iter().take(3).map(String::as_str).ne(first) {
+        ui.fail(format!("Recent Commit Messages…: {labels:?}"));
+    }
+    ui.step("pick:area parser");
+    ui.step("pickok");
+    if !ui.cx.has_pending_prompt() || message(ui) != "typed" {
+        let m = message(ui);
+        ui.fail(format!("no question before replacing typed text: box {m:?}"));
+    } else {
+        ui.cx.simulate_prompt_answer("Replace");
+        ui.cx.run_until_parked();
+    }
+    if message(ui) != want {
+        let m = message(ui);
+        ui.fail(format!("after Replace: {m:?}"));
     }
 }
 

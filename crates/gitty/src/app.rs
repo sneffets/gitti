@@ -36,6 +36,7 @@ use crate::sidebar::{self, SideItem};
 use crate::theme::Palette;
 
 mod change_search;
+mod commit_box;
 mod commit_flow;
 mod compare;
 mod context_lines;
@@ -117,8 +118,10 @@ pub enum Msg {
     Tick,
     /// The commit message draft's write may be due (`app/commit_flow.rs`).
     DraftDue,
-    /// The commit message draft stored for this worktree, read at start.
-    Draft(Option<gitti_core::store::Draft>, Option<gitti_core::store::AmendDraft>),
+    /// The commit message draft stored for this worktree, read at start (and Sign Off).
+    Draft(Option<gitti_core::store::Draft>, Option<gitti_core::store::AmendDraft>, bool),
+    /// The user's own earlier commit messages, read at this HEAD (`app/commit_box.rs`).
+    OwnMessages(Option<String>, Vec<String>, commit_box::OwnFor),
     /// Only the working state, re-read after a display option changed (generation).
     Working(u64, Result<WorkingState>),
     /// The merge editor's session for a conflicted file, loaded in the background.
@@ -358,6 +361,8 @@ pub struct Areas {
     /// message next to the user's own text); empty without the note.
     pub prepared_use: Rect,
     pub prepared_keep: Rect,
+    /// The message box's "☐ sign off".
+    pub sign_off: Rect,
     pub log: Rect,
     pub status: Rect,
     /// Item list of an open menu / picker.
@@ -508,6 +513,8 @@ pub struct App {
     pub amend: bool,
     /// The message draft's pending write (`app/commit_flow.rs`).
     draft: commit_flow::DraftState,
+    /// Template, Sign Off, earlier messages (`app/commit_box.rs`).
+    pub commit_box: commit_box::CommitBox,
 
     pub busy: Option<(String, Instant)>,
     pub status: Option<StatusLine>,
@@ -795,6 +802,7 @@ impl App {
             prepared_dismissed: None,
             amend: false,
             draft: Default::default(),
+            commit_box: Default::default(),
             busy: None,
             status: None,
             errors: Default::default(),
@@ -1194,7 +1202,11 @@ impl App {
             }
             Msg::Tick => {}
             Msg::DraftDue => self.draft_due(),
-            Msg::Draft(draft, amend) => self.restore_draft(draft, amend),
+            Msg::Draft(draft, amend, sign_off) => {
+                self.commit_box.sign_off = sign_off;
+                self.restore_draft(draft, amend)
+            }
+            Msg::OwnMessages(head, own, then) => self.own_messages_read(head, own, then),
             Msg::CommitSearch(generation, r) => self.on_commit_search(generation, *r),
             Msg::ChangeScan(generation, ev) => self.on_change_scan(generation, *ev),
             Msg::ChangeScanDone(generation) => self.on_change_scan_done(generation),
@@ -1514,6 +1526,7 @@ impl App {
         self.unpushed = s.unpushed;
         self.identity = s.identity;
         self.conflict_sides = s.conflict_sides;
+        self.commit_box.template = s.commit_template;
         self.sync_prepared_message(s.prepared_message);
         self.loaded = true;
         // The header's badges: the current branch, branches in other worktrees.
@@ -2582,6 +2595,10 @@ impl App {
                 == Some(self.message.text().as_str())
         {
             self.message = TextEdit::multi();
+        }
+        if !self.amend {
+            // An empty box starts again with git's message or the commit template.
+            self.sync_box_start();
         }
     }
 
@@ -3783,6 +3800,13 @@ impl App {
                 |app| app.toggle_amend(),
             )
             .same_as('A', Command::ToggleAmend),
+            MenuItem::new(
+                if self.commit_box.sign_off { "Sign off: off" } else { "Sign off commits" },
+                |app| app.toggle_sign_off(),
+            ),
+            MenuItem::new(gitti_core::commit_message::RECENT_LABEL, |app| {
+                app.open_recent_messages()
+            }),
         ]
     }
 
@@ -4102,6 +4126,7 @@ impl App {
         items.extend(self.menu_palette_items());
         items.extend(self.restore_contains_palette_items());
         items.extend(self.prepared_palette_items());
+        items.extend(self.commit_box_palette_items());
         if self.repo_state != RepoState::Clean || !self.working.conflicted.is_empty() {
             let clean = self.repo_state == RepoState::Clean;
             let label = if clean {

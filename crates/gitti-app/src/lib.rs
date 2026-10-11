@@ -282,6 +282,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-shift-g", RunGitCommand, None),
         KeyBinding::new("up", CmdHistoryPrev, Some("GittiCommand > Input")),
         KeyBinding::new("down", CmdHistoryNext, Some("GittiCommand > Input")),
+        // Earlier commit messages in an untouched box; otherwise the cursor moves
+        // (`app/commit_box.rs` propagates to the editor's own binding).
+        KeyBinding::new("up", MessageHistoryPrev, Some("GittiMessage > Input")),
+        KeyBinding::new("down", MessageHistoryNext, Some("GittiMessage > Input")),
         KeyBinding::new("secondary-shift-l", ToggleGitLog, None),
         KeyBinding::new("alt-z", ToggleWrap, None),
         KeyBinding::new("secondary-shift-w", ToggleWhitespace, None),
@@ -1342,6 +1346,10 @@ actions!(
     ]
 );
 
+// Commit ▸ Sign Off Commits / Recent Commit Messages…, ↑ / ↓ in the message box (earlier
+// messages); handlers in `app/commit_box.rs`.
+actions!(gitti, [ToggleSignOff, RecentMessages, MessageHistoryPrev, MessageHistoryNext]);
+
 // Commit ▸ Branches and Tags Containing / Restore File or Folder from Selected Commit;
 // handlers in `app/from_commit.rs`.
 actions!(gitti, [ShowContaining, RestoreFromCommit]);
@@ -1623,6 +1631,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action(gitti_core::ops::STAGE_TRACKED_LABEL, StageTrackedAndCommit),
                 MenuItem::action("Create Empty Commit", CreateEmptyCommit),
                 MenuItem::action("Amend Previous Commit", ToggleAmend),
+                MenuItem::action("Sign Off Commits", ToggleSignOff),
+                MenuItem::action(gitti_core::commit_message::RECENT_LABEL, RecentMessages),
                 MenuItem::action("Go to Working Directory", GoToWorkingDirectory),
                 MenuItem::separator(),
                 MenuItem::action("Stage All", StageAll),

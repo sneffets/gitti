@@ -5,6 +5,7 @@
 
 mod allowed_signers;
 mod change_search;
+mod commit_box;
 mod config_safety;
 mod conflicts;
 mod custom_commands;
