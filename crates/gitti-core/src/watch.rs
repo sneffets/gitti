@@ -180,14 +180,14 @@ impl WatchFilter {
         change: &Change,
         index_now: impl FnOnce() -> Option<IndexStamp>,
     ) -> Option<Refresh> {
-        let mtime = |p: &Path| std::fs::symlink_metadata(p).and_then(|m| m.modified()).ok();
-        let changed_at = |path: &Path| mtime(path).or_else(|| path.ancestors().skip(1).find_map(mtime));
+        let stamp = |p: &Path| std::fs::symlink_metadata(p).ok().and_then(|m| changed_stamp(&m));
+        let changed_at = |path: &Path| stamp(path).or_else(|| path.ancestors().skip(1).find_map(stamp));
         let covered = |path: &Path, read: Option<(Instant, SystemTime)>| {
             let Some((at, wall)) = read else {
                 return false;
             };
             match changed_at(path) {
-                Some(mtime) => mtime < wall,
+                Some(changed) => changed_before(changed, wall),
                 None => change.at < at,
             }
         };
@@ -197,7 +197,7 @@ impl WatchFilter {
                     || rel
                         .strip_prefix(read.as_str())
                         .is_some_and(|rest| rest.starts_with('/'));
-                below && changed_at(path).is_some_and(|m| m < *wall)
+                below && changed_at(path).is_some_and(|m| changed_before(m, *wall))
             })
         };
         let mut index_now = Some(index_now);
@@ -238,6 +238,45 @@ impl WatchFilter {
             paths.dedup();
             Some(Refresh::Paths(paths))
         }
+    }
+}
+
+/// When a file last changed as far as its metadata tells: the later of its modification
+/// time and — on unix — its status change time, elsewhere its creation time. A tool that
+/// writes a file with an old modification time (`cp -p`, `rsync -t`, `tar`, `unzip`, sync
+/// clients) still moves the status change time (and a new file's creation time): the
+/// modification time alone made such a write look older than the last read.
+fn changed_stamp(m: &std::fs::Metadata) -> Option<SystemTime> {
+    let modified = m.modified().ok();
+    #[cfg(unix)]
+    let other = {
+        use std::os::unix::fs::MetadataExt as _;
+        let (secs, nanos) = (m.ctime(), m.ctime_nsec());
+        u64::try_from(secs)
+            .ok()
+            .zip(u32::try_from(nanos).ok())
+            .map(|(s, n)| SystemTime::UNIX_EPOCH + Duration::new(s, n))
+    };
+    #[cfg(not(unix))]
+    let other = m.created().ok();
+    match (modified, other) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// A file changed at `stamp` before a read that started at `start`. A stamp of whole
+/// seconds comes from a file system that keeps no finer time (FAT: 2 s, HFS+: 1 s, some
+/// network mounts) — a write just after `start` can carry an earlier stamp there, so it
+/// counts as before only when it is at least 2 s older.
+fn changed_before(stamp: SystemTime, start: SystemTime) -> bool {
+    let coarse = stamp
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .is_ok_and(|d| d.subsec_nanos() == 0);
+    if coarse {
+        stamp + Duration::from_secs(2) <= start
+    } else {
+        stamp < start
     }
 }
 
@@ -1143,6 +1182,29 @@ mod tests {
         std::fs::write(d.join("wt-head"), "y").unwrap();
         assert_eq!(f.needs(&change(d, &[("wt-head", Worktrees)], late), || stamp), Some(Snapshot));
         assert_eq!(f.needs(&change(d, &[("wt-head", Rules)], late), || stamp), Some(Snapshot));
+    }
+
+    /// A file written after the read started but with an old modification time (`cp -p`,
+    /// `rsync -t`, `unzip`) is not taken as read; whole-second stamps (a coarse file
+    /// system) count as before a read only when they are 2 s older.
+    #[gitti_test::test]
+    fn an_old_modification_time_is_not_taken_as_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let mut f = WatchFilter::default();
+        f.read_started(false);
+        std::thread::sleep(Duration::from_millis(20));
+        let file = std::fs::File::create(d.join("old.txt")).unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        file.set_modified(old).unwrap();
+        drop(file);
+        let at = Instant::now();
+        assert_eq!(f.needs(&change(d, &[("old.txt", wt("old.txt"))], at), || None), paths(&["old.txt"]));
+        f.paths_read(&["p.txt".into()], SystemTime::now() - Duration::from_secs(1));
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(changed_before(t0 + Duration::from_millis(400), t0 + Duration::from_millis(500)));
+        assert!(!changed_before(t0, t0 + Duration::from_millis(500)), "whole seconds: maybe later");
+        assert!(changed_before(t0, t0 + Duration::from_secs(2)));
     }
 
     #[gitti_test::test]
