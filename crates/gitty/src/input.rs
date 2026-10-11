@@ -1026,6 +1026,8 @@ impl App {
                     self.show_error_details();
                 } else if a.repo_marks.contains(pos) {
                     self.explain_repo_marks();
+                } else if a.repo_name.contains(pos) {
+                    self.repo_name_menu();
                 } else if a.status.contains(pos) && self.busy_name().is_some() {
                     // A running operation: "esc cancel" cancels, elsewhere the
                     // output window opens / closes.

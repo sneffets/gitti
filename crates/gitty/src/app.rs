@@ -60,6 +60,7 @@ pub mod reflog;
 mod remote_cmds;
 mod reset_cmds;
 mod repo_cmds;
+mod repo_stats;
 mod search;
 mod sidebar_menu;
 mod signers;
@@ -182,6 +183,9 @@ pub enum Msg {
     /// A background load's result, applied to the app (`App::start_load` with a closure:
     /// "Branches and Tags Containing…", a restore's plan — `app/from_commit.rs`).
     Apply(Box<dyn FnOnce(&mut App) + Send>),
+    /// Repository Statistics: the whole-history count of window `.0` got this far (no job
+    /// of its own: the count's job ends with an `Apply`).
+    RepoStatsProgress(u64, usize),
 }
 
 /// What to do after an operation succeeded.
@@ -403,6 +407,9 @@ pub struct Areas {
     /// The marks after the repository name (● uncommitted, ○ not pushed); a click says
     /// what they mean in the status line.
     pub repo_marks: Rect,
+    /// The repository's name in the top line; a click opens its menu (Repository
+    /// Statistics…, the folder, its path).
+    pub repo_name: Rect,
     /// The status line's "esc cancel" of a running operation; a click cancels.
     pub busy_cancel: Rect,
     /// The status line's "o more k/n"; a click pages the key bar.
@@ -456,6 +463,8 @@ pub struct App {
     subtrees_dirty: bool,
     /// Git LFS: the repository's state, the notice shown, the locks (`app/lfs.rs`).
     pub lfs: lfs::LfsUi,
+    /// Repository Statistics (`app/repo_stats.rs`).
+    repo_stats: repo_stats::StatsUi,
     /// The paths the "can't be checked out here" badge was hidden for (`app/fs_paths.rs`).
     pub fs_badge_dismissed: Option<Vec<String>>,
     /// The shown commit's (comparison's, stash's) paths this file system can't hold,
@@ -808,6 +817,7 @@ impl App {
             subtrees_queued: false,
             subtrees_dirty: false,
             lfs: Default::default(),
+            repo_stats: Default::default(),
             fs_badge_dismissed: None,
             commit_fs: Default::default(),
             repo_state: RepoState::Clean,
@@ -1351,6 +1361,7 @@ impl App {
                 self.loads_in_flight -= 1;
                 f(self);
             }
+            Msg::RepoStatsProgress(generation, done) => self.repo_stats_progress(generation, done),
             Msg::ForcePushPlan(plan) => {
                 self.loads_in_flight -= 1;
                 self.force_push_planned(*plan);

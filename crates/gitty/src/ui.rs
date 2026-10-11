@@ -508,8 +508,13 @@ fn draw_toolbar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
             .add_modifier(Modifier::BOLD),
     )];
     spans.push(Span::raw("  "));
+    let name_at = area.x + spans.iter().map(|s| s.width() as u16).sum::<u16>();
+    let name = app.repo.name();
+    app.areas.repo_name =
+        Rect::new(name_at, area.y, name.width() as u16, 1)
+            .intersection(area);
     spans.push(Span::styled(
-        app.repo.name(),
+        name,
         Style::new().fg(p.text_strong).add_modifier(Modifier::BOLD),
     ));
     // As on gitti's repository tabs: ● uncommitted changes, else ○ commits not pushed.

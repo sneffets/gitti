@@ -92,6 +92,44 @@ fn about_names_the_build_commit() {
     assert!(s[2].contains(&format!("Third-party licences of gitty on {os}")), "{out}");
 }
 
+/// Palette → Repository Statistics: the window fills in (paths, commits, sizes, authors)
+/// with one git process (`count-objects`); `y` copies the text and keeps it open. A click
+/// on the repository's name in the top line opens its menu with the same entry.
+#[gitti_test::test]
+fn repository_statistics() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let script = format!(
+        "cmds;press:ctrl-p;{}key:enter;dump;cmds;press:y;state;dump;press:esc;click:9,0;dump",
+        presses("repository statistics")
+    );
+    let out = gitty(dir.path(), &script);
+    let s = screens(&out);
+    for part in [
+        " Repository Statistics ",
+        "  Object format:   SHA-1",
+        "  Commits:         1 — reachable from the branches",
+        "  Git data:        ",
+        "  Whole .git:      ",
+        "  Tracked files:   2 bytes in 1 file — ",
+        "Commits per author — all 1 commit, ",
+        "y copy as text",
+    ] {
+        assert!(s[0].contains(part), "lacks `{part}`:\n{out}");
+    }
+    let cmds: Vec<&str> = out
+        .split("cmds:")
+        .nth(2)
+        .unwrap_or_default()
+        .lines()
+        .skip(1)
+        .take_while(|l| l.starts_with("  "))
+        .collect();
+    assert!(cmds.len() == 1 && cmds[0].contains("count-objects -v"), "{cmds:?}\n{out}");
+    assert!(states(&out)[0].contains("Copied ") && states(&out)[0].contains(" lines"), "{out}");
+    assert!(s[1].contains(" Repository Statistics "), "y closed it:\n{out}");
+    assert!(s[2].contains("Repository Statistics…") && s[2].contains("Copy Path"), "{out}");
+}
+
 /// `gitty --licenses` prints this binary's part of the third-party list: its components
 /// (no gitti-only ones like gpui or the icons), then the licence texts.
 #[gitti_test::test]
