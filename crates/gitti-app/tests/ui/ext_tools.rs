@@ -207,14 +207,25 @@ fn wait_dialog(ui: &mut Ui) -> bool {
     }
 }
 
+/// The field of the open dialog that has the focus (its probe lies on the field's).
+fn focused_field(ui: &mut Ui, ctx: &str) -> Option<usize> {
+    let p = ui.check(ctx);
+    let focus = find(&p, "modal-focus")?.bounds;
+    (0..8).find(|ix| find(&p, &format!("modal-field:{ix}")).is_some_and(|f| f.bounds == focus))
+}
+
 /// No diff tool set up: Open in External Diff Tool offers the set-up dialog (the user's
-/// own tool and the installed ones to fill in, no terminal tool); the choice goes into this
-/// repository's config and the tool opens.
+/// own tool and the installed ones to fill in, no terminal tool), starting in the diff
+/// tool's field; the choice goes into this repository's config and the tool opens.
 fn diff_tool_set_up_first(ui: &mut Ui) {
     let _ = std::fs::remove_file(log());
     ui.step("exttool:a.txt");
     if !wait_dialog(ui) {
         return;
+    }
+    match focused_field(ui, "set-up dialog for the diff tool") {
+        Some(0) => {}
+        other => fail!(ui, "starts in the diff tool's field (0): {other:?}"),
     }
     let (_, blocked, fills) = live(ui);
     if !blocked.as_deref().is_some_and(|b| b.starts_with("Choose a diff tool")) {
@@ -300,8 +311,9 @@ fn merge_tool(ui: &mut Ui) {
     }
 }
 
-/// No merge tool set up: Open in External Merge Tool offers the set-up dialog; the chosen
-/// tool (this repository) resolves the file right after.
+/// No merge tool set up: Open in External Merge Tool offers the set-up dialog, starting in
+/// the merge tool's field (typing goes there); the chosen tool (this repository) resolves
+/// the file right after.
 /// Workflow: MG-25
 fn merge_tool_set_up_first(ui: &mut Ui) {
     ui.step("exttool:a.txt");
@@ -311,8 +323,18 @@ fn merge_tool_set_up_first(ui: &mut Ui) {
     if live(ui).1.as_deref() != Some("Choose a merge tool") {
         fail!(ui, "OK before a merge tool is chosen: {:?}", live(ui));
     }
+    match focused_field(ui, "set-up dialog for the merge tool") {
+        Some(1) => {}
+        other => fail!(ui, "starts in the merge tool's field (1): {other:?}"),
+    }
     ui.quick("option:0");
-    ui.quick("field:1=fake");
+    for k in ["f", "a", "k", "e"] {
+        ui.quick(&format!("key:{k}"));
+    }
+    let fields = ui.modal().map(|m| m.1).unwrap_or_default();
+    if fields.get(1).map(String::as_str) != Some("fake") || fields.first().is_some_and(|f| !f.is_empty()) {
+        fail!(ui, "typed into the merge tool's field: {fields:?}");
+    }
     ui.step("modalok");
     ui.wait_real(3000, |ui| ui.is_idle() && ui.status().is_some_and(|(s, _)| s.contains("resolved")));
     match ui.status() {
