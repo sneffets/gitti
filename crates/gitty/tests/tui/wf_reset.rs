@@ -118,8 +118,8 @@ fn rs09_move_another_branch_from_its_reflog() {
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     let s = wf::fixture(d);
-    // Sidebar row 1: feat; its menu's eighth entry: Show Reflog…
-    let downs = "press:j;".repeat(7);
+    // Sidebar row 1: feat; its menu's ninth entry: Show Reflog…
+    let downs = "press:j;".repeat(8);
     let downs_entry = "key:down;".repeat(wf::F2_ENTRY + 1);
     let out = gitty_with(
         d,

@@ -49,6 +49,7 @@ mod wf_branches;
 mod wf_catalog;
 mod wf_commit;
 mod wf_eol;
+mod wf_merge;
 mod wf_modules;
 mod wf_pilot;
 mod wf_remotes;

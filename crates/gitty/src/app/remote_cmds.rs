@@ -293,10 +293,10 @@ impl App {
             .collect()
     }
 
-    /// "Merge Branch into Current…": a branch or tag → the merge of its branch
-    /// menu. A detached HEAD merges too (git does), the title says so.
+    /// "Merge Branch into Current…": a branch or tag → the Merge dialog (as gitti's). A
+    /// detached HEAD merges too (git does), the title says so.
     fn merge_picker(&mut self) {
-        let items = self.branch_and_tag_items(App::merge_into_head);
+        let items = self.branch_and_tag_items(|app, name| app.merge_dialog(name.clone(), name));
         if items.is_empty() {
             self.set_info("Nothing to merge: no other branch or tag");
             return;

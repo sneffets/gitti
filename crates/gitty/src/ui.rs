@@ -2538,8 +2538,9 @@ fn draw_diff_row(
                 .and_then(|w| gitti_core::conflict::ConflictKind::of(&w.entry))
             {
                 let fg = if kind.is_content() { p.text_muted } else { p.warning };
+                let binary = wf.and_then(|w| w.diff.as_ref()).is_some_and(|d| d.binary);
                 spans.push(Span::styled(
-                    format!("  {}", kind.short(&app.conflict_sides_or_default())),
+                    format!("  {}", kind.short_for(&app.conflict_sides_or_default(), binary)),
                     Style::new().fg(fg),
                 ));
             }
@@ -2866,6 +2867,10 @@ fn draw_diff_row(
                 // A binary placeholder: "Binary file (… MB)", nothing to load.
                 (Some(d), _) if d.too_large.is_some() => {
                     gitti_core::commit_files::placeholder_note(d).unwrap_or_default()
+                }
+                // A binary conflict: no markers to show, git left ours.
+                (Some(d), _) if d.binary && src == Src::Conflicted => {
+                    gitti_core::conflict::binary_note(&app.conflict_sides_or_default())
                 }
                 (Some(d), _) if d.binary => "Binary file".to_string(),
                 // Line-ending / BOM-only changes, above the hunks.

@@ -255,7 +255,7 @@ fn branch_switcher_keys_no_matches_and_esc() {
 }
 
 /// "merge" finds Merge Branch into Current…; ⏎ lists the other branches and the tags,
-/// picking one merges it. "new" finds the Create… and Add… commands too.
+/// picking one opens the Merge dialog, ⏎ there merges it. "new" finds the Create… and Add… commands too.
 /// Workflow: MG-01
 #[gitti_test::test]
 fn palette_merge_picker_and_synonyms() {
@@ -269,7 +269,7 @@ fn palette_merge_picker_and_synonyms() {
     let d = dir.path();
     let script = format!(
         "press:ctrl-p;{}items;key:enter;dump;items;state;press:esc;press:ctrl-p;{}items;press:esc;\
-         press:ctrl-p;{}key:enter;dump;press:f;key:enter;state",
+         press:ctrl-p;{}key:enter;dump;press:f;key:enter;dump;key:enter;state",
         presses("merge"),
         presses("new"),
         presses("merge")
@@ -286,6 +286,8 @@ fn palette_merge_picker_and_synonyms() {
         assert!(lists[2].contains(&want), "new: {want} missing in {:?}\n{out}", lists[2]);
     }
     assert!(s[1].contains("Merge into main…"), "{out}");
+    // The picked branch → the Merge dialog (as gitti's); ⏎ merges.
+    assert!(s[2].contains("Merge feature into main") && s[2].contains("--squash"), "{out}");
     assert!(git(d, &["branch", "--merged", "main"]).contains("feature"), "not merged: {out}");
 }
 

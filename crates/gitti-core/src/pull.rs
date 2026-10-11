@@ -249,7 +249,7 @@ pub fn is_divergent_refusal(e: &anyhow::Error) -> bool {
 }
 
 /// Whether `e` is `git pull --ff-only` refusing diverged branches.
-fn is_not_fast_forward(e: &anyhow::Error) -> bool {
+pub(crate) fn is_not_fast_forward(e: &anyhow::Error) -> bool {
     git_said(e, "Not possible to fast-forward")
 }
 

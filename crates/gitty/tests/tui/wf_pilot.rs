@@ -53,7 +53,7 @@ fn st13_split_a_change_second_commit() {
 }
 
 /// CP-12: j to `Fix a`, . opens the commit menu, c cherry-picks; ctrl-p "merge", ⏎,
-/// the picker filtered to `feat`, ⏎ merges.
+/// the picker filtered to `feat`, ⏎, ⏎ in the Merge dialog merges.
 /// Workflow: CP-12
 #[gitti_test::test]
 fn cp12_pick_then_merge_the_source_branch() {
@@ -62,7 +62,7 @@ fn cp12_pick_then_merge_the_source_branch() {
     let d = tmp.path();
     let s = wf::fixture(d);
     let script = format!(
-        "press:j;press:j;press:j;state;press:.;dump;key:c;state;press:ctrl-p;{}key:enter;{}key:enter;state",
+        "press:j;press:j;press:j;state;press:.;dump;key:c;state;press:ctrl-p;{}key:enter;{}key:enter;key:enter;state",
         presses("merge"),
         presses("feat"),
     );
@@ -85,7 +85,7 @@ fn cp13_pick_edit_then_merge_conflicts_there() {
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     let s = wf::fixture(d);
-    let script = format!("press:ctrl-p;{}key:enter;{}key:enter;state;dump", presses("merge"), presses("feat"));
+    let script = format!("press:ctrl-p;{}key:enter;{}key:enter;key:enter;state;dump", presses("merge"), presses("feat"));
     let out = gitty(d, &script);
     let st = states(&out);
     assert!(st[0].contains("staged=1 repo_state=merging conflicted=1"), "{out}");

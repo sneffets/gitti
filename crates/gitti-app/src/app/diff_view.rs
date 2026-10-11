@@ -1418,6 +1418,10 @@ impl GittiApp {
                     None if diff.is_none() && src == Src::Conflicted => {
                         self.conflict_no_diff_note(file)
                     }
+                    // A binary conflict: no markers to show, git left ours.
+                    None if src == Src::Conflicted && diff.is_some_and(|d| d.binary) => {
+                        gitti_core::conflict::binary_note(&self.conflict_sides_or_default())
+                    }
                     None => match diff {
                         None => "No preview (large or special file)",
                         Some(d) if d.binary => "Binary file",
@@ -1855,7 +1859,8 @@ impl GittiApp {
                 (src == Src::Conflicted).then(|| self.conflict_kind(file)).flatten(),
                 |d, kind| {
                     let sides = self.conflict_sides_or_default();
-                    let tip = kind.explain(&sides);
+                    let binary = self.conflict_binary(file);
+                    let tip = kind.explain_for(&sides, binary);
                     d.child(
                         div()
                             .id(("conflict-kind", ix))
@@ -1865,7 +1870,7 @@ impl GittiApp {
                             .font_weight(FontWeight::NORMAL)
                             .text_size(self.settings.diff_small())
                             .text_color(if kind.is_content() { p.text_muted } else { p.warning })
-                            .child(kind.short(&sides))
+                            .child(kind.short_for(&sides, binary))
                             .tooltip(move |window, cx| {
                                 gpui_kit::component::tooltip::Tooltip::new(tip.clone())
                                     .build(window, cx)
@@ -1941,10 +1946,15 @@ impl GittiApp {
                         })),
                 )
             }
-            Src::Conflicted if !self.conflict_kind(file).is_none_or(|k| k.is_content()) => {
-                // A file one side deleted / only one side has: a button per way out (keep,
-                // delete, restore), the menu's words in the tooltip.
-                for c in self.conflict_choices(file) {
+            Src::Conflicted
+                if !self.conflict_kind(file).is_none_or(|k| k.is_content()) || self.conflict_binary(file) =>
+            {
+                // A file one side deleted / only one side has, or a binary one: a button per
+                // way out (keep, delete, restore; ours, theirs, mark resolved), the menu's
+                // words in the tooltip. The external merge tool stays in the diff's menu
+                // (room for the path).
+                let choices = self.conflict_choices(file);
+                for c in choices.into_iter().filter(|c| c.action != gitti_core::conflict::ConflictAction::MergeTool) {
                     let action = c.action;
                     let tip = format!("{} — {}", c.label, c.detail);
                     el = el.child(

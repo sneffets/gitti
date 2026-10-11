@@ -1107,7 +1107,11 @@ impl Repo {
             if e.conflicted {
                 state.conflicted.push(WorkFile {
                     entry: e.clone(),
-                    diff: self.conflict_diff(&e.path, opts).ok().flatten(),
+                    diff: self
+                        .conflict_diff(&e.path, opts)
+                        .ok()
+                        .flatten()
+                        .or_else(|| self.conflict_placeholder(e)),
                     patch_diff: None,
                 });
                 continue;

@@ -141,7 +141,50 @@ impl MergeOptions {
         a.push(rev.into());
         a
     }
+
+    /// The Merge dialog's checkboxes for these options, in [`MERGE_OPTION_LABELS`]'
+    /// order.
+    pub fn checks(&self) -> [bool; 5] {
+        [
+            self.ff == FastForward::Never,
+            self.ff == FastForward::Only,
+            self.squash,
+            self.no_commit,
+            self.allow_unrelated,
+        ]
+    }
+
+    /// The options the Merge dialog's checkboxes ([`MERGE_OPTION_LABELS`]' order) and its
+    /// message field say: `--no-ff` wins over `--ff-only`; an empty message is git's.
+    pub fn from_dialog(checks: &[bool], message: &str) -> Self {
+        let on = |i: usize| checks.get(i).copied().unwrap_or(false);
+        let message = message.trim();
+        MergeOptions {
+            ff: match (on(0), on(1)) {
+                (true, _) => FastForward::Never,
+                (false, true) => FastForward::Only,
+                _ => FastForward::Auto,
+            },
+            squash: on(2),
+            no_commit: on(3),
+            allow_unrelated: on(4),
+            message: (!message.is_empty()).then(|| message.to_string()),
+        }
+    }
 }
+
+/// The Merge dialog's message field (gitti and gitty).
+pub const MERGE_MESSAGE_LABEL: &str = "Message (optional, default: git's merge message)";
+
+/// The Merge dialog's checkboxes (gitti and gitty), in the order of
+/// [`MergeOptions::checks`].
+pub const MERGE_OPTION_LABELS: [&str; 5] = [
+    "--no-ff — always create a merge commit",
+    "--ff-only — only fast-forward, refuse otherwise",
+    "--squash — apply the changes to the index, no merge commit",
+    "--no-commit — merge, but stop before committing",
+    "--allow-unrelated-histories — also without a common commit",
+];
 
 /// What git refused with "refusing to merge unrelated histories" (the two histories share
 /// no commit), to run again with `--allow-unrelated-histories` once the user agrees.
@@ -208,6 +251,16 @@ pub fn is_unrelated_histories(e: &anyhow::Error) -> bool {
 }
 
 /// `result` with git's unrelated-histories refusal turned into [`UnrelatedHistories`].
+/// A fast-forward-only merge of `rev` into `current` that git refused because the two
+/// diverged, in plain words: what blocks, that nothing changed, the ways out.
+pub fn not_fast_forward(current: &str, rev: &str) -> String {
+    format!(
+        "Not merged: {current} and {rev} have diverged (each has commits the other doesn't), \
+         so {current} can't simply move ahead to {rev} (--ff-only). Nothing was changed. Merge \
+         without --ff-only to create a merge commit, or rebase {current} onto {rev} first."
+    )
+}
+
 pub(crate) fn unrelated_as(
     result: Result<String>,
     retry: impl FnOnce() -> UnrelatedRetry,
@@ -575,6 +628,13 @@ impl Repo {
                 rev: rev.to_string(),
                 opts: opts.clone(),
             });
+            let out = match out {
+                Err(e) if opts.ff == FastForward::Only && crate::pull::is_not_fast_forward(&e) => {
+                    let current = self.head().ok().and_then(|h| h.branch).unwrap_or_else(|| "HEAD".into());
+                    Err(anyhow::anyhow!(not_fast_forward(&current, rev)))
+                }
+                other => other,
+            };
             self.local_changes_as(out, || BlockedOp::Merge { rev: rev.to_string(), opts: opts.clone() })
         })
     }

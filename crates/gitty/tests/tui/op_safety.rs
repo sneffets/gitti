@@ -22,8 +22,9 @@ fn diverged() -> tempfile::TempDir {
     ])
 }
 
+/// The palette's Merge Branch into Current…, feat, ⏎ in the Merge dialog.
 fn merge_feat() -> String {
-    format!("press:ctrl-p;{}key:enter;{}key:enter;", presses("merge"), presses("feat"))
+    format!("press:ctrl-p;{}key:enter;{}key:enter;key:enter;", presses("merge"), presses("feat"))
 }
 
 /// The merge stops on a.txt: a plain status line, not an error.

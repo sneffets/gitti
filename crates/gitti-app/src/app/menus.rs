@@ -1,7 +1,7 @@
 //! Context menus (commits, branches, tags, remotes, stashes) and the dialogs / confirmations
 //! behind their entries. The actual git work lives in `gitti_core::ops`.
 
-use gitti_core::ops::{CherryPickOptions, FastForward, MergeOptions, RemoteInfo, ResetMode};
+use gitti_core::ops::{CherryPickOptions, MergeOptions, RemoteInfo, ResetMode};
 use gitti_core::ops::{StashRef, UnrelatedHistories, UnrelatedRetry};
 use gitti_core::switch::{SwitchBlock, SwitchOutcome, SwitchTarget, SwitchWay};
 use gitti_core::worktree::BranchDeletion;
@@ -1680,43 +1680,15 @@ impl GittiApp {
     ) {
         let current = self.head.branch.clone().unwrap_or("HEAD".into());
         let last = self.last_merge.clone();
-        let spec = ModalSpec::new(format!("Merge {label} into {current}"))
-            .field("Message (optional, default: git's merge message)", "")
-            .spell(0)
-            .check(
-                "--no-ff — always create a merge commit",
-                last.ff == FastForward::Never,
-            )
-            .check(
-                "--ff-only — only fast-forward, refuse otherwise",
-                last.ff == FastForward::Only,
-            )
-            .check(
-                "--squash — apply the changes to the index, no merge commit",
-                last.squash,
-            )
-            .check(
-                "--no-commit — merge, but stop before committing",
-                last.no_commit,
-            )
-            .check(
-                "--allow-unrelated-histories — also without a common commit",
-                last.allow_unrelated,
-            )
-            .ok("Merge");
+        let mut spec = ModalSpec::new(format!("Merge {label} into {current}"))
+            .field(gitti_core::ops::MERGE_MESSAGE_LABEL, "")
+            .spell(0);
+        for (label, on) in gitti_core::ops::MERGE_OPTION_LABELS.into_iter().zip(last.checks()) {
+            spec = spec.check(label, on);
+        }
+        let spec = spec.ok("Merge");
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
-            let msg = res.values[0].trim().to_string();
-            let opts = MergeOptions {
-                ff: match (res.checks[0], res.checks[1]) {
-                    (true, _) => FastForward::Never,
-                    (false, true) => FastForward::Only,
-                    _ => FastForward::Auto,
-                },
-                squash: res.checks[2],
-                no_commit: res.checks[3],
-                allow_unrelated: res.checks[4],
-                message: (!msg.is_empty()).then_some(msg),
-            };
+            let opts = MergeOptions::from_dialog(&res.checks, &res.values[0]);
             this.last_merge = MergeOptions {
                 message: None,
                 ..opts.clone()
