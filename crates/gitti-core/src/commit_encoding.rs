@@ -410,7 +410,25 @@ impl CommitEncoding {
             return None;
         };
         let encoded = codec.encode(message);
-        (!encoded.replaced.is_empty()).then(|| self.replaced_text("Written in", &encoded.replaced))
+        (!encoded.replaced.is_empty())
+            .then(|| self.replaced_text(&format!("Not in {}", self.name()), &encoded.replaced))
+    }
+
+    /// The line a dialog that takes a commit message shows (reword, merge): the encoding
+    /// messages are written in and what happens to characters it lacks, or the refusal;
+    /// `None` for UTF-8.
+    pub fn dialog_line(&self) -> Option<String> {
+        match self.target() {
+            Target::Utf8 => None,
+            Target::Unsupported => self.refusal(),
+            Target::Legacy(_) => Some(format!(
+                "The message is written in {} ({}): characters it lacks become their closest \
+                 equivalent (ä → ae, “ → \", € → EUR), others {}.",
+                self.name(),
+                self.setting(),
+                translit::PLACEHOLDER
+            )),
+        }
     }
 
     /// The line a commit's result gets when characters were replaced (empty when none).
@@ -418,16 +436,18 @@ impl CommitEncoding {
         if encoded.replaced.is_empty() {
             return String::new();
         }
-        self.replaced_text(WRITTEN_LEAD, &encoded.replaced)
+        self.replaced_text(&format!("{WRITTEN_LEAD} {}, replaced", self.name()), &encoded.replaced)
     }
 
+    /// `{lead}: – → -, € → EUR (i18n.commitEncoding in .git/config)` — the replacements
+    /// early, where a narrow note row still shows them.
     fn replaced_text(&self, lead: &str, replaced: &[Replacement]) -> String {
         const SHOWN: usize = 8;
         let mut list: Vec<String> = replaced.iter().take(SHOWN).map(Replacement::text).collect();
         if replaced.len() > SHOWN {
             list.push(format!("and {} more", replaced.len() - SHOWN));
         }
-        format!("{lead} {} ({}), which lacks: {}", self.name(), self.setting(), list.join(", "))
+        format!("{lead}: {} ({})", list.join(", "), self.setting())
     }
 
     /// The config for a stash in this repository: `-c i18n.commitEncoding=UTF-8` unless
@@ -533,6 +553,12 @@ impl crate::Repo {
         .any(|v| git.env_var(v) != std::env::var(v).ok());
         let read = if runner_sets { None } else { self.commit_encoding_in_process() };
         read.unwrap_or_else(|| self.commit_encoding_by_git())
+    }
+
+    /// [`Self::commit_encoding`] for what the apps show before committing: in-process
+    /// always (a refresh runs no extra git) — the commit itself reads it exactly.
+    pub fn commit_encoding_shown(&self) -> CommitEncoding {
+        self.commit_encoding_in_process().unwrap_or_default()
     }
 
     fn commit_encoding_in_process(&self) -> Option<CommitEncoding> {
@@ -691,7 +717,7 @@ mod tests {
         assert_eq!(latin1.note("Grüße"), None, "Latin-1 has them");
         assert_eq!(
             latin1.note("Grüße “x”").as_deref(),
-            Some("Written in ISO-8859-1 (i18n.commitEncoding in .git/config), which lacks: “ → \", ” → \"")
+            Some("Not in ISO-8859-1: “ → \", ” → \" (i18n.commitEncoding in .git/config)")
         );
         assert_eq!(CommitEncoding::utf8().note("漢字"), None);
         let bad = CommitEncoding::new("latin-x", Some(Path::new("/elsewhere/gitconfig")), false, wd);

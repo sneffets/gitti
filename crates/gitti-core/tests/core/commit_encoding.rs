@@ -59,12 +59,12 @@ fn commit_amend_and_reword_write_the_configured_encoding() {
     let note = enc.note(typed).unwrap();
     assert_eq!(
         note,
-        "Written in ISO-8859-1 (i18n.commitEncoding in .git/config), which lacks: “ → \", ” → \", – → -, € → EUR"
+        "Not in ISO-8859-1: “ → \", ” → \", – → -, € → EUR (i18n.commitEncoding in .git/config)"
     );
     let out = repo.commit_with(typed, CommitKind::Staged, CommitOptions::default()).unwrap();
     assert_eq!(
         out.lines().next(),
-        Some(note.replacen("Written in", "Message written in", 1).as_str()),
+        Some(note.replacen("Not in ISO-8859-1", "Message written in ISO-8859-1, replaced", 1).as_str()),
         "{out}"
     );
     let (header, message) = split(&raw(dir, "HEAD"));

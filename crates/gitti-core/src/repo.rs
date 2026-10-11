@@ -173,6 +173,9 @@ pub struct RepoSnapshot {
     pub prepared_message: Option<String>,
     /// `commit.template` ([`Repo::commit_template`]): an empty box starts with it.
     pub commit_template: Option<crate::commit_message::CommitTemplate>,
+    /// `i18n.commitEncoding` ([`Repo::commit_encoding`], in-process): the box says before
+    /// committing what a legacy encoding lacks.
+    pub commit_encoding: crate::commit_encoding::CommitEncoding,
     /// Every worktree, main first (cached, see [`Repo::worktrees`]); just the main one in
     /// a repository without linked worktrees.
     pub worktrees: Vec<crate::worktree::Worktree>,
@@ -1234,11 +1237,13 @@ impl Repo {
             let prepared_message = self.prepared_message();
             // In-process: the config and one small file.
             let commit_template = self.commit_template();
+            let commit_encoding = self.commit_encoding_shown();
             Ok(RepoSnapshot {
                 working,
                 conflict_sides,
                 prepared_message,
                 commit_template,
+                commit_encoding,
                 head: self.head()?,
                 refs: self.refs()?,
                 remotes: joined(remotes)?,

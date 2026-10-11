@@ -1342,12 +1342,12 @@ impl GittiApp {
                 }
                 Ok((id, message, None)) => {
                     let short = id.to_hex_with_len(7).to_string();
+                    let note = this.with_encoding_line(Some(
+                        "Rewrites the commit (and the ones after it); it is not pushed yet.".into(),
+                    ));
                     this.show_edit_modal(
                         &format!("Edit message of {short}"),
-                        Some(
-                            "Rewrites the commit (and the ones after it); it is not pushed yet."
-                                .into(),
-                        ),
+                        note,
                         message.trim_end().to_string(),
                         window,
                         cx,
@@ -1684,6 +1684,9 @@ impl GittiApp {
             .spell(0);
         for (label, on) in gitti_core::ops::MERGE_OPTION_LABELS.into_iter().zip(last.checks()) {
             spec = spec.check(label, on);
+        }
+        if let Some(line) = self.with_encoding_line(None) {
+            spec = spec.message(line);
         }
         let spec = spec.ok("Merge");
         self.open_modal(spec, window, cx, move |this, res, w, cx| {

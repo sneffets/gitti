@@ -4,6 +4,9 @@
 //!   prepared (`commit_flow::sync_box_start`); Commit refuses it unedited and says so
 //!   (`gitti_core::commit_message::CommitTemplate::refusal`), its comment lines go when it
 //!   is committed edited. A template that can't be read shows a note under the box.
+//! - `i18n.commitEncoding`: with a legacy encoding a note under the box says which
+//!   characters of the message it lacks and what is written instead
+//!   (`gitti_core::commit_encoding`); a name gitti can't write says so before Commit.
 //! - Sign Off: the toggle beside Amend, the Commit menu and the palette; `git commit
 //!   --signoff` for every commit gitti makes from the box, remembered per repository.
 //! - Earlier messages: ↑ in an empty box shows the newest of this session's commits and
@@ -29,6 +32,9 @@ use crate::{MessageHistoryNext, MessageHistoryPrev, RecentMessages, ToggleSignOf
 pub(super) struct CommitBox {
     /// `commit.template` as of the last refresh.
     pub template: Option<cm::CommitTemplate>,
+    /// `i18n.commitEncoding` as of the last refresh: the note under the box says what a
+    /// legacy encoding lacks of the message.
+    pub encoding: gitti_core::commit_encoding::CommitEncoding,
     /// Sign Off (per repository, `cm::load_sign_off`).
     pub sign_off: bool,
     /// Messages committed in this session, oldest first.
@@ -137,6 +143,43 @@ impl GittiApp {
                 })
                 .into_any_element(),
         )
+    }
+
+    /// The note under the box while `i18n.commitEncoding` lacks characters of the message
+    /// (what is written instead) or names an encoding gitti can't write.
+    pub(super) fn render_encoding_note(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let note = self.encoding_note(cx)?;
+        let p = cx.palette().clone();
+        let full = note.clone();
+        Some(
+            h_flex()
+                .id("encoding-note")
+                .probe("encoding-note")
+                .min_w_0()
+                .px_1()
+                .text_size(self.settings.ui_small())
+                .text_color(p.warning)
+                .child(div().min_w_0().truncate().child(note))
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(full.clone()).build(window, cx)
+                })
+                .into_any_element(),
+        )
+    }
+
+    /// The encoding note for the box's text ([`Self::render_encoding_note`]).
+    pub(super) fn encoding_note(&self, cx: &App) -> Option<String> {
+        let text = self.message.read(cx).value();
+        self.commit_box.encoding.note(&text)
+    }
+
+    /// What a dialog that takes a commit message (reword, merge) adds to its text about
+    /// `i18n.commitEncoding`.
+    pub(super) fn with_encoding_line(&self, text: Option<String>) -> Option<String> {
+        match (text, self.commit_box.encoding.dialog_line()) {
+            (Some(t), Some(l)) => Some(format!("{t}\n{l}")),
+            (t, l) => t.or(l),
+        }
     }
 
     // ------------------------------------------------------------------ earlier messages

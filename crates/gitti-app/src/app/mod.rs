@@ -1003,6 +1003,7 @@ impl GittiApp {
                         }
                         let prepared = s.prepared_message.take();
                         this.commit_box.template = s.commit_template.take();
+                        this.commit_box.encoding = std::mem::take(&mut s.commit_encoding);
                         this.errors.succeeded("Refresh");
                         this.apply_snapshot(s, cx);
                         this.sync_prepared_message(prepared, window, cx);
@@ -3364,6 +3365,11 @@ impl GittiApp {
     pub fn script_commit_summary(&self, row: usize) -> Option<String> {
         (row < self.history.commits.len() && !self.history.is_worktree_row(row))
             .then(|| self.history.meta(row).summary.clone())
+    }
+
+    /// The `i18n.commitEncoding` note under the commit box (`render_encoding_note`).
+    pub fn script_encoding_note(&self, cx: &App) -> Option<String> {
+        self.encoding_note(cx)
     }
 
     /// Rows of the shown history and how it came about (`HistoryLoad`).

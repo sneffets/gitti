@@ -5,6 +5,8 @@
 //!   prepared (`commit_flow::sync_box_start`); Commit refuses it unedited and says so,
 //!   its comment lines go when it is committed edited. A template that can't be read
 //!   shows a note under the box.
+//! - `i18n.commitEncoding`: with a legacy encoding the note row says which characters of
+//!   the message it lacks and what is written instead (`gitti_core::commit_encoding`).
 //! - Sign Off: "☐ sign off" beside amend (a click), the working directory's menu and the
 //!   palette; `git commit --signoff` for every commit made from the box, remembered per
 //!   repository.
@@ -25,6 +27,9 @@ use crate::modal::{Modal, PickItem};
 pub struct CommitBox {
     /// `commit.template` as of the last refresh.
     pub template: Option<cm::CommitTemplate>,
+    /// `i18n.commitEncoding` as of the last refresh: the note under the box says what a
+    /// legacy encoding lacks of the message.
+    pub encoding: gitti_core::commit_encoding::CommitEncoding,
     /// Sign Off (per repository, `cm::load_sign_off`).
     pub sign_off: bool,
     /// Messages committed in this session, oldest first.
@@ -84,6 +89,12 @@ impl App {
             && self
                 .template_start()
                 .is_some_and(|t| t.trim_end() == self.message.text().trim_end())
+    }
+
+    /// The note under the box while `i18n.commitEncoding` lacks characters of the message
+    /// (what is written instead) or names an encoding gitty can't write.
+    pub fn encoding_note(&self) -> Option<String> {
+        self.commit_box.encoding.note(&self.message.text())
     }
 
     /// The note under the box while `commit.template` can't be read.

@@ -1688,6 +1688,7 @@ impl App {
         self.identity = s.identity;
         self.conflict_sides = s.conflict_sides;
         self.commit_box.template = s.commit_template;
+        self.commit_box.encoding = s.commit_encoding;
         self.sync_prepared_message(s.prepared_message);
         self.loaded = true;
         // The header's badges: the current branch, branches in other worktrees.
@@ -4567,20 +4568,23 @@ impl App {
             }
             Ok((None, message)) => {
                 let short = id.to_hex_with_len(7).to_string();
-                self.modal = Some(Modal::edit(
-                    format!("Edit message of {short}"),
-                    "rewrites the commit and the ones after it",
-                    message.trim_end(),
-                    move |app, text| {
-                        if text.trim().is_empty() {
-                            app.set_error("The message must not be empty".into());
-                            return;
-                        }
-                        app.run_op("Edit commit message", true, After::Nothing, move |r| {
-                            r.reword(id, &text)
-                        });
-                    },
-                ));
+                self.modal = Some(
+                    Modal::edit(
+                        format!("Edit message of {short}"),
+                        "rewrites the commit and the ones after it",
+                        message.trim_end(),
+                        move |app, text| {
+                            if text.trim().is_empty() {
+                                app.set_error("The message must not be empty".into());
+                                return;
+                            }
+                            app.run_op("Edit commit message", true, After::Nothing, move |r| {
+                                r.reword(id, &text)
+                            });
+                        },
+                    )
+                    .with_encoding(self.commit_box.encoding.clone()),
+                );
             }
             Err(e) => self.set_error(format!("{e:#}")),
         }

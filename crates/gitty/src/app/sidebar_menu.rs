@@ -93,7 +93,7 @@ impl App {
         use gitti_core::ops::{MERGE_MESSAGE_LABEL, MERGE_OPTION_LABELS, MergeOptions};
         let title = format!("Merge {label} into {}", self.head_label());
         let checks = MERGE_OPTION_LABELS.into_iter().zip(self.last_merge.checks()).collect();
-        self.modal = Some(Modal::input_checks(
+        let mut modal = Modal::input_checks(
             title,
             vec![(MERGE_MESSAGE_LABEL, "")],
             checks,
@@ -102,7 +102,12 @@ impl App {
                 app.last_merge = MergeOptions { message: None, ..opts.clone() };
                 app.run_op("Merge", true, After::Nothing, move |r| r.merge_with(&target, &opts))
             },
-        ));
+        );
+        // A message in a legacy `i18n.commitEncoding`: what happens to what it lacks.
+        if let Some(line) = self.commit_box.encoding.dialog_line() {
+            modal = modal.with_note(line);
+        }
+        self.modal = Some(modal);
     }
 
     fn rebase_item(&self, name: &str) -> MenuItem {
