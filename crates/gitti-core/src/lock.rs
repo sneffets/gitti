@@ -52,7 +52,11 @@ pub fn retries(args: &[&str]) -> bool {
     !crate::git_cli::is_read_only(args)
         && !matches!(
             subcommand(args),
-            Some("rebase" | "am" | "stash" | "bisect" | "clone" | "init" | "submodule")
+            Some(
+                "rebase" | "am" | "stash" | "bisect" | "clone" | "init" | "submodule"
+                    // A rerun would start the user's tool again.
+                    | "difftool" | "mergetool"
+            )
         )
 }
 

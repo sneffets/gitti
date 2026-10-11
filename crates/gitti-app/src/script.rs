@@ -34,7 +34,8 @@
 //! out-of-date banner); `subtree:ACTION,PREFIX` (the add / pull / merge / push / split
 //! dialog for a subtree); `custom:ACTION[,NAME]` (custom commands: `new`, `manage`,
 //! `edit,NAME`, `run,NAME`); `ignore:PATH` ("Add to .gitignore…"
-//! for a working-directory file), `lfstrack:PATH` ("Track with Git LFS…" for it; the
+//! for a working-directory file), `exttool:PATH` ("Open in External Diff / Merge Tool"
+//! for the first diff file row of PATH), `lfstrack:PATH` ("Track with Git LFS…" for it; the
 //! dialog opens after a background check of git-lfs), `lfs:ACTION[,ARG]` (Git LFS
 //! health: `fix,setup|hooks|download`, `dismiss` the banner, `check` again),
 //! `fspaths:hide|show|dismiss` (paths this file system can't hold), `action:NAME` (dispatch e.g. `gitti::CloneRepository`, as
@@ -521,6 +522,7 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
         "askgone" => app.update(cx, |a, _| a.script_asks_gone()),
         "ignore" => app.update(cx, |a, cx| a.script_ignore_dialog(arg, window, cx)),
         "lfstrack" => app.update(cx, |a, cx| a.lfs_track_dialog(arg.to_string(), window, cx)),
+        "exttool" => app.update(cx, |a, cx| a.script_external_tool(arg, window, cx)),
         // `lfs:ACTION[,ARG]` — Git LFS health: `fix,KEY`, `dismiss`, `check`.
         "lfs" => {
             let (action, rest) = arg.split_once(',').unwrap_or((arg, ""));

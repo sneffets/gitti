@@ -41,6 +41,7 @@ mod commit_flow;
 mod compare;
 mod context_lines;
 mod custom_commands;
+mod ext_tools;
 mod file_list;
 mod from_commit;
 mod fs_paths;
@@ -2913,6 +2914,10 @@ impl App {
                     MenuItem::new("Open in Merge Editor", move |app| app.open_merge_editor(p))
                         .key('e')
                 }
+                A::MergeTool => MenuItem::new("Open in External Merge Tool", move |app| {
+                    app.open_external_merge_tool(p)
+                })
+                .key('x'),
                 A::MarkResolved => {
                     let shown = path.clone();
                     MenuItem::new("Mark Resolved", move |app| {
@@ -3883,6 +3888,7 @@ impl App {
                 };
                 items.extend(self.restore_file_items(src, file));
                 items.extend(self.lfs_menu_items());
+                items.extend(self.external_diff_item(src, file));
                 items.push(MenuItem::new("Copy Path", move |app| app.copy(path)));
                 // The file's custom commands (the diff cursor's file).
                 items.extend(self.custom_menu_items(

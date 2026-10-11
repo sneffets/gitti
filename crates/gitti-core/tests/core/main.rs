@@ -10,6 +10,7 @@ mod config_safety;
 mod conflicts;
 mod custom_commands;
 mod discard;
+mod ext_tools;
 mod fixture_kit;
 mod fs_paths;
 mod fx;

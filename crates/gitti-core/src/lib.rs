@@ -25,6 +25,7 @@ pub mod diff;
 pub mod discard;
 pub mod editor;
 pub mod error_mark;
+pub mod ext_tool;
 pub mod fd_limit;
 pub mod folder_tree;
 pub mod fs_paths;
