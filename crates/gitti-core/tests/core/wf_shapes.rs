@@ -230,3 +230,24 @@ fn nu04_a_name_that_is_not_utf8_on_disk() {
     repo.discard_paths(&[&f.entry]).unwrap();
     wf::expect_discarded(dir).unwrap();
 }
+
+/// CM-20: a repository with `i18n.commitEncoding = ISO-8859-1` — the box's note says
+/// what the encoding lacks of the typed message before committing; the commit is in
+/// Latin-1 with its header, and shows decoded.
+/// Workflow: CM-20
+#[gitti_test::test]
+fn cm20_legacy_encoding() {
+    use shapes::legacy_encoding as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    wf::fixture(dir);
+    let repo = Repo::open(dir).unwrap();
+    // What the apps show under the box (from the refresh).
+    let shown = repo.snapshot(&DiffOptions::default()).unwrap().commit_encoding;
+    assert_eq!(shown.note(wf::TYPED).as_deref(), Some(wf::NOTE));
+    repo.stage_paths(&["a.txt"]).unwrap();
+    let out = repo.commit_with(wf::TYPED, gitti_core::ops::CommitKind::Staged, Default::default()).unwrap();
+    assert!(out.starts_with("Message written in ISO-8859-1"), "{out}");
+    wf::expect(dir).unwrap();
+    assert_eq!(repo.head_message().unwrap(), format!("{}\n", wf::WRITTEN));
+}

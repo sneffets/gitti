@@ -315,6 +315,9 @@ const PINNED_READ_CONFIG: &[&str] = &[
     "diff.suppressBlankEmpty=false",
     "color.diff=false",
     "log.showSignature=false",
+    // Messages in UTF-8 whatever `i18n.commitEncoding` says (git's log output defaults to
+    // it): git re-encodes each commit's message from its `encoding` header.
+    "i18n.logOutputEncoding=UTF-8",
     // A repository's own config must not run programs just because gitti looked
     // at it — `core.fsmonitor` set to a hook path runs it on every status / diff. (The
     // builtin daemon, `true`, is off for gitti's reads too; they don't write the index

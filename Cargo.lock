@@ -2440,6 +2440,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "dirs 6.0.0",
+ "encoding_rs",
  "filetime",
  "getrandom 0.4.3",
  "gitti-test",

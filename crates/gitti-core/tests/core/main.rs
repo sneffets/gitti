@@ -7,6 +7,7 @@ mod allowed_signers;
 mod branches;
 mod change_search;
 mod commit_box;
+mod commit_encoding;
 mod config_safety;
 mod conflicts;
 mod custom_commands;

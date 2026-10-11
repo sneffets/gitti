@@ -61,6 +61,7 @@ pub fn main() {
         ("fs08_a_dot_git_alias_and_colliding_names", fs08_a_dot_git_alias_and_colliding_names),
         ("ig06_negation_and_excludes_file", ig06_negation_and_excludes_file),
         ("cm20_unicode_messages", cm20_unicode_messages),
+        ("cm20_legacy_encoding", cm20_legacy_encoding),
     ];
     common::run(tests, |name| {
         let dir: PathBuf = base.join(name).join("repo");
@@ -109,6 +110,10 @@ pub fn main() {
             }
             "ig06" => {
                 shapes::ignore_rules::fixture(&dir);
+                true
+            }
+            "cm20" if name.contains("legacy") => {
+                shapes::legacy_encoding::fixture(&dir);
                 true
             }
             "cm20" => {
@@ -627,7 +632,8 @@ fn ig06_negation_and_excludes_file(ui: &mut Ui) {
 }
 
 /// CM-20: the Latin-1 commit's message shows decoded; a message with CJK, emoji, a family
-/// emoji and right-to-left text committed: intact, as git reads it back, and shown so.
+/// emoji and right-to-left text committed (UTF-8, no `i18n.commitEncoding`): intact, as
+/// git reads it back, and shown so.
 /// Workflow: CM-20
 fn cm20_unicode_messages(ui: &mut Ui) {
     use shapes::unicode_messages as wf;
@@ -646,8 +652,40 @@ fn cm20_unicode_messages(ui: &mut Ui) {
     if new.as_deref() != Some(subject) {
         fail!(ui, "the new commit shows as {new:?}");
     }
-    // TODO(open point CM-20): with `i18n.commitEncoding` set to a legacy encoding, git
-    // takes the message gitti passes (UTF-8) as being in that encoding — the commit gets
-    // an `encoding ISO-8859-1` header over UTF-8 bytes, and git log shows mojibake.
+    expect(ui, wf::expect(&dir));
+}
+
+/// CM-20: `i18n.commitEncoding = ISO-8859-1` — before committing the note under the box
+/// says what Latin-1 lacks of the typed message and what is written instead; the commit is
+/// in Latin-1 with its header, the status line says what was replaced, the history shows
+/// it decoded.
+/// Workflow: CM-20
+fn cm20_legacy_encoding(ui: &mut Ui) {
+    use shapes::legacy_encoding as wf;
+    let dir = ui.workdir();
+    let ws = ui.ws.clone();
+    ui.step("stagefile:a.txt");
+    let none = ui.cx.update(|cx| testing::encoding_note(&ws, cx));
+    if none.is_some() {
+        fail!(ui, "a note before anything is typed: {none:?}");
+    }
+    ui.step(&format!("msg:{}", wf::TYPED));
+    let note = ui.cx.update(|cx| testing::encoding_note(&ws, cx));
+    if note.as_deref() != Some(wf::NOTE) {
+        fail!(ui, "the note under the box: {note:?}");
+    }
+    if find(&ui.check("the encoding note"), "encoding-note").is_none() {
+        fail!(ui, "no encoding note drawn");
+    }
+    ui.step("commit");
+    no_error(ui, "committing");
+    let status = ui.ui_state().status.map(|(t, _)| t).unwrap_or_default();
+    if !status.starts_with("Message written in ISO-8859-1") {
+        fail!(ui, "the status line: {status:?}");
+    }
+    let new = ui.cx.update(|cx| testing::commit_summary(&ws, 1, cx));
+    if new.as_deref() != Some(wf::WRITTEN) {
+        fail!(ui, "the new commit shows as {new:?}");
+    }
     expect(ui, wf::expect(&dir));
 }

@@ -98,57 +98,11 @@ fn read_meta(repo: &gix::Repository, id: ObjectId) -> Option<CommitMeta> {
     })
 }
 
-/// Commit text (message, names) as UTF-8. Like git, text in the legacy encoding named by
-/// the commit's `encoding` header (`i18n.commitEncoding`) is re-encoded: ISO-8859-1/-15
-/// and Windows-1252 are decoded; anything else, and text that already is valid UTF-8, is
-/// taken as UTF-8 with invalid bytes replaced.
+/// Commit text (message, names) as UTF-8, decoded by the commit's `encoding` header
+/// (`i18n.commitEncoding`) — [`crate::commit_encoding::decode`].
 pub(crate) fn decode_text(bytes: &[u8], encoding: Option<&[u8]>) -> String {
-    if let Ok(s) = std::str::from_utf8(bytes) {
-        return s.to_string();
-    }
-    let enc = encoding
-        .map(|e| {
-            String::from_utf8_lossy(e)
-                .to_ascii_lowercase()
-                .replace('_', "-")
-        })
-        .unwrap_or_default();
-    match enc.as_str() {
-        "iso-8859-1" | "iso8859-1" | "latin1" | "latin-1" | "l1" => {
-            bytes.iter().map(|&b| b as char).collect()
-        }
-        "iso-8859-15" | "iso8859-15" | "latin9" | "latin-9" => bytes
-            .iter()
-            .map(|&b| match b {
-                0xa4 => '\u{20ac}',
-                0xa6 => '\u{160}',
-                0xa8 => '\u{161}',
-                0xb4 => '\u{17d}',
-                0xb8 => '\u{17e}',
-                0xbc => '\u{152}',
-                0xbd => '\u{153}',
-                0xbe => '\u{178}',
-                b => b as char,
-            })
-            .collect(),
-        "windows-1252" | "cp1252" => bytes
-            .iter()
-            .map(|&b| match b {
-                0x80..=0x9f => CP1252_HIGH[(b - 0x80) as usize],
-                b => b as char,
-            })
-            .collect(),
-        _ => String::from_utf8_lossy(bytes).into_owned(),
-    }
+    crate::commit_encoding::decode(bytes, encoding)
 }
-
-/// Windows-1252 0x80..=0x9f (unassigned bytes map to the C1 control of the same value).
-const CP1252_HIGH: [char; 32] = [
-    '\u{20ac}', '\u{81}', '\u{201a}', '\u{192}', '\u{201e}', '\u{2026}', '\u{2020}', '\u{2021}',
-    '\u{2c6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8d}', '\u{17d}', '\u{8f}',
-    '\u{90}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}', '\u{2022}', '\u{2013}', '\u{2014}',
-    '\u{2dc}', '\u{2122}', '\u{161}', '\u{203a}', '\u{153}', '\u{9d}', '\u{17e}', '\u{178}',
-];
 
 /// The subject of a commit message like git's `%s`: leading blank lines skipped, the lines
 /// of the first paragraph joined with spaces, trailing whitespace trimmed.
@@ -817,24 +771,6 @@ pub(crate) fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[gitti_test::test]
-    fn decode_text_by_commit_encoding() {
-        let latin1 = Some(&b"ISO-8859-1"[..]);
-        assert_eq!(decode_text(b"Caf\xe9", latin1), "Café");
-        assert_eq!(decode_text(b"Caf\xe9", Some(b"latin1")), "Café");
-        // Valid UTF-8 wins over a wrong header.
-        assert_eq!(decode_text("Café".as_bytes(), latin1), "Café");
-        assert_eq!(decode_text(b"\xa4 \xbd", Some(b"ISO-8859-15")), "€ œ");
-        assert_eq!(
-            decode_text(b"\x80 \x93x\x94 \xe9", Some(b"windows-1252")),
-            "€ “x” é"
-        );
-        assert_eq!(decode_text(b"\x80\x81", Some(b"CP1252")), "€\u{81}");
-        // No or an unknown encoding: replacement characters, as before.
-        assert_eq!(decode_text(b"Caf\xe9", None), "Caf\u{fffd}");
-        assert_eq!(decode_text(b"Caf\xe9", Some(b"KOI8-R")), "Caf\u{fffd}");
-    }
 
     /// A commit that can't be read is shown empty but not kept: once its object is there
     /// (a fetch's pack arrived after the history was loaded) the row reads it.

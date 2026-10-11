@@ -380,6 +380,9 @@ pub enum Modal {
         hint: String,
         edit: TextEdit,
         submit: Option<SubmitText>,
+        /// A commit message's `i18n.commitEncoding`: a line above the hint says what it
+        /// lacks of the text ([`Modal::with_encoding`]).
+        encoding: Option<gitti_core::commit_encoding::CommitEncoding>,
     },
 }
 
@@ -598,7 +601,17 @@ impl Modal {
             hint: hint.into(),
             edit,
             submit: Some(Box::new(submit)),
+            encoding: None,
         }
+    }
+
+    /// An edit window for a commit message written in `encoding`: a line says what the
+    /// encoding lacks of the text as it is typed (nothing for UTF-8).
+    pub fn with_encoding(mut self, enc: gitti_core::commit_encoding::CommitEncoding) -> Self {
+        if let Modal::Edit { encoding, .. } = &mut self {
+            *encoding = Some(enc);
+        }
+        self
     }
 
     pub fn text(title: impl Into<String>, body: impl Into<String>) -> Self {

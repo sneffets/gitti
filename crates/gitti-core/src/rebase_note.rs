@@ -263,6 +263,10 @@ impl Repo {
                 if let Some(a) = autostash_note(&out) {
                     line = format!("{line} {a}");
                 }
+                // The box's message in a legacy encoding: what it lacked (first line).
+                if let Some(w) = out.lines().next().filter(|l| l.starts_with(crate::commit_encoding::WRITTEN_LEAD)) {
+                    line = format!("{line} {w}");
+                }
                 line
             }
             _ => out,

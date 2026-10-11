@@ -451,7 +451,10 @@ impl Repo {
         if flags.staged_only {
             self.check_staged_removal(paths)?;
         }
-        let mut args = vec!["stash", "push"];
+        // Stashes are written in UTF-8 (`CommitEncoding::stash_config`).
+        let encoding = self.commit_encoding();
+        let mut args = encoding.stash_config().to_vec();
+        args.extend(["stash", "push"]);
         if flags.include_ignored {
             args.push("--all");
         } else if flags.include_untracked {
@@ -650,10 +653,12 @@ impl Repo {
         };
 
         let base = head_id.to_string();
+        // Stashes are written in UTF-8 (`CommitEncoding::stash_config`).
+        let utf8 = self.commit_encoding().stash_config();
         let i_commit = self
             .git()
             .run_stdin(
-                &["commit-tree", &i_tree, "-p", &base, "-F", "-"],
+                &[utf8, &["commit-tree", &i_tree, "-p", &base, "-F", "-"]].concat(),
                 Some(format!("index on {branch}: {short} {subject}\n").as_bytes()),
             )?
             .stdout_str()
@@ -667,7 +672,7 @@ impl Repo {
         let w_commit = self
             .git()
             .run_stdin(
-                &["commit-tree", &w_tree, "-p", &base, "-p", &i_commit, "-F", "-"],
+                &[utf8, &["commit-tree", &w_tree, "-p", &base, "-p", &i_commit, "-F", "-"]].concat(),
                 Some(format!("{msg}\n").as_bytes()),
             )?
             .stdout_str()

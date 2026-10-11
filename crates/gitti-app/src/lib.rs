@@ -661,6 +661,13 @@ pub mod testing {
         app.read(cx).script_commit_summary(row)
     }
 
+    /// The note under the active tab's commit box about `i18n.commitEncoding` (what the
+    /// encoding lacks of the message, or why it can't be written).
+    pub fn encoding_note(ws: &Entity<Workspace>, cx: &App) -> Option<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_encoding_note(cx)
+    }
+
     /// Holds history loads back (they wait until released) — to see that the working
     /// state doesn't wait for them.
     pub fn hold_history(hold: bool) {

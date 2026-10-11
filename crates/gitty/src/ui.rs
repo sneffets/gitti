@@ -2112,7 +2112,11 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
     // git's prepared message next to the user's own text: a note row under the text.
     let note = app.prepared_note();
     // Else a commit.template that can't be read: what is wrong.
-    let problem = if note.is_none() { app.template_problem() } else { None };
+    let problem = if note.is_none() {
+        app.encoding_note().or_else(|| app.template_problem())
+    } else {
+        None
+    };
     let note_h = u16::from(note.is_some() || problem.is_some());
     let total = (text_h + 2 + note_h).min(area.height);
     let box_area = Rect::new(area.x, area.y, area.width, total);
@@ -3856,7 +3860,7 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
             ));
         }
         Modal::Edit {
-            title, hint, edit, ..
+            title, hint, edit, encoding, ..
         } => {
             let w = 80.min(screen.width.saturating_sub(4));
             let h = 18.min(screen.height.saturating_sub(4));
@@ -3901,6 +3905,19 @@ fn draw_modal(f: &mut Frame, screen: Rect, app: &mut App, p: &Palette) {
                 text_area.x + 1 + col.width() as u16,
                 text_area.y + (crow - scroll) as u16,
             ));
+            // What a commit encoding lacks of the text: on the row above the hint.
+            if let Some(note) = encoding.as_ref().and_then(|e| e.note(&edit.text()))
+                && inner.height >= 3
+            {
+                let room = inner.width.saturating_sub(2);
+                put(
+                    buf,
+                    inner.x + 1,
+                    inner.y + inner.height - 2,
+                    room,
+                    vec![Span::styled(fit_width(&note, room), Style::new().fg(p.warning))],
+                );
+            }
             put(
                 buf,
                 inner.x + 1,

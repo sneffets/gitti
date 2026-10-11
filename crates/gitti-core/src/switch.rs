@@ -681,6 +681,9 @@ impl Repo {
         let mut notes = Vec::new();
         let untracked = block.untracked_paths();
         let untracked_stashed = !untracked.is_empty();
+        // Stashes are written in UTF-8 (`CommitEncoding::stash_config`).
+        let encoding = self.commit_encoding();
+        let utf8 = encoding.stash_config();
         if untracked_stashed {
             let msg = format!("gitti: untracked files replaced by switching to {name}");
             let mut list = Vec::new();
@@ -688,7 +691,8 @@ impl Repo {
                 list.extend_from_slice(p.as_bytes());
                 list.push(0);
             }
-            let args = [
+            let mut args = utf8.to_vec();
+            args.extend([
                 "stash",
                 "push",
                 "--include-untracked",
@@ -696,7 +700,7 @@ impl Repo {
                 &msg,
                 "--pathspec-from-file=-",
                 "--pathspec-file-nul",
-            ];
+            ]);
             self.git_literal().run_stdin(&args, Some(&list))?;
             notes.push(format!(
                 "{} saved in stash \"{msg}\"",
@@ -706,7 +710,7 @@ impl Repo {
         let local_stashed = !block.local.is_empty();
         if local_stashed {
             let msg = format!("gitti: local changes carried over to {name}");
-            if let Err(e) = self.git().run(&["stash", "push", "-m", &msg]) {
+            if let Err(e) = self.git().run(&[utf8, &["stash", "push", "-m", &msg]].concat()) {
                 if untracked_stashed {
                     let _ = self.git().run(&["stash", "pop"]);
                 }

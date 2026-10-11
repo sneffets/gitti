@@ -192,6 +192,7 @@ impl GittiApp {
                     }),
             )
             .children(self.render_prepared_note(cx))
+            .children(self.render_encoding_note(cx))
             .children(self.render_template_problem(cx))
             .child({
                 let (name, mail) = &self.identity;

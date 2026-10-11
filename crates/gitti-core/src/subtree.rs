@@ -367,8 +367,14 @@ impl Repo {
             let _ = self.git().run_raw(&["update-index", "-q", "--refresh"], None);
         }
         let sign = req.action.merges() && self.signs_commits();
-        let args = req.args(sign);
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let owned = req.args(sign);
+        // A typed message goes on the command line, which carries no legacy bytes on
+        // Windows: in UTF-8 when it isn't ASCII (`CommitEncoding::command_line_config`).
+        let typed = if req.commits() { req.message.as_str() } else { "" };
+        let encoding = self.commit_encoding();
+        let utf8 = encoding.command_line_config(typed);
+        let mut args: Vec<&str> = utf8.to_vec();
+        args.extend(owned.iter().map(String::as_str));
         // `git merge` opens no editor for its message.
         let git = self.git().with_env(&[("GIT_MERGE_AUTOEDIT", "no")]);
         let result = if matches!(req.action, Action::Split | Action::Push) {
@@ -440,6 +446,9 @@ impl Repo {
                 }
             }
         };
+        if !utf8.is_empty() {
+            note.push_str(&format!(". {}", encoding.utf8_note("The merge message")));
+        }
         Ok(Outcome {
             message: message + &note,
             conflicts: false,

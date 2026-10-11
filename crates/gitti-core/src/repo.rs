@@ -173,6 +173,9 @@ pub struct RepoSnapshot {
     pub prepared_message: Option<String>,
     /// `commit.template` ([`Repo::commit_template`]): an empty box starts with it.
     pub commit_template: Option<crate::commit_message::CommitTemplate>,
+    /// `i18n.commitEncoding` ([`Repo::commit_encoding`], in-process): the box says before
+    /// committing what a legacy encoding lacks.
+    pub commit_encoding: crate::commit_encoding::CommitEncoding,
     /// Every worktree, main first (cached, see [`Repo::worktrees`]); just the main one in
     /// a repository without linked worktrees.
     pub worktrees: Vec<crate::worktree::Worktree>,
@@ -1288,11 +1291,13 @@ impl Repo {
             let prepared_message = self.prepared_message();
             // In-process: the config and one small file.
             let commit_template = self.commit_template();
+            let commit_encoding = self.commit_encoding_shown();
             Ok(RepoSnapshot {
                 working,
                 conflict_sides,
                 prepared_message,
                 commit_template,
+                commit_encoding,
                 head: self.head()?,
                 refs: self.refs()?,
                 remotes: joined(remotes)?,
@@ -1739,6 +1744,9 @@ impl Repo {
         opts: crate::commit_message::CommitOptions,
     ) -> Result<String> {
         use crate::ops::CommitKind;
+        // In `i18n.commitEncoding`; a name gitti can't write is refused before git runs.
+        let encoding = self.commit_encoding();
+        let encoded = encoding.encode(message)?;
         let cleanup = format!("--cleanup={}", cleanup.flag());
         let mut args = vec!["commit", cleanup.as_str(), "-F", "-"];
         if opts.sign_off {
@@ -1759,8 +1767,8 @@ impl Repo {
             }
             CommitKind::Empty => args.push("--allow-empty"),
         }
-        let out = self.git.run_stdin(&args, Some(message.as_bytes()))?;
-        Ok(out.stdout_str())
+        let out = self.git.run_stdin(&args, Some(&encoded.bytes))?;
+        Ok(noted_first(out.stdout_str(), &encoding.written_note(&encoded)))
     }
 
     /// Message of HEAD (for amending).
@@ -1768,8 +1776,7 @@ impl Repo {
     pub fn head_message(&self) -> Result<String> {
         let repo = self.gix()?;
         let commit = repo.head_commit().map_err(gx)?;
-        let raw = commit.message_raw_sloppy();
-        Ok(crate::git_cli::decode_native(raw))
+        Ok(crate::commit_encoding::message_of(&commit))
     }
 
     pub fn fetch(&self) -> Result<String> {
@@ -1780,6 +1787,18 @@ impl Repo {
     pub fn push(&self) -> Result<String> {
         let out = self.git.run(&["push"])?;
         Ok(out.stderr)
+    }
+}
+
+/// `out` with `note` as its first line (the status line shows an output's first line):
+/// `out` as it is when `note` is empty.
+pub(crate) fn noted_first(out: String, note: &str) -> String {
+    if note.is_empty() {
+        out
+    } else if out.trim().is_empty() {
+        note.to_string()
+    } else {
+        format!("{note}\n{out}")
     }
 }
 
