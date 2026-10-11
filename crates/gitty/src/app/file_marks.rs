@@ -38,6 +38,29 @@ impl App {
         }
     }
 
+    /// The folder row the diff cursor is on (kept across a rebuild, [`Self::settle_cursor`]).
+    pub(super) fn cursor_folder(&self) -> Option<(Src, Folder)> {
+        if !matches!(self.detail, Detail::Worktree) {
+            return None;
+        }
+        self.folder_at(self.diff_cursor)
+    }
+
+    /// After the working rows were rebuilt: the cursor back on its folder row (`folder`,
+    /// from before) while that folder is still there, and never on a gap band — when a
+    /// folder or marked files left the section, on the next file or folder there.
+    pub(super) fn settle_cursor(&mut self, folder: Option<(Src, Folder)>) {
+        if let Some((src, f)) = folder
+            && let Some(id) = self.folders.position(src, f.group, &f.path)
+            && let Some(i) = self.rows.iter().position(|r| *r == DiffRow::Folder { src, folder: id })
+        {
+            self.diff_cursor = i;
+        }
+        self.diff_cursor = gitti_core::rows::real_row_near(&self.rows, self.diff_cursor);
+        let h = usize::from(self.areas.detail.height);
+        self.diff_offset = gitti_core::nav::keep_visible(self.diff_offset, self.diff_cursor, h, self.rows.len());
+    }
+
     fn folder_paths(&self, src: Src, folder: &Folder) -> Vec<String> {
         let files = work_files(&self.working, src);
         folder.files.iter().filter_map(|&i| Some(files.get(i)?.path().to_string())).collect()

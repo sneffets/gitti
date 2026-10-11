@@ -39,6 +39,14 @@ pub(super) enum ListLayout {
 /// opens every context menu under the pointer, so the badge can't have its own.
 type BadgePick = Rc<std::cell::RefCell<Option<gitti_core::RefInfo>>>;
 
+/// Where a right click on a ref badge hands its ref to, for the menu that opens on it.
+enum BadgeMenu {
+    /// A commit-list row's menu ([`BadgePick`]).
+    Row(BadgePick),
+    /// The diff list's menu, from the commit header (`header_ids::mark_ref_click`).
+    Header,
+}
+
 /// One-line rows' author column: at most this many UI-font ems (about 12 characters of the
 /// small font, then "…"; gitty: 11 columns). It gives way before the subject does in a
 /// narrow list.
@@ -305,7 +313,7 @@ impl GittiApp {
                         Some(px(s.ui_font_size * 11.)),
                         format!("ref-badge:{ix}:{}", r.short_name),
                         true,
-                        Some(badge_pick.clone()),
+                        BadgeMenu::Row(badge_pick.clone()),
                         &p,
                         cx,
                     ));
@@ -510,7 +518,7 @@ impl GittiApp {
             .context_menu(move |menu, window, cx| {
                 // A right click on a ref's badge: that ref's menu (as in the sidebar).
                 if let Some(r) = badge_pick.borrow_mut().take() {
-                    return super::menus::ref_context_menu(menu, &app, &r, window, cx);
+                    return super::branch_list::ref_menu_pinnable(menu, &app, &r, window, cx);
                 }
                 let menu = match (&menu_ctx, stash) {
                     (_, Some(n)) => super::menus::stash_menu(menu, &app, n),
@@ -543,7 +551,8 @@ impl GittiApp {
             .into_any_element()
     }
 
-    /// One ref's badge (a commit-list row or the commit header): coloured by kind, the
+    /// One ref's badge in the commit header (a right click opens the ref's menu, see
+    /// [`Self::ref_badge_with`]): coloured by kind, the
     /// current branch filled and bold; a branch checked out in another worktree gets a
     /// folder mark (like the sidebar) and the folder in its tooltip (probe
     /// `wt-branch-badge:NAME` when `wt_probe`). At most `max_w` wide (`None`: its line in
@@ -558,11 +567,12 @@ impl GittiApp {
         p: &crate::theme::Palette,
         cx: &App,
     ) -> AnyElement {
-        self.ref_badge_with(r, max_w, probe, wt_probe, None, p, cx)
+        self.ref_badge_with(r, max_w, probe, wt_probe, BadgeMenu::Header, p, cx)
     }
 
-    /// [`Self::ref_badge`]; `menu`: a right click on it (a branch's or tag's) puts the
-    /// ref there for its row's menu, which then is the ref's ([`BadgePick`]).
+    /// A ref's badge (a commit-list row or the commit header, [`Self::ref_badge`]);
+    /// `menu`: a right click on it (a branch's or tag's) hands the ref to the menu that
+    /// opens — its row's ([`BadgePick`]) or the diff list's — which then is the ref's.
     #[allow(clippy::too_many_arguments)]
     fn ref_badge_with(
         &self,
@@ -570,7 +580,7 @@ impl GittiApp {
         max_w: Option<Pixels>,
         probe: String,
         wt_probe: bool,
-        menu: Option<BadgePick>,
+        menu: BadgeMenu,
         p: &crate::theme::Palette,
         cx: &App,
     ) -> AnyElement {
@@ -613,11 +623,19 @@ impl GittiApp {
             .text_color(fg)
             .when(current, |d| d.font_weight(FontWeight::BOLD))
             .probe(probe)
-            .when_some(menu.filter(|_| r.kind != RefKind::Stash), |d, pick| {
+            .when(r.kind != RefKind::Stash, |d| {
                 let r = r.clone();
-                d.on_mouse_down(MouseButton::Right, move |_, _, _| {
-                    *pick.borrow_mut() = Some(r.clone())
-                })
+                match menu {
+                    BadgeMenu::Row(pick) => d.on_mouse_down(MouseButton::Right, move |_, _, _| {
+                        *pick.borrow_mut() = Some(r.clone())
+                    }),
+                    // Capture phase, like the header's ids: before the diff's menu sees it.
+                    BadgeMenu::Header => d.capture_any_mouse_down(move |ev, _, _| {
+                        if ev.button == MouseButton::Right {
+                            super::header_ids::mark_ref_click(r.clone());
+                        }
+                    }),
+                }
             })
             .when(elsewhere.is_some(), |d| {
                 d.child(Icon::new(IconName::Folder).xsmall().flex_none().text_color(fg))

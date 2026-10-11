@@ -17,24 +17,77 @@ use super::modal::{ModalLive, ModalSpec};
 type AppHandle = WeakEntity<GittiApp>;
 
 thread_local! {
-    /// Labels of the menu entries built since the last [`take_menu_labels`] (only while
-    /// the layout probes are on: tests, scripted runs).
-    static BUILT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Labels of the menu entries built since the last [`take_menu_labels`], each with
+    /// whether it is enabled (only while the layout probes are on: tests, scripted runs).
+    static BUILT: std::cell::RefCell<Vec<(String, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// A context-menu entry: `PopupMenuItem::new` that tests can read back (the sidebar menus
-/// are checked against `gitti_core::sidebar_menus`; gpui-component keeps a menu's items
-/// private).
-pub(super) fn menu_entry(label: impl Into<SharedString>) -> PopupMenuItem {
-    let label = label.into();
-    if crate::probe::enabled() {
-        BUILT.with(|b| b.borrow_mut().push(label.to_string()));
+/// A context-menu entry being built: a `PopupMenuItem` that tests can read back (the
+/// sidebar menus are checked against `gitti_core::sidebar_menus`; gpui-component keeps a
+/// menu's items private). It becomes the item in `menu.item(…)`, which records its label,
+/// whether it is greyed and what it does ([`menu_action`]) — so after every `.disabled`.
+pub(crate) struct Entry {
+    item: PopupMenuItem,
+    action: Option<EntryAction>,
+}
+
+impl Entry {
+    /// Greyed (with `disabled`): a click does nothing, nor does the `menu:LABEL` step.
+    pub(crate) fn disabled(mut self, disabled: bool) -> Self {
+        self.item = self.item.disabled(disabled);
+        self
     }
-    PopupMenuItem::new(label)
+
+    pub(crate) fn checked(mut self, checked: bool) -> Self {
+        self.item = self.item.checked(checked);
+        self
+    }
+
+    pub(crate) fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.item = self.item.on_click(f);
+        self
+    }
+}
+
+impl gpui_kit::prelude::FluentBuilder for Entry {}
+
+impl From<Entry> for PopupMenuItem {
+    fn from(e: Entry) -> Self {
+        if crate::probe::enabled()
+            && let PopupMenuItem::Item { label, disabled, .. } = &e.item
+        {
+            let (label, enabled) = (label.to_string(), !*disabled);
+            BUILT.with(|b| b.borrow_mut().push((label.clone(), enabled)));
+            if let Some(f) = e.action {
+                ACTIONS.with(|a| {
+                    let mut a = a.borrow_mut();
+                    // Menus are built on every open: keep the recent ones.
+                    if a.len() >= 512 {
+                        a.drain(..256);
+                    }
+                    a.push((label, enabled, f));
+                });
+            }
+        }
+        e.item
+    }
+}
+
+/// A context-menu entry ([`Entry`]).
+pub(super) fn menu_entry(label: impl Into<SharedString>) -> Entry {
+    Entry {
+        item: PopupMenuItem::new(label),
+        action: None,
+    }
 }
 
 /// The labels of the menu entries built since the last call (see [`menu_entry`]).
 pub fn take_menu_labels() -> Vec<String> {
+    take_menu_entries().into_iter().map(|(l, _)| l).collect()
+}
+
+/// [`take_menu_labels`] with whether each entry is enabled (not greyed).
+pub fn take_menu_entries() -> Vec<(String, bool)> {
     BUILT.with(|b| std::mem::take(&mut *b.borrow_mut()))
 }
 
@@ -42,9 +95,10 @@ pub fn take_menu_labels() -> Vec<String> {
 type EntryAction = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 
 thread_local! {
-    /// The entries of the menus built lately with what they do, newest last (only while
-    /// the layout probes are on): the `menu:LABEL` script step chooses one by its label.
-    static ACTIONS: std::cell::RefCell<Vec<(String, EntryAction)>> =
+    /// The entries of the menus built lately — label, enabled, what it does —, newest last
+    /// (only while the layout probes are on): the `menu:LABEL` script step chooses one by
+    /// its label.
+    static ACTIONS: std::cell::RefCell<Vec<(String, bool, EntryAction)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -53,40 +107,38 @@ thread_local! {
 pub(super) fn menu_action(
     label: impl Into<SharedString>,
     f: impl Fn(&mut Window, &mut App) + 'static,
-) -> PopupMenuItem {
-    let label = label.into();
+) -> Entry {
     let f: EntryAction = std::rc::Rc::new(f);
-    if crate::probe::enabled() {
-        ACTIONS.with(|a| {
-            let mut a = a.borrow_mut();
-            // Menus are built on every open: keep the recent ones.
-            if a.len() >= 512 {
-                a.drain(..256);
-            }
-            a.push((label.to_string(), f.clone()));
-        });
-    }
-    menu_entry(label).on_click(move |_, window, cx| f(window, cx))
+    let mut e = menu_entry(label);
+    e.item = e.item.on_click({
+        let f = f.clone();
+        move |_, window, cx| f(window, cx)
+    });
+    e.action = Some(f);
+    e
 }
 
 /// Runs the entry `label` (exactly as shown, a greyed one with its reason) of the menu
 /// built last that has it — what clicking it does, without the menu's coordinates. The
-/// caller closes the open menu first. An error when no such entry was built.
+/// caller closes the open menu first. An error when no such entry was built, or when it
+/// is greyed (a click on it does nothing: a test must not choose it by accident).
 pub fn run_menu_entry(label: &str, window: &mut Window, cx: &mut App) -> Result<(), String> {
     let found = ACTIONS.with(|a| {
         a.borrow()
             .iter()
             .rev()
-            .find(|(l, _)| l == label)
-            .map(|(_, f)| f.clone())
+            .find(|(l, ..)| l == label)
+            .map(|(_, enabled, f)| (*enabled, f.clone()))
     });
     match found {
-        Some(f) => {
+        Some((true, f)) => {
             f(window, cx);
             Ok(())
         }
+        Some((false, _)) => Err(format!("menu entry {label:?} is greyed (disabled)")),
         None => {
-            let known: Vec<String> = ACTIONS.with(|a| a.borrow().iter().rev().take(40).map(|(l, _)| l.clone()).collect());
+            let known: Vec<String> =
+                ACTIONS.with(|a| a.borrow().iter().rev().take(40).map(|(l, ..)| l.clone()).collect());
             Err(format!("no menu entry {label:?} (latest: {known:?})"))
         }
     }
@@ -97,20 +149,20 @@ fn item(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> Entry {
     let app = app.clone();
     menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }
 
-pub(super) fn copy_item(label: impl Into<SharedString>, text: String) -> PopupMenuItem {
+pub(super) fn copy_item(label: impl Into<SharedString>, text: String) -> Entry {
     menu_entry(label)
         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())))
 }
 
 /// "Mark for Comparison" for the commit `target` points at (a ref's row).
-fn compare_item(app: &AppHandle, target: gitti_core::ObjectId) -> PopupMenuItem {
+fn compare_item(app: &AppHandle, target: gitti_core::ObjectId) -> Entry {
     item("Mark for Comparison", app, move |this, _, cx| {
         match this.history.row_of(&target) {
             Some(row) => this.mark_compare_row(row, cx),
@@ -148,7 +200,7 @@ fn command_item(
     command: &str,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> Entry {
     let why = crate::why_not_now(command);
     item(why_label(label, why), app, f).disabled(why.is_some())
 }

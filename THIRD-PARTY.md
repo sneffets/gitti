@@ -9,8 +9,8 @@ ships no third-party fonts, themes or images; text uses the system fonts.
   [`licenses/THIRD-PARTY-LICENSES.txt`](licenses/THIRD-PARTY-LICENSES.txt) — generated
   from `Cargo.lock` by `cargo xtask licenses` (per binary and platform; a test fails when
   `Cargo.lock` changed without regenerating it). The same list is built into both apps
-  (gitti: Help ▸ Third-Party Licences…, summary in Help ▸ About; gitty: `gitty
-  --licenses`, palette ▸ Third-Party Licences…) and copied next to the binaries by the
+  (gitti: Help ▸ Third-Party Licences…, summary in Help ▸ About, `gitti --licenses`;
+  gitty: `gitty --licenses`, palette ▸ Third-Party Licences…) and copied next to the binaries by the
   bundle / install scripts in `scripts/`.
 - **Icons**: [Lucide](https://lucide.dev) (ISC; a few icons derived from Feather, MIT),
   via `gpui-kit-assets` plus the extra icons embedded in `crates/gitti-app/src/assets.rs`.

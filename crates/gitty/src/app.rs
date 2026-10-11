@@ -1445,6 +1445,9 @@ impl App {
             Some(Modal::Text { scroll, .. } | Modal::Help { scroll }) => {
                 format!(" text_scroll={scroll}")
             }
+            Some(Modal::Input { focus, offset, .. }) => {
+                format!(" input_focus={focus} input_offset={offset}")
+            }
             _ => String::new(),
         };
         format!(
@@ -1605,6 +1608,7 @@ impl App {
                 .and_then(|f| f.diff.clone())
         });
         let at = self.cursor_file();
+        let at_folder = self.cursor_folder();
         let regroup = self.regroup_anchor(&s.working);
         let prev = std::mem::replace(&mut self.working, Arc::new(s.working));
         // Refs moved behind our back → the history may have changed too (the first
@@ -1663,6 +1667,7 @@ impl App {
             self.apply_regroup(regroup);
             self.schedule_highlight();
             self.follow_cursor_file(&prev, at);
+            self.settle_cursor(at_folder);
             let sel = self.line_sel.take();
             self.line_sel = sel
                 .zip(prev_sel_diff)
@@ -2500,6 +2505,7 @@ impl App {
                 .and_then(|f| f.diff.clone())
         });
         let at = self.cursor_file();
+        let at_folder = self.cursor_folder();
         let regroup = self.regroup_anchor(&working);
         let prev = std::mem::replace(&mut self.working, Arc::new(working));
         self.publish_marks();
@@ -2514,6 +2520,7 @@ impl App {
         self.rebuild_rows();
         self.apply_regroup(regroup);
         self.follow_cursor_file(&prev, at);
+        self.settle_cursor(at_folder);
         self.restore_view_anchor();
         let sel = self.line_sel.take();
         self.line_sel = sel

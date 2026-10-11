@@ -14,7 +14,7 @@ use std::rc::Rc;
 use gitti_core::ObjectId;
 use gitti_core::subtree::{self, Action, Request, Subtree};
 use gpui_kit::component::Icon;
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -33,9 +33,9 @@ fn item(
     label: impl Into<SharedString>,
     app: &AppHandle,
     f: impl Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
-) -> PopupMenuItem {
+) -> super::menus::Entry {
     let app = app.clone();
-    super::menus::menu_entry(label).on_click(move |_, window, cx| {
+    super::menus::menu_action(label, move |window, cx| {
         app.update(cx, |this, cx| f(this, window, cx)).ok();
     })
 }

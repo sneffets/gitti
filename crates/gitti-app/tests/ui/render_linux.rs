@@ -764,8 +764,10 @@ fn menu_bar_dropdowns(ui: &mut Ui) {
             if items.len() < want {
                 fail!(ui, "{ctx}: menu {name} shows {} items, {want} expected", items.len());
             }
-            // A menu scrolls only when the window has no room for all of it.
-            let content = items.iter().map(|b| f(b.size.height)).sum::<f32>();
+            // A menu scrolls only when the window has no room for all of it. Its content is
+            // the span of its items (scrolled or not), separators' margins included.
+            let top = items.iter().map(|b| f(b.top())).fold(f32::INFINITY, f32::min);
+            let content = items.iter().map(|b| f(b.bottom())).fold(top, f32::max) - top;
             let clipped = items.iter().filter(|b| !testing::contains(popup, b)).count();
             if clipped > 0 && content + 120. < f(win.size.height) {
                 fail!(ui, "{ctx}: menu {name} scrolls ({clipped} items cut) although the window has room");

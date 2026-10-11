@@ -408,6 +408,7 @@ impl Ui {
                 testing::step(&ws, step, window, cx)
             })
             .unwrap();
+        self.step_errors(step);
         self.settle();
         if step_times() {
             println!("    {:6.1} ms  {step}", t.elapsed().as_secs_f64() * 1000.);
@@ -711,9 +712,18 @@ impl Ui {
         self.cx
             .update_window(self.window, |_, window, cx| testing::step(&ws, step, window, cx))
             .unwrap();
+        self.step_errors(step);
         self.cx.run_until_parked();
         self.render();
         self.check_drawn();
+    }
+
+    /// A step that couldn't do what it says (`menu:LABEL` on a greyed or missing entry)
+    /// fails the scenario.
+    fn step_errors(&mut self, step: &str) {
+        for e in testing::take_step_errors() {
+            self.fail(format!("step {step}: {e}"));
+        }
     }
 
     /// [`Self::quick`] for a key (`key:` step: the commit list gets the focus when nothing

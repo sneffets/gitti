@@ -714,6 +714,46 @@ fn right_click_on_a_badge_opens_the_refs_menu() {
     assert!(lists[2].iter().any(|i| i.starts_with("Cherry-pick")), "the commit's menu: {out}");
 }
 
+/// A right click on a badge of the commit header's "Refs" lines opens that ref's menu
+/// too (a branch's with "Pin to Top", a tag's Show Tag…), elsewhere on the header the
+/// diff's — no git.
+#[gitti_test::test]
+fn right_click_on_a_header_badge_opens_the_refs_menu() {
+    let dir = many_refs_repo();
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(dir.path(), config.path(), "160x40", "key:j;dump");
+    let screen = screens(&out)[0];
+    let lines: Vec<&str> = screen.lines().collect();
+    let refs_at = lines.iter().position(|l| l.contains(" Refs ")).unwrap_or_else(|| panic!("no Refs line: {out}"));
+    // (x, y) of `text` in the header's Refs lines (right of the "Refs" label's column).
+    let label_x = lines[refs_at].find(" Refs ").unwrap();
+    let at = |text: &str| {
+        lines[refs_at..]
+            .iter()
+            .enumerate()
+            .find_map(|(i, l)| {
+                let from = l.char_indices().nth(lines[refs_at][..label_x].chars().count())?.0;
+                l[from..].find(text).map(|b| (l[..from + b].chars().count() + 1, refs_at + i))
+            })
+            .unwrap_or_else(|| panic!("no {text} in the header: {out}"))
+    };
+    let ((bx, by), (tx, ty)) = (at("hotfix"), at("v1.0.0"));
+    let label = lines[refs_at][..label_x].chars().count() + 2;
+    let out = gitty_with(
+        dir.path(),
+        config.path(),
+        "160x40",
+        &format!(
+            "key:j;cmds;rclick:{bx},{by};items;key:esc;state;rclick:{tx},{ty};items;key:esc;state;rclick:{label},{refs_at};items;key:esc;cmds"
+        ),
+    );
+    let lists = item_lists(&out);
+    assert!(lists[0].contains(&"Checkout hotfix") && lists[0].contains(&"Pin to Top"), "the branch's menu: {out}");
+    assert!(lists[1].contains(&"Show Tag…") && !lists[1].contains(&"Checkout hotfix"), "the tag's menu: {out}");
+    assert!(!lists[2].contains(&"Show Tag…") && !lists[2].contains(&"Checkout hotfix"), "the diff's menu: {out}");
+    assert_no_git(&cmds(&out)[1..], "header badge menus", &out);
+}
+
 /// A click on a list row's "+N" selects the row and says which refs it hides (gitti: the
 /// tooltip); a click elsewhere on the row doesn't.
 #[gitti_test::test]

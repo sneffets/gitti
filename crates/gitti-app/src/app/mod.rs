@@ -64,7 +64,7 @@ mod worktree_tabs;
 mod worktrees;
 
 pub(crate) use overlay_keys::intercept as intercept_overlay_keys;
-pub(crate) use menus::{run_menu_entry, take_menu_labels};
+pub(crate) use menus::{run_menu_entry, take_menu_entries, take_menu_labels};
 pub(crate) use signers::set_open_repos;
 pub(crate) use unavailable::set_tab_count;
 pub(crate) use startup_ui::WHERE as STARTUP_TIMINGS_WHERE;

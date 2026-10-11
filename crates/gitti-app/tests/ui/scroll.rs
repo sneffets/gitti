@@ -40,6 +40,7 @@ pub fn main() {
         ("diff_commit_view", diff_commit_view),
         ("diff_long_and_wrapped", diff_long_and_wrapped),
         ("diff_anchor_across_toggles", diff_anchor_across_toggles),
+        ("sticky_path_in_tree", sticky_path_in_tree),
         ("diff_stays_on_refresh_and_stage", diff_stays_on_refresh_and_stage),
         ("diff_stage_whole_file_shows_the_next", diff_stage_whole_file_shows_the_next),
         ("sidebar_scroll", sidebar_scroll),
@@ -62,6 +63,9 @@ pub fn main() {
         }
         if name == "diff_anchor_across_toggles" {
             return make_ws_repo(&tmp.path().join("ws"));
+        }
+        if name == "sticky_path_in_tree" {
+            return make_nested_repo(&tmp.path().join("nested"));
         }
         if matches!(
             name,
@@ -513,6 +517,38 @@ fn diff_page_keys(ui: &mut Ui) {
         ui.fail(format!("Home: offset {y}"));
     }
     ui.expect_no_git(git_before, "page keys in the diff");
+}
+
+/// `src/app/long.rs` with 120 changed lines in the working directory.
+fn make_nested_repo(dir: &Path) -> PathBuf {
+    init_repo(dir);
+    let mut st = Stream::new();
+    let old: String = (0..120).map(|i| format!("line {i}\n")).collect();
+    st.commit("refs/heads/main", "Base", None, &[("src/app/long.rs", Some(&old))]);
+    st.import(dir);
+    read_tree(dir, "main");
+    let new: String = (0..120).map(|i| format!("LINE {i}\n")).collect();
+    std::fs::write(dir.join("src/app/long.rs"), new).unwrap();
+    dir.to_path_buf()
+}
+
+/// In the tree a file header shows the file's name under its folder; its sticky copy at
+/// the top of the list (the folder row scrolled away) shows the whole path.
+fn sticky_path_in_tree(ui: &mut Ui) {
+    ui.step("select:0");
+    ui.step("action:gitti::ToggleChangesTree");
+    // (The commit box shrinks first.)
+    for _ in 0..10 {
+        ui.wheel_ff("diff-list", 200.);
+        if ui.scroll().diff_y > 400. {
+            break;
+        }
+    }
+    let (p, y) = (ui.frame(), ui.scroll().diff_y);
+    let paths: Vec<&str> = p.iter().filter_map(|q| q.name.strip_prefix("sticky-path:")).collect();
+    if paths != ["src/app/long.rs"] || find(&p, "folder:unstaged/src/app").and_then(Probe::visible).is_some() {
+        ui.fail(format!("sticky header in the tree: {paths:?}, scrolled {y}"));
+    }
 }
 
 /// `ws.txt` (300 lines) for the diff anchor scenarios. HEAD changed line 30 and 250 and
