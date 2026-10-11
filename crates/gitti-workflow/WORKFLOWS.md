@@ -192,7 +192,7 @@ working tree or the index while the app shows an older state.
 | CM-17 | Reword root / pushed / below a merge | reword the root; a pushed commit; one under a merge | root works; pushed and below-merge refused with the reason, nothing changed | ~`repo_ops::reword_the_root_commit_and_not_pushed_ones`, `wf_commit::cm17_reword_refused_for_pushed_and_below_a_merge`, `wf_commit::cm17_reword_the_root_commit` | `wf_commit::cm17_reword_refused_for_pushed_and_below_a_merge`, `wf_commit::cm17_reword_the_root_commit` | `wf_commit::cm17_reword_refused_for_pushed_and_below_a_merge`, `wf_commit::cm17_reword_the_root_commit` |
 | CM-18 | Earlier messages | ↑ in the empty box; Recent Commit Messages… | newest first, own only | `commit_box::own_messages_are_the_users_newest` | `commit::template_sign_off_and_earlier_messages` | `commit_box::earlier_messages_by_up_and_the_picker` |
 | CM-19 | First commit in a fresh repository | `git init`; stage; commit | root commit; history shows it; commands needing a commit come alive | ~`staging::history_of_repo_without_commits_has_worktree_row`, `wf_commit::cm19_first_commit_in_a_fresh_repository` | ~`menus::fresh_repository_greys_what_needs_a_commit`, `wf_commit::cm19_first_commit_in_a_fresh_repository` | `wf_commit::cm19_first_commit_in_a_fresh_repository` |
-| CM-20 | Unicode / i18n messages | message with CJK, emoji; `i18n.commitEncoding` | committed intact, shown decoded | `repo_shapes::commit_made_with_i18n_commit_encoding`, `repo_shapes::latin1_commit_message_is_decoded` | ~`render_linux::unicode_message` | `unicode::staging_copying_and_committing_unicode` |
+| CM-20 | Unicode / i18n messages | message with CJK, emoji; `i18n.commitEncoding` | committed intact, shown decoded | `repo_shapes::commit_made_with_i18n_commit_encoding`, `repo_shapes::latin1_commit_message_is_decoded` | `wf_shapes::cm20_unicode_messages`, ~`render_linux::unicode_message` | `unicode::staging_copying_and_committing_unicode` |
 | CM-21 | Quit while a commit runs | ⌘Q / `q` while a hook holds the commit | asks; Quit When Done waits; Stop and Quit stops, draft kept | ~`runner::cancel_stops_a_hanging_hook`, `wf_commit::cm21_stop_a_commit_held_by_a_hook` | `commit::quit_while_git_runs_asks`, `commit::close_tab_while_git_runs_asks` | `cancel::quit_while_an_operation_runs_asks_first`, `cancel::quit_when_done_waits_for_the_operation`, `cancel::stop_and_quit_stops_the_operation` |
 
 ## SH — Stash
@@ -442,33 +442,33 @@ working tree or the index while the app shows an older state.
 | IG-03 | Folder `.gitignore` / `info/exclude` | target a folder's file | pattern relative to that folder | `repo_setup::folder_gitignore_patterns_apply_inside_the_folder`, `repo_setup::info_exclude_target` | `menus::folder_rule_files` | `repo_cmds::ignore_into_a_folder_gitignore` |
 | IG-04 | `status.showUntrackedFiles` | `no` / `normal` | hidden said so; folder entry stages / discards whole | `config_safety::show_untracked_files_config_is_honoured`, `config_safety::untracked_folder_entry_stages_and_discards_as_a_whole` | `config_safety::hidden_untracked_note` | `config_safety::hidden_untracked_files_are_said_to_be_hidden` |
 | IG-05 | Stage All with hidden untracked files | `showUntrackedFiles=no`, a hidden new file; Stage All | the hidden file is not staged without saying so | `op_safety::stage_all_leaves_hidden_untracked_files_out` | `op_safety::hidden_untracked_and_stale_stage` | `op_safety::stage_all_leaves_hidden_untracked_files_out` |
-| IG-06 | Negation and global excludes | `!keep.log` in a nested `.gitignore`; `core.excludesFile` | as git decides | — | — | — |
+| IG-06 | Negation and global excludes | `!keep.log` in a nested `.gitignore`; `core.excludesFile` | as git decides | `wf_shapes::ig06_negation_and_excludes_file` | `wf_shapes::ig06_negation_and_excludes_file` | `wf_shapes::ig06_negation_and_excludes_file` |
 
 ## RN — Renames
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| RN-01 | Rename a file and stage both sides | `mv a b`; stage deletion and new file | one rename staged; unstage brings both back | ~`unix_fs::rename_only_in_case` | — | — |
-| RN-02 | Rename with edits, stage some lines | `mv a b` + edit | lines of `b` stage; rename detected once both staged | — | — | — |
+| RN-01 | Rename a file and stage both sides | `mv a b`; stage deletion and new file | one rename staged; unstage brings both back | `wf_shapes::rn01_stage_and_unstage_both_halves_of_a_rename`, ~`unix_fs::rename_only_in_case` | `wf_shapes::rn01_stage_and_unstage_both_halves_of_a_rename` | `wf_shapes::rn01_stage_and_unstage_both_halves_of_a_rename` |
+| RN-02 | Rename with edits, stage some lines | `mv a b` + edit | lines of `b` stage; rename detected once both staged | `wf_shapes::rn02_stage_lines_of_a_renamed_file_then_its_deletion` | `wf_shapes::rn02_stage_lines_of_a_renamed_file_then_its_deletion` | `wf_shapes::rn02_stage_lines_of_a_renamed_file_then_its_deletion` |
 | RN-03 | File history across a rename | Go to Commit with the file | commits through the rename | `search::file_history_follows_renames_and_deleted_files` | `menus::go_to_commit` | `views::go_to_commit_finds_file_history_and_messages` |
-| RN-04 | Commit diff of a rename | select the commit | old → new name | `history_diffs::batched_commit_diffs_match_single_ones` | — | — |
+| RN-04 | Commit diff of a rename | select the commit | old → new name | `history_diffs::batched_commit_diffs_match_single_ones` | `wf_shapes::rn04_a_commit_that_renames` | `wf_shapes::rn04_a_commit_that_renames` |
 | RN-05 | Merge across a rename | `feat` renames `a`, `main` edits `a` | clean merge, edit in the new name | `wf_merge::rn05_merge_across_a_rename` | `wf_merge::rn05_merge_across_a_rename` | `wf_merge::rn05_merge_across_a_rename` |
 
 ## BN — Binary files
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| BN-01 | Binary next to text | change both | binary stages whole; a binary patch is an error, not a broken index | `unix_fs::binary_next_to_text` | — | — |
-| BN-02 | Text becomes binary and back | — | listed right each time | `unix_fs::text_becomes_binary` | — | — |
+| BN-01 | Binary next to text | change both | binary stages whole; a binary patch is an error, not a broken index | `unix_fs::binary_next_to_text` | `wf_shapes::bn01_a_line_beside_binary_files` | `wf_shapes::bn01_stage_a_line_beside_binary_files`, `wf_shapes::bn01_stage_binary_files`, `wf_shapes::bn01_unstage_a_binary_file`, `wf_shapes::bn01_discard_a_binary_file` |
+| BN-02 | Text becomes binary and back | — | listed right each time | `unix_fs::text_becomes_binary` | `wf_shapes::bn02_text_becomes_binary_and_back` | `wf_shapes::bn02_text_becomes_binary_and_back`, `wf_shapes::bn02_unstage_a_line_of_the_text_again` |
 | BN-03 | Huge / binary file in a commit | select the commit | listed, not diffed; Load anyway for text | `history_diffs::huge_files_are_listed_but_not_diffed`, `history_diffs::stash_and_compare_guard_huge_files` | `speed::huge_file_in_a_commit_loads_on_demand` | `speed::huge_file_in_a_commit_loads_on_demand` |
 
 ## BG — Big and many
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| BG-01 | A commit with a huge diff | merge of 1 700 files | shows after one load | — | `speed::huge_commit_shows_after_one_load` | — |
-| BG-02 | Very long lines | 200 KB lines | diff and stage byte-exact | `unix_fs::very_long_lines` | — | — |
-| BG-03 | Long history | 5 000+ commits | compact rows, partial history first | `repo_shapes::very_long_linear_history`, `repo_shapes::history_rows_are_compact`, `repo_shapes::partial_history_is_the_newest_slice_of_the_full_one` | — | — |
+| BG-01 | A commit with a huge diff | merge of 1 700 files | shows after one load | `wf_shapes::bg01_a_huge_merge_loads_once` | `speed::huge_commit_shows_after_one_load` | `wf_shapes::bg01_a_huge_merge_loads_once` |
+| BG-02 | Very long lines | 200 KB lines | diff and stage byte-exact | `unix_fs::very_long_lines` | `wf_shapes::bg02_stage_and_discard_beside_very_long_lines` | `wf_shapes::bg02_stage_a_very_long_line`, `wf_shapes::bg02_discard_beside_very_long_lines` |
+| BG-03 | Long history | 5 000+ commits | compact rows, partial history first | `repo_shapes::very_long_linear_history`, `repo_shapes::history_rows_are_compact`, `repo_shapes::partial_history_is_the_newest_slice_of_the_full_one` | `wf_shapes::bg03_a_long_history` | `wf_shapes::bg03_a_long_history` |
 | BG-04 | Stage a group of > 200 paths | 250 untracked files; stage the group | all staged (chunked `git add`) | `wf_staging::bg04_stage_a_group_of_250_paths` | `wf_staging::bg04_stage_a_group_of_250_paths` | `wf_staging::bg04_stage_a_group_of_250_paths` |
 | BG-05 | Watcher with thousands of folders | — | no loop, ignored trees unwatched | `linux_env::watcher_handles_thousands_of_directories`, `linux_env::watcher_leaves_ignored_trees_unwatched` | n/a | n/a |
 
@@ -477,10 +477,10 @@ working tree or the index while the app shows an older state.
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
 | NU-01 | Latin-1 / Windows-1252 lines | stage / unstage / discard lines | exact bytes; encoding named | `non_utf8::eight_bit_lines_stage_unstage_discard_exactly`, `unix_fs::latin1_content_stages_lines` | `speed::non_utf8_line_stages_exactly` | `staging::latin1_line_stages_exactly` |
-| NU-02 | UTF-16 with a `diff` attribute | lines | exact | `non_utf8::utf16_lines_stage_unstage_discard_exactly` | — | — |
+| NU-02 | UTF-16 with a `diff` attribute | lines | exact | `non_utf8::utf16_lines_stage_unstage_discard_exactly` | `wf_shapes::nu02_utf16_lines` | `wf_shapes::nu02_utf16_stage_and_discard_lines`, `wf_shapes::nu02_utf16_unstage_a_line` |
 | NU-03 | `working-tree-encoding` | discard a line; stage one line of an untracked file | in its encoding on disk, UTF-8 in the index | `non_utf8::working_tree_encoding_and_untracked_files` | `wf_eol::nu03_working_tree_encoding` | `wf_eol::nu03_working_tree_encoding` |
-| NU-04 | A file name that isn't UTF-8 | list, whole-file stage; line stage refused | refused before git, in plain words | `unix_fs::non_utf8_name_is_listed`, `unix_fs::non_utf8_name_stages`, `non_utf8::names_that_are_not_utf8_are_refused` | — | — |
-| NU-05 | Odd names everywhere | spaces, quotes, newlines, glob characters | hunks, lines, files right | `unix_fs::odd_names_tracked_hunks_and_lines`, `unix_fs::odd_names_tracked_discard_and_whole_files`, `unix_fs::odd_names_untracked_partial_stage_and_unstage`, `unix_fs::odd_names_untracked_discard_lines_and_files`, `unix_fs::odd_names_deleted_partial_stage_and_discard` | — | — |
+| NU-04 | A file name that isn't UTF-8 | list, whole-file stage; line stage refused | refused before git, in plain words | `unix_fs::non_utf8_name_is_listed`, `unix_fs::non_utf8_name_stages`, `non_utf8::names_that_are_not_utf8_are_refused` | `wf_shapes::nu04_a_name_that_is_not_utf8` | `wf_shapes::nu04_a_name_that_is_not_utf8` |
+| NU-05 | Odd names everywhere | spaces, quotes, newlines, glob characters | hunks, lines, files right | `unix_fs::odd_names_tracked_hunks_and_lines`, `unix_fs::odd_names_tracked_discard_and_whole_files`, `unix_fs::odd_names_untracked_partial_stage_and_unstage`, `unix_fs::odd_names_untracked_discard_lines_and_files`, `unix_fs::odd_names_deleted_partial_stage_and_discard` | `wf_shapes::nu05_odd_names` | `wf_shapes::nu05_hunks_of_odd_names`, `wf_shapes::nu05_stage_odd_names_by_group`, `wf_shapes::nu05_unstage_odd_names`, `wf_shapes::nu05_discard_odd_names_by_group` |
 
 ## FS — File-system paths and file types
 
@@ -488,12 +488,12 @@ working tree or the index while the app shows an older state.
 |---|---|---|---|---|---|---|
 | FS-01 | Case collision in the index | `X.h` and `x.h` on a case-insensitive disk | marked, explained; staging asks; hide and show again | `fs_paths::index_paths_the_file_system_cant_hold_are_reported`, `fs_paths::hiding_with_skip_worktree_and_showing_again` | `fs_paths::marked_explained_and_noted`, `fs_paths::stage_asks_first`, `fs_paths::hide_and_show_again` | `fs_paths::colliding_paths_marked_staging_asks_hiding_settles` |
 | FS-02 | A commit adds the other spelling | history commit adds `A.TXT` | marked before checkout | `fs_paths::a_commit_that_adds_the_other_spelling_is_marked_before_it_is_checked_out` | `fs_paths::history_commit_marked` | `fs_paths::history_commit_marked_before_checkout` |
-| FS-03 | Rename only in case | `foo` → `Foo` | delete + untracked, a rename once staged | `unix_fs::rename_only_in_case`, `unix_fs::case_sensitive_names_are_separate_files` | — | — |
-| FS-04 | NFC / NFD names | "café" both ways | two files where the disk keeps both | `unix_fs::unicode_nfc_and_nfd_names_are_separate_files` | — | — |
-| FS-05 | Symlinks | new / changed / dangling / to a folder / deleted | the link, never its target | `unix_fs::new_symlink_stage_unstage_discard`, `unix_fs::untracked_symlink_preview_is_the_link`, `unix_fs::changed_symlink_target_hunk_and_lines`, `unix_fs::dangling_symlink`, `unix_fs::symlink_to_directory`, `unix_fs::deleted_symlink_hunks` | — | — |
-| FS-06 | Path beyond a symlink | file under a tracked symlink | staging fails cleanly | `unix_fs::path_beyond_a_symlink_is_refused` | — | — |
-| FS-07 | Special files | FIFO, hard links, empty files | refresh works; each operable | `unix_fs::fifo_in_worktree_does_not_block`, `unix_fs::hard_linked_files_stage_independently`, `unix_fs::empty_files` | — | — |
-| FS-08 | git refuses a `.git` alias / clone collisions | — | explained in plain words | `fs_paths::gits_refusal_of_a_dot_git_alias_in_plain_words`, `fs_paths::a_clone_explains_gits_collided_warning` | — | — |
+| FS-03 | Rename only in case | `foo` → `Foo` | delete + untracked, a rename once staged | `unix_fs::rename_only_in_case`, `unix_fs::case_sensitive_names_are_separate_files` | `wf_shapes::fs03_rename_only_in_case` | `wf_shapes::fs03_rename_only_in_case` |
+| FS-04 | NFC / NFD names | "café" both ways | two files where the disk keeps both | `unix_fs::unicode_nfc_and_nfd_names_are_separate_files` | `wf_shapes::fs04_nfc_and_nfd_names` | `wf_shapes::fs04_nfc_and_nfd_names` |
+| FS-05 | Symlinks | new / changed / dangling / to a folder / deleted | the link, never its target | `unix_fs::new_symlink_stage_unstage_discard`, `unix_fs::untracked_symlink_preview_is_the_link`, `unix_fs::changed_symlink_target_hunk_and_lines`, `unix_fs::dangling_symlink`, `unix_fs::symlink_to_directory`, `unix_fs::deleted_symlink_hunks` | `wf_shapes::fs05_fs06_symlinks` | `wf_shapes::fs05_fs06_stage_symlinks`, `wf_shapes::fs05_discard_a_deleted_symlink` |
+| FS-06 | Path beyond a symlink | file under a tracked symlink | staging fails cleanly | `unix_fs::path_beyond_a_symlink_is_refused` | `wf_shapes::fs05_fs06_symlinks` | `wf_shapes::fs05_fs06_stage_symlinks` |
+| FS-07 | Special files | FIFO, hard links, empty files | refresh works; each operable | `unix_fs::fifo_in_worktree_does_not_block`, `unix_fs::hard_linked_files_stage_independently`, `unix_fs::empty_files` | `wf_shapes::fs07_special_files` | `wf_shapes::fs07_stage_special_files`, `wf_shapes::fs07_discard_a_hard_linked_file` |
+| FS-08 | git refuses a `.git` alias / clone collisions | — | explained in plain words | `fs_paths::gits_refusal_of_a_dot_git_alias_in_plain_words`, `fs_paths::a_clone_explains_gits_collided_warning` | `wf_shapes::fs08_a_dot_git_alias_and_colliding_names` | `wf_shapes::fs08_a_dot_git_alias_and_colliding_names` |
 
 ---
 
@@ -506,7 +506,7 @@ layer (partial `~` and `n/a` don't count as covered).
 |---|---|---|---|---|
 | ST staging | 21 | 16 | 19 | 15 |
 | EX external changes | 24 | 21 | 12 | 14 |
-| CM commit / amend / reword | 21 | 21 | 20 | 21 |
+| CM commit / amend / reword | 21 | 21 | 21 | 21 |
 | SH stash | 19 | 18 | 17 | 17 |
 | BR branches | 19 | 19 | 19 | 18 |
 | MG merge | 26 | 25 | 21 | 22 |
@@ -521,13 +521,13 @@ layer (partial `~` and `n/a` don't count as covered).
 | LF LFS | 6 | 6 | 6 | 6 |
 | DC discard | 9 | 9 | 6 | 6 |
 | RL recovery | 4 | 2 | 2 | 2 |
-| IG ignore | 6 | 5 | 5 | 5 |
-| RN renames | 5 | 3 | 2 | 2 |
-| BN binary | 3 | 3 | 1 | 1 |
-| BG big / many | 5 | 4 | 2 | 1 |
-| NU non-UTF-8 | 5 | 5 | 2 | 2 |
-| FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **266** | **242** | **209** | **209** |
+| IG ignore | 6 | 6 | 6 | 6 |
+| RN renames | 5 | 5 | 5 | 5 |
+| BN binary | 3 | 3 | 3 | 3 |
+| BG big / many | 5 | 5 | 4 | 4 |
+| NU non-UTF-8 | 5 | 5 | 5 | 5 |
+| FS paths | 8 | 8 | 8 | 8 |
+| **Total** | **266** | **246** | **227** | **227** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -541,3 +541,5 @@ at the step; once fixed, the assertion goes in and the entry goes.
 |---|---|---|
 | RM-14, RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21), and a credential prompt from a real git can't be answered while its fetch blocks that thread. The prompt dialog itself is covered with the `ask:` step (`layout::askpass_key_icon`); the round trip in gitty. | — |
 | EX-02 (all) | Line staging keeps the diff's order: the `-` / `+` pair of one line in the middle of a replaced block (all `-` lines, then all `+` lines — every line of a file whose endings changed) puts the `+` line after the block's last `-` line, so the line moves (staging line 2's pair of `a 1…a 6` gives `a 1, a 3 … a 6, a 2`); discarding a pair the same way. The tests pick the last / first line, where the order holds. Fix proposal: interleave a block's `-` / `+` pairs when every selected line's partner is selected too (needs the release fuzz model changed with it). | core `wf_eol::ex02_whole_file_to_crlf_stage_one_line_discard_another` |
+| CM-20 (all) | With `i18n.commitEncoding` set to a legacy encoding (ISO-8859-1, …), git takes the message the apps pass on stdin (UTF-8) as being in that encoding: the commit gets an `encoding ISO-8859-1` header over UTF-8 bytes. gitti shows it right (valid UTF-8 is taken as is), git log with a UTF-8 output encoding — any other clone, any forge — shows mojibake; CJK or emoji can't be in Latin-1 at all. Ways out: encode the message into the configured encoding where it fits (refuse or fall back to UTF-8 where it doesn't), or commit with `-c i18n.commitEncoding=UTF-8`. | gitti `wf_shapes::cm20_unicode_messages` |
+| NU-04 (all) | A file whose name isn't UTF-8 is listed (U+FFFD in its name) and its hunks / lines are refused in plain words, but a whole-file stage / unstage / discard passes the lossy name to git, which answers with its pathspec error (the core test `unix_fs::non_utf8_name_stages` is ignored for it). Paths are strings app-wide; the cheap step is a plain refusal for these files too. | gitti / gitty `wf_shapes::nu04_a_name_that_is_not_utf8` |

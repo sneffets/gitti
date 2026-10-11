@@ -42,6 +42,7 @@ mod wf_pick;
 mod wf_pilot;
 mod wf_remotes;
 mod wf_reset;
+mod wf_shapes;
 mod wf_staging;
 mod wf_stash;
 mod wf_tags;
@@ -86,6 +87,7 @@ const SUITES: &[(&str, fn())] = &[
     ("wf_staging", wf_staging::main),
     ("wf_eol", wf_eol::main),
     ("wf_pick", wf_pick::main),
+    ("wf_shapes", wf_shapes::main),
 ];
 
 fn main() {

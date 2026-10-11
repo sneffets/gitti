@@ -654,6 +654,13 @@ pub mod testing {
         app.read(cx).script_history()
     }
 
+    /// The summary of the active tab's commit-list row `row` (`None`: the worktree row or
+    /// past the end).
+    pub fn commit_summary(ws: &Entity<Workspace>, row: usize, cx: &App) -> Option<String> {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_commit_summary(row)
+    }
+
     /// Holds history loads back (they wait until released) — to see that the working
     /// state doesn't wait for them.
     pub fn hold_history(hold: bool) {

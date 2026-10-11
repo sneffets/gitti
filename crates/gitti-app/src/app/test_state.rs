@@ -4,7 +4,7 @@
 use gpui_kit::*;
 
 use super::{Detail, GittiApp};
-use crate::rows::DiffRow;
+use crate::rows::{DiffRow, Src};
 use crate::testing::UiState;
 
 impl GittiApp {
@@ -144,7 +144,11 @@ impl GittiApp {
             out.push_str(&format!(" {}", g.name()));
         }
         if let Some((src, file)) = row.file_ref() {
-            let path = self.file_path(src, file).unwrap_or_default();
+            // A commit's file header: as shown (`old → new` for a rename).
+            let path = match (row, self.file_diff(src, file)) {
+                (DiffRow::File { src: Src::Commit, .. }, Some(f)) => super::diff_view::commit_file_label(f),
+                _ => self.file_path(src, file).unwrap_or_default(),
+            };
             out.push_str(&format!(" {src:?} {path}"));
         }
         // A line-ending / BOM-only change: what its note row says.
@@ -154,6 +158,14 @@ impl GittiApp {
                 .filter(|d| !d.binary && !d.hunks.is_empty())
                 .and_then(gitti_core::eol_note::eol_note)
         {
+            out.push_str(&format!(": {note}"));
+        }
+        // A binary file, a file without lines: what its note says.
+        if let DiffRow::Note { src, file } = *row
+            && let Some(d) = self.file_diff(src, file).filter(|d| d.hunks.is_empty() && d.too_large.is_none())
+            && src != Src::Conflicted
+        {
+            let note = if d.binary { "Binary file" } else { d.no_lines_note() };
             out.push_str(&format!(": {note}"));
         }
         if let DiffRow::Line {
