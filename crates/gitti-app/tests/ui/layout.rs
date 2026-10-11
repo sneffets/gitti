@@ -1532,6 +1532,12 @@ fn repo_tab_marks_follow(ui: &mut Ui) {
     if marks != [("○".to_string(), "1 commit not pushed to origin/main".to_string())] {
         ui.fail(format!("ahead of origin/main, clean: {marks:?}"));
     }
+    // With a recursive OS watch (macOS, Windows) a write before the watches are in place is
+    // not seen; the scenario writes right after opening.
+    let ws = ui.ws.clone();
+    if !ui.wait_real(1500, |ui| ui.cx.update(|cx| testing::watcher_armed(&ws, cx))) {
+        ui.fail("the file watcher is not set up".into());
+    }
     std::fs::write(ui.repo.join("outside.txt"), "x\n").unwrap();
     let seen = ui.wait_real(1500, |ui| ui.is_idle() && tab_marks(ui)[0].0 == "●");
     let marks = tab_marks(ui);

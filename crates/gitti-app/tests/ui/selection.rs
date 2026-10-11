@@ -12,6 +12,7 @@ use crate::common;
 use std::path::{Path, PathBuf};
 
 use common::*;
+use gitti_app::testing::InputBox;
 
 macro_rules! fail {
     ($ui:expr, $($arg:tt)*) => {{
@@ -165,13 +166,13 @@ fn diff_word_across_a_wrap(ui: &mut Ui) {
     }
 }
 
-fn input(ui: &mut Ui, field: Option<usize>, byte: usize) -> (Option<Point<Pixels>>, String) {
+fn input(ui: &mut Ui, input: InputBox, byte: usize) -> (Option<Point<Pixels>>, String) {
     ui.frame();
     let ws = ui.ws.clone();
-    ui.cx.update(|cx| testing::input(&ws, field, byte, cx)).unwrap_or_default()
+    ui.cx.update(|cx| testing::input(&ws, input, byte, cx)).unwrap_or_default()
 }
 
-/// The commit message editor and a dialog's field (the tag message): a double click
+/// The commit message editor and a dialog's text area (the tag message): a double click
 /// selects the word, a triple click (editor) the line.
 fn editor_and_dialog_field_words(ui: &mut Ui) {
     let text = "Fix the frobnicator\n\nIt broke on_save handlers.";
@@ -182,24 +183,27 @@ fn editor_and_dialog_field_words(ui: &mut Ui) {
         (at("on_save") + 4, 2, "on_save"),
         (at("broke"), 3, "It broke on_save handlers."),
     ] {
-        let (Some(p), _) = input(ui, None, byte) else {
+        let (Some(p), _) = input(ui, InputBox::Message, byte) else {
             fail!(ui, "editor byte {byte} not laid out");
             continue;
         };
         ui.clicks(p, count, None);
-        let (_, got) = input(ui, None, byte);
+        let (_, got) = input(ui, InputBox::Message, byte);
         if got != want {
             fail!(ui, "{count} clicks in the editor at byte {byte}: {got:?}, want {want:?}");
         }
     }
     ui.step("action:gitti::CreateTag");
     let msg = "Release the frobnicator build";
-    ui.quick(&format!("field:1={msg}"));
+    let ws = ui.ws.clone();
+    ui.cx
+        .update_window(ui.window, |_, window, cx| testing::modal_text(&ws, msg, window, cx))
+        .unwrap();
     let byte = msg.find("frob").unwrap() + 3;
-    match input(ui, Some(1), byte) {
+    match input(ui, InputBox::DialogText, byte) {
         (Some(p), _) => {
             ui.clicks(p, 2, None);
-            let (_, got) = input(ui, Some(1), byte);
+            let (_, got) = input(ui, InputBox::DialogText, byte);
             if got != "frobnicator" {
                 fail!(ui, "double click in the tag message field selected {got:?}");
             }

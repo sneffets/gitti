@@ -358,6 +358,11 @@ impl Modal {
         self.fields.get(ix).map(|(_, f)| f)
     }
 
+    /// The dialog's text area (tests).
+    pub(super) fn text_area(&self) -> Option<&Entity<TextareaState>> {
+        self.text.as_ref()
+    }
+
     /// The dialog, a field or the text area has the focus (for the key tests).
     pub(super) fn has_focus(&self, window: &Window, cx: &App) -> bool {
         self.focus.is_focused(window)

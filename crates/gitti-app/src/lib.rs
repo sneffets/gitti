@@ -813,6 +813,14 @@ pub mod testing {
         out
     }
 
+    /// The active tab's file watcher has its watches in place: an outside change from now
+    /// on is seen.
+    pub fn watcher_armed(ws: &Entity<Workspace>, cx: &App) -> bool {
+        ws.read(cx)
+            .active_app()
+            .is_some_and(|app| app.read(cx).script_watcher_armed())
+    }
+
     /// No operation, refresh or reload of the active tab is running or queued (true without
     /// a repository tab).
     pub fn idle(ws: &Entity<Workspace>, cx: &App) -> bool {
@@ -949,15 +957,26 @@ pub mod testing {
         app.read(cx).script_text_point(area, line, byte)
     }
 
-    /// The commit message editor (`field` = `None`) or the open dialog's field `ix`: the
-    /// window position of its byte `byte` (`None`: not laid out) and its selected text.
+    /// A text input of the active tab, for [`input`].
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum InputBox {
+        /// The commit message editor.
+        Message,
+        /// The open dialog's single-line field `ix`.
+        DialogField(usize),
+        /// The open dialog's multi-line text area (e.g. the tag message).
+        DialogText,
+    }
+
+    /// The window position of `input`'s byte `byte` (`None`: not laid out) and its
+    /// selected text; `None` when there is no such input.
     pub fn input(
         ws: &Entity<Workspace>,
-        field: Option<usize>,
+        input: InputBox,
         byte: usize,
         cx: &App,
     ) -> Option<(Option<Point<Pixels>>, String)> {
-        ws.read(cx).script_app()?.read(cx).script_input(field, byte, cx)
+        ws.read(cx).script_app()?.read(cx).script_input(input, byte, cx)
     }
 
     /// The commit message box's text.
