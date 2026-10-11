@@ -163,6 +163,7 @@ fn settle_stamps(repo: &Path) {
 /// Add Worktree… (new branch from the selected commit) → it opens in a new tab on its
 /// folder; the original tab lists it (section + branch mark); checking its branch out
 /// offers that tab instead of git's error; Remove deletes it and closes its tab.
+/// Workflow: BR-15, WT-01
 fn add_open_remove(ui: &mut Ui) {
     let repo = base().join("add_open_remove");
     if worktrees(ui) != ["add_open_remove main current main"] {
@@ -321,6 +322,7 @@ fn add_open_remove(ui: &mut Ui) {
 
 /// Detached and existing-branch worktrees without opening a tab; a dirty one is only
 /// removed after the second, explicit Force Remove.
+/// Workflow: WT-02
 fn detached_and_dirty_remove(ui: &mut Ui) {
     let repo = base().join("detached_and_dirty_remove");
     let head = git_out(&repo, &["rev-parse", "--short=7", "HEAD"]);
@@ -417,6 +419,7 @@ fn detached_and_dirty_remove(ui: &mut Ui) {
 /// The commit list marks worktrees (a folder in the label of a branch checked out
 /// elsewhere, an own label for a detached one); Add Worktree with folders makes a sparse
 /// one (listed + marked `sparse`, a clean tab); Sparse Folders… changes / clears it.
+/// Workflow: WT-04
 fn log_marks_and_sparse(ui: &mut Ui) {
     let repo = base().join("log_marks_and_sparse");
     std::fs::create_dir_all(repo.join("sub/deep")).unwrap();
@@ -517,6 +520,7 @@ fn log_marks_and_sparse(ui: &mut Ui) {
 
 /// A tab on a linked worktree: its working state, staging, committing, refs moved by a
 /// commit in the main worktree; the cached list costs no git on a refresh.
+/// Workflow: WT-03
 fn linked_tab_works(ui: &mut Ui) {
     let repo = base().join("linked_tab_works");
     let wt = base().join("linked_tab_works-wt");
@@ -589,6 +593,7 @@ fn branch_exists(repo: &Path, name: &str) -> bool {
 /// Remove Worktree… with "Also delete branch": a merged branch goes with it; an
 /// unmerged one is kept until the explicit Force Delete (the dialog names its commits); a
 /// dirty worktree asks for Force Remove first, then the branch question follows.
+/// Workflow: WT-02
 fn remove_with_branch(ui: &mut Ui) {
     let repo = base().join("remove_with_branch");
     let merged = base().join("remove_with_branch-merged");
@@ -662,6 +667,7 @@ fn remove_with_branch(ui: &mut Ui) {
 
 /// A linked worktree's own tab removes itself (Repository ▸ Remove This Worktree…):
 /// the main worktree's tab takes over, the worktree's tab closes, the branch goes too.
+/// Workflow: WT-05
 fn remove_from_own_tab(ui: &mut Ui) {
     let repo = base().join("remove_from_own_tab");
     let own = base().join("remove_from_own_tab-own");
@@ -712,6 +718,7 @@ fn folders(ui: &mut Ui) -> Option<(Vec<String>, String, Vec<String>)> {
 /// "Choose…" next to the folders field opens the folder tree of the commit (read
 /// without git): expand step by step (mouse and keys), check folders, the result fills the
 /// field; Sparse Folders… starts from the worktree's folders.
+/// Workflow: WT-04
 fn folder_picker(ui: &mut Ui) {
     let repo = base().join("folder_picker");
     for f in ["src/app/x.rs", "src/core/deep/y.rs", "docs/z.md"] {
@@ -807,6 +814,7 @@ fn folder_picker(ui: &mut Ui) {
 /// tab too), Repair (a worktree moved by hand is prunable until Repair gets its new
 /// folder; git's report is shown; nothing to repair says so), palette entries, and the
 /// Add Worktree key (⌘⌥W / Ctrl+Alt+W) with its hint.
+/// Workflow: WT-05
 fn move_and_repair(ui: &mut Ui) {
     let repo = base().join("move_and_repair");
     let wt = base().join("move_and_repair-wt");
@@ -937,6 +945,7 @@ fn move_and_repair(ui: &mut Ui) {
 /// why), a new branch, an existing one (Check Out), completion buttons that fill the
 /// field, the branch of this tab (refused), a remote branch (tracked; the folder named
 /// after the local branch), detached (the name not used).
+/// Workflow: WT-01
 fn live_plan(ui: &mut Ui) {
     let repo = base().join("live_plan");
     git(&repo, &["branch", "side", "HEAD~1"]);
@@ -1093,6 +1102,7 @@ fn main_worktree_alone(ui: &mut Ui) {
 /// working directory has changes), a linked worktree with an untracked file, none on a
 /// clean one. A refresh reads the others with one `git status` each; folded, nothing is
 /// read; unfolding reads them again; moving through the sidebar reads none.
+/// Workflow: WT-06
 fn sidebar_marks(ui: &mut Ui) {
     let repo = base().join("sidebar_marks");
     let clean = base().join("sidebar_marks-clean");

@@ -44,6 +44,7 @@ fn pair_repo() -> tempfile::TempDir {
     dir
 }
 
+/// Workflow: FS-01
 #[gitti_test::test]
 fn colliding_paths_marked_staging_asks_hiding_settles() {
     let dir = pair_repo();
@@ -128,6 +129,7 @@ fn file_list_menu_and_greyed_palette_entries() {
 /// refusing them): its header carries the mark and the explanation says what checking it
 /// out does — before anything is checked out, from the paths in memory (showing it again
 /// runs no git).
+/// Workflow: FS-02
 #[gitti_test::test]
 fn history_commit_marked_before_checkout() {
     let dir = import(&[

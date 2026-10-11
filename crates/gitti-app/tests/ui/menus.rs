@@ -350,6 +350,7 @@ fn editor_lines() -> usize {
 
 /// The menu bar has the full menu set and the new entries; the dialog entries open their
 /// dialog (menu action and palette alike), the pickers too.
+/// Workflow: RM-01
 fn menu_entries(ui: &mut Ui) {
     let items = menus::menu_items();
     let has = |menu: &str, label: &str| items.iter().any(|(m, l, _)| m == menu && l == label);
@@ -554,6 +555,7 @@ fn terminal_chooser(ui: &mut Ui) {
 /// "Add to .gitignore…" is prefilled `/path`, the suggestion buttons fill the (editable)
 /// line, OK appends it and the file disappears; the same pattern twice gives one line; a
 /// tracked file can be untracked (staged removal, kept on disk).
+/// Workflow: IG-01, IG-02
 fn gitignore_dialog(ui: &mut Ui) {
     let dir = base().join("gitignore_dialog");
     ui.quick("ignore:new.txt");
@@ -608,6 +610,7 @@ fn gitignore_dialog(ui: &mut Ui) {
 /// it is kept and offers a box to delete it too; unticked, everything else goes and the
 /// status line names what was kept (before, `git clean` skipped it silently and it stayed
 /// listed as if Discard had worked only partly); ticked, it goes too.
+/// Workflow: DC-05
 fn discard_all_nested_repository(ui: &mut Ui) {
     let dir = base().join("discard_all_nested_repository");
     ui.quick("discardall");
@@ -653,6 +656,7 @@ fn discard_all_nested_repository(ui: &mut Ui) {
 /// A switch git refuses (an untracked x.txt that `feat` has): the dialog says what blocks
 /// it and offers the three ways out, each explained as it is chosen; Delete & Switch
 /// deletes only that file and switches.
+/// Workflow: BR-07, BR-08
 fn switch_blocked_ways(ui: &mut Ui) {
     let dir = base().join("switch_blocked_ways");
     ui.quick("palette:Switch Branch");
@@ -698,6 +702,7 @@ fn switch_blocked_ways(ui: &mut Ui) {
 /// folder above it that has one), the nearest existing one preselected, each target with
 /// its own pattern line relative to its folder; OK writes into the chosen file. "Track
 /// with Git LFS…" opens after its git-lfs check (or says that git-lfs is missing).
+/// Workflow: IG-03
 fn folder_rule_files(ui: &mut Ui) {
     let dir = base().join("folder_rule_files");
     std::fs::create_dir_all(dir.join("sub/deep")).unwrap();
@@ -900,6 +905,7 @@ fn init_object_format(ui: &mut Ui) {
 /// Init open the result in a new tab, the clone in the command log of the tab it was
 /// started from; Init turns a folder that is no repository into one; a bare repository is
 /// said as such; with no tab open the start page hosts the dialogs.
+/// Workflow: RM-17
 fn clone_and_init(ui: &mut Ui) {
     let bare = bare_source("upstream");
     let parent = base().join("clones");
@@ -1003,6 +1009,7 @@ fn clone_and_init(ui: &mut Ui) {
 /// finds the commits that changed it (tagged with the path, a note says what was searched)
 /// and shows that file — also for a commit not loaded yet; nothing found keeps the picker
 /// with a note.
+/// Workflow: RN-03
 fn go_to_commit(ui: &mut Ui) {
     let ids = ids_of(ui);
     ui.quick("focuslist");
@@ -1166,6 +1173,7 @@ fn ids_of(_: &mut Ui) -> Vec<String> {
 /// worktree row the Commit menu explains instead of acting (no git); Edit Commit Message on
 /// a commit; Stash Including Untracked takes the untracked file too, Drop Stash lists it;
 /// Toggle Sidebar from the menu.
+/// Workflow: CM-15, SH-02, SH-11, BR-11, BR-12, BR-17, RB-01
 fn branch_commit_stash_menus(ui: &mut Ui) {
     let dir = base().join("branch_commit_stash_menus");
     ui.quick("focuslist");
@@ -1241,6 +1249,7 @@ fn branch_commit_stash_menus(ui: &mut Ui) {
 /// The stash dialogs: Stash Changes… says what it does and refuses `--staged` with `-u`;
 /// "Stash Selected Lines or File…" stashes two selected lines of big.txt (the rest of the
 /// file stays), then the file at the cursor; "Rename Stash…" renames the first one.
+/// Workflow: SH-05, SH-06, SH-07
 fn stash_dialogs(ui: &mut Ui) {
     let dir = base().join("stash_dialogs");
     let ws = ui.ws.clone();
@@ -1391,6 +1400,7 @@ fn open_this_version(ui: &mut Ui) {
 /// before the commit, then a dialog saying what it writes; over a local change OK waits
 /// for the check box. Commit ▸ "Branches and Tags Containing Selected Commit…" lists
 /// them from the loaded history without git.
+/// Workflow: RS-06
 fn restore_and_containing(ui: &mut Ui) {
     let ids = ids_of(ui);
     let dir = ui.workdir();
@@ -1487,6 +1497,7 @@ fn restore_and_containing(ui: &mut Ui) {
 /// Merging a branch with its own history: git refuses, the error offers "Merge anyway
 /// (allow unrelated histories)", which merges; the dialog's option merges directly and is
 /// remembered for the next merge.
+/// Workflow: MG-12
 fn merge_unrelated_histories(ui: &mut Ui) {
     let dir = ui.workdir();
     let parents = || git_out(&dir, &["rev-list", "--parents", "-n1", "HEAD"]).split_whitespace().count();
@@ -1562,6 +1573,7 @@ fn diverged_repo(d: &Path) {
 /// Merge + Remember merges what the refused pull fetched (no second fetch) and is
 /// stored in gitti's settings (not the git config). "Pull with…" offers to forget
 /// it, then pulls with the strategy picked for this pull.
+/// Workflow: RB-09, RM-04
 fn pull_diverged(ui: &mut Ui) {
     use gitti_core::pull::{PullStrategy, saved_strategy};
     let dir = ui.workdir();
@@ -1633,6 +1645,7 @@ fn pull_diverged(ui: &mut Ui) {
 /// to it. After an amend, Push…'s Options with "Force with lease" lists what origin/main
 /// loses before it pushes. Remote ▸ Reset Remote Branch to Selected Commit… moves origin's
 /// main back to Base (the upstream first in its picker); the local branch stays.
+/// Workflow: RM-09
 fn push_refused_ways_out(ui: &mut Ui) {
     let dir = ui.workdir();
     let rev = |r: &str| git_out(&dir, &["rev-parse", r]).trim().to_string();
@@ -1721,6 +1734,7 @@ fn push_refused_ways_out(ui: &mut Ui) {
 /// Every sidebar menu (rows and section headers) has the entries of
 /// `gitti_core::sidebar_menus` (the table gitty's menus are checked against); "Create
 /// Branch from Stash…" works.
+/// Workflow: SH-14
 fn sidebar_menus(ui: &mut Ui) {
     use gitti_core::sidebar_menus::{SideMenu, Vars, missing};
     let fm = gitti_core::desktop::file_manager_name().to_string();
@@ -1826,6 +1840,7 @@ fn expect_palette_refusal(ui: &mut Ui, query: &str, label: &str, why: &str) {
 /// What can't act now is greyed with the reason — the menu bar, the palette (⏎ says why), a
 /// context menu — and its action says why instead of doing nothing; no git. The fixture:
 /// changes staged and unstaged, no remote, no stash, one branch.
+/// Workflow: CP-17
 fn unavailable_commands(ui: &mut Ui) {
     use gitti_core::availability::*;
     ui.quick("focuslist");
@@ -1876,6 +1891,7 @@ fn unavailable_commands(ui: &mut Ui) {
 }
 
 /// A detached HEAD greys the current branch's commands with "HEAD is detached".
+/// Workflow: BR-16
 fn detached_head_greys_branch_commands(ui: &mut Ui) {
     use gitti_core::availability::*;
     ui.quick("focuslist");
@@ -1898,6 +1914,7 @@ fn detached_head_greys_branch_commands(ui: &mut Ui) {
 }
 
 /// A fresh `git init` greys what needs a commit with "no commits yet".
+/// Workflow: CM-19
 fn fresh_repository_greys_what_needs_a_commit(ui: &mut Ui) {
     use gitti_core::availability::*;
     ui.quick("focuslist");
@@ -1927,6 +1944,7 @@ fn fresh_repository_greys_what_needs_a_commit(ui: &mut Ui) {
 /// Create Tag's message is a multi-line text area, kept as typed (`#` lines too): an
 /// annotated tag; without one a lightweight tag. The tag's sidebar menu starts with Show Tag: its tagger and message; a
 /// lightweight tag says it is one.
+/// Workflow: TG-01, TG-02
 fn tag_message_and_show_tag(ui: &mut Ui) {
     let ws = ui.ws.clone();
     let dir = ui.workdir();

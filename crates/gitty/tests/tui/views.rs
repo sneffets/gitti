@@ -53,6 +53,7 @@ fn file_list_of_a_commit_and_the_conflict_letter() {
 /// During a merge the working-directory row is the pending merge commit — a
 /// dashed edge from it to MERGE_HEAD's commit (`feat`); the rows below it have none.
 /// `feat` says MERGE_HEAD, no other row does.
+/// Workflow: MG-13
 #[gitti_test::test]
 fn merge_preview_dashes_the_pending_merge() {
     let dir = import(&[
@@ -80,6 +81,7 @@ fn merge_preview_dashes_the_pending_merge() {
 /// each with the path it had; the line above says what was searched; ⏎ selects the
 /// commit with the file under the diff cursor. Plain words search messages without git;
 /// nothing found is said.
+/// Workflow: RN-03
 #[gitti_test::test]
 fn go_to_commit_finds_file_history_and_messages() {
     let body: String = (0..20).map(|i| format!("parser line {i}\n")).collect();
@@ -189,6 +191,7 @@ fn detail(screen: &str) -> Vec<String> {
 /// The unstaged section in groups with counts and line totals; ⏎ folds a group (no
 /// git), s stages a group (one `git add` of its paths, path-limited queries), without
 /// untracked files no group headers; d on a group asks with its own wording.
+/// Workflow: ST-09, DC-07
 #[gitti_test::test]
 fn unstaged_groups_fold_stage_and_discard_with_totals() {
     let dir = grouped_repo();
@@ -459,6 +462,7 @@ fn commit_list_layouts_from_the_palette() {
 /// pushed, ● uncommitted changes; a click on them says what they are; staging keeps ●.
 /// (A commit taking ● away and counting one more ○ is the same refresh path, covered by
 /// gitti's `layout::repo_tab_marks_follow`; a commit here costs ~0.6 s.)
+/// Workflow: RM-18
 #[gitti_test::test]
 fn repo_marks_after_the_name() {
     let dir = import_with(
@@ -499,6 +503,7 @@ fn repo_marks_after_the_name() {
 /// changes, ○ one whose branch has commits no remote has, none on gitty's own (clean,
 /// pushed); moving onto one says what its mark means. The other worktrees are read with
 /// one `git status` each, none while moving through the sidebar.
+/// Workflow: WT-06
 #[gitti_test::test]
 fn worktree_entries_carry_the_marks() {
     let dir = import_with(

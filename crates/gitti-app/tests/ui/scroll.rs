@@ -567,6 +567,7 @@ fn make_ws_repo(dir: &Path) -> PathBuf {
 /// Scrolled into a file's diff, staging that whole file shows the next file of the
 /// section at the top (else the previous one) — not the old offset, which now points into
 /// whatever moved up.
+/// Workflow: ST-17
 fn diff_stage_whole_file_shows_the_next(ui: &mut Ui) {
     ui.step("select:0");
     let row_h = ui.metrics().diff_row_h;
@@ -1623,6 +1624,7 @@ fn commit_list_keys(ui: &mut Ui) {
 
 /// A history reload (a commit made outside, then a refresh) keeps the selected commit
 /// selected and in its place on screen.
+/// Workflow: EX-22
 fn commit_list_reload(ui: &mut Ui) {
     ui.step("focuslist");
     let pitch = ui.metrics().commit_row_h;
@@ -1978,6 +1980,7 @@ fn stage_hunk_lines(ui: &mut Ui, h: usize, kinds: &[&str], step: &str) {
 /// The diff stays where it is when the worktree is refreshed (nothing changed) and when a
 /// hunk below the viewport is staged; the row at the top keeps its place when one above it
 /// is staged or unstaged.
+/// Workflow: ST-17
 fn diff_stays_on_refresh_and_stage(ui: &mut Ui) {
     ui.step("select:0");
     let row_h = ui.metrics().diff_row_h;

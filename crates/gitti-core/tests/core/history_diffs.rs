@@ -197,6 +197,7 @@ fn batched_compare_diffs_match_git_diff() {
 
 /// One `git show` for several commits gives each exactly its own diff: root, rename,
 /// binary, a merge (first parent), content with \x01 at a line start.
+/// Workflow: RN-04
 #[gitti_test::test]
 fn batched_commit_diffs_match_single_ones() {
     let mut h = History::new();
@@ -239,6 +240,7 @@ fn count_since(r: &Repo, n: usize, cmd: &str) -> usize {
     r.command_log().snapshot()[n..].iter().filter(|e| e.args[0] == cmd).count()
 }
 
+/// Workflow: SH-15
 #[gitti_test::test]
 fn stash_rows_in_history_and_stash_diff() {
     let mut h = History::new();
@@ -270,6 +272,7 @@ fn stash_rows_in_history_and_stash_diff() {
 /// size, not diffed (a stash's huge untracked file too), binary ones (by type, by
 /// `.gitattributes`) say so and can't be loaded; "Load anyway" loads the others (a
 /// comparison's by `diff-tree`, a stash's untracked file from its untracked commit).
+/// Workflow: BN-03
 #[gitti_test::test]
 fn stash_and_compare_guard_huge_files() {
     use gitti_core::commit_files::{loadable, placeholder_note};
@@ -374,6 +377,7 @@ fn remotes_and_stashes_cached_until_their_files_change() {
 /// the huge one is a placeholder (never diffed: its path is excluded), every other file's
 /// diff is what `git show -p` gives; a batch with it costs one `git show` more; "Load
 /// anyway" loads exactly git's diff of that file.
+/// Workflow: BN-03
 #[gitti_test::test]
 fn huge_files_are_listed_but_not_diffed() {
     let huge: String = (0..40_000).map(|i| format!("line {i} of a huge generated file, padded to be larger than the cap\n")).collect();

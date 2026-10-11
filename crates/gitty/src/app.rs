@@ -1414,7 +1414,7 @@ impl App {
         };
         format!(
             "focus={:?} selected={} [{sel}] cursor={} {row} sel_lines={lines} marked={} unstaged={} staged={} \
-             history_rows={} history_load={:?} status={status:?} \
+             repo_state={} conflicted={} history_rows={} history_load={:?} status={status:?} \
              commit_offset={} diff_offset={} hscroll={} side_cursor={} side_offset={} \
              log_first={log_first} log_follow={} top={}{list}{}{}{}",
             self.focus,
@@ -1423,6 +1423,8 @@ impl App {
             self.marks.len(),
             self.working.unstaged.len(),
             self.working.staged.len(),
+            format!("{:?}", self.repo_state).to_lowercase(),
+            self.working.conflicted.len(),
             self.history.commits.len(),
             self.history.load,
             self.commit_offset,

@@ -23,6 +23,7 @@ fn last_message(d: &std::path::Path) -> String {
 /// The template fills the empty box with the cursor after "Area: "; Commit refuses it
 /// unedited without running git; typed there, the commit has the subject and no comment
 /// lines (also one the user edited).
+/// Workflow: CM-12
 #[gitti_test::test]
 fn template_fills_the_box_and_is_refused_unedited() {
     let dir = template_repo();
@@ -40,6 +41,7 @@ fn template_fills_the_box_and_is_refused_unedited() {
 
 /// Sign Off (palette) adds the trailer, is remembered for the repository (next start:
 /// "☑ sign off"); the bottom row shows it.
+/// Workflow: CM-13
 #[gitti_test::test]
 fn sign_off_adds_the_trailer_and_is_remembered() {
     let dir = repo();
@@ -61,6 +63,7 @@ fn sign_off_adds_the_trailer_and_is_remembered() {
 /// ↑ again an older one (the user's own from history), ↓ back and to the empty box;
 /// "Recent Commit Messages…" lists them, the template first, and asks before replacing
 /// typed text.
+/// Workflow: CM-18
 #[gitti_test::test]
 fn earlier_messages_by_up_and_the_picker() {
     let dir = repo();

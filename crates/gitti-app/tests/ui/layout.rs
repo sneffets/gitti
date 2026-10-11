@@ -360,6 +360,7 @@ fn make_delete_conflict_repo(dir: &std::path::Path) -> std::path::PathBuf {
 /// main") and offers Keep File / Delete File instead of the merge editor, both whole at the
 /// default and the most cramped sweep point; Keep File stages it (`git add`: as main has
 /// it, nothing left to show).
+/// Workflow: MG-08
 fn delete_conflict_choices(ui: &mut Ui) {
     ui.step("select:0");
     let mut checked = 0;
@@ -412,6 +413,7 @@ fn delete_conflict_choices(ui: &mut Ui) {
 /// from it (row 0) down a lane to MERGE_HEAD's commit (`feature change`), every dash inside
 /// its row (layout invariant) at the default and the most cramped sweep point; the rows
 /// below have none. MERGE_HEAD's row has the "MERGE_HEAD" badge, no other row has one.
+/// Workflow: MG-13
 fn merge_preview_graph(ui: &mut Ui) {
     for pt in points() {
         let ctx = set_point(ui, pt);
@@ -452,6 +454,7 @@ fn merge_preview_graph(ui: &mut Ui) {
 
 /// Conflicts from a `git stash pop`: the banner has Abort, Commit says why it is
 /// off; Abort asks, then puts the files back to HEAD and the stash entry stays.
+/// Workflow: SH-12
 fn stash_conflict_abort(ui: &mut Ui) {
     let ws = ui.ws.clone();
     let dir = ui.cx.update(|cx| testing::workdir(&ws, cx));
@@ -498,6 +501,7 @@ fn stash_conflict_abort(ui: &mut Ui) {
 /// A merge with a conflict: the message box gets git's merge message, Commit is
 /// off with the reason, the banner has Abort; the main part of "Resolve Conflicts" opens
 /// the merge editor; once resolved and staged, Commit concludes the merge.
+/// Workflow: MG-06, MG-10
 fn merge_commit_flow(ui: &mut Ui) {
     let ws = ui.ws.clone();
     let dir = ui.cx.update(|cx| testing::workdir(&ws, cx));
@@ -570,6 +574,7 @@ fn merge_commit_flow(ui: &mut Ui) {
 
 /// A credential prompt from the askpass helper shows the key icon (gitti showed
 /// none on Windows).
+/// Workflow: RM-14
 fn askpass_key_icon(ui: &mut Ui) {
     ui.step("ask:Enter passphrase for key '/home/u/.ssh/id_ed25519': ");
     let p = ui.check("askpass");
@@ -1527,6 +1532,7 @@ fn sweep_tab_mark(ui: &mut Ui, shown: &str, hidden: &str) {
 /// circle, staging keeps it, a commit takes it away and the hollow one counts two commits;
 /// a change in a background tab's folder shows on its tab. The empty repository next to it
 /// has none. Tooltips say it in words.
+/// Workflow: RM-18
 fn repo_tab_marks_follow(ui: &mut Ui) {
     let marks = tab_marks(ui);
     if marks != [("○".to_string(), "1 commit not pushed to origin/main".to_string())] {

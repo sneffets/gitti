@@ -149,6 +149,7 @@ fn worktree(ui: &mut Ui) {
 }
 
 /// big.txt has 16 hunks (`make_repo`): staging one moves it over at once.
+/// Workflow: ST-01
 fn stage_hunk_is_quick(ui: &mut Ui) {
     worktree(ui);
     let start = working(ui);
@@ -168,6 +169,7 @@ fn stage_hunk_is_quick(ui: &mut Ui) {
 }
 
 /// Whole files: modified, staged, untracked.
+/// Workflow: ST-07
 fn stage_and_unstage_files_are_quick(ui: &mut Ui) {
     worktree(ui);
     let (cmds, wall) = quick_step(ui, "stagefile:big.txt");
@@ -185,6 +187,7 @@ fn stage_and_unstage_files_are_quick(ui: &mut Ui) {
 }
 
 /// A line selection inside the first hunk, staged with the `s` key path.
+/// Workflow: ST-02
 fn stage_lines_is_quick(ui: &mut Ui) {
     worktree(ui);
     let rows = ui.metrics().diff_rows;
@@ -206,6 +209,7 @@ fn stage_lines_is_quick(ui: &mut Ui) {
 
 /// A stage-all key pressed while a stage still runs is not refused ("Busy") but runs
 /// after it.
+/// Workflow: ST-15
 fn key_during_an_operation_waits_for_it(ui: &mut Ui) {
     worktree(ui);
     ui.focus_list();
@@ -228,6 +232,7 @@ fn key_during_an_operation_waits_for_it(ui: &mut Ui) {
 
 /// A full refresh (here: `r`) that started before a stage finishes after it: its older
 /// working state must not replace the newer one, not even for one frame.
+/// Workflow: ST-16, EX-19
 fn refresh_racing_a_stage_shows_no_old_state(ui: &mut Ui) {
     worktree(ui);
     ui.focus_list();
@@ -364,6 +369,7 @@ fn expect_tab(ui: &mut Ui, what: &str, label: &str, active: Option<&str>, files:
 /// Staging / unstaging hunks, lines and the file inside a file tab: the work_op fast path
 /// (no full refresh), the tab stays and its mark follows; a tab whose file has no changes
 /// any more falls back to all changes.
+/// Workflow: ST-14
 fn staging_in_a_file_tab_updates_the_tabs(ui: &mut Ui) {
     worktree(ui);
     ui.click_on("file-tab:1", MouseButton::Left);
@@ -446,6 +452,7 @@ fn select_row(ui: &mut Ui, ix: usize) {
 /// s / u on a selected line, d asking first (Cancel keeps, Discard drops), S / U for
 /// everything, D asking first — each a cheap work_op (its own command + path-limited
 /// re-reads), the result in the first frames.
+/// Workflow: ST-03, ST-08, ST-18, DC-01, DC-03
 fn staging_keys(ui: &mut Ui) {
     worktree(ui);
     let dir = ui.workdir();
@@ -521,6 +528,7 @@ fn staging_keys(ui: &mut Ui) {
 /// The unstaged section in groups (`make_repo` has the untracked new.txt). Folding
 /// a group runs no git; its Stage button is one `git add` of the group's paths and the
 /// usual path-limited re-read.
+/// Workflow: ST-09
 fn unstaged_groups_fold_and_stage_cheaply(ui: &mut Ui) {
     worktree(ui);
     let rows = ui.metrics().diff_rows;
@@ -679,6 +687,7 @@ fn changes_as_tree_and_marked_files(ui: &mut Ui) {
 /// whole-repository status, refs, remotes, stashes), a new directory with a file likewise;
 /// a ref moved by someone else refreshes the whole snapshot. Waits only until each expected
 /// re-read happened (real time: the watcher).
+/// Workflow: EX-01
 fn watcher_rereads_only_what_changed(ui: &mut Ui) {
     worktree(ui);
     let path = ui.workdir();
@@ -769,6 +778,7 @@ fn history(ui: &mut Ui) -> (usize, String) {
 /// The working state doesn't wait for the history. With history loads held back,
 /// a commit made outside (and a new file) shows its working state; released, the commit
 /// is added on top of the loaded rows (only it is read and sorted).
+/// Workflow: EX-22
 fn working_state_does_not_wait_for_the_history(ui: &mut Ui) {
     worktree(ui);
     let path = ui.workdir();
@@ -804,6 +814,7 @@ fn working_state_does_not_wait_for_the_history(ui: &mut Ui) {
 /// A commit adding a huge file shows it in its file list with a "Load anyway" row — its
 /// path left out of the commit's `git show` — and a click loads its diff. A huge binary
 /// file gets no "Load anyway"; both headers show the size.
+/// Workflow: BN-03
 fn huge_file_in_a_commit_loads_on_demand(ui: &mut Ui) {
     let path = ui.workdir();
     let huge: String = (0..60_000).map(|i| format!("generated line {i}, long enough to pass the cap\n")).collect();
@@ -854,6 +865,7 @@ fn huge_file_in_a_commit_loads_on_demand(ui: &mut Ui) {
 /// A commit too big for the core's commit cache (over 100 000 diff lines; e.g. a merge
 /// of 1700 files) shows after one load — it was looked up in the cache again and
 /// loaded forever ("Loading…") — and selecting its neighbour doesn't prefetch it again.
+/// Workflow: BG-01
 fn huge_commit_shows_after_one_load(ui: &mut Ui) {
     let path = ui.workdir();
     let lines: String = (0..100_001).map(|i| format!("{i}\n")).collect();
@@ -987,6 +999,7 @@ impl UiExt for Ui {
 /// A file that is not UTF-8 (`big.txt` here, Latin-1 "äö" in line 3): the file row names
 /// the encoding, the line shows (and copies) the right characters, and staging only the
 /// added line puts its exact bytes into the index, cheaply.
+/// Workflow: EX-09, NU-01
 fn non_utf8_line_stages_exactly(ui: &mut Ui) {
     worktree(ui);
     let start = working(ui);

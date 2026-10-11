@@ -208,6 +208,7 @@ fn output_window_goes_to_its_ends() {
 /// The branch switcher (b): the keys move (↓ ↑ pgdn pgup ctrl-n ctrl-j ctrl-k tab
 /// shift-tab ctrl-p), typing filters, "no matches", ⏎ checks out, esc closes. Moving runs
 /// no git.
+/// Workflow: BR-03
 #[gitti_test::test]
 fn branch_switcher_picker_keys() {
     let dir = import(&[
@@ -248,6 +249,7 @@ fn branch_switcher_picker_keys() {
 
 /// "merge" finds Merge Branch into Current…; ⏎ lists the other branches and the tags,
 /// picking one merges it. "new" finds the Create… and Add… commands too.
+/// Workflow: MG-01
 #[gitti_test::test]
 fn palette_merge_picker_and_synonyms() {
     let dir = import_with(
@@ -282,6 +284,7 @@ fn palette_merge_picker_and_synonyms() {
 
 /// The "… Current Branch…" commands on a detached HEAD say so instead of doing
 /// nothing; merging into a detached HEAD is offered (git does it).
+/// Workflow: BR-16
 #[gitti_test::test]
 fn palette_branch_commands_on_a_detached_head() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
@@ -310,6 +313,7 @@ fn offs(out: &str) -> Vec<&str> {
 /// gitti uses, `gitti_core::availability`); ⏎ on it says why in the status line and runs
 /// no git. A clean repository without remotes, stashes or submodules; its Working
 /// Directory menu greys the same way.
+/// Workflow: CP-17
 #[gitti_test::test]
 fn palette_and_menu_grey_what_cannot_act_with_the_reason() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);

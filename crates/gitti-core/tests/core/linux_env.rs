@@ -876,6 +876,7 @@ mod linux {
         *k == PathKind::Refs
     }
 
+    /// Workflow: EX-01
     #[gitti_test::test]
     fn watcher_reports_edits_but_not_our_own_reads() {
         let (_d, p) = repo();
@@ -1038,6 +1039,7 @@ mod linux {
         assert!(seen.len() <= 6, "{} batches for one burst", seen.len());
     }
 
+    /// Workflow: BG-05
     #[gitti_test::test]
     fn watcher_handles_thousands_of_directories() {
         if !alone("watcher_handles_thousands_of_directories") {
@@ -1182,6 +1184,7 @@ mod linux {
     /// directories; the user's limit is shared with every other program) — also
     /// directories ignored by a nested `.gitignore` (`*`); directories with tracked files
     /// are watched even when a pattern matches them.
+    /// Workflow: BG-05
     #[gitti_test::test]
     fn watcher_leaves_ignored_trees_unwatched() {
         if !alone("watcher_leaves_ignored_trees_unwatched") {

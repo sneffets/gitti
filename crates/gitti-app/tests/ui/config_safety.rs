@@ -100,6 +100,7 @@ fn trust_dialog(ui: &mut Ui) {
 
 /// `status.showUntrackedFiles=no`: no untracked file, and the note under "Nothing to
 /// commit" says why.
+/// Workflow: IG-04
 fn hidden_untracked_note(ui: &mut Ui) {
     let working = ui.working();
     if !working.is_empty() {

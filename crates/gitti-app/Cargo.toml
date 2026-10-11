@@ -48,6 +48,8 @@ embed-resource = "3"
 tempfile = "3"
 # `#[gitti_test::test]` (the time limit) for the unit tests.
 gitti-test.workspace = true
+# Workflow tests (`wf_*`): fixtures, "another program", expectations.
+gitti-workflow.workspace = true
 # Headless UI tests (`tests/ui`): TestAppContext + element observation.
 gpui-kit = { version = "0.7", features = ["test-support"] }
 # `examples/make_icons.rs` (same version as gpui uses).

@@ -7,6 +7,7 @@ use std::io::Write as _;
 
 use crate::support::{gitty_env, history_repo};
 
+/// Workflow: IG-04
 #[gitti_test::test]
 fn hidden_untracked_files_are_said_to_be_hidden() {
     let dir = history_repo(1);

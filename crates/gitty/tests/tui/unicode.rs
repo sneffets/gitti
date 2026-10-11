@@ -203,6 +203,7 @@ fn wrapped_wide_lines_lose_no_text() {
 
 /// y copies the odd line as it is in the file (escape sequence included); space + s stage
 /// just it; a Unicode commit message is typed, shown and committed intact.
+/// Workflow: ST-21, CM-20
 #[gitti_test::test]
 fn staging_copying_and_committing_unicode() {
     let dir = unicode_repo();

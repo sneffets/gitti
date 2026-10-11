@@ -1145,6 +1145,7 @@ mod tests {
         assert_eq!(f.needs(&change(d, &[("wt-head", Rules)], late), || stamp), Some(Snapshot));
     }
 
+    /// Workflow: EX-01
     #[gitti_test::test]
     fn worktree_changes_need_only_their_paths() {
         use PathKind::*;

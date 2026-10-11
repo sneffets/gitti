@@ -70,6 +70,7 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf, ObjectId, ObjectId) {
 /// the dialog names the local change it overwrites; a folder with `--staged` writes and
 /// deletes in both and counts an untracked file in the way as lost; names with glob
 /// characters are literal; filters run.
+/// Workflow: RS-06
 #[gitti_test::test]
 fn restore_file_and_folder_from_a_commit() {
     let (_tmp, dir, c1, _) = fixture();
@@ -129,6 +130,7 @@ fn restore_file_and_folder_from_a_commit() {
 /// The version before a commit, from its diff: a renamed file brings back the old name
 /// and removes the new one; an added file is deleted; a deleted file has no "this
 /// version"; a root commit has no version before.
+/// Workflow: RS-07
 #[gitti_test::test]
 fn restore_the_version_before_a_commit() {
     let (_tmp, dir, c1, c2) = fixture();

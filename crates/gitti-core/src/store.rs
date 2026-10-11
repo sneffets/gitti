@@ -1133,6 +1133,7 @@ mod tests {
     /// The amend message: one per worktree for the commit it amends (a newer one for
     /// another commit replaces it), gone when blanked; a db of the level before (6) gets
     /// the table.
+    /// Workflow: CM-05
     #[gitti_test::test]
     fn amend_drafts_are_kept_per_worktree_for_their_commit() {
         let dir = tempfile::tempdir().unwrap();

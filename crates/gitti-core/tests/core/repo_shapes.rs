@@ -590,6 +590,7 @@ fn raw_commit(dir: &Path, body: &[u8]) -> ObjectId {
     ))
 }
 
+/// Workflow: CM-20
 #[gitti_test::test]
 fn latin1_commit_message_is_decoded() {
     let (_t, p) = new_repo(&[]);
@@ -617,6 +618,7 @@ fn latin1_commit_message_is_decoded() {
     assert_eq!(d.author, "José");
 }
 
+/// Workflow: CM-20
 #[gitti_test::test]
 fn commit_made_with_i18n_commit_encoding() {
     // The usual way such commits come about: i18n.commitEncoding + a Latin-1 message file.
@@ -990,6 +992,7 @@ fn orphan_branches_and_unrelated_merge() {
     }
 }
 
+/// Workflow: BG-03
 #[gitti_test::test]
 fn very_long_linear_history() {
     let (_t, p) = new_repo(&[]);
@@ -1008,6 +1011,7 @@ fn very_long_linear_history() {
 /// twenty, empty trees: one `git fast-import`) cost well under 100 bytes each in rows,
 /// id lookup and graph layout (it was ~300). 47 bytes at 5000 as at 20 000, which took
 /// 2.4 s under the full suite's load.
+/// Workflow: BG-03
 #[gitti_test::test]
 fn history_rows_are_compact() {
     let (_t, p) = new_repo(&[]);
@@ -1154,6 +1158,7 @@ fn commit_graph_split_corrupt_and_disabled() {
     assert_same_history(&off, &split_plain);
 }
 
+/// Workflow: BG-03
 #[gitti_test::test]
 fn partial_history_is_the_newest_slice_of_the_full_one() {
     let (_t, p) = new_repo(&[]);
@@ -1415,6 +1420,7 @@ fn odd_ref_names_packed_loose_symbolic_and_broken() {
     assert_eq!(repo.head().unwrap().branch.as_deref(), Some("neu/ö@x"));
 }
 
+/// Workflow: TG-06
 #[gitti_test::test]
 fn tags_on_tags_and_on_non_commits() {
     use crate::fixture_kit::{History, f, repo_with};
@@ -1458,6 +1464,7 @@ fn tags_on_tags_and_on_non_commits() {
     assert!(deco.contains(&"outermost") && deco.contains(&"main"));
 }
 
+/// Workflow: BR-16
 #[gitti_test::test]
 fn detached_and_unborn_head() {
     // Empty repository: only the working-directory row.
@@ -1717,6 +1724,7 @@ fn expect_update(repo: &Repo, prev: &History, how: gitti_core::HistoryLoad) -> H
 /// A ref change reloads the history only as far as needed — not at all when
 /// nothing it shows moved, the same rows for new refs / a moved HEAD, the new commits
 /// only when they came on top — and always gives what a full load gives.
+/// Workflow: EX-22
 #[gitti_test::test]
 fn history_updates_reuse_what_did_not_change() {
     use gitti_core::HistoryLoad::{Full, Prepended, SameCommits};

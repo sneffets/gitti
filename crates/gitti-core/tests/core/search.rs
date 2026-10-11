@@ -69,6 +69,7 @@ fn subjects(r: &SearchResult) -> Vec<&str> {
     r.hits.iter().map(|h| h.summary.as_str()).collect()
 }
 
+/// Workflow: RN-03
 #[gitti_test::test]
 fn file_history_follows_renames_and_deleted_files() {
     let (_d, repo) = repo();
