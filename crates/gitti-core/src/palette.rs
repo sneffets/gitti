@@ -150,6 +150,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // The external diff / merge tool (`tool_setup`).
     both("ChooseExternalTool", crate::tool_setup::CHOOSE_LABEL),
     both("WriteCommitGraph", "Write Commit-Graph"),
+    gitti("RepositoryStatistics", "gitty gap: not yet"),
     // Branch
     both("SwitchBranch", "Switch Branch…"),
     both("CreateBranch", "Create Branch at HEAD…"),

@@ -1781,3 +1781,26 @@ impl GittiApp {
         });
     }
 }
+
+/// The repository name's menu (a right click on it in the toolbar): the statistics, the
+/// folder in the file manager / a terminal, its path.
+pub(super) fn repo_name_menu(menu: PopupMenu, app: &AppHandle, path: Option<String>) -> PopupMenu {
+    let fm = gitti_core::desktop::file_manager_name();
+    let menu = menu.item(command_item(
+        gitti_core::repo_stats::MENU_LABEL,
+        "RepositoryStatistics",
+        app,
+        |this, w, cx| this.show_repo_stats(w, cx),
+    ));
+    let Some(path) = path else {
+        return menu;
+    };
+    menu.separator()
+    .item(item(format!("Open in {fm}"), app, |_, w, cx| {
+        w.dispatch_action(Box::new(crate::OpenInFileManager), cx)
+    }))
+    .item(item("Open in Terminal", app, |_, w, cx| {
+        w.dispatch_action(Box::new(crate::OpenTerminal), cx)
+    }))
+    .item(copy_item("Copy Path", path))
+}

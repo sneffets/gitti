@@ -3,6 +3,7 @@
 //! it), then the error mark and Stash / Fetch / Pull / Push ▾ / Refresh.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _, DropdownButton};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{Disableable as _, Icon, IconName, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -48,6 +49,8 @@ impl GittiApp {
             Button::new(id).label(label).small().ghost().disabled(busy)
         };
         let app = cx.entity().downgrade();
+        let path = self.repo.as_ref().map(|r| r.workdir().display().to_string());
+        let name_app = app.clone();
         // Left and right take equal shares of the free width (both grow from 0), so the
         // command bar sits in the middle; the right side never shrinks below its buttons,
         // the left one truncates.
@@ -60,11 +63,17 @@ impl GittiApp {
             .overflow_hidden()
             .gap_2()
             .child(
+                // A right click: Repository Statistics…, the folder, its path.
                 div()
+                    .id("toolbar-repo-name")
+                    .probe("toolbar-repo-name")
                     .flex_none()
                     .font_weight(FontWeight::BOLD)
                     .text_color(p.text_strong)
-                    .child(name),
+                    .child(name)
+                    .context_menu(move |menu, _, _| {
+                        super::menus::repo_name_menu(menu, &name_app, path.clone())
+                    }),
             )
             .child(
                 div()

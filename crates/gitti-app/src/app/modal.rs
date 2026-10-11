@@ -374,6 +374,13 @@ impl Modal {
         self.text.as_ref()
     }
 
+    /// What its Copy button copies from now on (a text window that fills in).
+    pub(super) fn set_copy_text(&mut self, text: String) {
+        if let Some((_, t, _)) = self.copy.as_mut() {
+            *t = text;
+        }
+    }
+
     /// The dialog, a field or the text area has the focus (for the key tests).
     pub(super) fn has_focus(&self, window: &Window, cx: &App) -> bool {
         self.focus.is_focused(window)
@@ -977,7 +984,11 @@ impl GittiApp {
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
         *copied = true;
-        let info = format!("Copied {text}");
+        // A whole text (Repository Statistics) is not repeated in the status line.
+        let info = match text.lines().count() {
+            0 | 1 => format!("Copied {text}"),
+            n => format!("Copied {n} lines"),
+        };
         self.set_info(info);
         cx.notify();
     }

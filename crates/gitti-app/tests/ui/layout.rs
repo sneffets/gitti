@@ -1900,12 +1900,14 @@ fn clone_clipboard_note(ui: &mut Ui) {
 /// every field and check (or the text box) reachable by the wheel, nothing of it under
 /// the buttons (invariant 9); at the default point the first and last shown at once.
 /// Representative dialogs: Clone (fields + a check), Add Worktree (options, many fields,
-/// a button beside one), Edit Commit Message (a text box).
+/// a button beside one), Edit Commit Message (a text box), Repository Statistics (a text
+/// window with Copy as Text).
 fn modal_sizing_sweep(ui: &mut Ui) {
-    let dialogs: [(&str, &str, &str); 3] = [
+    let dialogs: [(&str, &str, &str); 4] = [
         ("clone", "action:gitti::CloneRepository", "modal-check:0"),
         ("add worktree", "action:gitti::AddWorktree", "modal-field:3"),
         ("edit message", "action:gitti::EditCommitMessage", "modal-text"),
+        ("repository statistics", "action:gitti::RepositoryStatistics", "modal-text"),
     ];
     for pt in points() {
         let ctx = set_point(ui, pt);
@@ -1917,7 +1919,7 @@ fn modal_sizing_sweep(ui: &mut Ui) {
             ui.step(open);
             let p = ui.check(&format!("{ctx}, opened"));
             modal_whole(ui, &p, &ctx);
-            let first = if what == "edit message" { "modal-text" } else { "modal-field:0" };
+            let first = if last == "modal-text" { "modal-text" } else { "modal-field:0" };
             // Shown (enough of it to see what it is): whole, or 40 px of a bigger one.
             let shown = |p: &[Probe], name: &str| {
                 find(p, name).is_some_and(|l| {

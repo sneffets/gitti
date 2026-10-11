@@ -32,6 +32,7 @@ pub fn main() {
         ("non_utf8_line_stages_exactly", non_utf8_line_stages_exactly),
         ("restored_tabs_load_in_turn", restored_tabs_load_in_turn),
         ("restore_rereads_only_its_paths", restore_rereads_only_its_paths),
+        ("repository_statistics_run_one_git", repository_statistics_run_one_git),
     ];
     // Every scenario changes the repository: each gets a fresh one.
     let counter = std::cell::Cell::new(0);
@@ -1096,4 +1097,23 @@ fn restore_rereads_only_its_paths(ui: &mut Ui) {
     };
     restore(ui, "new.txt", false, &["U new.txt 1", "U old.txt 1"]);
     restore(ui, "added.txt", true, &["S added.txt 1"]);
+}
+
+/// Repository Statistics: opening the window runs one git process (`count-objects`; the
+/// rest is read in-process, the commits counted on the loaded history) — no refresh, no
+/// history walk.
+fn repository_statistics_run_one_git(ui: &mut Ui) {
+    let n = ui.n_git();
+    ui.quick("focuslist");
+    ui.step("action:gitti::RepositoryStatistics");
+    let ws = ui.ws.clone();
+    let filled = ui.wait_real(1500, |ui| {
+        let t = ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+        ui.is_idle() && t.contains("Git data:") && !t.contains("reading…") && !t.contains("counting…")
+    });
+    let cmds = ui.git_since(n);
+    if !filled || cmds.len() != 1 || !cmds[0].starts_with("count-objects") {
+        ui.fail(format!("Repository Statistics (filled: {filled}) ran {cmds:#?}"));
+    }
+    ui.quick("cancel");
 }
