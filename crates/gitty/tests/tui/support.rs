@@ -119,6 +119,7 @@ pub fn gitty_env(
     env: &[(&str, &str)],
     script: &str,
 ) -> String {
+    crate::common::age_stamped_files(dir);
     let out = Command::new(env!("CARGO_BIN_EXE_gitty"))
         .arg(dir)
         .env("GITTY_SCRIPT", script)
