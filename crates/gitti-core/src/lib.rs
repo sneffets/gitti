@@ -71,6 +71,7 @@ pub mod reach;
 pub mod restore;
 pub mod ref_badges;
 pub mod repo;
+pub mod reset;
 pub mod reword;
 pub mod rows;
 pub mod safe_directory;

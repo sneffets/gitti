@@ -104,6 +104,16 @@ impl Reflog {
     }
 }
 
+/// What "Reset <branch> to Here…" (a reflog entry of a branch that isn't checked
+/// out) says before it moves `branch` to `short` (`subject`).
+pub fn reset_branch_note(branch: &str, short: &str, subject: &str) -> String {
+    format!(
+        "{branch} then points at {short} ({subject}) — git branch -f. The commits only \
+         {branch} had stay in its reflog (this list). Nothing is checked out; the working \
+         directory stays as it is."
+    )
+}
+
 /// The full name of `name`'s reflog: `HEAD` stays, a branch name gets `refs/heads/`.
 pub fn refname_of(name: &str) -> String {
     if name == "HEAD" || name.starts_with("refs/") {
@@ -123,7 +133,7 @@ fn short_of(refname: &str) -> &str {
 }
 
 /// The first line of a commit message.
-fn subject_of(message: &[u8]) -> String {
+pub(crate) fn subject_of(message: &[u8]) -> String {
     let text = String::from_utf8_lossy(message);
     text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string()
 }

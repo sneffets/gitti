@@ -326,15 +326,16 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| RS-01 | Reset soft | reset `main` to HEAD~1 (soft) | HEAD moved; the undone commit's changes staged | — | — | — |
-| RS-02 | Reset mixed | mixed | changes unstaged | — | — | — |
-| RS-03 | **Reset hard (asks)** | hard; confirm | HEAD, index and files at the target; untracked kept | `repo_ops::cherry_pick_revert_reset_and_conflict_state` | — | — |
+| RS-01 | Reset soft | reset `main` to HEAD~1 (soft) | HEAD moved; the undone commit's changes staged | `wf_reset::rs01_soft_reset_keeps_index_and_working_tree` | `wf_reset::rs01_soft_reset_from_the_commit_menu` | `wf_reset::rs01_soft_reset_from_the_commit_menu` |
+| RS-02 | Reset mixed | mixed | changes unstaged | `wf_reset::rs02_mixed_reset_keeps_the_working_tree` | `wf_reset::rs02_mixed_reset_from_the_commit_menu` | `wf_reset::rs02_mixed_reset_from_the_commit_menu` |
+| RS-03 | **Reset hard (asks)** | hard; confirm | HEAD, index and files at the target; untracked kept | `repo_ops::cherry_pick_revert_reset_and_conflict_state`, `wf_reset::rs03_hard_reset_says_what_is_lost_and_does_it` | `wf_reset::rs03_hard_reset_asks_naming_what_is_lost` | `wf_reset::rs03_hard_reset_asks_naming_what_is_lost` |
 | RS-04 | Reset hard, recover from the reflog | reset hard; Show Reflog; Create Branch Here on the lost commit | the lost commit back on a branch | `reflog::heads_reflog_keeps_the_commit_a_reset_dropped` | `reflog::create_branch_keeps_a_lost_commit`, `reflog::lists_shows_and_navigates` | `reflog::reflog_lists_shows_navigates_and_recovers` |
-| RS-05 | Reset to colliding paths | target has `X.h` and `x.h` (case-insensitive disk) | the app says which paths can't be checked out | `fs_paths::switching_and_resetting_to_colliding_paths_say_so` | — | — |
+| RS-05 | Reset to colliding paths | target has `X.h` and `x.h` (case-insensitive disk) | the app says which paths can't be checked out | `fs_paths::switching_and_resetting_to_colliding_paths_say_so` | `wf_reset::rs05_reset_to_colliding_paths_says_so` | `wf_reset::rs05_reset_to_colliding_paths_says_so` |
 | RS-06 | Restore a file / folder from a commit | Restore from Selected Commit… | working tree (and index with `--staged`) as the commit; local change named first | `restore::restore_file_and_folder_from_a_commit` | `menus::restore_and_containing` | `menus::restore_from_a_commit_and_branches_containing_it` |
-| RS-07 | Restore the version before a commit | renamed / added file | old name back, new removed; added file deleted | `restore::restore_the_version_before_a_commit` | — | — |
-| RS-08 | Reset the remote branch | Reset origin/main to Here… | origin moves back (lease), local untouched | `push::reset_the_remote_branch_to_a_commit` | — | `remote::reset_remote_branch_from_the_palette` |
-| RS-09 | Move another branch to a reflog commit | reflog of `feat`; move it | `feat` at that commit | `reflog::another_branch_moves_to_a_reflog_commit` | — | — |
+| RS-07 | Restore the version before a commit | renamed / added file | old name back, new removed; added file deleted | `restore::restore_the_version_before_a_commit` | `wf_reset::rs07_restore_the_version_before_a_commit` | `wf_reset::rs07_restore_the_version_before_a_rename`, `wf_reset::rs07_restore_and_stage_the_version_before_an_addition` |
+| RS-08 | Reset the remote branch | Reset origin/main to Here… | origin moves back (lease), local untouched | `push::reset_the_remote_branch_to_a_commit` | `wf_reset::rs08_reset_the_remote_branch` | `remote::reset_remote_branch_from_the_palette` |
+| RS-09 | Move another branch to a reflog commit | reflog of `feat`; move it | `feat` at that commit | `reflog::another_branch_moves_to_a_reflog_commit`, `wf_reset::rs09_move_another_branch_to_a_reflog_commit` | `wf_reset::rs09_move_another_branch_from_its_reflog` | `wf_reset::rs09_move_another_branch_from_its_reflog` |
+| RS-10 | Undo a hard reset from the reflog | HEAD's reflog; the lost commit's entry ▸ Reset main to Here ▸ Hard (asks: nothing lost, untracked file stays) | main back at the commit, its files; untracked file kept | `wf_reset::rs10_undo_a_hard_reset_through_the_reflog` | `wf_reset::rs10_undo_a_hard_reset_from_the_reflog` | `wf_reset::rs10_undo_a_hard_reset_from_the_reflog` |
 
 ## TG — Tags
 
@@ -342,10 +343,11 @@ working tree or the index while the app shows an older state.
 |---|---|---|---|---|---|---|
 | TG-01 | Lightweight and annotated tags | Create Tag… with / without a message; delete | as typed, multi-line, `#` lines kept | `repo_ops::branch_tag_stash_remote_ops`, `repo_ops::tag_details_lightweight_annotated_signed` | `menus::tag_message_and_show_tag` | `menus::commit_menu_by_right_click_and_dot_creates_a_tag_and_a_branch` |
 | TG-02 | Show a tag | Show Tag | lightweight says so; annotated: tagger, message; signed verified | `repo_ops::tag_details_lightweight_annotated_signed` | `menus::tag_message_and_show_tag` | `menus::show_tag_lightweight_and_annotated` |
-| TG-03 | Push tags | push one / all / follow-tags | on the remote | `push::push_to_several_remotes_with_a_new_name_tags_and_a_failing_one` | ~`toolbar::push_steps_and_dialog` | `remote::push_dialog_to_two_remotes_under_a_new_name_with_tags` |
-| TG-04 | Delete a tag locally and on the remote | Delete Tag…, also on origin | gone in both | ~`repo_ops::branch_tag_stash_remote_ops` | — | `menus::sidebar_menus_rename_a_branch_and_delete_a_tag` |
-| TG-05 | Tag name already exists | Create Tag… `v1` again | refused in plain words before git | — | — | — |
-| TG-06 | Tags on tags / non-commits | — | listed and shown | `repo_shapes::tags_on_tags_and_on_non_commits` | — | — |
+| TG-03 | Push tags | push one / all / follow-tags | on the remote | `push::push_to_several_remotes_with_a_new_name_tags_and_a_failing_one`, `wf_tags::tg03_push_one_tag_then_all` | `wf_tags::tg03_push_a_tag_then_all_tags`, ~`toolbar::push_steps_and_dialog` | `remote::push_dialog_to_two_remotes_under_a_new_name_with_tags` |
+| TG-04 | Delete a tag locally and on the remote | Delete Tag…, also on origin | gone in both | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_tags::tg04_delete_a_tag_on_the_remote_and_here` | `wf_tags::tg04_delete_a_tag_on_origin_then_here` | `menus::sidebar_menus_rename_a_branch_and_delete_a_tag` |
+| TG-05 | Tag name already exists | Create Tag… `v1` again | refused in plain words before git | `wf_tags::tg05_an_existing_tag_name_is_refused_before_git` | `wf_tags::tg05_an_existing_name_is_refused_in_the_dialog` | `wf_tags::tg05_an_existing_name_is_refused_in_the_dialog` |
+| TG-06 | Tags on tags / non-commits | — | listed and shown | `repo_shapes::tags_on_tags_and_on_non_commits` | `wf_tags::tg06_tags_of_tags_and_blobs_listed_and_shown` | `wf_tags::tg06_tags_of_tags_and_blobs_listed_and_shown` |
+| TG-07 | Tag a detached commit | HEAD detached; Create Tag at HEAD… with a multi-line message (a `#` line) | annotated tag of that commit, message as typed; HEAD stays detached | `wf_tags::tg07_tag_a_detached_commit` | `wf_tags::tg07_tag_a_detached_commit` | `wf_tags::tg07_tag_a_detached_commit` |
 
 ## RM — Remotes (local bare remote)
 
@@ -510,8 +512,8 @@ layer (partial `~` and `n/a` don't count as covered).
 | CP cherry-pick | 18 | 9 | 3 | 3 |
 | RV revert | 6 | 2 | 0 | 0 |
 | RB rebase | 9 | 4 | 1 | 1 |
-| RS reset / restore | 9 | 7 | 2 | 3 |
-| TG tags | 6 | 4 | 2 | 4 |
+| RS reset / restore | 10 | 10 | 10 | 10 |
+| TG tags | 7 | 7 | 7 | 7 |
 | RM remotes | 18 | 10 | 9 | 12 |
 | WT worktrees | 8 | 7 | 6 | 5 |
 | SM submodules | 8 | 7 | 7 | 5 |
@@ -524,7 +526,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 3 | 1 | 0 |
 | NU non-UTF-8 | 5 | 5 | 1 | 1 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **263** | **191** | **118** | **125** |
+| **Total** | **265** | **197** | **131** | **135** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

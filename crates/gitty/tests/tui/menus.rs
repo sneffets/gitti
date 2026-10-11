@@ -308,7 +308,7 @@ fn sidebar_menus_drop_a_stash_and_the_stashes_header() {
 
 /// The text inside the dialog box of `screen` (between its side borders), its lines
 /// joined with spaces — wrapped sentences read whole.
-fn dialog_text(screen: &str) -> String {
+pub(crate) fn dialog_text(screen: &str) -> String {
     let lines: Vec<Vec<char>> = screen.lines().map(|l| l.chars().collect()).collect();
     let Some(col) = lines.iter().find_map(|l| l.iter().position(|c| *c == '┌')) else {
         return String::new();

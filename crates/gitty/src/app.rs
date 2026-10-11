@@ -10,7 +10,7 @@ use anyhow::Result;
 use gitti_core::commit_cache::CommitData;
 use gitti_core::diff::FileDiff;
 use gitti_core::keys::Command;
-use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, ResetMode, StashInfo, Tracking};
+use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, StashInfo, Tracking};
 use gitti_core::ops::{UnrelatedHistories, UnrelatedRetry};
 use gitti_core::patch::{PatchMode, Selection};
 use gitti_core::rows::{DiffRow, Expansion, LineSel, Src};
@@ -32,7 +32,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use crate::edit::TextEdit;
-use crate::modal::{MenuItem, Modal, PickItem};
+use crate::modal::{Live, MenuItem, Modal, PickItem};
 use crate::sidebar::{self, SideItem};
 use crate::theme::Palette;
 
@@ -58,6 +58,7 @@ mod op_stops;
 mod overwrite;
 pub mod reflog;
 mod remote_cmds;
+mod reset_cmds;
 mod repo_cmds;
 mod search;
 mod sidebar_menu;
@@ -3626,7 +3627,9 @@ impl App {
     /// editor): with one an annotated tag (`git tag -a`), without a lightweight one.
     pub fn create_tag_dialog(&mut self, rev: String) {
         let title = format!("Create tag at {}", short_rev(&rev));
-        self.modal = Some(Modal::input_checks(
+        // A name git would refuse (an existing tag, an invalid name) is refused here first.
+        let refs = self.refs.clone();
+        let modal = Modal::input_checks(
             title,
             vec![("Tag name", "")],
             vec![("Annotated — write a message next (git tag -a)", true)],
@@ -3650,7 +3653,13 @@ impl App {
                     move |app, text| create(app, name, text),
                 ));
             },
-        ));
+        )
+        .with_live(move |values, checks| Live {
+            ok_label: if checks.first().copied().unwrap_or(true) { "Next…" } else { "Create" }.into(),
+            blocked: gitti_core::tag::new_tag_problem(values.first().map_or("", |v| v.as_str()), &refs),
+            ..Default::default()
+        });
+        self.modal = Some(modal);
     }
 
     /// Show Tag: tag `name`'s details (lightweight or annotated: tagger, date, message,
@@ -3916,38 +3925,7 @@ impl App {
             })
             .unless(head_or_busy),
         );
-        for (label, mode) in [
-            ("soft", ResetMode::Soft),
-            ("mixed", ResetMode::Mixed),
-            ("hard", ResetMode::Hard),
-        ] {
-            let s = sha.clone();
-            let reset = move |app: &mut App| {
-                app.run_op(
-                    &format!("Reset ({label})"),
-                    true,
-                    After::Nothing,
-                    move |r| r.reset(&s, mode),
-                )
-            };
-            if mode == ResetMode::Hard {
-                let short = short.clone();
-                let head = head.clone();
-                items.push(MenuItem::new(format!("Reset {head} to here — hard"), move |app| {
-                    app.modal = Some(Modal::confirm(
-                        "Reset Hard",
-                        format!("Reset {head} to {short} and discard all uncommitted changes?\nThis cannot be undone."),
-                        "Reset",
-                        reset,
-                    ));
-                }));
-            } else {
-                items.push(MenuItem::new(
-                    format!("Reset {head} to here — {label}"),
-                    reset,
-                ));
-            }
-        }
+        items.extend(self.reset_items(&sha, &head));
         // The remote branch moves (push with lease); the local one stays.
         items.extend(self.remote_reset_items(&sha));
         items.push(MenuItem::separator());

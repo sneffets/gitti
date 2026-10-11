@@ -1003,11 +1003,12 @@ pub(super) fn ref_menu(
             }
             menu = menu.separator().item({
                 let name = name.clone();
+                let remotes = remotes.to_vec();
                 item("Delete Tag…", app, move |this, w, cx| {
                     let name = name.clone();
                     this.confirm(
                         format!("Delete tag {name}?"),
-                        None,
+                        Some(gitti_core::tag::delete_note(&name, &remotes)),
                         "Delete",
                         w,
                         cx,
@@ -1554,6 +1555,12 @@ impl GittiApp {
             )
             .field("Tag name", "")
             .ok("Create");
+        // A name git would refuse (an existing tag, an invalid name) is refused here first.
+        let refs = self.refs.clone();
+        let spec = spec.live(move |res| ModalLive {
+            blocked: gitti_core::tag::new_tag_problem(res.values.first().map_or("", |v| v.as_str()), &refs),
+            ..Default::default()
+        });
         self.open_modal(spec, window, cx, move |this, res, w, cx| {
             let name = res.values[0].trim().to_string();
             let message = res.text.unwrap_or_default();
@@ -1722,6 +1729,9 @@ impl GittiApp {
         });
     }
 
+    /// "Reset <branch> to …" with `mode`: soft and mixed lose nothing and run at once (the
+    /// status says what happened); a hard reset first reads what it would lose (in the
+    /// background) and asks with that ([`gitti_core::reset::ResetPlan`]).
     pub(super) fn reset_to(
         &mut self,
         rev: String,
@@ -1729,22 +1739,45 @@ impl GittiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let branch = self.head.branch.clone().unwrap_or("HEAD".into());
-        let go = move |this: &mut Self, w: &mut Window, cx: &mut Context<Self>| {
-            let rev = rev.clone();
-            this.git_op("Reset", w, cx, move |r| r.reset(&rev, mode))
-        };
-        if mode == ResetMode::Hard {
-            self.confirm(
-                format!("Hard reset {branch}?"),
-                Some("All uncommitted changes will be lost.".into()),
-                "Reset",
-                window,
-                cx,
-                go,
-            );
-        } else {
-            go(self, window, cx);
+        if mode != ResetMode::Hard {
+            return self.git_op("Reset", window, cx, move |r| r.reset(&rev, mode));
         }
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let job = cx.background_executor().spawn({
+            let rev = rev.clone();
+            async move { repo.reset_plan(&rev, mode) }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = job.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(plan) => this.hard_reset_dialog(rev, plan, window, cx),
+                    Err(e) => this.set_error(format!("{e:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The hard reset's dialog: what moves, which uncommitted changes are lost, which
+    /// untracked files stay, where the commits that leave the branch are found again.
+    fn hard_reset_dialog(
+        &mut self,
+        rev: String,
+        plan: gitti_core::reset::ResetPlan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut spec = ModalSpec::new(plan.title()).message(plan.describe()).ok(plan.ok_label());
+        if !plan.lost().is_empty() {
+            spec = spec.danger();
+        }
+        self.open_modal(spec, window, cx, move |this, _, w, cx| {
+            this.git_op("Reset", w, cx, move |r| r.reset(&rev, ResetMode::Hard))
+        });
     }
 }

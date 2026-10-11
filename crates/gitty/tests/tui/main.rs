@@ -39,3 +39,5 @@ mod views;
 mod wf_branches;
 mod wf_commit;
 mod wf_pilot;
+mod wf_reset;
+mod wf_tags;
