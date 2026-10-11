@@ -32,6 +32,7 @@ use crate::sidebar::SideItem;
 use crate::theme::{Palette, blend};
 
 mod change_search;
+mod reflog;
 
 const SIDEBAR_W: u16 = 26;
 const MAX_LANES: usize = 16;
@@ -975,7 +976,9 @@ fn draw_sidebar(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
 // ---------------------------------------------------------------------- commit list
 
 fn draw_commits(buf: &mut Buffer, area: Rect, app: &mut App, p: &Palette) {
-    if app.change.open {
+    if app.reflog.open {
+        reflog::draw(buf, area, app, p);
+    } else if app.change.open {
         change_search::draw(buf, area, app, p);
     } else {
         draw_commit_list(buf, area, app, p, true);
@@ -2561,7 +2564,7 @@ fn draw_diff_row(
             let Some(issue) = app.fs_issue_of(src, file) else {
                 return;
             };
-            let lines = issue.problem.lines(&issue.path, &app.working.fs_paths.rules);
+            let lines = app.fs_note_lines(src, issue);
             let whole = lines.get(line as usize).cloned().unwrap_or_default();
             let notes = match app.note_cols {
                 Some(cols) => gitti_core::rows::NoteWrap::Cols(cols),

@@ -9,6 +9,9 @@
 //! detail menu (`m`) has its explanation and "Hide this path". The explanation rows wrap
 //! at the pane's width; file list entries say why too. Staging such a file asks
 //! first, Discard says what it can't do, lines of such a file are not staged / discarded.
+//! A commit's, comparison's or stash's files that this file system can't hold
+//! (`PathReport::of_changes`) carry the same mark and rows — what checking the commit out
+//! or applying it would do — before anything is checked out.
 
 use gitti_core::fs_paths::{PathIssue, STAGE_THEM_TOO, discard_warning, partial_refusal, stage_question};
 use gitti_core::patch::PatchMode;
@@ -20,10 +23,37 @@ use super::{App, MenuItem, Modal, PickItem, work_files};
 const NOTE_WIDTH: usize = 72;
 
 impl App {
-    /// The problem of a working-directory file's path on this file system.
+    /// The problem of a file's path on this file system: a working-directory file's, or
+    /// one the shown commit (comparison, stash) would bring into the work tree.
     pub(crate) fn fs_issue_of(&self, src: Src, file: usize) -> Option<&PathIssue> {
+        if src == Src::Commit {
+            let super::Detail::Commit(cv) = &self.detail else {
+                return None;
+            };
+            return gitti_core::rows::change_issue(&self.commit_fs, cv.files.get(file)?);
+        }
         let path = work_files(&self.working, src).get(file)?.path();
         self.working.fs_paths.issue(path)
+    }
+
+    /// The shown commit's paths this file system can't hold (`rebuild_rows` keeps it in
+    /// `commit_fs`): from its diff and the index's paths already read, no git.
+    pub(super) fn shown_commit_fs(&self) -> std::sync::Arc<gitti_core::fs_paths::PathReport> {
+        match &self.detail {
+            super::Detail::Commit(cv) => {
+                std::sync::Arc::new(self.working.fs_paths.of_changes(&cv.files))
+            }
+            _ => Default::default(),
+        }
+    }
+
+    /// The explanation lines of `issue` (a file of `src`).
+    pub(crate) fn fs_note_lines(&self, src: Src, issue: &PathIssue) -> Vec<String> {
+        if src == Src::Commit {
+            issue.problem.change_lines(&self.commit_fs.rules)
+        } else {
+            issue.problem.lines(&issue.path, &self.working.fs_paths.rules)
+        }
     }
 
     fn fs_issues_among<'a>(&'a self, paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a PathIssue> {
@@ -106,7 +136,7 @@ impl App {
             return;
         };
         let mut items = Vec::new();
-        for line in issue.problem.lines(&issue.path, &self.working.fs_paths.rules) {
+        for line in self.fs_note_lines(src, &issue) {
             items.extend(MenuItem::notes(&line, NOTE_WIDTH));
         }
         if src == Src::Unstaged && issue.problem.cannot_hold() {

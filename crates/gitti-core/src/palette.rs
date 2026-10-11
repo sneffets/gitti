@@ -200,6 +200,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("SearchChanges", "Search in Changes…"),
     gitti("GoToRef", "gitty: b switches, the sidebar lists them"),
     both("GoToHead", "Go to HEAD"),
+    both("ShowReflog", "Reflog (Recover Lost Commits)…"),
     // The file list (`t`): gitti's file tabs ▾ (or under the command bar without
     // tabs), gitty's file picker.
     both("FileList", "Go to File…"),

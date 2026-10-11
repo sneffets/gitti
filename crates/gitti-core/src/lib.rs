@@ -56,6 +56,7 @@ pub mod progress;
 pub mod pull;
 pub mod push;
 pub mod redact;
+pub mod reflog;
 pub mod reach;
 pub mod restore;
 pub mod ref_badges;

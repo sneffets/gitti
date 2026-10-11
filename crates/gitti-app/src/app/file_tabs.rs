@@ -217,15 +217,25 @@ impl GittiApp {
                         t.set_file_tab(None, cx)
                     },
                 )];
+                let warning = cx.palette().warning;
                 items.extend(cv.files.iter().enumerate().map(|(i, f)| {
                     let (a, r) = f.added_removed();
                     let stat = gitti_core::commit_files::placeholder_stat(f)
                         .unwrap_or_else(|| format!("+{a} −{r}"));
-                    let detail = format!("{}, {stat}", change_name(f.change.letter()));
-                    picker::item(f.path(), detail, move |t, w, cx| {
+                    let mut detail = format!("{}, {stat}", change_name(f.change.letter()));
+                    // A path this file system can't hold: why, in the warning colour.
+                    let fs = self.fs_issue_of(super::Src::Commit, i).map(|is| is.problem.short());
+                    if let Some(why) = &fs {
+                        detail.push_str(&format!(" — {} {why}", gitti_core::rows::FS_MARK));
+                    }
+                    let mut it = picker::item(f.path(), detail, move |t, w, cx| {
                         t.diff_focus.focus(w, cx);
                         t.set_file_tab(Some(i), cx)
-                    })
+                    });
+                    if fs.is_some() {
+                        it.color = Some(warning);
+                    }
+                    it
                 }));
                 (items, self.file_tab.map_or(0, |i| i + 1))
             }

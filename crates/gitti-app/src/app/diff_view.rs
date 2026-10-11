@@ -410,11 +410,26 @@ impl GittiApp {
         let files = cv.files.iter().enumerate().map(|(i, f)| {
             let path = f.path().to_string();
             let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+            // A path this file system can't hold (the tooltip says why).
+            let fs = self.fs_issue_of(Src::Commit, i).map(|is| is.problem.short());
+            let tip = match &fs {
+                Some(why) => format!("{path} — {} {why}", gitti_core::rows::FS_MARK),
+                None => path.clone(),
+            };
             super::file_tabs::tab("file-tab", i + 1, self.file_tab == Some(i), s, &p)
                 .child(super::file_tabs::letter(f.change.letter(), false, &p))
                 .child(super::file_tabs::label(name))
+                .when(fs.is_some(), |d| {
+                    d.child(
+                        div()
+                            .probe(format!("file-tab-fs:{}", i + 1))
+                            .flex_none()
+                            .text_color(p.warning)
+                            .child(gitti_core::rows::FS_MARK),
+                    )
+                })
                 .tooltip(move |window, cx| {
-                    gpui_kit::component::tooltip::Tooltip::new(path.clone()).build(window, cx)
+                    gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
                 })
                 .on_click(cx.listener(move |this, _, _, cx| this.set_file_tab(Some(i), cx)))
         });

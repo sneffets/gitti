@@ -37,6 +37,9 @@ use std::path::Path;
 
 use unicode_normalization::UnicodeNormalization as _;
 
+mod changes;
+pub use changes::{CHANGE_WHAT_TO_DO, IndexPaths};
+
 /// Test override of the file system probe, e.g. `case,unicode` (comma-separated:
 /// `case`, `unicode`, `chars`, `reserved`, `nosymlinks`, and `windows` / `macos` to take
 /// that OS's rules; empty = a case-sensitive file system with everything allowed).
@@ -674,11 +677,15 @@ pub struct PathReport {
     pub rules: FsRules,
     /// Sorted by path.
     pub issues: Vec<PathIssue>,
+    /// The index's paths as this file system sees them, when its names fold (case /
+    /// Unicode form): what the paths of a commit, comparison or stash are checked against
+    /// ([`Self::of_changes`]). Only on [`crate::Repo::fs_paths`]' report.
+    pub index: Option<std::sync::Arc<IndexPaths>>,
 }
 
 impl PathReport {
     pub fn new(rules: FsRules, issues: Vec<PathIssue>) -> Self {
-        Self { rules, issues }
+        Self { rules, issues, index: None }
     }
 
     /// The problem of `path` (`None`: fine).
@@ -1079,11 +1086,18 @@ impl crate::Repo {
         let mut files = vec![git_dir.join("index")];
         files.extend(self.config_files().iter().cloned());
         let (_, cache) = self.statics_fs_paths();
-        cache.get(&files, || self.fs_paths_now()).unwrap_or_default()
+        cache.get(&files, || self.read_fs_paths(true)).unwrap_or_default()
     }
 
-    /// [`Self::fs_paths`] read now (after an operation wrote the index).
+    /// [`Self::fs_paths`] read now (after an operation wrote the index), without
+    /// [`PathReport::index`].
     pub fn fs_paths_now(&self) -> anyhow::Result<std::sync::Arc<PathReport>> {
+        self.read_fs_paths(false)
+    }
+
+    /// The index's paths checked; `with_index`: [`PathReport::index`] too (when names
+    /// fold).
+    fn read_fs_paths(&self, with_index: bool) -> anyhow::Result<std::sync::Arc<PathReport>> {
         use gix::index::entry::{Flags, Mode};
         let rules = self.fs_rules();
         let repo = self.gix()?;
@@ -1120,7 +1134,14 @@ impl crate::Repo {
             issues.extend(links);
             issues.sort_by(|a, b| a.path.cmp(&b.path));
         }
-        Ok(std::sync::Arc::new(PathReport::new(rules, issues)))
+        let mut report = PathReport::new(rules, issues);
+        if with_index && rules.folds() {
+            report.index = Some(std::sync::Arc::new(IndexPaths::new(
+                entries.iter().map(|e| e.path),
+                &rules,
+            )));
+        }
+        Ok(std::sync::Arc::new(report))
     }
 
     /// Runs `op` (a checkout, reset, cherry-pick, merge, …) and says which paths it brought

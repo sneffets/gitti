@@ -123,3 +123,45 @@ fn file_list_menu_and_greyed_palette_entries() {
     assert!(lists[0].contains(&"Hide this path (skip-worktree)"), "{out}");
     assert!(s[1].contains("Show Hidden Paths Again") && s[1].contains("no paths hidden"), "{out}");
 }
+
+/// A history commit that adds a Windows device name (`aux.c`, the file system taken as
+/// refusing them): its header carries the mark and the explanation says what checking it
+/// out does — before anything is checked out, from the paths in memory (showing it again
+/// runs no git).
+#[gitti_test::test]
+fn history_commit_marked_before_checkout() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", "a\n")] },
+        Commit {
+            branch: "side",
+            from: Some(1),
+            merge: None,
+            msg: "Add aux",
+            files: &[("aux.c", "x\n"), ("b.txt", "b\n")],
+        },
+    ]);
+    let config = tempfile::tempdir().unwrap();
+    // Rows: 0 worktree, 1 "Add aux" (newest), 2 "init".
+    let out = gitty_env(
+        dir.path(),
+        config.path(),
+        "200x50",
+        &[(ENV_TEST_FS, "reserved")],
+        "key:j;state;dump;key:j;cmds;key:k;cmds;dump",
+    );
+    let s = screens(&out);
+    assert!(states(&out)[0].contains("Add aux"), "{out}");
+    for screen in [s[0], s[1]] {
+        assert!(screen.contains("⚠ aux.c: reserved name on Windows"), "{out}");
+        assert!(
+            screen.contains("Can't be checked out on this file system: aux.c is a reserved device name"),
+            "{out}"
+        );
+    }
+    // Back to the loaded commit: its diff isn't loaded again, the marks cost no git.
+    let blocks = cmds(&out);
+    assert!(
+        !blocks[1].iter().any(|c| c.contains("git show")),
+        "showing the marked commit again loaded it: {out}"
+    );
+}
