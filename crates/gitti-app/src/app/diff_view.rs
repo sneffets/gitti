@@ -1303,7 +1303,7 @@ impl GittiApp {
             DiffRow::Section(src) => self.render_section_row(base, src, ix, &p, cx),
             DiffRow::Group(group) => self.render_group_row(base, group, ix, &p, cx),
             DiffRow::Folder { src, folder } => self.render_folder_row(base, src, folder, ix, &p, cx),
-            DiffRow::File { src, file } => self.render_file_row(base, src, file, ix, &p, cx),
+            DiffRow::File { src, file } => self.render_file_row(base, src, file, ix, !probe, &p, cx),
             DiffRow::Note { src, file }
                 if let Some(size) = self
                     .file_diff(src, file)
@@ -1646,6 +1646,8 @@ impl GittiApp {
             .into_any_element()
     }
 
+    /// A file's header row; `sticky`: its copy over the top of the list, which shows the
+    /// whole path in the tree too (the folder rows above it scrolled away).
     #[allow(clippy::too_many_arguments)]
     fn render_file_row(
         &self,
@@ -1653,6 +1655,7 @@ impl GittiApp {
         src: Src,
         file: usize,
         ix: usize,
+        sticky: bool,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1701,9 +1704,12 @@ impl GittiApp {
             .and_then(|d| self.lfs_lock_of(d.path()))
             .map(gitti_core::lfs::lock_badge);
         let letter_color = super::file_tabs::letter_color(letter, conflicted, p);
-        // The tree: indented under its folder, the file's name only.
-        let indent = self.file_indent(src, file);
-        let path = self.tree_file_label(src, file, path);
+        // The tree: indented under its folder, the file's name only (not the sticky copy).
+        let (indent, path) = if sticky {
+            (None, path)
+        } else {
+            (self.file_indent(src, file), self.tree_file_label(src, file, path))
+        };
         let mut el = base
             .pr_2()
             .gap_2()
@@ -1740,7 +1746,13 @@ impl GittiApp {
                         }
                     }),
             )
-            .child(div().min_w_0().truncate().child(path))
+            .child(
+                div()
+                    .when(sticky, |d| d.probe(format!("sticky-path:{path}")))
+                    .min_w_0()
+                    .truncate()
+                    .child(path),
+            )
             .when_some(stats, |d, (a, r)| {
                 d.child(stat_pill(format!("−{r}"), p.bg_removed, p.text_removed))
                     .child(stat_pill(format!("+{a}"), p.bg_added, p.text_added))

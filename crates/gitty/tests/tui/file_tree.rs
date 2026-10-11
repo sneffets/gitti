@@ -75,3 +75,21 @@ fn folder_action_keeps_the_cursor_on_a_real_row() {
     assert!(st[1].contains("unstaged=2 staged=2"), "staged: {out}");
     assert!(!st[1].contains("Spacer") && st[1].contains("File { src: Unstaged"), "the cursor: {out}");
 }
+
+/// In the tree a file's header shows its name under its folder; its sticky copy at the
+/// top of the pane (the folder rows scrolled away) shows the whole path.
+#[gitti_test::test]
+fn sticky_file_header_shows_the_whole_path_in_the_tree() {
+    let old: String = (0..40).map(|i| format!("line {i}\n")).collect();
+    let new: String = (0..40).map(|i| format!("LINE {i}\n")).collect();
+    let dir = fixture(&[("src/app/a.rs", &old)], &[("src/app/a.rs", &new)]);
+    let tree = format!("press:ctrl-p;{}press:enter", presses("changes as tree"));
+    let script = format!("{tree};dump;wheel:90,10,1;wheel:90,10,1;wheel:90,10,1;wheel:90,10,1;dump");
+    let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "120x40", &script);
+    let sc = screens(&out);
+    let (top, scrolled) = (detail(sc[0]), detail(sc[1]));
+    let has = |rows: &[String], s: &str| rows.iter().any(|r| r.contains(s));
+    assert!(has(&top, "M a.rs") && !has(&top, "src/app/a.rs"), "the tree's header: {out}");
+    assert!(!has(&scrolled, "src/app/ (1)"), "the folder row scrolled away: {out}");
+    assert!(has(&scrolled, "M src/app/a.rs"), "the sticky header: {out}");
+}

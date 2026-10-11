@@ -1914,7 +1914,7 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         let y = content.y + (i - app.diff_offset) as u16;
         let row = Rect::new(content.x, y, content.width, 1);
         let cursor = show_cursor && i == app.diff_cursor;
-        draw_diff_row(buf, row, app, i, cursor, digits, wrap, p);
+        draw_diff_row(buf, row, app, i, cursor, digits, wrap, false, p);
     }
     // Sticky header: the file whose lines fill the top keeps its header row visible.
     if let Some(file_row) = sticky_file_row(&app.rows, app.diff_offset).filter(|_| h > 0) {
@@ -1923,7 +1923,7 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         Clear.render(row, buf);
         buf.set_style(row, Style::new().bg(p.bg_diff));
         let cursor = show_cursor && app.diff_cursor == file_row;
-        draw_diff_row(buf, row, app, file_row, cursor, digits, wrap, p);
+        draw_diff_row(buf, row, app, file_row, cursor, digits, wrap, true, p);
     }
 }
 
@@ -2226,6 +2226,8 @@ fn draw_message_box(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) -> u1
     total
 }
 
+/// Diff row `index` in `area`; `sticky`: the file header's copy at the top of the pane,
+/// which shows the whole path in the tree too (the folder rows above it scrolled away).
 #[allow(clippy::too_many_arguments)]
 fn draw_diff_row(
     buf: &mut Buffer,
@@ -2235,6 +2237,7 @@ fn draw_diff_row(
     cursor: bool,
     digits: u16,
     wrap: Option<usize>,
+    sticky: bool,
     p: &Palette,
 ) {
     let (x, y, w) = (area.x, area.y, area.width);
@@ -2411,7 +2414,7 @@ fn draw_diff_row(
                 .or_else(|| wf.map(|w| w.path().to_string()))
                 .unwrap_or_default();
             // The tree: the file's name under its folder (a rename says where from).
-            let depth = app.folders.file_depth(src, file);
+            let depth = app.folders.file_depth(src, file).filter(|_| !sticky);
             let path = match (depth, diff) {
                 (None, _) => path,
                 (Some(_), Some(d)) if d.old_path.is_some() && d.old_path != d.new_path => format!(
