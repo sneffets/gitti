@@ -89,6 +89,8 @@ fn run() -> Result<()> {
     if script.is_none() {
         gitti_core::startup::begin("gitty", env!("CARGO_PKG_VERSION"));
     }
+    // GIT_DIR / GIT_WORK_TREE this start has (checked when that folder opens).
+    gitti_core::open_check::LaunchEnv::capture(arg.as_deref().map(std::path::Path::new));
     let path = arg.unwrap_or_else(|| ".".into());
     let mut repo = match Repo::open(&path) {
         Ok(repo) => repo,

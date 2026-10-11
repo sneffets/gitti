@@ -764,6 +764,60 @@ fn bare_repository_is_refused() {
 }
 
 
+/// A repository kept apart from its work tree ("dotfiles": `core.worktree` names the
+/// folder, which has no `.git`): opening the git dir is refused with how to link them —
+/// git run in the work tree (as gitti / gitty do) would not find it; linked by a `.git`
+/// file it opens from either side. Started with `GIT_DIR` / `GIT_WORK_TREE` naming it while
+/// the folder leads nowhere (or elsewhere), the start is refused; a path given that is not
+/// `GIT_WORK_TREE` (a hook starting the app for another repository) ignores them.
+#[gitti_test::test]
+fn separate_git_dir_with_a_work_tree() {
+    use gitti_core::OpenError;
+    use gitti_core::open_check::LaunchEnv;
+    use gitti_core::paths::canonical;
+    let t = tempfile::tempdir().unwrap();
+    let (git_dir, home) = (t.path().join("cfg"), t.path().join("home"));
+    fs::create_dir_all(&home).unwrap();
+    crate::fx::bare(&git_dir);
+    let config = git_dir.join("config");
+    fs::write(
+        &config,
+        format!(
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = {}\n",
+            home.display().to_string().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    let (git_dir, home) = (canonical(&git_dir), canonical(&home));
+    let err = Repo::open(&git_dir).unwrap_err();
+    let want = OpenError::WorkTreeElsewhere { git_dir: git_dir.clone(), work_tree: home.clone() };
+    assert_eq!(err.downcast_ref::<OpenError>(), Some(&want), "{err:#}");
+    assert!(err.to_string().contains("gitdir: "), "{err}");
+
+    // Started in home with the variables: refused while home leads nowhere.
+    let env = LaunchEnv::from_values(None, &home, Some(git_dir.as_os_str()), Some(".".as_ref()))
+        .unwrap();
+    assert_eq!((env.path.as_path(), env.work_tree.as_deref()), (home.as_path(), Some(home.as_path())));
+    let problem = env.problem(None).unwrap();
+    assert!(problem.to_string().contains("GIT_DIR="), "{problem}");
+    // A hook of another repository starting the app for `ours`: the path wins.
+    let ours = t.path().join("ours");
+    assert_eq!(LaunchEnv::from_values(Some(&ours), &home, Some(git_dir.as_os_str()), None), None);
+    assert_eq!(
+        LaunchEnv::from_values(Some(&home), t.path(), Some(git_dir.as_os_str()), Some(home.as_os_str()))
+            .map(|e| e.path),
+        Some(home.clone())
+    );
+
+    // Linked by a .git file: opens from both sides, the variables agree.
+    fs::write(home.join(".git"), format!("gitdir: {}\n", git_dir.display())).unwrap();
+    for open in [&git_dir, &home] {
+        let r = Repo::open(open).unwrap();
+        assert_eq!((r.workdir(), r.git_dir()), (home.as_path(), Some(git_dir.clone())));
+    }
+    assert_eq!(env.problem(Some(&Repo::open(&home).unwrap())), None);
+}
+
 #[gitti_test::test]
 #[ignore = "helper of git_dir_in_the_environment_does_not_leak (runs in a child process)"]
 fn env_leak_child() {

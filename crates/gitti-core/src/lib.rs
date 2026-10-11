@@ -46,6 +46,7 @@ pub mod merge;
 pub mod merge_session;
 pub mod nav;
 pub mod object_format;
+pub mod open_check;
 pub mod ops;
 pub mod overwrite;
 pub mod palette;

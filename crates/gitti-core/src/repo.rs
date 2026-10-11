@@ -316,6 +316,12 @@ pub enum OpenError {
     Bare(PathBuf),
     /// git is not installed / not on `PATH` ([`crate::caps::GitCaps`]).
     GitMissing,
+    /// A repository whose work tree (`core.worktree`) has no `.git` leading back to it:
+    /// git, run in the work tree, would not find it ([`crate::open_check`]).
+    WorkTreeElsewhere { git_dir: PathBuf, work_tree: PathBuf },
+    /// Started with `GIT_DIR` (and maybe `GIT_WORK_TREE`) naming another repository than
+    /// the folder opened ([`crate::open_check::LaunchEnv`]).
+    GitDirEnv { git_dir: PathBuf, work_tree: Option<PathBuf>, path: PathBuf },
 }
 
 impl OpenError {
@@ -324,6 +330,8 @@ impl OpenError {
         match self {
             OpenError::Bare(_) => "Bare repository",
             OpenError::GitMissing => "git not found",
+            OpenError::WorkTreeElsewhere { .. } => "Work tree without .git",
+            OpenError::GitDirEnv { .. } => "GIT_DIR not followed",
         }
     }
 }
@@ -340,6 +348,45 @@ impl std::fmt::Display for OpenError {
                 dir.display()
             ),
             OpenError::GitMissing => f.write_str(&crate::caps::GitCaps::missing_message()),
+            OpenError::WorkTreeElsewhere { git_dir, work_tree } => write!(
+                f,
+                "{} is a repository whose work tree is {} (core.worktree), but that folder \
+                 has no .git leading back to it, so git run there does not find this \
+                 repository — and gitti / gitty run git in the work tree. To open it, link the \
+                 two: write a file {} containing the line \"gitdir: {}\" (from then on git \
+                 commands anywhere in that folder use this repository), then open {}.",
+                git_dir.display(),
+                work_tree.display(),
+                work_tree.join(".git").display(),
+                git_dir.display(),
+                work_tree.display()
+            ),
+            OpenError::GitDirEnv { git_dir, work_tree, path } => {
+                let mut vars = Vec::new();
+                if !git_dir.as_os_str().is_empty() {
+                    vars.push(format!("GIT_DIR={}", git_dir.display()));
+                }
+                if let Some(w) = work_tree {
+                    vars.push(format!("GIT_WORK_TREE={}", w.display()));
+                }
+                write!(
+                    f,
+                    "Started with {}, a repository other than what {} leads \
+                     to. gitti / gitty don't follow GIT_DIR / GIT_WORK_TREE (git sets them for \
+                     hooks and aliases, where they would point every command at the wrong \
+                     repository); they open a work tree whose .git leads to its repository. \
+                     For a repository kept apart from its work tree (e.g. dotfiles), write a \
+                     file .git into the work tree containing the line \"gitdir: {}\" and open \
+                     the work tree — or start without GIT_DIR in the folder you want.",
+                    vars.join(" and "),
+                    path.display(),
+                    if git_dir.as_os_str().is_empty() {
+                        "<the repository>".to_string()
+                    } else {
+                        git_dir.display().to_string()
+                    }
+                )
+            }
         }
     }
 }
@@ -354,6 +401,11 @@ impl Repo {
     /// Opens the repository containing `path` (discovering upwards).
     /// Refuses (typed, [`OpenError`]) a bare repository and a system without git.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let opened = Self::open_here(path.as_ref());
+        crate::open_check::LaunchEnv::check_open(path.as_ref(), opened)
+    }
+
+    fn open_here(path: &Path) -> Result<Self> {
         if crate::caps::GitCaps::get().missing {
             return Err(OpenError::GitMissing.into());
         }
@@ -363,14 +415,18 @@ impl Repo {
             reduced: trust.reduced.permissions(gix_permissions()),
         };
         let repo: gix::Repository =
-            gix::ThreadSafeRepository::discover_opts(path.as_ref(), Default::default(), trust)
-                .map_err(|e| open_error(path.as_ref(), e))?
+            gix::ThreadSafeRepository::discover_opts(path, Default::default(), trust)
+                .map_err(|e| open_error(path, e))?
                 .into();
         let workdir = repo
             .workdir()
             .ok_or_else(|| OpenError::Bare(crate::paths::canonical(repo.git_dir())))?
             .to_path_buf();
         let workdir = crate::paths::canonical(&workdir);
+        let git_dir = crate::paths::canonical(repo.git_dir());
+        if !crate::open_check::work_tree_leads_to(&workdir, &git_dir) {
+            return Err(OpenError::WorkTreeElsewhere { git_dir, work_tree: workdir }.into());
+        }
         let object_hash = repo.object_hash();
         if object_hash != gix::hash::Kind::Sha1
             && let Some(why) = crate::caps::GitCaps::get().sha256_refusal()
