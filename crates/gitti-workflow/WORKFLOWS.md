@@ -418,12 +418,12 @@ working tree or the index while the app shows an older state.
 | DC-01 | Discard one line | select a line; discard (asks) | only that line goes back | `staging::discard_single_line` | `speed::staging_keys` | `staging::stage_a_single_line_and_discard_lines_after_asking` |
 | DC-02 | Discard a hunk | discard the hunk (asks) | the hunk restored, others stay | `wf_staging::dc02_discard_a_hunk`, ~`hostile_config::stage_hunk_lines_unstage_and_discard` | `wf_staging::dc02_discard_a_hunk` | `wf_staging::dc02_discard_a_hunk` |
 | DC-03 | Discard All keeps staged work | staged + unstaged; Discard All | unstaged gone (untracked too), staged stays | `staging::discard_all_keeps_staged_changes` | `speed::staging_keys` | `staging::stage_all_unstage_all_discard_all_with_confirmations` |
-| DC-04 | Discard thousands of untracked files | `target/` with 1 000 files | one go; ignored file stays | `discard::discard_all_deletes_thousands_of_untracked_files_in_one_go` | — | — |
+| DC-04 | Discard thousands of untracked files | `target/` with 1 000 files | one go; ignored file stays | `discard::discard_all_deletes_thousands_of_untracked_files_in_one_go` | `wf_discard::dc04_discard_thousands_of_untracked_files` | `wf_discard::dc04_discard_thousands_of_untracked_files` |
 | DC-05 | Discard with a nested repository | untracked folder that is a repository | kept and named unless asked | `discard::nested_repository_is_kept_and_named_unless_asked`, `discard::untracked_folder_entry_keeps_a_repository_inside` | `menus::discard_all_nested_repository` | `staging::discard_all_keeps_a_nested_repository_unless_asked` |
-| DC-06 | A file can't be deleted | read-only folder | the others go; error names the file | `discard::a_file_that_cannot_be_deleted_does_not_stop_the_others`, `unix_fs::read_only_directory` | — | — |
+| DC-06 | A file can't be deleted | read-only folder (unix) | the others go; error names the file | `discard::a_file_that_cannot_be_deleted_does_not_stop_the_others`, `unix_fs::read_only_directory` | `wf_discard::dc06_a_file_that_cannot_be_deleted` | `wf_discard::dc06_a_file_that_cannot_be_deleted` |
 | DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | `wf_staging::dc07_discard_a_group` | `wf_staging::dc07_discard_a_group` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
 | DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file`, ~`staging::working_state_after_whole_files_match_a_full_read` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` |
-| DC-09 | Discard lines of a read-only file | 0444 file | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | — | — |
+| DC-09 | Discard lines of a read-only file | 0444 file (unix) | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | `wf_discard::dc09_discard_lines_of_a_read_only_file` | `wf_discard::dc09_discard_lines_of_a_read_only_file` |
 
 ## RL — Undo and recovery
 
@@ -520,7 +520,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
-| DC discard | 9 | 9 | 6 | 6 |
+| DC discard | 9 | 9 | 9 | 9 |
 | RL recovery | 4 | 2 | 2 | 2 |
 | IG ignore | 6 | 5 | 5 | 5 |
 | RN renames | 5 | 3 | 2 | 2 |
@@ -528,7 +528,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 4 | 2 | 1 |
 | NU non-UTF-8 | 5 | 5 | 2 | 2 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **267** | **244** | **214** | **214** |
+| **Total** | **267** | **244** | **217** | **217** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
