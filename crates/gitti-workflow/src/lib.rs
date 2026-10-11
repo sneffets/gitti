@@ -23,6 +23,7 @@
 //! std only (no gitti-core, no gix): a dev-dependency that adds no dependency features to
 //! the workspace build. Every git process here runs without the user's global config.
 
+pub mod br;
 pub mod cm;
 pub mod cp;
 pub mod expect;

@@ -219,6 +219,56 @@ impl Expect {
             .unwrap_or(0)
     }
 
+    /// The values of `key` (`branch.main.remote`: section, subsection, name) in the
+    /// repository's own config file (`.git/config`, no git; includes not followed), in
+    /// order. Section and name match without regard to case, the subsection exactly.
+    pub fn config(&self, key: &str) -> Vec<String> {
+        let (section, name) = key.rsplit_once('.').unwrap_or(("", key));
+        let (section, sub) = match section.split_once('.') {
+            Some((s, sub)) => (s, Some(sub)),
+            None => (section, None),
+        };
+        let text = fs::read_to_string(self.common_dir.join("config")).unwrap_or_default();
+        let mut inside = false;
+        let mut values = Vec::new();
+        for line in text.lines().map(str::trim) {
+            if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                let (s, h_sub) = match header.split_once(' ') {
+                    Some((s, q)) => (s, Some(q.trim().trim_matches('"'))),
+                    None => (header, None),
+                };
+                inside = s.eq_ignore_ascii_case(section) && h_sub == sub;
+                continue;
+            }
+            if !inside {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=')
+                && k.trim().eq_ignore_ascii_case(name)
+            {
+                values.push(v.trim().to_string());
+            }
+        }
+        values
+    }
+
+    /// The reflog of `refname` (`HEAD`, `refs/heads/main`) from its file (no git), newest
+    /// first: (old id, new id, message). Empty when it has none.
+    pub fn reflog(&self, refname: &str) -> Vec<(String, String, String)> {
+        let dir = if refname == "HEAD" { &self.git_dir } else { &self.common_dir };
+        let text = fs::read_to_string(dir.join("logs").join(refname)).unwrap_or_default();
+        let mut entries: Vec<(String, String, String)> = text
+            .lines()
+            .filter_map(|l| {
+                let (head, message) = l.split_once('\t').unwrap_or((l, ""));
+                let mut f = head.split(' ');
+                Some((f.next()?.to_string(), f.next()?.to_string(), message.to_string()))
+            })
+            .collect();
+        entries.reverse();
+        entries
+    }
+
     /// A working-tree file's bytes (`None` = not there).
     pub fn file(&self, path: &str) -> Option<Vec<u8>> {
         fs::read(self.dir.join(path)).ok()
