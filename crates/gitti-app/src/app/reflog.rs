@@ -613,11 +613,7 @@ impl GittiApp {
         cx: &mut Context<Self>,
     ) {
         let short_rev = rev[..rev.len().min(7)].to_string();
-        let text = format!(
-            "{branch} then points at {short_rev} ({subject}) — git branch -f. The commits only \
-             {branch} had stay in its reflog (this list). Nothing is checked out; the working \
-             directory stays as it is."
-        );
+        let text = gitti_core::reflog::reset_branch_note(&branch, &short_rev, &subject);
         let spec = ModalSpec::new(format!("Reset {branch} to {short_rev}?"))
             .message(text)
             .ok("Reset Branch");

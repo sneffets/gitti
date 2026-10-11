@@ -10,7 +10,7 @@ use anyhow::Result;
 use gitti_core::commit_cache::CommitData;
 use gitti_core::diff::FileDiff;
 use gitti_core::keys::Command;
-use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, ResetMode, StashInfo, Tracking};
+use gitti_core::ops::{ConflictSides, RemoteInfo, RepoState, StashInfo, Tracking};
 use gitti_core::ops::{UnrelatedHistories, UnrelatedRetry};
 use gitti_core::patch::{PatchMode, Selection};
 use gitti_core::rows::{DiffRow, Expansion, LineSel, Src};
@@ -56,6 +56,7 @@ mod op_output;
 mod overwrite;
 pub mod reflog;
 mod remote_cmds;
+mod reset_cmds;
 mod repo_cmds;
 mod search;
 mod sidebar_menu;
@@ -3852,38 +3853,7 @@ impl App {
             })
             .unless(head_or_busy),
         );
-        for (label, mode) in [
-            ("soft", ResetMode::Soft),
-            ("mixed", ResetMode::Mixed),
-            ("hard", ResetMode::Hard),
-        ] {
-            let s = sha.clone();
-            let reset = move |app: &mut App| {
-                app.run_op(
-                    &format!("Reset ({label})"),
-                    true,
-                    After::Nothing,
-                    move |r| r.reset(&s, mode),
-                )
-            };
-            if mode == ResetMode::Hard {
-                let short = short.clone();
-                let head = head.clone();
-                items.push(MenuItem::new(format!("Reset {head} to here — hard"), move |app| {
-                    app.modal = Some(Modal::confirm(
-                        "Reset Hard",
-                        format!("Reset {head} to {short} and discard all uncommitted changes?\nThis cannot be undone."),
-                        "Reset",
-                        reset,
-                    ));
-                }));
-            } else {
-                items.push(MenuItem::new(
-                    format!("Reset {head} to here — {label}"),
-                    reset,
-                ));
-            }
-        }
+        items.extend(self.reset_items(&sha, &head));
         // The remote branch moves (push with lease); the local one stays.
         items.extend(self.remote_reset_items(&sha));
         items.push(MenuItem::separator());

@@ -10,7 +10,6 @@
 use std::sync::Arc;
 
 use gitti_core::ObjectId;
-use gitti_core::ops::ResetMode;
 use gitti_core::reflog::{EXPLANATION, Reflog, ReflogEntry};
 use gitti_core::switch::SwitchTarget;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -327,11 +326,7 @@ impl App {
                 let sh = short.clone();
                 items.push(
                     MenuItem::new(format!("Reset {branch} to Here…"), move |app: &mut App| {
-                        let body = format!(
-                            "{branch} then points at {sh} ({subject}) — git branch -f. The \
-                             commits only {branch} had stay in its reflog. Nothing is checked \
-                             out; the working directory stays as it is."
-                        );
+                        let body = gitti_core::reflog::reset_branch_note(&branch, &sh, &subject);
                         app.modal = Some(Modal::confirm(
                             format!("Reset {branch} to {sh}?"),
                             body,
@@ -348,34 +343,7 @@ impl App {
                 );
             }
             None => {
-                for (label, mode) in [
-                    ("soft", ResetMode::Soft),
-                    ("mixed", ResetMode::Mixed),
-                    ("hard", ResetMode::Hard),
-                ] {
-                    let s = sha.clone();
-                    let reset = move |app: &mut App| {
-                        app.run_op(&format!("Reset ({label})"), true, After::Nothing, move |r| {
-                            r.reset(&s, mode)
-                        })
-                    };
-                    let item = if mode == ResetMode::Hard {
-                        let (sh, h) = (short.clone(), head.clone());
-                        MenuItem::new(format!("Reset {head} to here — hard"), move |app: &mut App| {
-                            app.modal = Some(Modal::confirm(
-                                "Reset Hard",
-                                format!(
-                                    "Reset {h} to {sh} and discard all uncommitted changes?\nThis cannot be undone."
-                                ),
-                                "Reset",
-                                reset,
-                            ));
-                        })
-                    } else {
-                        MenuItem::new(format!("Reset {head} to here — {label}"), reset)
-                    };
-                    items.push(item.unless(gone));
-                }
+                items.extend(self.reset_items(&sha, &head).into_iter().map(|i| i.unless(gone)));
             }
         }
         items.push(MenuItem::separator());

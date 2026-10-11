@@ -516,13 +516,31 @@ impl Repo {
         })
     }
 
+    /// `git reset --soft | --mixed | --hard <rev>`; the status line says where the branch
+    /// is now, what the mode kept and how many commits left it ([`crate::reset::done`]) —
+    /// or which paths of the new index this file system can't hold.
     pub fn reset(&self, rev: &str, mode: ResetMode) -> Result<String> {
         let flag = match mode {
             ResetMode::Soft => "--soft",
             ResetMode::Mixed => "--mixed",
             ResetMode::Hard => "--hard",
         };
-        self.noting_fs_paths(|| self.out(&["reset", "-q", flag, rev]))
+        // Read in-process before the reset: what moves and the commits leaving it.
+        let before = self.gix().ok().and_then(|repo| {
+            let target = repo.rev_parse_single(rev).ok()?.object().ok()?.peel_to_commit().ok()?.id;
+            let head = self.head().ok()?;
+            let leaving = head.id.map_or(0, |h| crate::reset::commits_leaving(&repo, h, target));
+            Some((head.branch.unwrap_or_else(|| "HEAD".into()), target, leaving))
+        });
+        self.noting_fs_paths(|| {
+            self.out(&["reset", "-q", flag, rev])?;
+            Ok(match before {
+                Some((who, target, leaving)) => {
+                    crate::reset::done(mode, &who, &target.to_hex_with_len(7).to_string(), leaving)
+                }
+                None => format!("Reset to {rev}"),
+            })
+        })
     }
 
     pub fn merge(&self, rev: &str) -> Result<String> {
