@@ -141,7 +141,50 @@ impl MergeOptions {
         a.push(rev.into());
         a
     }
+
+    /// The Merge dialog's checkboxes for these options, in [`MERGE_OPTION_LABELS`]'
+    /// order.
+    pub fn checks(&self) -> [bool; 5] {
+        [
+            self.ff == FastForward::Never,
+            self.ff == FastForward::Only,
+            self.squash,
+            self.no_commit,
+            self.allow_unrelated,
+        ]
+    }
+
+    /// The options the Merge dialog's checkboxes ([`MERGE_OPTION_LABELS`]' order) and its
+    /// message field say: `--no-ff` wins over `--ff-only`; an empty message is git's.
+    pub fn from_dialog(checks: &[bool], message: &str) -> Self {
+        let on = |i: usize| checks.get(i).copied().unwrap_or(false);
+        let message = message.trim();
+        MergeOptions {
+            ff: match (on(0), on(1)) {
+                (true, _) => FastForward::Never,
+                (false, true) => FastForward::Only,
+                _ => FastForward::Auto,
+            },
+            squash: on(2),
+            no_commit: on(3),
+            allow_unrelated: on(4),
+            message: (!message.is_empty()).then(|| message.to_string()),
+        }
+    }
 }
+
+/// The Merge dialog's message field (gitti and gitty).
+pub const MERGE_MESSAGE_LABEL: &str = "Message (optional, default: git's merge message)";
+
+/// The Merge dialog's checkboxes (gitti and gitty), in the order of
+/// [`MergeOptions::checks`].
+pub const MERGE_OPTION_LABELS: [&str; 5] = [
+    "--no-ff — always create a merge commit",
+    "--ff-only — only fast-forward, refuse otherwise",
+    "--squash — apply the changes to the index, no merge commit",
+    "--no-commit — merge, but stop before committing",
+    "--allow-unrelated-histories — also without a common commit",
+];
 
 /// What git refused with "refusing to merge unrelated histories" (the two histories share
 /// no commit), to run again with `--allow-unrelated-histories` once the user agrees.

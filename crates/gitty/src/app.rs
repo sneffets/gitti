@@ -572,6 +572,9 @@ pub struct App {
     merge_prefill: Option<String>,
     /// That message as of the last refresh (`None`: git left none).
     prepared: Option<String>,
+    /// The Merge dialog's options of the last merge (not its message), its next defaults —
+    /// as gitti's.
+    last_merge: gitti_core::ops::MergeOptions,
     /// The prepared message the user answered "Keep Mine" for: its note stays hidden.
     prepared_dismissed: Option<String>,
     pub amend: bool,
@@ -876,6 +879,7 @@ impl App {
             message_view: Default::default(),
             merge_prefill: None,
             prepared: None,
+            last_merge: Default::default(),
             prepared_dismissed: None,
             amend: false,
             draft: Default::default(),
@@ -3944,6 +3948,11 @@ impl App {
                 app.run_op("Merge", true, After::Nothing, move |r| r.merge(&s))
             })
             .unless(head_or_busy),
+        );
+        let (s, sh) = (sha.clone(), short.clone());
+        items.push(
+            MenuItem::new(format!("Merge {short} into {head}…"), move |app| app.merge_dialog(s, sh))
+                .unless(head_or_busy),
         );
         let s = sha.clone();
         items.push(

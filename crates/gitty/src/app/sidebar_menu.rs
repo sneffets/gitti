@@ -68,10 +68,40 @@ impl App {
         .unless(gitti_core::availability::in_progress(self.repo_state))
     }
 
-    /// Merges `name` (a branch or tag) into HEAD — the branch menus and the palette's
-    /// "Merge Branch into Current…".
+    /// "Merge … into ……": the Merge dialog for `name`, as [`Self::merge_item`]'s.
+    fn merge_dialog_item(&self, name: &str) -> MenuItem {
+        let n = name.to_string();
+        MenuItem::new(format!("Merge {name} into {}…", self.head_label()), move |app| {
+            app.merge_dialog(n.clone(), n)
+        })
+        .key('M')
+        .unless(gitti_core::availability::in_progress(self.repo_state))
+    }
+
+    /// Merges `name` (a branch or tag) into HEAD — the branch menus.
     pub(super) fn merge_into_head(&mut self, name: String) {
         self.run_op("Merge", true, After::Nothing, move |r| r.merge(&name))
+    }
+
+    /// The Merge dialog (as gitti's): `target` (shown as `label`) into HEAD with a message
+    /// and git's options — `--no-ff`, `--ff-only`, `--squash`, `--no-commit`,
+    /// `--allow-unrelated-histories` — the last ones ticked again (the message not). The
+    /// branch, tag and commit menus' "Merge … into ……" and the palette's "Merge Branch into
+    /// Current…".
+    pub(super) fn merge_dialog(&mut self, target: String, label: String) {
+        use gitti_core::ops::{MERGE_MESSAGE_LABEL, MERGE_OPTION_LABELS, MergeOptions};
+        let title = format!("Merge {label} into {}", self.head_label());
+        let checks = MERGE_OPTION_LABELS.into_iter().zip(self.last_merge.checks()).collect();
+        self.modal = Some(Modal::input_checks(
+            title,
+            vec![(MERGE_MESSAGE_LABEL, "")],
+            checks,
+            move |app, values, checks| {
+                let opts = MergeOptions::from_dialog(&checks, &values[0]);
+                app.last_merge = MergeOptions { message: None, ..opts.clone() };
+                app.run_op("Merge", true, After::Nothing, move |r| r.merge_with(&target, &opts))
+            },
+        ));
     }
 
     fn rebase_item(&self, name: &str) -> MenuItem {
@@ -117,6 +147,7 @@ impl App {
             let n = name.to_string();
             v.push(MenuItem::new(format!("Checkout {name}"), move |app| app.checkout(n)).key('c'));
             v.push(self.merge_item(name));
+            v.push(self.merge_dialog_item(name));
             v.push(self.rebase_item(name));
         }
         let upstream = self.tracking_of(name).and_then(|t| t.upstream.clone());
@@ -226,6 +257,7 @@ impl App {
             .key('c'),
         );
         v.push(self.merge_item(full));
+        v.push(self.merge_dialog_item(full));
         v.push(self.rebase_item(full));
         v.push(MenuItem::separator());
         let n = full.to_string();
@@ -295,6 +327,7 @@ impl App {
             .key('c'),
         );
         v.push(self.merge_item(name));
+        v.push(self.merge_dialog_item(name));
         let n = name.to_string();
         v.push(MenuItem::new("Create Branch From…", move |app| app.create_branch_dialog(n)).key('b'));
         v.push(self.compare_item(self.row_of_ref(RefKind::Tag, name)));
