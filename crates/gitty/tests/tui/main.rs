@@ -35,4 +35,5 @@ mod submodules;
 mod subtrees;
 mod unicode;
 mod views;
+mod wf_commit;
 mod wf_pilot;

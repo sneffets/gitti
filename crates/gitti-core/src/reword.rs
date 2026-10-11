@@ -3,7 +3,9 @@
 //! non-interactive `rebase -i` — the sequence editor turns its `pick` into `reword`, the
 //! editor copies the new message in. So hooks, signing and the user's git config apply as
 //! with git itself. Only for commits that are not pushed yet and have no merge commits
-//! after them (a rebase would flatten those).
+//! after them (a rebase would flatten those). Work in progress survives both: the
+//! rebase's `--autostash` keeps the working tree, and what was staged is staged again
+//! afterwards (the autostash alone would leave it unstaged).
 
 use anyhow::{Context as _, Result, bail};
 use gix::ObjectId;
@@ -53,7 +55,9 @@ impl Repo {
         }
         let hex = id.to_string();
         let git = self.git();
-        let head = git.run(&["rev-parse", "HEAD"])?.stdout_str().trim().to_string();
+        let ids = git.run(&["rev-parse", "HEAD", "HEAD^{tree}"])?.stdout_str();
+        let mut ids = ids.split_whitespace().map(str::to_string);
+        let (head, head_tree) = (ids.next().unwrap_or_default(), ids.next().unwrap_or_default());
         if hex == head {
             let out = git.run_stdin(
                 &["commit", "--amend", "--only", "--allow-empty", "--cleanup=whitespace", "-F", "-"],
@@ -78,6 +82,19 @@ impl Repo {
         let parent = git.run(&["rev-parse", "--verify", "-q", &format!("{hex}^")]);
         let base_owned;
         // The editor's message would be cleaned with `strip` (`#123 fix` lines dropped).
+        // `--autostash` gives the working tree back but not what was staged (git applies
+        // the stash without `--index`: a staged change becomes unstaged, the staged version
+        // of a file changed again since is lost). The staged state as a tree, put back
+        // afterwards — HEAD's tree is the same after a reword, so it is exactly the index
+        // from before (`read-tree --reset` keeps the stat data of unchanged entries).
+        let staged = git.run(&["write-tree"])?.stdout_str().trim().to_string();
+        let restore_index = || {
+            if staged != head_tree {
+                git.run(&["read-tree", "--reset", &staged]).map(|_| ())
+            } else {
+                Ok(())
+            }
+        };
         let mut args = vec!["-c", "commit.cleanup=whitespace", "rebase", "-i", "--autostash"];
         match parent {
             Ok(p) => {
@@ -97,10 +114,13 @@ impl Repo {
             Ok(out) => out,
             Err(e) => {
                 // Never leave the user in a half-done rebase.
-                let _ = git.run(&["rebase", "--abort"]);
+                if git.run(&["rebase", "--abort"]).is_ok() {
+                    let _ = restore_index();
+                }
                 return Err(e.into());
             }
         };
+        restore_index().context("putting the staged changes back after the reword")?;
         Ok(format!("{}{}", out.stdout_str(), out.stderr).trim().to_string())
     }
 }

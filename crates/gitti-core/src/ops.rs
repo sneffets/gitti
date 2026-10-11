@@ -1125,6 +1125,26 @@ pub fn commit_blocker(state: RepoState, conflicted: usize) -> Option<String> {
     })
 }
 
+/// Why Amend cannot run in `state`, if it cannot: a merge, cherry-pick or revert waits
+/// for its own commit. git refuses to amend during a merge or cherry-pick ("You are in
+/// the middle of a merge -- cannot amend"); during a revert it amends — folding the
+/// revert into HEAD and ending it — which is never what Amend meant there. A rebase
+/// stopped at `edit` is the place to amend, so `Rebasing` is no reason (git itself
+/// refuses while a rebase step has a conflict). Shared by gitti and gitty
+/// ([`plan_commit`]) and [`crate::Repo::commit_with`].
+pub fn amend_blocker(state: RepoState) -> Option<String> {
+    let (what, conclude) = match state {
+        RepoState::Merging => ("a merge", "Commit concludes the merge"),
+        RepoState::CherryPicking => ("a cherry-pick", "Commit (or Continue) concludes the cherry-pick"),
+        RepoState::Reverting => ("a revert", "Commit (or Continue) concludes the revert"),
+        RepoState::Clean | RepoState::Rebasing => return None,
+    };
+    Some(format!(
+        "Can't amend while {what} is in progress: it would change HEAD under it. Turn Amend \
+         off — {conclude} — or abort it first"
+    ))
+}
+
 /// What Commit does (with nothing staged it asks instead of failing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommitKind {
@@ -1168,6 +1188,9 @@ pub fn plan_commit(
     message: &str,
 ) -> CommitPlan {
     if let Some(why) = commit_blocker(state, conflicted) {
+        return CommitPlan::Blocked(why);
+    }
+    if amend && let Some(why) = amend_blocker(state) {
         return CommitPlan::Blocked(why);
     }
     let blank = message.trim().is_empty();

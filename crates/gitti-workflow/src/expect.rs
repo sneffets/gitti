@@ -168,6 +168,20 @@ impl Expect {
         })
     }
 
+    /// The id `refname` (a full name, `refs/heads/main`) points at in the bare repository
+    /// `git_dir` — a remote laid out by `Fixture::build_bare` — read from the files (no
+    /// git): loose ref, then `packed-refs`.
+    pub fn bare_ref(git_dir: &Path, refname: &str) -> Option<String> {
+        if let Ok(text) = fs::read_to_string(git_dir.join(refname)) {
+            return Some(text.trim().to_string());
+        }
+        let packed = fs::read_to_string(git_dir.join("packed-refs")).ok()?;
+        packed.lines().find_map(|l| {
+            let (id, name) = l.split_once(' ')?;
+            (name == refname).then(|| id.to_string())
+        })
+    }
+
     /// The operation git left half-done (no git).
     pub fn state(&self) -> OpState {
         let d = &self.git_dir;
