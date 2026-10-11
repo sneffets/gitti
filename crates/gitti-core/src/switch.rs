@@ -294,6 +294,64 @@ pub fn newly_untracked_note(from: &str, to: &str, count: usize, examples: &[Stri
     )
 }
 
+/// The commits a switch away from a detached HEAD left on no branch, from git's warning
+/// ("you are leaving N commits behind, not connected to any of your branches", printed
+/// whatever the advice settings): how many, and the first ones git lists as
+/// `<short id> <subject>`. `None` when git warned of nothing (output in the C locale, as
+/// every git call of gitti runs).
+pub fn left_behind(git_output: &str) -> Option<(usize, Vec<String>)> {
+    let mut lines = git_output.lines();
+    let count: usize = lines.by_ref().find_map(|l| {
+        l.trim_start()
+            .strip_prefix("Warning: you are leaving ")?
+            .split(' ')
+            .next()?
+            .parse()
+            .ok()
+    })?;
+    // `  <short id> <subject>` lines (git's advice below has one space, its "… and N
+    // more." line no id).
+    let is_commit = |l: &str| {
+        l.strip_prefix("  ")
+            .and_then(|r| r.split(' ').next())
+            .is_some_and(|id| id.len() >= 4 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+    };
+    let commits = lines
+        .skip_while(|l| !is_commit(l))
+        .take_while(|l| is_commit(l))
+        .map(|l| l.trim().to_string())
+        .collect();
+    Some((count, commits))
+}
+
+/// The status line's words for commits a switch left on no branch ([`left_behind`]):
+/// which, and how to get them back.
+pub fn left_behind_note(count: usize, commits: &[String]) -> String {
+    let n = crate::discard::count(count, "commit");
+    let (verb, it) = if count == 1 { ("is", "it") } else { ("are", "them") };
+    let mut list = commits.join(", ");
+    if count > commits.len() {
+        list.push_str(&format!(" and {} more", count - commits.len()));
+    }
+    format!(
+        "{n} of the detached HEAD {verb} on no branch now: {list}. Only HEAD's reflog has \
+         {it} — Show Reflog… and Create Branch Here… keep {it}."
+    )
+}
+
+impl SwitchTarget {
+    /// How a status line names the target: a full commit id shortened.
+    fn label(&self) -> &str {
+        let name = self.name();
+        match self {
+            SwitchTarget::Detached(rev) if rev.len() >= 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                &rev[..7]
+            }
+            _ => name,
+        }
+    }
+}
+
 impl Repo {
     fn switch_raw(&self, target: &SwitchTarget, force: bool) -> Result<String> {
         let mut args = vec!["switch"];
@@ -332,7 +390,8 @@ impl Repo {
     /// Switches (`force`: `--discard-changes`) and says which formerly ignored files are
     /// untracked now. Only when some `.gitignore` differs between HEAD and the target
     /// (checked in-process) does that cost git calls: the ignored files before, which of
-    /// them are untracked after.
+    /// them are untracked after. Commits of a detached HEAD the switch left on no branch
+    /// are named too (from git's own warning, no git call).
     fn switch_noting(&self, target: &SwitchTarget, force: bool) -> Result<Switched> {
         let watch = self.ignore_rules_change(target).unwrap_or(false);
         let from = self.head_label();
@@ -346,10 +405,17 @@ impl Repo {
             .then(|| self.untracked_among(&ignored))
             .filter(|(n, _)| *n > 0)
             .map(|(n, examples)| newly_untracked_note(&from, target.name(), n, &examples));
-        let note = match (note, self.fs_change_note(&fs_before)) {
-            (Some(ignore), Some(fs)) => Some(format!("{ignore} {fs}")),
-            (None, Some(fs)) => Some(format!("Switched to {}. {fs}", target.name())),
-            (note, None) => note,
+        let more: Vec<String> = [
+            self.fs_change_note(&fs_before),
+            left_behind(&message).map(|(n, commits)| left_behind_note(n, &commits)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let note = match (note, more.is_empty()) {
+            (note, true) => note,
+            (Some(ignore), false) => Some(format!("{ignore} {}", more.join(" "))),
+            (None, false) => Some(format!("Switched to {}. {}", target.label(), more.join(" "))),
         };
         Ok(Switched { message, note })
     }
@@ -755,6 +821,31 @@ mod tests {
         let forced = SwitchBlock::parse("error: Updating 'd' would lose untracked files in it\n").unwrap();
         assert_eq!(forced.dirs, vec!["d"]);
         assert!(!block.truncated && !forced.truncated);
+    }
+
+    /// git's warning on leaving a detached HEAD with commits no branch has: their number
+    /// and the ones it lists (not its advice line, not "… and N more").
+    #[gitti_test::test]
+    fn reads_the_commits_left_behind() {
+        let one = "Warning: you are leaving 1 commit behind, not connected to\n\
+                   any of your branches:\n\n  1a2b3c4 Fix on c2\n\n\
+                   If you want to keep it by creating a new branch, this may be a good time\n\
+                   to do so with:\n\n git branch <new-branch-name> 1a2b3c4\n\n\
+                   Switched to branch 'main'";
+        let (n, commits) = left_behind(one).unwrap();
+        assert_eq!((n, commits.clone()), (1, vec!["1a2b3c4 Fix on c2".to_string()]));
+        assert_eq!(
+            left_behind_note(n, &commits),
+            "1 commit of the detached HEAD is on no branch now: 1a2b3c4 Fix on c2. Only \
+             HEAD's reflog has it — Show Reflog… and Create Branch Here… keep it."
+        );
+        let many = "Warning: you are leaving 7 commits behind, not connected to\n\
+                    any of your branches:\n\n  aaaaaaa one\n  bbbbbbb two\n  ccccccc three\n  ddddddd four\n \
+                    ... and 3 more.\n\nSwitched to branch 'main'";
+        let (n, commits) = left_behind(many).unwrap();
+        assert_eq!((n, commits.len()), (7, 4));
+        assert!(left_behind_note(n, &commits).contains("ddddddd four and 3 more. Only HEAD's reflog has them"));
+        assert_eq!(left_behind("Previous HEAD position was 1a2b3c4 x\nSwitched to branch 'main'"), None);
     }
 
     /// git cuts every error message after 4 KiB: a list without its closing advice line
