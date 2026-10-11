@@ -642,10 +642,21 @@ impl Repo {
         })
     }
 
+    /// `git rebase <onto>`: a finished rebase says where the branch is now and which
+    /// commits it left out ([`crate::rebase_note`]); a stop on conflicts, a refusal for
+    /// local changes and paths this file system can't hold are said in plain words.
     pub fn rebase(&self, onto: &str) -> Result<String> {
-        self.stop_on_conflicts(|| {
-            let out = self.out(&["rebase", onto]);
+        let watch = self.rebase_watch_start(onto);
+        let fs_before = self.fs_paths();
+        let result = self.stop_on_conflicts(|| {
+            let out = self.out(&["rebase", onto]).map_err(|e| self.explain_fs_error(e));
             self.local_changes_as(out, || BlockedOp::Rebase { onto: onto.to_string() })
+        });
+        let line = self.rebase_noted(watch, result)?;
+        // Paths of the new base this file system can't hold: said after what happened.
+        Ok(match self.fs_change_note(&fs_before) {
+            Some(note) => format!("{line} {note}"),
+            None => line,
         })
     }
 
@@ -817,11 +828,18 @@ impl Repo {
     /// their own), cleaned up like git's default `strip` ([`cleanup_message`]: comment
     /// lines such as `# Conflicts:` per `core.commentChar` / `core.commentString` go);
     /// `None` when there is none or nothing is left. git deletes both files when a commit
-    /// succeeds (also `commit -F`, as gitti commits) and on abort / `reset`.
+    /// succeeds (also `commit -F`, as gitti commits) and on abort / `reset`. A rebase with
+    /// the apply backend (`rebase --apply`) writes neither: its stopped patch's message
+    /// (`rebase-apply/final-commit`, what its Continue commits with) stands in — so the box
+    /// shows it as for the merge backend, and an edit of it is noticed (and refused,
+    /// [`Self::continue_with`]) instead of being dropped silently.
     pub fn prepared_message(&self) -> Option<String> {
         let dir = self.git_dir()?;
-        let merge = std::fs::read(dir.join("MERGE_MSG")).ok();
+        let mut merge = std::fs::read(dir.join("MERGE_MSG")).ok();
         let squash = std::fs::read(dir.join("SQUASH_MSG")).ok();
+        if merge.is_none() && squash.is_none() && dir.join("rebase-apply").join("rebasing").exists() {
+            merge = std::fs::read(dir.join("rebase-apply").join("final-commit")).ok();
+        }
         if merge.is_none() && squash.is_none() {
             return None;
         }
@@ -858,6 +876,12 @@ impl Repo {
     /// [`Self::continue_operation`]; the merge commit with Sign Off when `opts` says so
     /// (git's own `--continue` of the others takes no `--signoff`).
     pub fn continue_operation_with(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
+        let watch = self.rebase_watch_step(true);
+        let result = self.continue_operation_plain(opts);
+        self.rebase_noted(watch, result)
+    }
+
+    fn continue_operation_plain(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
         self.stop_on_conflicts(|| self.empty_pick_as(self.continue_operation_raw(opts)))
     }
 
@@ -900,10 +924,12 @@ impl Repo {
         message: Option<&str>,
         opts: crate::commit_message::CommitOptions,
     ) -> Result<String> {
-        let Some(message) = message.filter(|m| !m.trim().is_empty()) else {
-            return self.continue_operation_with(opts);
+        let watch = self.rebase_watch_step(true);
+        let result = match message.filter(|m| !m.trim().is_empty()) {
+            None => self.continue_operation_plain(opts),
+            Some(message) => self.stop_on_conflicts(|| self.empty_pick_as(self.continue_with_message(message, opts))),
         };
-        self.stop_on_conflicts(|| self.empty_pick_as(self.continue_with_message(message, opts)))
+        self.rebase_noted(watch, result)
     }
 
     fn continue_with_message(
@@ -940,7 +966,7 @@ impl Repo {
                 }
                 let staged = self.git().run_raw(&["diff", "--cached", "--quiet"], None)?.code != 0;
                 if !staged {
-                    return self.continue_operation();
+                    return self.continue_operation_plain(opts);
                 }
                 self.continue_rebase_with(message, dir.as_deref())
             }

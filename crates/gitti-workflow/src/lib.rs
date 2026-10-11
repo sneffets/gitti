@@ -14,7 +14,7 @@
 //! - [`expect`]: [`Expect`], the repository afterwards read with few git processes, and
 //!   [`Checks`] collecting the mismatches;
 //! - the workflows, one module each in their area's module ([`st`], [`dc`], [`bg`],
-//!   [`cm`], [`cp`], [`rv`], [`ex`], [`mg`], [`rs`], [`sh`], [`tg`], …): a
+//!   [`cm`], [`cp`], [`rv`], [`rb`], [`rl`], [`ex`], [`mg`], [`rs`], [`sh`], [`tg`], …): a
 //!   `fixture(dir)`, the step constants the drivers need, and `expect…(dir)` functions
 //!   returning `Err(text)` with every mismatch.
 //!
@@ -37,6 +37,8 @@ pub mod git;
 pub mod lf;
 pub mod mg;
 pub mod nu;
+pub mod rb;
+pub mod rl;
 pub mod rm;
 pub mod rs;
 pub mod rv;

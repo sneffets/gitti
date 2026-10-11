@@ -292,8 +292,8 @@ working tree or the index while the app shows an older state.
 | CP-11 | Conflicting `-x` with a custom comment char | `core.commentChar=;` | `; Conflicts:` lines dropped, origin line kept | `conflicts::conflicting_cherry_pick_strips_the_configured_comment_char` | `wf_pick::cp11_conflicting_pick_with_record_origin_and_comment_char` | `wf_pick::cp11_conflicting_pick_with_record_origin_and_comment_char` |
 | CP-12 | **Pick, then merge the source branch** | pick `A` from `feat` onto `main`; later merge `feat` | merges cleanly; both `A` and its copy in history | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` | `wf_pilot::cp12_pick_then_merge_the_source_branch` |
 | CP-13 | Pick, change the same lines on main, merge the source | pick `A`; edit A's lines on `main`; merge `feat` | conflict exactly on those lines (expected); other files merged | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` | `wf_pilot::cp13_pick_edit_then_merge_conflicts_there` |
-| CP-14 | Pick with a different resolution, merge the source | pick `A` with a conflict resolved differently; merge `feat` | conflict again on those lines (git can't know); resolvable | — | — | — |
-| CP-15 | Pick, revert the pick, merge the source | pick `A`; revert it; merge `feat` | `A`'s change is back after the merge (git's three-way result) and the diff shows it | — | — | — |
+| CP-14 | Pick with a different resolution, merge the source | pick `A` with a conflict resolved differently; merge `feat` | conflict again on those lines (git can't know); resolvable (keep the resolution, Continue) | `wf_history::cp14_pick_resolved_differently_then_merge_conflicts_again` | `wf_history::cp14_merge_stops_on_the_resolved_line`, `wf_history::cp14_keep_the_resolution_and_continue` | `wf_history::cp14_merge_stops_on_the_resolved_line`, `wf_history::cp14_keep_the_resolution`, `wf_history::cp14_continue_makes_the_merge` |
+| CP-15 | Pick, revert the pick, merge the source | pick `A`; revert it; merge `feat` | `A`'s change is back after the merge (git's three-way result) and the diff shows it | `wf_history::cp15_pick_revert_then_merge_brings_the_change_back` | `wf_history::cp15_pick_revert_then_merge_brings_the_change_back` | `wf_history::cp15_pick_revert_then_merge_brings_the_change_back` |
 | CP-16 | Pick into a dirty tree | local change in a file the pick changes | refused in plain words naming the file, ways out offered; nothing changed | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` |
 | CP-17 | Pick HEAD | Cherry-pick on HEAD (also HEAD among marked commits) | greyed with the reason; no git | `availability::changes_stashes_and_selection_turn_them_on` (unit) | `wf_pick::cp17_pick_head_is_greyed`, ~`menus::unavailable_commands` | `wf_pick::cp17_pick_head_is_greyed`, ~`palette::palette_and_menu_grey_what_cannot_act_with_the_reason` |
 | CP-18 | Pick a lost commit from the reflog | reflog entry → Cherry-pick | its change on HEAD | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` |
@@ -314,14 +314,14 @@ working tree or the index while the app shows an older state.
 
 | ID | Story | Steps | Expected | core | gitti | gitty |
 |---|---|---|---|---|---|---|
-| RB-01 | **Rebase the current branch onto another** | `feat` 2 commits, `main` 1 newer; Rebase onto `main` | `feat` linear on top of `main`, same messages / authors | — | ~`menus::branch_commit_stash_menus` (picker) | — |
-| RB-02 | Rebase conflict → Continue with the edited message | conflict on commit 1; resolve; Continue | rebased commit has the message; author kept | `conflicts::continue_a_rebase_with_the_edited_message` | — | — |
-| RB-03 | Rebase conflict → Abort | Abort | branch exactly as before | — | — | — |
-| RB-04 | The next commit conflicts too | resolve, Continue, stops again | error says the message was used; second resolve finishes | `conflicts::continue_a_rebase_with_the_edited_message` | — | — |
-| RB-05 | A step becomes empty | resolution equals upstream | git drops it; state clean; the app says it was dropped | — | — | — |
-| RB-06 | Rebase drops commits already upstream | `A` cherry-picked to `main` before | `A` not replayed | — | — | — |
-| RB-07 | Rebase with a dirty tree | local change | refused (or autostash per config) in plain words | — | — | — |
-| RB-08 | The apply backend refuses the box message | `rebase --apply` stopped | box text not silently dropped | `conflicts::continue_a_rebase_with_the_edited_message` | — | — |
+| RB-01 | **Rebase the current branch onto another** | `feat` 2 commits, `main` 1 newer; Rebase onto `main` | `feat` linear on top of `main`, same messages / authors; the status line says where it is now | `wf_history::rb01_rebase_the_current_branch_onto_another` | `wf_history::rb01_rebase_onto_main_from_the_picker`, ~`menus::branch_commit_stash_menus` (picker) | `wf_history::rb01_rebase_onto_main_from_the_palette` |
+| RB-02 | Rebase conflict → Continue with the edited message | conflict on commit 1; resolve; edit the box (git's message in it); Continue | rebased commit has the message; author kept | `conflicts::continue_a_rebase_with_the_edited_message` | `wf_history::rb02_continue_with_the_edited_message` | `wf_history::rb02_continue_with_the_edited_message` |
+| RB-03 | Rebase conflict → Abort | stop (said plainly, banner with Continue / Skip / Abort); Abort | branch exactly as before | `wf_history::rb03_rebase_conflict_then_abort` | `wf_history::rb03_rebase_from_the_sidebar_stops_then_abort` | `wf_history::rb03_rebase_stops_then_abort` |
+| RB-04 | The next commit conflicts too | resolve, Continue with an edited message, stops again | the stop said plainly; the box empties (its text went into commit 1); the second resolve finishes | `conflicts::continue_a_rebase_with_the_edited_message` | `wf_history::rb04_the_next_commit_conflicts_too` | `wf_history::rb04_the_next_commit_conflicts_too`, `wf_history::rb04_resolve_the_second_and_finish` |
+| RB-05 | A step becomes empty | resolution equals upstream; Continue | git drops it (without a word); state clean; the app says it was left out — also when the next commit stops | `wf_history::rb05_a_step_resolved_to_the_base_is_left_out_and_said`, `wf_history::rb05_left_out_before_the_next_stop_is_said_with_it` | `wf_history::rb05_resolved_to_the_base_is_left_out_and_said` | `wf_history::rb05_resolved_to_the_base_is_left_out_and_said` |
+| RB-06 | Rebase drops commits already upstream | `A` cherry-picked to `main` before | `A` not replayed; the status line says it was left out | `wf_history::rb06_commits_already_upstream_are_left_out` | `wf_history::rb06_a_commit_picked_before_is_left_out` | `wf_history::rb06_a_commit_picked_before_is_left_out` |
+| RB-07 | Rebase with a dirty tree | local change | refused in plain words naming the file, ways out offered, nothing changed; with `rebase.autoStash` rebased and the change put back, said so | `wf_history::rb07_rebase_with_a_dirty_tree_is_refused`, `wf_history::rb07_rebase_with_autostash_keeps_the_change` | `wf_history::rb07_rebase_with_a_dirty_tree_is_refused` | `wf_history::rb07_rebase_with_a_dirty_tree_is_refused` |
+| RB-08 | The apply backend refuses the box message | `rebase --apply` stopped (the box shows the patch's message); edit it; Continue | refused in plain words; box text kept, not silently dropped | `conflicts::continue_a_rebase_with_the_edited_message`, `wf_history::rb08_the_apply_backend_shows_and_guards_the_message` | `wf_history::rb08_the_apply_backend_keeps_the_box_text` | `wf_history::rb08_the_apply_backend_keeps_the_box_text` |
 | RB-09 | Pull with rebase | diverged; Pull with… Rebase | local commits on top of the upstream's; strategy remembered on request | `pull::a_diverged_pull_asks_and_each_choice_does_what_it_says`, `pull::the_rebase_retry_ends_where_git_pull_would`, `pull::the_merge_retry_ends_where_git_pull_would`, `pull::pull_with_passes_the_choice_over_the_configuration` | `menus::pull_diverged` | `remote::pull_with_chooses_remembers_and_forgets_the_strategy` |
 
 ## RS — Reset and restore
@@ -431,8 +431,8 @@ working tree or the index while the app shows an older state.
 |---|---|---|---|---|---|---|
 | RL-01 | Find a commit a reset dropped | Show Reflog | "lost" entry marked; its commit shown | `reflog::heads_reflog_keeps_the_commit_a_reset_dropped` | `reflog::lists_shows_and_navigates`, `reflog::menu_bar_and_branch_menu_open_it` | `reflog::reflog_lists_shows_navigates_and_recovers` |
 | RL-02 | Recover a deleted branch | delete `feat`; its reflog commit → Create Branch | `feat` back | `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | `wf_branches::rl02_recover_a_deleted_branch_from_the_reflog` | `wf_branches::rl02_recover_a_deleted_branch_from_the_reflog` |
-| RL-03 | Undo an amend | amend; reflog → reset to the pre-amend commit | old HEAD back | — | — | — |
-| RL-04 | Undo a bad rebase | rebase; reflog → reset to before | branch as before | — | — | — |
+| RL-03 | Undo an amend | amend; reflog → reset (soft) to the pre-amend commit | old HEAD back; what the amend added staged | `wf_history::rl03_undo_an_amend_through_the_reflog` | `wf_history::rl03_undo_an_amend_from_the_reflog` | `wf_history::rl03_undo_an_amend_from_the_reflog` |
+| RL-04 | Undo a bad rebase | rebase; reflog → reset (hard) to before | branch as before | `wf_history::rl04_undo_a_rebase_through_the_reflog` | `wf_history::rl04_undo_a_rebase_from_the_reflog` | `wf_history::rl04_undo_a_rebase_from_the_reflog` |
 
 ## IG — Ignore rules and untracked files
 
@@ -511,9 +511,9 @@ layer (partial `~` and `n/a` don't count as covered).
 | SH stash | 20 | 19 | 18 | 19 |
 | BR branches | 19 | 19 | 19 | 18 |
 | MG merge | 26 | 25 | 21 | 22 |
-| CP cherry-pick | 18 | 16 | 16 | 16 |
+| CP cherry-pick | 18 | 18 | 18 | 18 |
 | RV revert | 7 | 7 | 7 | 7 |
-| RB rebase | 9 | 4 | 1 | 1 |
+| RB rebase | 9 | 9 | 9 | 9 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
 | RM remotes | 18 | 17 | 16 | 18 |
@@ -521,14 +521,14 @@ layer (partial `~` and `n/a` don't count as covered).
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
 | DC discard | 9 | 9 | 6 | 6 |
-| RL recovery | 4 | 2 | 2 | 2 |
+| RL recovery | 4 | 4 | 4 | 4 |
 | IG ignore | 6 | 5 | 5 | 5 |
 | RN renames | 5 | 3 | 2 | 2 |
 | BN binary | 3 | 3 | 1 | 1 |
 | BG big / many | 5 | 4 | 2 | 1 |
 | NU non-UTF-8 | 5 | 5 | 2 | 2 |
 | FS paths | 8 | 8 | 2 | 2 |
-| **Total** | **267** | **243** | **210** | **211** |
+| **Total** | **267** | **252** | **222** | **223** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -541,3 +541,4 @@ at the step; once fixed, the assertion goes in and the entry goes.
 | Workflow | What | Where the test notes it |
 |---|---|---|
 | RM-14, RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21), and a credential prompt from a real git can't be answered while its fetch blocks that thread. The prompt dialog itself is covered with the `ask:` step (`layout::askpass_key_icon`); the round trip in gitty. | — |
+| RB-01, RB-03 (both apps) | Whether a rebase asks first differs: gitti's Rebase Current Branch onto… picker and the commit list's ref menu ask ("Rebase feat onto main? Rewrites the commits of the current branch."), gitti's sidebar branch menu and gitty (palette, branch menus) start it at once. A design choice: ask everywhere — and then say what follows (the commits get new ids; a branch pushed before needs a force push) — or nowhere. | gitti `wf_history::rb03_rebase_from_the_sidebar_stops_then_abort`, gitty `wf_history::rb01_rebase_onto_main_from_the_palette` |

@@ -36,6 +36,7 @@ mod tooltips;
 mod wf_branches;
 mod wf_commit;
 mod wf_eol;
+mod wf_history;
 mod wf_merge;
 mod wf_modules;
 mod wf_pick;
@@ -86,6 +87,7 @@ const SUITES: &[(&str, fn())] = &[
     ("wf_staging", wf_staging::main),
     ("wf_eol", wf_eol::main),
     ("wf_pick", wf_pick::main),
+    ("wf_history", wf_history::main),
 ];
 
 fn main() {
