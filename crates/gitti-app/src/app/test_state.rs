@@ -60,6 +60,7 @@ impl GittiApp {
                 Detail::Empty => "empty",
                 Detail::Worktree => "worktree",
                 Detail::Loading => "loading",
+                Detail::Failed(_) => "failed",
                 Detail::Commit(ref cv) if cv.compare.is_some() => "compare",
                 Detail::Commit(_) => "commit",
             },

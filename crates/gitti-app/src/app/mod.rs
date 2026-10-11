@@ -179,6 +179,9 @@ enum Detail {
     Empty,
     Worktree,
     Loading,
+    /// The selected commit / comparison couldn't be loaded: why (git's message). Selecting
+    /// it again loads it again.
+    Failed(String),
     Commit(Arc<CommitView>),
 }
 
@@ -1679,7 +1682,7 @@ impl GittiApp {
             return;
         }
         // Keep the old commit visible while loading; avoids flicker when arrowing through.
-        if matches!(self.detail, Detail::Worktree | Detail::Empty) {
+        if matches!(self.detail, Detail::Worktree | Detail::Empty | Detail::Failed(_)) {
             self.detail = Detail::Loading;
             self.rows = Arc::new(Vec::new());
         }
@@ -1717,9 +1720,20 @@ impl GittiApp {
                 match result {
                     // Shows it if still selected, else loads the new selection.
                     Ok(data) => this.show_selected_commit_or(Some((opts, data)), cx),
+                    // Still selected: why it isn't shown (not "Loading…" or the previous
+                    // commit). Else the selection moved on: load that one.
                     Err(e) => {
-                        this.set_error(format!("{e:#}"));
-                        cx.notify();
+                        let still = this.history.commits.get(this.selected).is_some_and(|c| c.id == id)
+                            && !this.history.is_worktree_row(this.selected);
+                        if still {
+                            let text = format!("{e:#}");
+                            this.detail = Detail::Failed(text.clone());
+                            this.rows = Arc::new(Vec::new());
+                            this.set_error(text);
+                            cx.notify();
+                        } else {
+                            this.show_selected_commit_or(None, cx);
+                        }
                     }
                 }
             })

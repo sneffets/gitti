@@ -16,6 +16,7 @@ mod commit;
 mod config_safety;
 mod custom_commands;
 mod ext_tools;
+mod faults;
 mod fs_paths;
 mod keys;
 mod layout;
@@ -56,6 +57,7 @@ const SUITES: &[(&str, fn())] = &[
     ("subtrees", subtrees::main),
     ("custom_commands", custom_commands::main),
     ("ext_tools", ext_tools::main),
+    ("faults", faults::main),
     ("toolbar", toolbar::main),
     ("tooltips", tooltips::main),
     ("worktrees", worktrees::main),

@@ -49,6 +49,17 @@ impl GittiApp {
         match &self.detail {
             Detail::Empty => centered("No commit selected"),
             Detail::Loading => centered("Loading…"),
+            Detail::Failed(why) => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_4()
+                .bg(p.bg_diff)
+                .text_color(p.danger)
+                .probe("detail-failed")
+                .child(format!("Couldn't load this: {why}"))
+                .into_any_element(),
             // The commit box above the diff shrinks to its first line when scrolling down
             // (before the list scrolls) and grows back when scrolling up at the list's top.
             Detail::Worktree => v_flex()

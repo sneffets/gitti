@@ -239,7 +239,7 @@ impl GittiApp {
                 }));
                 (items, self.file_tab.map_or(0, |i| i + 1))
             }
-            Detail::Empty | Detail::Loading => {
+            Detail::Empty | Detail::Loading | Detail::Failed(_) => {
                 self.set_info("No diff shown");
                 cx.notify();
                 return;
