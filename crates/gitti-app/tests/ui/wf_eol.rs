@@ -106,8 +106,8 @@ fn discard_selected(ui: &mut Ui) {
     ui.settle();
 }
 
-/// EX-02: the note says every line changed its ending; the last line's `-` / `+` pair
-/// staged, the first line's discarded.
+/// EX-02: the note says every line changed its ending; a middle line's `-` / `+` pair
+/// staged, another middle line's discarded.
 /// Workflow: EX-02
 fn ex02_whole_file_to_crlf(ui: &mut Ui) {
     use ex::lf_to_crlf as wf;
@@ -126,9 +126,11 @@ fn ex02_whole_file_to_crlf(ui: &mut Ui) {
         fail!(ui, "after staging: staged {:?}, unstaged {:?}", s.staged, s.unstaged);
     }
     expect_note(ui, "Staged", wf::FILE, "1 line differs only in its line ending (LF → CRLF)");
+    // The staged line is context now: one `-` / `+` row fewer before a later line.
+    let nth = wf::DISCARDED - 1 - usize::from(wf::DISCARDED > wf::STAGED);
     let (Some(r), Some(a)) = (
-        row(ui, "line Unstaged a.txt Removed", wf::DISCARDED - 1),
-        row(ui, "line Unstaged a.txt Added", wf::DISCARDED - 1),
+        row(ui, "line Unstaged a.txt Removed", nth),
+        row(ui, "line Unstaged a.txt Added", nth),
     ) else {
         return;
     };

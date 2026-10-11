@@ -46,25 +46,22 @@ fn crlf(_: usize) -> bool {
 
 /// **EX-02 — an editor converts a whole file from LF to CRLF** (no `core.autocrlf`, no
 /// attributes). `a.txt` ([`N`] lines, LF) committed; another program rewrites every line
-/// ending as CRLF ([`ext::crlf_all`]). The user stages the last line's change (its `-`
-/// and its `+` line, [`STAGED`]) and then discards the first line's ([`DISCARDED`]).
+/// ending as CRLF ([`ext::crlf_all`]). The user stages the change of line [`STAGED`] (its
+/// `-` and its `+` line, in the middle of the block of all `-` lines, then all `+` lines)
+/// and then discards the change of line [`DISCARDED`] (in the middle of what is left).
 ///
 /// Expected: the diff says why every line changed ([`NOTE`]); afterwards
-/// ([`expect`]) the index has line [`STAGED`] with CRLF and the others as committed,
-/// the working tree CRLF except line [`DISCARDED`], LF again.
-///
-/// The last and the first line on purpose: the `-` / `+` pair of a line in the middle of
-/// the block (all `-` lines, then all `+` lines) lands at the block's end — line staging
-/// keeps the diff's order (open point in `WORKFLOWS.md`).
+/// ([`expect`]) the index has line [`STAGED`] with CRLF, in its place, and the others as
+/// committed, the working tree CRLF except line [`DISCARDED`], LF again and in its place.
 pub mod lf_to_crlf {
     use super::*;
 
     pub const FILE: &str = "a.txt";
-    pub const N: usize = 4;
-    pub const STAGED: usize = 4;
-    pub const DISCARDED: usize = 1;
+    pub const N: usize = 6;
+    pub const STAGED: usize = 2;
+    pub const DISCARDED: usize = 4;
     /// The note above the file's hunks (gitti-core's `eol_note`).
-    pub const NOTE: &str = "4 lines differ only in their line ending (LF → CRLF)";
+    pub const NOTE: &str = "6 lines differ only in their line ending (LF → CRLF)";
 
     pub fn text(crlf: impl Fn(usize) -> bool) -> String {
         numbered("a", N, crlf, &[])

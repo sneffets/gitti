@@ -116,6 +116,37 @@ fn stash_lines_keeps_exact_bytes() {
     assert_eq!(read(&r, "l.txt"), new);
 }
 
+/// CRLF without a final newline and a replaced block: stashing only the old last line's
+/// removal puts it back with CRLF (not LF) before the new last line; stashing the
+/// `-` / `+` pair of a line in the middle of a block whose every line ending changed
+/// takes out just that line, in its place (stash and working tree).
+/// Workflow: SH-08, EX-02
+#[gitti_test::test]
+fn stash_lines_keep_crlf_and_line_places() {
+    let lf: String = (1..=5).map(|i| format!("a {i}\n")).collect();
+    let crlf = lf.replace('\n', "\r\n");
+    let (_tmp, r) = repo(&[("c.txt", b"one\r\ntwo\r\nlast"), ("e.txt", lf.as_bytes())]);
+    write(&r, "c.txt", b"one\r\ntwo\r\nLAST");
+    write(&r, "e.txt", crlf.as_bytes());
+    let ws = r.working_state().unwrap();
+    let diff = |p: &str| ws.unstaged.iter().find(|f| f.path() == p).unwrap().patch_source().unwrap().clone();
+    let (c, e) = (diff("c.txt"), diff("e.txt"));
+    let last = c.hunks[0].lines.iter().position(|l| l.text == "last").unwrap();
+    r.stash_lines(&c, &Selection::lines(0, [last]), false, "last").unwrap();
+    assert_eq!(read(&r, "c.txt"), b"one\r\ntwo\r\nlast\r\nLAST");
+    assert_eq!(stash_changes(&r, 0), ["c.txt:-last"]);
+    let three: Vec<usize> = e.hunks[0]
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.is_change() && l.text.trim_end_matches('\r') == "a 3")
+        .map(|(i, _)| i)
+        .collect();
+    r.stash_lines(&e, &Selection::lines(0, three), false, "three").unwrap();
+    assert_eq!(read(&r, "e.txt"), crlf.replace("a 3\r\n", "a 3\n").as_bytes());
+    assert_eq!(stash_changes(&r, 0), ["e.txt:-a 3", "e.txt:+a 3\r"]);
+}
+
 /// `eol=crlf` in `.gitattributes`: the index has LF, the working tree CRLF; the stash and
 /// what stays both come out right.
 /// Workflow: EX-06, SH-08

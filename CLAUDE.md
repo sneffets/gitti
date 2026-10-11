@@ -148,8 +148,9 @@ Three crates; the core is strictly separated from both frontends:
 Stage = build a patch from the *unstaged* hunk containing only the selected lines, then
 `git apply --cached --recount` via stdin; unselected `+` lines are dropped, unselected `-` lines
 become context. Unstage/discard build from the staged (resp. unstaged) hunk and apply with
-`--reverse` / `-R`, so the roles swap. Hunk headers are recomputed. New/deleted-file headers are
-rewritten to modifications for partial patches. With ignore-whitespace on, the shown diff is
+`--reverse` / `-R`, so the roles swap. A replaced block's lines go into the patch as `-` / `+`
+pairs (`patch::line_order`), so a selected line stays in its place. Hunk headers are
+recomputed. New/deleted-file headers are rewritten to modifications for partial patches. With ignore-whitespace on, the shown diff is
 `-w` but staging uses the exact `patch_diff` and `patch::map_selection` transfers the selection.
 `crates/gitti-core/tests/core/staging.rs` covers these cases against temp repos — extend it when
 touching patch logic.

@@ -52,8 +52,7 @@ fn ex02_whole_file_to_crlf_stage_one_line_discard_another() {
     let repo = Repo::open(dir).unwrap();
     let a = unstaged(&repo.working_state().unwrap(), wf::FILE);
     assert_eq!(eol_note(&a).as_deref(), Some(wf::NOTE));
-    // The last line and (below) the first: a pair in the middle of the block lands at its
-    // end. TODO: open point "EX-02 (all)" in WORKFLOWS.md — then stage a middle line.
+    // Lines in the middle of the block: each stays in its place.
     let line = format!("a {}", wf::STAGED);
     repo.apply_selection(&a, &pair(&a, 0, &line, &line), PatchMode::Stage).unwrap();
     let a = unstaged(&repo.working_state().unwrap(), wf::FILE);
