@@ -49,16 +49,23 @@ impl GittiApp {
         match &self.detail {
             Detail::Empty => centered("No commit selected"),
             Detail::Loading => centered("Loading…"),
-            Detail::Failed(why) => div()
+            // git's message is long (the whole command line): it wraps inside the panel.
+            Detail::Failed(why) => v_flex()
                 .size_full()
-                .flex()
+                .overflow_hidden()
                 .items_center()
                 .justify_center()
+                .gap_2()
                 .p_4()
                 .bg(p.bg_diff)
-                .text_color(p.danger)
                 .probe("detail-failed")
-                .child(format!("Couldn't load this: {why}"))
+                .child(
+                    div()
+                        .probe("detail-failed-title")
+                        .text_color(p.danger)
+                        .child("Couldn't load this — select it again to try once more"),
+                )
+                .child(div().probe("detail-failed-text").w_full().text_color(p.text_muted).child(why.clone()))
                 .into_any_element(),
             // The commit box above the diff shrinks to its first line when scrolling down
             // (before the list scrolls) and grows back when scrolling up at the list's top.

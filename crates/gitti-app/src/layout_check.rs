@@ -493,6 +493,18 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
         }
     }
 
+    // 8b. A failed load's lines (git's message is a long command line) wrap inside the
+    //     diff panel's notice.
+    if let Some(notice) = get("detail-failed") {
+        for line in ["detail-failed-title", "detail-failed-text"] {
+            if let Some(l) = get(line)
+                && !contains(&notice.bounds, &l.bounds)
+            {
+                out.push(format!("{line} reaches outside detail-failed"));
+            }
+        }
+    }
+
     // 9. A dialog: inside the window's view of it; its title and buttons always shown
     //    whole (the part between them scrolls), and what that part draws stays in it —
     //    clear of its scrollbar's strip at the right edge (Linux / Windows draw the bar
