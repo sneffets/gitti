@@ -707,6 +707,7 @@ impl GittiApp {
         items.extend(self.lfs_download_palette_items());
         items.extend(self.lfs_health_palette_items());
         items.extend(self.fs_paths_palette_items());
+        items.extend(self.reflog_palette_items());
         if self.repo_state != gitti_core::ops::RepoState::Clean {
             items.insert(
                 0,

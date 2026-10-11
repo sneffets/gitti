@@ -8,7 +8,8 @@
 //! `click:X,Y`, `rclick:X,Y`, `pressclick:X,Y` (a left click without waiting for the jobs
 //! — e.g. on a running operation's status line), `wheel:X,Y,DY`, `answer:TEXT` (askpass), `dump` (screen as
 //! text), `cells:Y` (colour runs of one screen row), `state` (selection, focus, status),
-//! `changes` (Search in Changes: query, toggles, scans, hits with why, note),
+//! `changes` (Search in Changes: query, toggles, scans, hits with why, note), `reflog`
+//! (the reflog view: title, note, selection, shown commit, entries),
 //! `write:PATH=TEXT` (writes a working-tree file as another program would; `\n` = newline),
 //! `clip:TEXT` (the clipboard's text as the Clone dialog reads it — a scripted run never
 //! reads the system clipboard, and copies land there too), `paste:TEXT` (a bracketed paste),
@@ -236,6 +237,7 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                     println!("hint{dim}: {} | {}", h.key, h.label);
                 }
             }
+            "reflog" => println!("{}", app.reflog_debug()),
             "changes" => println!(
                 "{}",
                 app.change_search_debug().unwrap_or_else(|| "changes: closed".into())

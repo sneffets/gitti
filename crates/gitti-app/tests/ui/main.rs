@@ -19,6 +19,7 @@ mod keys;
 mod layout;
 mod lfs;
 mod menus;
+mod reflog;
 mod render_linux;
 mod scroll;
 mod selection;
@@ -52,6 +53,7 @@ const SUITES: &[(&str, fn())] = &[
     ("fs_paths", fs_paths::main),
     ("signature", signature::main),
     ("selection", selection::main),
+    ("reflog", reflog::main),
 ];
 
 fn main() {

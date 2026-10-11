@@ -23,6 +23,7 @@ mod navigate;
 mod non_utf8;
 mod pull;
 mod push;
+mod reflog;
 mod repo_ops;
 mod repo_setup;
 mod repo_shapes;

@@ -41,7 +41,8 @@
 //! its menu item does). Pickers: `pick:TEXT` (type into the open picker — filters, or
 //! starts its search), `pickok` (run the selected entry, as Enter). Search in Changes:
 //! `changes:TEXT` (open the bar, type), `changehit:N` (select hit N), `changetoggle:strict
-//! |order|all`.
+//! |order|all`. Reflog: `reflog:NAME` (open HEAD's or a branch's; `reflog:close`),
+//! `reflogentry:N` (select entry N).
 //! Steps act on the active tab (the start page while no tab is open).
 //! Scripted runs record no start-up timings unless `GITTI_SCRIPT_STARTUP=1`.
 
@@ -535,6 +536,11 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
             app.update(cx, |a, cx| a.script_change_hit(i, window, cx))
         }
         "changetoggle" => app.update(cx, |a, cx| a.script_change_toggle(arg, cx)),
+        "reflog" => app.update(cx, |a, cx| a.script_reflog(arg, window, cx)),
+        "reflogentry" => {
+            let i = arg.parse().unwrap_or(0);
+            app.update(cx, |a, cx| a.script_reflog_entry(i, cx))
+        }
         "pickok" => app.update(cx, |a, cx| a.script_picker_accept(window, cx)),
         other => eprintln!("[script] unknown step {other}"),
     }

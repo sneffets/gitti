@@ -684,7 +684,8 @@ pub(super) fn ref_menu(
                     })
                     .disabled(is_head || elsewhere.is_some())
                 })
-                .item(compare_item(app, target));
+                .item(compare_item(app, target))
+                .item(super::reflog::reflog_item(app, &name));
             let menu = match is_head {
                 // The checked-out branch can't be added into itself.
                 true => menu,

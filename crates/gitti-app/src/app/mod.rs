@@ -35,6 +35,7 @@ mod op_progress;
 mod overlay_keys;
 mod picker;
 mod push_ui;
+mod reflog;
 mod repo_actions;
 mod script_scroll;
 mod settings_view;
@@ -88,7 +89,7 @@ use gitti_core::store::PaneLayout;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::rows::{DiffRow, Expansion, LineSel, Src, build_commit_rows, line_part_range};
+use crate::rows::{DiffRow, Expansion, LineSel, Src, build_commit_rows_noted, line_part_range};
 use crate::probe::ProbeExt as _;
 use crate::shortcuts as tips;
 use crate::theme::{PaletteExt as _, Settings};
@@ -100,6 +101,7 @@ use crate::{
 };
 
 pub use change_search::ChangeSearchState;
+pub use reflog::ReflogState;
 pub use modal::AskRequest;
 pub use settings_view::{ShortcutLine, shortcut_lines};
 pub use repo_actions::AppEvent;
@@ -377,6 +379,9 @@ pub struct GittiApp {
     /// How the explanation rows of paths this file system can't hold wrap
     /// (`fs_paths.rs`).
     note_wrap: fs_paths::NoteWrapper,
+    /// The shown commit's (comparison's, stash's) paths this file system can't hold,
+    /// against the index's paths (`fs_paths.rs`; set with the rows).
+    commit_fs: Arc<gitti_core::fs_paths::PathReport>,
     /// Height of the diff list viewport (measured while painting).
     diff_viewport_h: Rc<Cell<Pixels>>,
     log_scroll: UniformListScrollHandle,
@@ -423,6 +428,8 @@ pub struct GittiApp {
     compare: compare::CompareState,
     /// Search in Changes: the bar above the list, its scan and hits.
     change_search: change_search::ChangeSearchUi,
+    /// The reflog view in place of the commit list (`reflog.rs`).
+    reflog: reflog::ReflogUi,
     /// `DiffRow::HeaderSpace` rows reserved for the commit header (from its measured height).
     header_rows: usize,
     /// Line totals of the working-directory sections / groups and the state they were
@@ -699,6 +706,7 @@ impl GittiApp {
             picker: None,
             wrap_cols: Rc::new(Cell::new(120)),
             note_wrap: fs_paths::NoteWrapper::new(cx),
+            commit_fs: Default::default(),
             diff_viewport_h: Rc::new(Cell::new(px(0.))),
             log_scroll: UniformListScrollHandle::new(),
             log_focus: cx.focus_handle(),
@@ -727,6 +735,7 @@ impl GittiApp {
             pending_file: None,
             compare: Default::default(),
             change_search: Default::default(),
+            reflog: Default::default(),
             header_rows: 0,
             worktree_totals: RefCell::new(None),
             commit_box_h: px(0.),
@@ -964,6 +973,10 @@ impl GittiApp {
 
     fn apply_snapshot(&mut self, s: RepoSnapshot, cx: &mut Context<Self>) {
         let refs_changed = !same_refs(&self.refs, &s.refs) || self.head.id != s.head.id;
+        if refs_changed || self.head.branch != s.head.branch {
+            // The open reflog has new entries (`reflog.rs`).
+            self.reflog_refs_moved(cx);
+        }
         if !self.loaded_once {
             if s.refs.iter().filter(|r| r.kind == RefKind::Tag).count() > 25 {
                 self.collapsed.insert("tags".into());
@@ -1165,16 +1178,24 @@ impl GittiApp {
     fn rebuild_rows(&mut self) {
         let wrap = self.wrap();
         let before = self.rows.clone();
+        self.commit_fs = self.shown_commit_fs();
         self.rows = Arc::new(match &self.detail {
             Detail::Worktree => self.worktree_rows(wrap),
             Detail::Commit(cv) => {
                 // A comparison has its banner above the list instead of a header.
                 let header = if cv.compare.is_some() { 0 } else { self.header_rows };
                 let mut rows = vec![DiffRow::HeaderSpace; header];
-                rows.extend(self.change_search_rows(
-                    cv,
-                    build_commit_rows(&cv.files, self.file_tab, &self.expansion, wrap),
-                ));
+                let built = self.with_note_wrap(|notes| {
+                    build_commit_rows_noted(
+                        &cv.files,
+                        self.file_tab,
+                        &self.expansion,
+                        wrap,
+                        Some(&self.commit_fs),
+                        notes,
+                    )
+                });
+                rows.extend(self.change_search_rows(cv, built));
                 rows
             }
             _ => Vec::new(),
@@ -1566,6 +1587,10 @@ impl GittiApp {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        // The reflog view's selected entry has the detail pane (`reflog.rs`).
+        if self.reflog_shows_commit(cx) {
+            return;
+        }
         let row = self.selected;
         let Some(c) = self.history.commits.get(row) else {
             return;
@@ -3583,6 +3608,7 @@ impl Render for GittiApp {
         let root = self.nav_actions(root, cx);
         let root = self.repo_actions(root, cx);
         let root = self.fs_paths_actions(root, cx);
+        let root = self.reflog_actions(root, cx);
         let root = self.navigate_actions(root, cx);
         let root = self.menu_cmd_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);

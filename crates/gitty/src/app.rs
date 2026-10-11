@@ -51,6 +51,7 @@ mod lfs_health;
 mod op_cancel;
 mod op_output;
 mod overwrite;
+pub mod reflog;
 mod remote_cmds;
 mod repo_cmds;
 mod search;
@@ -428,6 +429,9 @@ pub struct App {
     pub lfs: lfs::LfsUi,
     /// The paths the "can't be checked out here" badge was hidden for (`app/fs_paths.rs`).
     pub fs_badge_dismissed: Option<Vec<String>>,
+    /// The shown commit's (comparison's, stash's) paths this file system can't hold,
+    /// against the index's paths (`app/fs_paths.rs`; set with the rows).
+    pub commit_fs: Arc<gitti_core::fs_paths::PathReport>,
     pub repo_state: RepoState,
     pub tracking: Vec<Tracking>,
     /// The current branch's commits that are not pushed (the ○ after the repository name).
@@ -472,6 +476,8 @@ pub struct App {
     pub search: search::SearchState,
     /// Search in Changes.
     pub change: change_search::ChangeSearchTui,
+    /// The reflog view in place of the commit list (`app/reflog.rs`).
+    pub reflog: reflog::ReflogTui,
     /// Verification result for the shown commit (`(id, None)` = failed to run).
     pub signature: Option<(ObjectId, Option<SignatureInfo>)>,
     /// No allowed signers file set for the shown SSH signature: the files to offer.
@@ -752,6 +758,7 @@ impl App {
             subtrees_dirty: false,
             lfs: Default::default(),
             fs_badge_dismissed: None,
+            commit_fs: Default::default(),
             repo_state: RepoState::Clean,
             tracking: Vec::new(),
             unpushed: None,
@@ -783,6 +790,7 @@ impl App {
             compare: Default::default(),
             search: Default::default(),
             change: Default::default(),
+            reflog: Default::default(),
             rows: Vec::new(),
             expansion: Expansion::default(),
             worktree_totals: Default::default(),
@@ -1331,6 +1339,7 @@ impl App {
             && self.compare.idle()
             && !self.search.running
             && !self.change.busy()
+            && !self.reflog.busy()
             && (self.history_full || self.status.as_ref().is_some_and(|s| s.error))
     }
 
@@ -1515,6 +1524,10 @@ impl App {
         if self.loaded && (!same_refs || self.head.id != s.head.id) {
             self.load_history(false);
         }
+        if !same_refs || self.head.id != s.head.id || self.head.branch != s.head.branch {
+            // The open reflog has new entries (`app/reflog.rs`).
+            self.reflog_refs_moved();
+        }
         self.head = s.head;
         self.refs = s.refs;
         self.remotes = s.remotes;
@@ -1647,6 +1660,10 @@ impl App {
     }
 
     pub fn load_detail(&mut self) {
+        // The reflog view's selected entry has the detail pane (`app/reflog.rs`).
+        if self.reflog_shows_commit() {
+            return;
+        }
         if self.load_compare() {
             return;
         }
@@ -2041,20 +2058,28 @@ impl App {
 
     pub fn rebuild_rows(&mut self) {
         let wrap = if self.opts.wrap { self.wrap_cols } else { None };
+        let notes = match self.note_cols {
+            Some(cols) => gitti_core::rows::NoteWrap::Cols(cols),
+            None => gitti_core::rows::NoteWrap::None,
+        };
+        self.commit_fs = self.shown_commit_fs();
         self.rows = match &self.detail {
             Detail::Worktree => {
                 self.worktree_totals = gitti_core::rows::WorktreeTotals::of(&self.working);
-                let notes = match self.note_cols {
-                    Some(cols) => gitti_core::rows::NoteWrap::Cols(cols),
-                    None => gitti_core::rows::NoteWrap::None,
-                };
                 gitti_core::rows::build_worktree_rows_noted(&self.working, None, &self.expansion, wrap, &notes)
             }
             Detail::Commit(cv) => {
                 let mut rows = vec![DiffRow::HeaderSpace; self.header.len()];
                 rows.extend(self.change_search_rows(
                     cv,
-                    gitti_core::rows::build_commit_rows(&cv.files, None, &self.expansion, wrap),
+                    gitti_core::rows::build_commit_rows_noted(
+                        &cv.files,
+                        None,
+                        &self.expansion,
+                        wrap,
+                        Some(&self.commit_fs),
+                        &notes,
+                    ),
                 ));
                 rows
             }
@@ -4103,6 +4128,7 @@ impl App {
         ));
         items.push(self.signers_palette_item());
         items.extend(self.change_search_palette_items());
+        items.extend(self.reflog_palette_items());
         items.extend(self.repo_palette_items());
         items.extend(self.terminal_palette_items());
         items.extend(self.submodule_palette_items());

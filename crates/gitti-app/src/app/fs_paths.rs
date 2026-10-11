@@ -8,7 +8,10 @@
 //! Repository ▸ "Paths This File System Can't Hold…" / "Hide Paths …" / "Show Hidden Paths
 //! Again" (the undo) and the palette have the same. Staging such a file asks first (what is
 //! on disk isn't its own content), Discard says what it can't do, and lines of such a file
-//! can't be staged or discarded.
+//! can't be staged or discarded. A commit's, comparison's or stash's files that this
+//! file system can't hold (`PathReport::of_changes`: their own names, and new names that
+//! collide with the work tree's) carry the same mark, tab mark and rows — what checking
+//! the commit out or applying it would do — before anything is checked out.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -103,10 +106,35 @@ impl NoteWrapper {
 }
 
 impl GittiApp {
-    /// The problem of a working-directory file's path on this file system.
+    /// The problem of a file's path on this file system: a working-directory file's, or
+    /// one the shown commit (comparison, stash) would bring into the work tree.
     pub(super) fn fs_issue_of(&self, src: Src, file: usize) -> Option<&PathIssue> {
+        if src == Src::Commit {
+            let super::Detail::Commit(cv) = &self.detail else {
+                return None;
+            };
+            return gitti_core::rows::change_issue(&self.commit_fs, cv.files.get(file)?);
+        }
         let path = self.work_files(src)?.get(file)?.path();
         self.working.fs_paths.issue(path)
+    }
+
+    /// The shown commit's paths this file system can't hold (`rebuild_rows` keeps it in
+    /// `commit_fs`): from its diff and the index's paths already read, no git.
+    pub(super) fn shown_commit_fs(&self) -> Arc<gitti_core::fs_paths::PathReport> {
+        match &self.detail {
+            super::Detail::Commit(cv) => Arc::new(self.working.fs_paths.of_changes(&cv.files)),
+            _ => Default::default(),
+        }
+    }
+
+    /// The explanation lines of `issue` (a file of `src`).
+    fn fs_note_lines(&self, src: Src, issue: &PathIssue) -> Vec<String> {
+        if src == Src::Commit {
+            issue.problem.change_lines(&self.commit_fs.rules)
+        } else {
+            issue.problem.lines(&issue.path, &self.working.fs_paths.rules)
+        }
     }
 
     /// The issues of `paths` (files about to be staged / discarded).
@@ -157,7 +185,7 @@ impl GittiApp {
         let Some(issue) = self.fs_issue_of(src, file) else {
             return base.into_any_element();
         };
-        let lines = issue.problem.lines(&issue.path, &self.working.fs_paths.rules);
+        let lines = self.fs_note_lines(src, issue);
         let whole = lines.get(line as usize).cloned().unwrap_or_default();
         let text = self.with_note_wrap(|w| w.part(&whole, part).trim_end().to_string());
         let full = lines.join("\n\n");

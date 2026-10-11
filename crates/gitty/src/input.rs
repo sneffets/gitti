@@ -338,6 +338,9 @@ impl App {
     }
 
     fn commits_key(&mut self, key: KeyEvent) -> bool {
+        if self.reflog.open {
+            return self.reflog_key(key);
+        }
         if self.change.open && self.change_hits_key(key) {
             return true;
         }
@@ -1023,6 +1026,12 @@ impl App {
                         self.toggle_log();
                     } else {
                         self.log_top = None;
+                    }
+                } else if a.commits.contains(pos) && self.reflog.open {
+                    let i = self.reflog.offset + (m.row - a.commits.y) as usize;
+                    self.select_reflog_entry(i);
+                    if right {
+                        self.reflog_entry_menu_open();
                     }
                 } else if a.commits.contains(pos) && self.change.active() {
                     self.change.editing = false;

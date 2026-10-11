@@ -26,13 +26,20 @@ impl App {
             Detail::Commit(cv) => cv
                 .files
                 .iter()
-                .map(|f| {
+                .enumerate()
+                .map(|(i, f)| {
                     let path = f.path().to_string();
-                    PickItem::new(
-                        path.clone(),
-                        change_name(f.change.letter()),
-                        move |app: &mut App| app.goto_file_row(&path),
-                    )
+                    let mut detail = change_name(f.change.letter()).to_string();
+                    // A path this file system can't hold: why.
+                    let fs = self.fs_issue_of(Src::Commit, i).map(|is| is.problem.short());
+                    if let Some(why) = &fs {
+                        detail.push_str(&format!(" — {} {why}", gitti_core::rows::FS_MARK));
+                    }
+                    let mut it = PickItem::new(path.clone(), detail, move |app: &mut App| {
+                        app.goto_file_row(&path)
+                    });
+                    it.strong = fs.is_some();
+                    it
                 })
                 .collect(),
             _ => Vec::new(),

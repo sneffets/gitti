@@ -19,6 +19,7 @@ mod merge_editor;
 mod navigation;
 mod palette;
 mod progress;
+mod reflog;
 mod remote;
 mod repo_cmds;
 mod scroll;

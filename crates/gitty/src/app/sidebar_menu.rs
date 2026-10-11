@@ -162,6 +162,8 @@ impl App {
         let n = name.to_string();
         v.push(MenuItem::new("Create Tag…", move |app| app.create_tag_dialog(n)).key('t'));
         v.push(self.compare_item(self.row_of_ref(RefKind::LocalBranch, name)));
+        let n = name.to_string();
+        v.push(MenuItem::new("Show Reflog…", move |app: &mut App| app.open_reflog(n)));
         if !current {
             // The checked-out branch can't be added into itself.
             v.push(MenuItem::separator());

@@ -368,6 +368,9 @@ impl GittiApp {
 
     /// The commit list pane: the search bar above the hits while searching, else the list.
     pub(super) fn render_list_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.reflog.is_open() {
+            return self.render_reflog_pane(cx);
+        }
         if !self.change_search.open {
             return self.render_commit_list(cx).into_any_element();
         }

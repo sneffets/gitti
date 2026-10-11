@@ -7,7 +7,9 @@
 //! before the answer); "Hide Them" hides it (skip-worktree) and the banner goes; "Show
 //! Hidden Paths Again" brings it back. The explanation rows wrap at any width (never cut);
 //! the file tab and the file list carry the mark; the Repository menu's entries act
-//! (greyed while there is nothing to do).
+//! (greyed while there is nothing to do). A history commit that adds `A.TXT` (one file
+//! with `a.txt` here) carries the mark, rows, tab mark before it is checked out — from
+//! the paths already loaded, no git when shown again.
 //!
 //! Own process (suite) because of the environment: `cargo test --workspace --test ui --
 //! fs_paths[::FILTER]`.
@@ -39,7 +41,11 @@ fn repo(dir: &Path) -> PathBuf {
         None,
         &[("net/X.h", Some("upper\n")), ("net/x.h", Some("lower\n")), ("a.txt", Some("a\n"))],
     );
+    // A commit on `side` that adds A.TXT (on this file system one file with a.txt) and
+    // b.txt (two files: file tabs).
+    let side = s.commit("refs/heads/side", "Add A.TXT", Some(head), &[("A.TXT", Some("A\n")), ("b.txt", Some("b\n"))]);
     let ids = s.import(dir);
+    std::fs::write(dir.join(".git/fixture-side"), &ids[side]).unwrap();
     append_config(dir, &format!("[core]\n\tignorecase = {ignore_case}\n"));
     read_tree(dir, &ids[head]);
     std::fs::write(dir.join("net/x.h"), "upper\n").unwrap();
@@ -58,6 +64,7 @@ pub fn main() {
         ("explanation_wraps", explanation_wraps),
         ("tab_and_file_list_marks", tab_and_file_list_marks),
         ("menu_entries", menu_entries),
+        ("history_commit_marked", history_commit_marked),
     ];
     let counter = std::cell::Cell::new(0);
     common::run(tests, |_| {
@@ -229,5 +236,49 @@ fn menu_entries(ui: &mut Ui) {
     ui.step("action:gitti::ShowHiddenFsPaths");
     if !ui.working().iter().any(|l| l.starts_with("U net/x.h")) {
         fail!(ui, "net/x.h not back after Show Hidden Paths Again");
+    }
+}
+
+/// The side commit adds A.TXT: its header, rows, file tab and file list say it collides
+/// with a.txt before anything is checked out; showing it again runs no git.
+fn history_commit_marked(ui: &mut Ui) {
+    let side = std::fs::read_to_string(ui.workdir().join(".git/fixture-side")).unwrap();
+    let row = (1..4).find(|&r| {
+        ui.step(&format!("select:{r}"));
+        ui.ui_state().selected_commit.as_deref() == Some(side.as_str())
+    });
+    let Some(row) = row else {
+        return fail!(ui, "the side commit is not in the history");
+    };
+    let probes = ui.check("the side commit");
+    for name in ["fs-path:", "path-note:", "file-tab-fs:"] {
+        if !probes.iter().any(|p| p.name.starts_with(name)) {
+            fail!(ui, "no {name} probe on the side commit");
+        }
+    }
+    if probes.iter().any(|p| p.name.starts_with("hide-path:")) {
+        fail!(ui, "Hide Path on a commit's file");
+    }
+    let notes = probes.iter().filter(|p| p.name.starts_with("path-note:")).count();
+    if notes < 3 {
+        fail!(ui, "{notes} explanation rows on the side commit");
+    }
+    ui.step("action:gitti::FileList");
+    let Some(picker) = ui.ui_state().picker else {
+        return fail!(ui, "no file list");
+    };
+    let entry = picker.labels.iter().zip(&picker.details).find(|(l, _)| *l == "A.TXT");
+    if !entry.is_some_and(|(_, d)| d.ends_with("⚠ collides with a.txt")) {
+        fail!(ui, "file list {:?} / {:?}", picker.labels, picker.details);
+    }
+    ui.step("cancel");
+    // Away and back: the commit is loaded, the marks come from the paths in memory.
+    let other = if row == 1 { 2 } else { 1 };
+    ui.step(&format!("select:{other}"));
+    let n = ui.n_git();
+    ui.step(&format!("select:{row}"));
+    ui.no_git_since(n, "showing the marked commit again");
+    if !ui.check("again").iter().any(|p| p.name.starts_with("fs-path:")) {
+        fail!(ui, "no mark when shown again");
     }
 }

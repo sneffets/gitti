@@ -600,7 +600,13 @@ pub mod testing {
         app.read(cx).script_git_commands()
     }
 
-    pub use crate::app::ChangeSearchState;
+    pub use crate::app::{ChangeSearchState, ReflogState};
+
+    /// The active tab's reflog view: open, title, entries, selection, the shown commit.
+    pub fn reflog(ws: &Entity<Workspace>, cx: &App) -> ReflogState {
+        let app = ws.read(cx).active_app().expect("a repository tab");
+        app.read(cx).script_reflog_state()
+    }
 
     /// The active tab's Search in Changes: open, text, hits, note, scans started.
     pub fn change_search(ws: &Entity<Workspace>, cx: &App) -> ChangeSearchState {
@@ -1375,6 +1381,10 @@ actions!(gitti, [FsPaths, HideFsPaths, ShowHiddenFsPaths]);
 // stays); handler in `app/menu_cmds.rs`.
 actions!(gitti, [ResetRemoteBranch]);
 
+// Navigate ▸ Reflog (Recover Lost Commits)…: HEAD's reflog in place of the commit
+// list; handler in `app/reflog.rs`.
+actions!(gitti, [ShowReflog]);
+
 // The action of a greyed menu-bar entry. Nothing handles it, so macOS's menu validation
 // shows the entry disabled too (it asks gpui whether the action is handled).
 actions!(gitti, [MenuItemUnavailable]);
@@ -1695,6 +1705,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Search in Changes…", SearchChanges),
                 MenuItem::action("Go to Branch / Tag…", GoToRef),
                 MenuItem::action("Go to HEAD", GoToHead),
+                MenuItem::action("Reflog (Recover Lost Commits)…", ShowReflog),
                 MenuItem::action("Go to File…", FileList),
                 MenuItem::separator(),
                 MenuItem::action("Next Commit", SelectNext),

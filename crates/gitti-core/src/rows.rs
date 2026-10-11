@@ -591,15 +591,7 @@ fn path_notes(ws: &crate::WorkingState, f: &crate::WorkFile, notes: &NoteWrap) -
     let Some(issue) = ws.fs_paths.issue(f.path()) else {
         return Vec::new();
     };
-    let lines = issue.problem.lines(f.path(), &ws.fs_paths.rules);
-    lines
-        .iter()
-        .enumerate()
-        .flat_map(|(line, text)| {
-            let n = notes.parts(text).len().clamp(1, u16::MAX as usize) as u16;
-            (0..n).map(move |part| (line as u16, part))
-        })
-        .collect()
+    note_parts(&issue.problem.lines(f.path(), &ws.fs_paths.rules), notes)
 }
 
 /// The status letter of a conflicted file on file tabs, file rows and diff headers. git's
@@ -742,6 +734,20 @@ pub fn build_commit_rows(
     exp: &Expansion,
     wrap: Option<usize>,
 ) -> Vec<DiffRow> {
+    build_commit_rows_noted(files, only, exp, wrap, None, &NoteWrap::None)
+}
+
+/// [`build_commit_rows`] with explanation rows ([`DiffRow::PathNote`]) under the files
+/// whose path this file system can't hold (`fs`: [`crate::fs_paths::PathReport::of_changes`]
+/// of `files`), wrapped by `notes`.
+pub fn build_commit_rows_noted(
+    files: &[FileDiff],
+    only: Option<usize>,
+    exp: &Expansion,
+    wrap: Option<usize>,
+    fs: Option<&crate::fs_paths::PathReport>,
+    notes: &NoteWrap,
+) -> Vec<DiffRow> {
     let mut rows = Vec::new();
     for (i, f) in files.iter().enumerate() {
         if only.is_some_and(|o| o != i) {
@@ -750,9 +756,42 @@ pub fn build_commit_rows(
         if !rows.is_empty() {
             rows.push(DiffRow::Spacer);
         }
-        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap, &[]);
+        let path_notes = fs.map(|r| change_notes(r, f, notes)).unwrap_or_default();
+        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap, &path_notes);
     }
     rows
+}
+
+/// The issue of a commit's file `f` in `fs` (its report): deleted files have none.
+pub fn change_issue<'a>(
+    fs: &'a crate::fs_paths::PathReport,
+    f: &FileDiff,
+) -> Option<&'a crate::fs_paths::PathIssue> {
+    if f.change == crate::diff::FileChange::Deleted {
+        return None;
+    }
+    fs.issue(f.path())
+}
+
+/// The explanation rows of a commit's file: (line, part) of each visual row of
+/// [`crate::fs_paths::Problem::change_lines`].
+fn change_notes(fs: &crate::fs_paths::PathReport, f: &FileDiff, notes: &NoteWrap) -> Vec<(u16, u16)> {
+    let Some(issue) = change_issue(fs, f) else {
+        return Vec::new();
+    };
+    note_parts(&issue.problem.change_lines(&fs.rules), notes)
+}
+
+/// (line, part) of each visual row of `lines` wrapped by `notes`.
+fn note_parts(lines: &[String], notes: &NoteWrap) -> Vec<(u16, u16)> {
+    lines
+        .iter()
+        .enumerate()
+        .flat_map(|(line, text)| {
+            let n = notes.parts(text).len().clamp(1, u16::MAX as usize) as u16;
+            (0..n).map(move |part| (line as u16, part))
+        })
+        .collect()
 }
 
 fn push_file(

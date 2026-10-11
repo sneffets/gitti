@@ -194,3 +194,48 @@ fn a_clone_explains_gits_collided_warning() {
         assert_eq!(note, None);
     }
 }
+
+#[gitti_test::test]
+fn a_commit_that_adds_the_other_spelling_is_marked_before_it_is_checked_out() {
+    let mut h = History::new();
+    let root = h.commit("main", &[], "init", &[("net/xt_TCPMSS.h", f("upper\n"))]);
+    h.commit(
+        "side",
+        &[root],
+        "lower case + aux",
+        &[("net/xt_tcpmss.h", f("lower\n")), ("drivers/aux.c", f("aux\n")), ("b.txt", f("b\n"))],
+    );
+    let (_tmp, dir) = repo_with(&h);
+    let side = crate::fixture_kit::rev(&dir, "side");
+    let windows_like = FsProbe { refuses_reserved: true, ..case_insensitive() };
+    let repo = open(&dir, windows_like, Os::Other);
+    let files = repo.commit_diff(side).unwrap();
+    // From the index's paths already read (no git): the pair and the device name.
+    let report = repo.fs_paths().of_changes(&files);
+    let found: Vec<(&str, String)> =
+        report.issues.iter().map(|i| (i.path.as_str(), i.problem.short())).collect();
+    assert_eq!(
+        found,
+        vec![
+            ("drivers/aux.c", "aux.c: reserved name on Windows".to_string()),
+            ("net/xt_tcpmss.h", "collides with xt_TCPMSS.h".to_string()),
+        ]
+    );
+    let lines = report.issues[1].problem.change_lines(&report.rules);
+    assert!(lines[1].contains("checking out this commit"), "{lines:?}");
+    // Rows: the explanation under the file header.
+    let exp = gitti_core::rows::Expansion::default();
+    let rows = gitti_core::rows::build_commit_rows_noted(
+        &files,
+        None,
+        &exp,
+        None,
+        Some(&report),
+        &gitti_core::rows::NoteWrap::None,
+    );
+    let notes = rows
+        .iter()
+        .filter(|r| matches!(r, gitti_core::rows::DiffRow::PathNote { .. }))
+        .count();
+    assert_eq!(notes, 6, "three lines for each of the two files");
+}
