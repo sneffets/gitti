@@ -97,6 +97,7 @@ const SHORTCUTS: &[Shortcut] = shortcuts! {
     "Open in a terminal" => [OpenTerminal];
     "Apply the latest stash" => [ApplyStash];
     "Pop the latest stash" => [PopStash];
+    "Apply / pop the latest stash restoring its index" => [ApplyStashIndex, PopStashIndex];
     // From every pane, not in text fields (`GRAPH_KEY_CONTEXT`).
     "Follow the branch down / up (first parent / child on the lane; anywhere but text \
      fields)" in "Gitti" => [FollowBranchDown, FollowBranchUp];

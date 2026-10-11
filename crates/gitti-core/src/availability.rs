@@ -284,7 +284,8 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "StashChanges" | "StashIncludingUntracked" | "StashSelection" => check(f.unborn, UNBORN)
             .or(check(changes == 0, NO_CHANGES))
             .or(busy_op),
-        "ApplyStash" | "PopStash" | "DropLatestStash" | "DropStash" | "RenameStash" => {
+        "ApplyStash" | "PopStash" | "ApplyStashIndex" | "PopStashIndex" | "DropLatestStash"
+        | "DropStash" | "RenameStash" => {
             check(f.stashes == 0, NO_STASHES)
         }
         // Remote.

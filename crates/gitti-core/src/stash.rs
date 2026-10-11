@@ -34,6 +34,20 @@
 //!   progress stashing is refused ([`refusal_during`]): `git stash` resets the working
 //!   tree and the index to HEAD, which ends a merge (`MERGE_HEAD` goes) and puts its
 //!   result into the stash; the next commit would be a plain one.
+//! - **Apply / pop restoring the index** (`git stash apply|pop --index`;
+//!   [`Repo::stash_index_plan`] says what it does, [`Repo::stash_apply_with`] runs it):
+//!   what was staged when the stash was made is staged again. git applies that staged
+//!   part to the current index as a plain patch (`diff-tree stash^1 stash^2 | apply
+//!   --cached`, no three-way merge): when the index or HEAD changed those lines since,
+//!   git refuses with "conflicts in index" before touching anything — the stash stays
+//!   (also for a pop). When the rest then conflicts with the files, git applies it with
+//!   conflict markers and leaves the index part unstaged ("Index was not unstashed").
+//! - **Untracked files in the way**: a stash made with `-u` / `--all` brings untracked
+//!   files back (its third parent). When one of them exists in the working tree, git
+//!   applies the tracked changes first and only then stops ("already exists, no
+//!   checkout") — a half-applied stash, which a second apply can't finish. Apply / pop
+//!   check the untracked files first ([`Repo::stash_untracked_in_the_way`]) and refuse
+//!   before anything changes.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -809,6 +823,183 @@ enum Removal {
         reverse: Vec<u8>,
         worktree: Option<(String, ObjectId)>,
     },
+}
+
+/// The menus' entries that apply / pop a stash restoring its index (a stash's menu, both
+/// apps).
+pub const APPLY_INDEX_LABEL: &str = "Apply with Index…";
+pub const POP_INDEX_LABEL: &str = "Pop with Index…";
+/// The same for the latest stash (Stash menu, the stashes section's menu, palettes).
+pub const APPLY_LATEST_INDEX_LABEL: &str = "Apply Latest Stash with Index…";
+pub const POP_LATEST_INDEX_LABEL: &str = "Pop Latest Stash with Index…";
+
+/// What applying / popping a stash restoring its index will do ([`Repo::stash_index_plan`]),
+/// for the dialog that asks first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexPlan {
+    /// `stash@{N}` as it is now.
+    pub name: String,
+    /// The stash's message.
+    pub message: String,
+    /// Pop (drop the entry once applied) rather than apply.
+    pub pop: bool,
+    /// The files that were staged when the stash was made, sorted.
+    pub staged: Vec<String>,
+}
+
+impl IndexPlan {
+    /// The dialog's title: "Pop stash@{0} with its index?".
+    pub fn title(&self) -> String {
+        format!("{} {} with its index?", if self.pop { "Pop" } else { "Apply" }, self.name)
+    }
+
+    /// The OK button.
+    pub fn ok_label(&self) -> &'static str {
+        if self.pop { "Pop with Index" } else { "Apply with Index" }
+    }
+
+    /// What happens, in plain words: what comes back staged, what unstaged, when git
+    /// refuses and what to do then.
+    pub fn describe(&self) -> String {
+        const SHOWN: usize = 8;
+        let n = self.staged.len();
+        let files = if n == 1 { "1 file was".to_string() } else { format!("{n} files were") };
+        let mut list: String = self.staged.iter().take(SHOWN).map(|p| format!("\n  {p}")).collect();
+        if n > SHOWN {
+            list.push_str(&format!("\n  … and {} more", n - SHOWN));
+        }
+        let message = message_parts(&self.message).1;
+        let (verb, plain, dropped, kept) = if self.pop {
+            ("Pops", "Pop", "\nThe stash entry is dropped once it applied.\n", " and the stash entry stays")
+        } else {
+            ("Applies", "Apply", "", "")
+        };
+        format!(
+            "{verb} {} (“{message}”) restoring its index (git stash {} --index): what was \
+             staged when it was made is staged again, the rest of its changes come back \
+             unstaged. A plain {plain} brings everything back unstaged.\n\n\
+             Staged again — {files} staged in the stash:{list}\n{dropped}\n\
+             git applies the staged part to the index as it is now, without merging. When \
+             the index or HEAD changed those lines since, git refuses: nothing changes{kept}. \
+             Then use a plain {plain} (and stage again what you need), or Create Branch \
+             from Stash… (a new branch at the commit the stash was made on, its index \
+             restored).\n\n\
+             When the rest of the stash conflicts with your files, git applies it with \
+             conflict markers and does not restore the index: the staged changes come back \
+             unstaged too.",
+            self.name,
+            if self.pop { "pop" } else { "apply" },
+        )
+    }
+}
+
+/// Why apply / pop `--index` of `name` was refused by git ("conflicts in index").
+pub fn index_refusal(name: &str, pop: bool) -> String {
+    let (plain, kept) = if pop { ("Pop", " The stash entry is kept.") } else { ("Apply", "") };
+    format!(
+        "Not applied: the staged part of {name} doesn't apply to the index as it is now (the \
+         index or HEAD changed those lines since the stash was made), so git refused — \
+         nothing was changed.{kept} Use a plain {plain} (everything comes back unstaged), or \
+         Create Branch from Stash… to apply it on the commit it was made on with its index."
+    )
+}
+
+/// The note added to the conflict stop of an apply / pop `--index`: git applied the rest
+/// with conflicts and left the index part unstaged.
+pub const INDEX_NOT_RESTORED: &str =
+    "git did not restore the index: the stash's staged changes are unstaged with the rest.";
+
+/// Why applying / popping `name` is refused: its untracked files `blocked` exist in the
+/// working tree.
+pub fn untracked_refusal(name: &str, blocked: &[String]) -> String {
+    const SHOWN: usize = 5;
+    let mut names = blocked.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(", ");
+    if blocked.len() > SHOWN {
+        names.push_str(&format!(" and {} more", blocked.len() - SHOWN));
+    }
+    let (one, it, them) = if blocked.len() == 1 {
+        ("an untracked file", "it exists", "it")
+    } else {
+        ("untracked files", "they exist", "them")
+    };
+    format!(
+        "Not applied: {name} brings back {one} — {names} — and {it} in the working tree now. \
+         git would apply the stash's other changes and then stop there, half applied. \
+         Nothing was changed and the stash is kept: move, rename or delete {them}, then \
+         apply the stash again."
+    )
+}
+
+impl Repo {
+    /// What applying / popping `stash` restoring its index does ([`IndexPlan`]): the files
+    /// staged in it (`git diff-tree` of its base and its index commit, one git process).
+    /// Refuses when the stash is gone, or when nothing was staged in it (a plain apply /
+    /// pop restores it the same way).
+    pub fn stash_index_plan(&self, stash: crate::ops::StashRef, pop: bool) -> Result<IndexPlan> {
+        let name = self.stash_name(stash)?;
+        let id = stash.id.to_string();
+        let out = self.git().run(&[
+            "diff-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            "--no-renames",
+            &format!("{id}^1"),
+            &format!("{id}^2"),
+        ])?;
+        let mut staged: Vec<String> = out
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect();
+        staged.sort();
+        if staged.is_empty() {
+            bail!(
+                "{name} was made with nothing staged: there is no index to restore. Apply or \
+                 Pop brings it back the same way."
+            );
+        }
+        let message = self
+            .stashes()?
+            .into_iter()
+            .find(|s| s.id == stash.id)
+            .map(|s| s.message)
+            .unwrap_or_default();
+        Ok(IndexPlan { name, message, pop, staged })
+    }
+
+    /// The untracked files of stash commit `id` (its third parent, `-u` / `--all`) that
+    /// exist in the working tree now — or sit below a file that does — where git can't put
+    /// them back. Read in-process (no git process); empty for a stash without untracked
+    /// files.
+    pub fn stash_untracked_in_the_way(&self, id: ObjectId) -> Result<Vec<String>> {
+        let repo = self.gix()?;
+        let commit = repo.find_commit(id).map_err(gx)?;
+        let Some(third) = commit.parent_ids().nth(2) else {
+            return Ok(Vec::new());
+        };
+        let tree = repo.find_commit(third.detach()).map_err(gx)?.tree().map_err(gx)?;
+        let files = tree.traverse().breadthfirst.files().map_err(gx)?;
+        let workdir = self.workdir();
+        let mut blocked = Vec::new();
+        for f in files.iter().filter(|e| !e.mode.is_tree()) {
+            let path = f.filepath.to_str_lossy();
+            let full = crate::paths::join_repo_path(workdir, &path);
+            // The file itself, or a file where one of its folders should be.
+            let in_the_way = full.symlink_metadata().is_ok()
+                || path.match_indices('/').any(|(at, _)| {
+                    crate::paths::join_repo_path(workdir, &path[..at])
+                        .symlink_metadata()
+                        .is_ok_and(|m| !m.is_dir())
+                });
+            if in_the_way {
+                blocked.push(path.into_owned());
+            }
+        }
+        blocked.sort();
+        Ok(blocked)
+    }
 }
 
 fn nul_list(paths: &[String]) -> Vec<u8> {

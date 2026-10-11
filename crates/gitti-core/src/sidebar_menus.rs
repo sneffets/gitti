@@ -138,6 +138,8 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
         SideMenu::Stash => &[
             "Apply",
             "Pop",
+            crate::stash::APPLY_INDEX_LABEL,
+            crate::stash::POP_INDEX_LABEL,
             "Create Branch from Stash…",
             "Copy Message",
             "Drop…",
@@ -199,6 +201,8 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Stash Including Untracked",
             "Apply Latest Stash",
             "Pop Latest Stash",
+            crate::stash::APPLY_LATEST_INDEX_LABEL,
+            crate::stash::POP_LATEST_INDEX_LABEL,
         ],
         SideMenu::WorktreesSection => &["Add Worktree…", "Prune Worktrees", "Repair Worktrees…"],
         SideMenu::SubmodulesSection => &[

@@ -777,6 +777,16 @@ impl GittiApp {
                 st.name.clone(),
                 move |t, w, cx| t.git_op("Stash pop", w, cx, move |r| r.stash_apply(stash, true)),
             ));
+            items.push(item(
+                format!("Apply Stash with Index: {}", st.message),
+                st.name.clone(),
+                move |t, w, cx| t.stash_index_dialog(stash, false, w, cx),
+            ));
+            items.push(item(
+                format!("Pop Stash with Index: {}", st.message),
+                st.name.clone(),
+                move |t, w, cx| t.stash_index_dialog(stash, true, w, cx),
+            ));
         }
         // Every entry standing for a menu action shows that action's keys (the column, from
         // the live bindings), also where the entry was made without them.

@@ -188,6 +188,8 @@ pub struct Fixture {
     config: String,
     hooks: Vec<(String, String)>,
     after: Vec<(Vec<String>, bool)>,
+    /// The stash entries, oldest first: (stash commit, message, time).
+    stashes: Vec<(Mark, String, u64)>,
 }
 
 impl Default for Fixture {
@@ -211,6 +213,7 @@ impl Fixture {
             config: String::new(),
             hooks: Vec::new(),
             after: Vec::new(),
+            stashes: Vec::new(),
         }
     }
 
@@ -359,6 +362,39 @@ impl Fixture {
         mark
     }
 
+    /// A stash entry on top of the stash list, as `git stash` writes it but without a git
+    /// process: the "index on" commit (`base` + `staged`: the index then), the untracked
+    /// files' commit (a root commit of `untracked`; none when empty — a stash without
+    /// `-u`) and the stash commit (parents `base`, the index commit and the untracked
+    /// one; its tree `base` + `staged` + `work`: the tracked files of the working tree
+    /// then), `refs/stash` on it and its line in `logs/refs/stash` with `message` — what
+    /// `git stash list` shows (`On main: wip`). The stash commit's mark. Built in the one
+    /// `git fast-import`; the stash reflog written as a file.
+    pub fn stash(
+        &mut self,
+        base: Mark,
+        message: &str,
+        staged: &[Change],
+        work: &[Change],
+        untracked: &[Change],
+    ) -> Mark {
+        const INDEX: &str = "refs/gitti-workflow/stash-index";
+        const UNTRACKED: &str = "refs/gitti-workflow/stash-untracked";
+        let i = self.raw(INDEX, Some(base.into()), &[], format!("index on {message}").as_bytes(), staged);
+        self.forget(INDEX);
+        let mut parents: Vec<Rev> = vec![i.into()];
+        if !untracked.is_empty() {
+            let u = self.raw(UNTRACKED, None, &[], format!("untracked files on {message}").as_bytes(), untracked);
+            self.forget(UNTRACKED);
+            parents.push(u.into());
+        }
+        let mut changes = staged.to_vec();
+        changes.extend_from_slice(work);
+        let w = self.raw("refs/stash", Some(base.into()), &parents, message.as_bytes(), &changes);
+        self.stashes.push((w, message.to_string(), self.time));
+        w
+    }
+
     /// HEAD on `branch` once built (default `main`); index and working tree are its tip.
     pub fn checkout(&mut self, branch: &str) {
         self.head = Head::Branch(branch.into());
@@ -465,6 +501,18 @@ impl Fixture {
         let ids = if stream.is_empty() { Ids::default() } else { import(dir, &git_dir, &stream, marks) };
         if let Head::Detached(m) = &self.head {
             fs::write(git_dir.join("HEAD"), format!("{}\n", &ids[*m])).unwrap();
+        }
+        if !self.stashes.is_empty() {
+            let mut log = String::new();
+            let mut old = "0".repeat(ids[self.stashes[0].0].len());
+            for (w, message, time) in &self.stashes {
+                let new = &ids[*w];
+                writeln!(log, "{old} {new} {TESTER} {time} +0000\t{message}").unwrap();
+                old = new.to_string();
+            }
+            let path = git_dir.join("logs/refs/stash");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, log).unwrap();
         }
         let head_born = match &self.head {
             Head::Branch(b) => self.tips.contains_key(&full_ref(b)),

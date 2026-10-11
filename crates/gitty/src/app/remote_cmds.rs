@@ -422,6 +422,16 @@ impl App {
             PickItem::new("Pop Latest Stash", "stash@{0}", |app: &mut App| {
                 app.latest_stash(true)
             }),
+            PickItem::new(
+                gitti_core::stash::APPLY_LATEST_INDEX_LABEL,
+                "stash@{0}; staged changes come back staged",
+                |app: &mut App| app.latest_stash_index(false),
+            ),
+            PickItem::new(
+                gitti_core::stash::POP_LATEST_INDEX_LABEL,
+                "stash@{0}; staged changes come back staged",
+                |app: &mut App| app.latest_stash_index(true),
+            ),
         ]
     }
 }
