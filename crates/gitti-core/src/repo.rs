@@ -1134,11 +1134,20 @@ impl Repo {
             }
         }
 
+        // A type change (file ↔ symlink) is a deletion and an addition of the same path:
+        // the addition is kept and learns the deleted side's mode (`FileDiff::link_change`).
         let by_path = |diffs: Vec<FileDiff>| -> HashMap<String, FileDiff> {
-            diffs
-                .into_iter()
-                .map(|d| (d.path().to_string(), d))
-                .collect()
+            let mut map: HashMap<String, FileDiff> = HashMap::with_capacity(diffs.len());
+            for mut d in diffs {
+                if let Some(gone) = map.get(d.path()).filter(|g| g.change == FileChange::Deleted)
+                    && d.change == FileChange::Added
+                    && let Some(mode) = gone.header.iter().find(|h| h.starts_with("deleted file mode "))
+                {
+                    d.header.push(mode.clone());
+                }
+                map.insert(d.path().to_string(), d);
+            }
+            map
         };
         let mut unstaged_map = by_path(unstaged_diff?);
         let mut staged_map = by_path(staged_diff?);

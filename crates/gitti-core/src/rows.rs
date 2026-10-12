@@ -722,6 +722,8 @@ pub struct WorktreeTab {
     /// Why this work tree's file system can't hold the path, in a few words
     /// ([`crate::fs_paths::Problem::short`]: "collides with xt_TCPMSS.h"), if so.
     pub fs_note: Option<String>,
+    /// A symbolic link: [`crate::diff::LinkChange::label`] ("symlink → ../a").
+    pub link: Option<String>,
 }
 
 impl WorktreeTab {
@@ -744,6 +746,10 @@ impl WorktreeTab {
             TabStage::Partly => format!("{what}, partly staged"),
             TabStage::Staged => format!("{what}, staged"),
         };
+        let state = match &self.link {
+            Some(link) => format!("{state}, {link}"),
+            None => state,
+        };
         match &self.fs_note {
             Some(note) => format!("{state} — {FS_MARK} {note}"),
             None => state,
@@ -764,6 +770,7 @@ pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
             letter: CONFLICT_LETTER,
             stage: TabStage::Conflicted,
             fs_note: None,
+            link: None,
         });
     }
     for f in &ws.unstaged {
@@ -780,6 +787,7 @@ pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
             letter,
             stage,
             fs_note: None,
+            link: None,
         });
     }
     for f in &ws.staged {
@@ -788,14 +796,20 @@ pub fn worktree_tabs(ws: &crate::WorkingState) -> Vec<WorktreeTab> {
             letter: f.entry.index.unwrap_or('M'),
             stage: TabStage::Staged,
             fs_note: None,
+            link: None,
         });
         if tab.stage == TabStage::Unstaged {
             tab.stage = TabStage::Partly;
         }
     }
     let mut tabs: Vec<WorktreeTab> = map.into_values().collect();
+    // The working directory's side wins (it is listed after the index's).
+    let links: std::collections::HashMap<&str, String> = (ws.staged.iter().chain(&ws.unstaged))
+        .filter_map(|f| Some((f.path(), f.diff.as_ref()?.link_change()?.label())))
+        .collect();
     for t in &mut tabs {
         t.fs_note = ws.fs_paths.issue(&t.path).map(|i| i.problem.short());
+        t.link = links.get(t.path.as_str()).cloned();
     }
     tabs
 }
