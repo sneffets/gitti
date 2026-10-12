@@ -1249,6 +1249,8 @@ pub mod testing {
         pub status: Option<(String, bool)>,
         /// The ours / theirs panes have the focus.
         pub top_focused: bool,
+        /// The result editor has the focus.
+        pub result_focused: bool,
         pub text: String,
         /// The text selected in ours / theirs (as copying takes it).
         pub selected: Option<String>,
@@ -1258,7 +1260,7 @@ pub mod testing {
         let window = merge_window()?;
         let editor = crate::merge_window::LAST_EDITOR.with(|e| e.borrow().clone())?.upgrade()?;
         window
-            .update(cx, |_, window, cx| editor.read(cx).script_state(window))
+            .update(cx, |_, window, cx| editor.read(cx).script_state(window, cx))
             .ok()
     }
 

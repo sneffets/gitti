@@ -193,7 +193,10 @@ pub fn open(
     scripted: bool,
     cx: &mut App,
 ) -> anyhow::Result<()> {
-    let (bounds, display_id) = if scripted {
+    // `GITTI_SCRIPT_PLACEMENT=1`: on screen and focused like a normal start (as the main
+    // window), so real input can be sent to a scripted run.
+    let placed = std::env::var_os("GITTI_SCRIPT_PLACEMENT").is_some();
+    let (bounds, display_id) = if scripted && !placed {
         let b = Bounds::new(point(px(-6000.), px(-6000.)), size(px(1400.), px(900.)));
         (WindowBounds::Windowed(b), None)
     } else {
@@ -202,7 +205,7 @@ pub fn open(
     let options = WindowOptions {
         window_bounds: Some(bounds),
         display_id,
-        focus: !scripted,
+        focus: !scripted || placed,
         titlebar: Some(TitlebarOptions {
             title: Some(format!("Merge {path}").into()),
             ..Default::default()
@@ -339,6 +342,9 @@ impl MergeEditor {
         if let Some(first) = first {
             this.go_to(first, window, cx);
         }
+        // The result is where the file is edited: it has the focus from the start (cursor at
+        // the first conflict), so typing works without a click first.
+        this.editor.update(cx, |e, cx| e.focus(window, cx));
         this
     }
 
@@ -469,7 +475,7 @@ impl MergeEditor {
     }
 
     /// For tests: see `testing::MergeState`.
-    pub fn script_state(&self, window: &Window) -> crate::testing::MergeState {
+    pub fn script_state(&self, window: &Window, cx: &App) -> crate::testing::MergeState {
         crate::testing::MergeState {
             current: self.current,
             chunks: (0..self.session.doc.chunks.len())
@@ -483,6 +489,7 @@ impl MergeEditor {
             single: self.single,
             status: self.status.clone(),
             top_focused: self.top_focus.is_focused(window),
+            result_focused: self.editor.read(cx).focus_handle(cx).is_focused(window),
             text: self.session.text().to_string(),
             selected: self.selected_text(),
         }
@@ -1330,6 +1337,18 @@ impl MergeEditor {
                     .relative()
                     .overflow_hidden()
                     .probe("merge-result-pane")
+                    // A press anywhere on the result (gutter, the layers over the text, a
+                    // chunk's bar) leaves the focus in the editor: what the user clicked into
+                    // is always editable, also when the editor itself didn't take the press.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                            let editor = this.editor.clone();
+                            if !editor.read(cx).focus_handle(cx).is_focused(window) {
+                                editor.update(cx, |e, cx| e.focus(window, cx));
+                            }
+                        }),
+                    )
                     .child(
                         canvas(
                             move |bounds, _, _| pane_bounds.set(Some(bounds)),
