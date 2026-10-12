@@ -167,6 +167,9 @@ impl App {
             v.push(self.rebase_item(name));
         }
         let upstream = self.tracking_of(name).and_then(|t| t.upstream.clone());
+        if !current {
+            v.push(self.fast_forward_item(name, upstream.as_deref()));
+        }
         let remote = upstream
             .as_deref()
             .and_then(|u| u.split_once('/'))
@@ -520,6 +523,7 @@ impl App {
             ]
             .into_iter()
             .chain(self.delete_menu_items())
+            .chain([self.fast_forward_all_item()])
             .chain(self.sort_menu_items(false))
             .collect(),
             "remotes" => vec![
@@ -694,15 +698,7 @@ pub(super) fn stash_items(stash: gitti_core::ops::StashRef) -> Vec<MenuItem> {
         })
         .key('y'),
         MenuItem::separator(),
-        MenuItem::new("Drop…", move |app| {
-            app.modal = Some(Modal::confirm(
-                "Drop Stash",
-                format!("Drop stash@{{{n}}}? This cannot be undone."),
-                "Drop",
-                move |app| app.run_op("Drop stash", true, After::Nothing, move |r| r.stash_drop(stash)),
-            ));
-        })
-        .key('d'),
+        MenuItem::new("Drop…", move |app| app.drop_stash_confirm(stash)).key('d'),
     ]
 }
 

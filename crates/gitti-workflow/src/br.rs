@@ -1,6 +1,7 @@
 //! BR — branches and switching: create, switch (clean, carrying local changes, blocked
 //! and the ways out), rename, delete (merged, unmerged, several at once), remote branches,
-//! a detached HEAD and keeping its work; RL-02 (a deleted branch brought back) shares the
+//! a detached HEAD and keeping its work, fast-forwarding branches without checking them
+//! out; RL-02 (a deleted branch brought back) shares the
 //! deletion fixture.
 
 use std::path::{Path, PathBuf};
@@ -246,6 +247,11 @@ pub mod blocked {
 /// **BR-09 — many blocking untracked files.** `feat` adds [`COUNT`] generated files;
 /// the same paths exist untracked on `main` (with other content), next to `keep.txt`.
 /// Stash & Switch moves all of them into one stash and switches; `keep.txt` stays.
+///
+/// "Many" = more than the switch dialog lists (eight, then "… and N more"). git's own
+/// limit — it cuts its message after 4 KiB, about a hundred paths — is the core test's
+/// (`switching::many_blocking_untracked_files_are_stashed_in_one_go`): the stash's cost
+/// grows with every path, and these short names stay under it anyway.
 pub mod many_untracked {
     use std::path::Path;
 
@@ -254,7 +260,7 @@ pub mod many_untracked {
     use crate::fixture::{Change, Fixture, put};
 
     pub const TARGET: &str = "feat";
-    pub const COUNT: usize = 200;
+    pub const COUNT: usize = 20;
 
     pub fn path(i: usize) -> String {
         format!("gen/out-{i:03}.txt")
@@ -677,6 +683,98 @@ pub mod upstream {
         };
         c.eq("branch.main.remote", e.config("branch.main.remote"), remote);
         c.eq("branch.main.merge", e.config("branch.main.merge"), merge);
+        c.done()
+    }
+}
+
+/// **BR-21 — fast-forward branches without checking them out.** `main` (checked out):
+/// `init` → `second`, its upstream `origin/main` one commit further (`upstream work`).
+/// [`BEHIND`] at `init`, `origin/behind` at `upstream work` (2 behind); [`DIVERGED`] has
+/// its own commit on `init`, `origin/diverged` at `second` (1 ahead, 1 behind);
+/// [`ELSEWHERE`] at `init`, `origin/elsewhere` at `second`, checked out in the linked
+/// worktree [`worktree`]; [`TOPIC`] at `second` without upstream.
+///
+/// The user fast-forwards [`BEHIND`] from its menu (it moves, nothing else changes:
+/// [`expect`]), then runs Fast-Forward All Branches: nothing more moves — the report says
+/// per branch why (`main` is checked out here, [`DIVERGED`] diverged, [`ELSEWHERE`] is
+/// checked out in the worktree, [`TOPIC`] has no upstream, [`BEHIND`] is up to date).
+/// Fast-Forward All Branches straight from the fixture moves [`BEHIND`] alike.
+pub mod fast_forward {
+    use std::path::{Path, PathBuf};
+
+    use super::on;
+    use crate::expect::{Checks, Expect};
+    use crate::fixture::{Fixture, put};
+
+    pub const BEHIND: &str = "behind";
+    pub const DIVERGED: &str = "diverged";
+    pub const ELSEWHERE: &str = "elsewhere";
+    pub const TOPIC: &str = "topic";
+    /// What the report says of each branch that doesn't move (after [`BEHIND`] moved).
+    pub const DIVERGED_WHY: &str = "1 ahead, 1 behind origin/diverged — merge or rebase it instead";
+    /// The short reason of diverged's greyed menu entry.
+    pub const DIVERGED_MENU_WHY: &str = "1 ahead, 1 behind origin/diverged";
+    pub const MAIN_WHY: &str = "checked out here";
+    pub const TOPIC_WHY: &str = "no upstream";
+    pub const BEHIND_WHY: &str = "up to date with origin/behind";
+
+    pub struct Setup {
+        pub init: String,
+        pub second: String,
+        pub up: String,
+        pub mine: String,
+    }
+
+    /// The linked worktree of [`ELSEWHERE`]: `<dir>-wt`.
+    pub fn worktree(dir: &Path) -> PathBuf {
+        let mut p = dir.as_os_str().to_owned();
+        p.push("-wt");
+        PathBuf::from(p)
+    }
+
+    /// The branches above, HEAD on `main`, clean; `origin` an empty bare repository.
+    /// Four git processes (the linked worktree is the fourth).
+    pub fn fixture(dir: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        let init = fx.commit("main", "init", &[put("a.txt", "a\n")]);
+        let second = fx.commit("main", "second", &[put("a.txt", "b\n")]);
+        let up = fx.commit_from("refs/remotes/origin/main", second, "upstream work", &[put("u.txt", "u\n")]);
+        fx.branch(BEHIND, init);
+        fx.branch("refs/remotes/origin/behind", up);
+        let mine = fx.commit_from(DIVERGED, init, "my own work", &[put("d.txt", "d\n")]);
+        fx.branch("refs/remotes/origin/diverged", second);
+        fx.branch(ELSEWHERE, init);
+        fx.branch("refs/remotes/origin/elsewhere", second);
+        fx.branch(TOPIC, second);
+        fx.remote("origin", &super::origin(dir));
+        for b in ["main", BEHIND, DIVERGED, ELSEWHERE] {
+            fx.upstream(b, "origin");
+        }
+        let wt = worktree(dir).display().to_string().replace('\\', "/");
+        fx.git_after(&["worktree", "add", "-q", &wt, ELSEWHERE]);
+        let ids = fx.build(dir);
+        Setup {
+            init: ids[init].into(),
+            second: ids[second].into(),
+            up: ids[up].into(),
+            mine: ids[mine].into(),
+        }
+    }
+
+    /// [`BEHIND`] at `upstream work`; every other branch where it was, HEAD on `main`, no
+    /// file changed. One git process.
+    pub fn expect(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut c = Checks::new("BR-21 after the fast-forward");
+        on(&mut c, &e, "main");
+        c.eq("behind", e.ref_id(BEHIND), Some(s.up.clone()));
+        c.eq("main", e.ref_id("main"), Some(s.second.clone()));
+        c.eq("diverged", e.ref_id(DIVERGED), Some(s.mine.clone()));
+        c.eq("elsewhere", e.ref_id(ELSEWHERE), Some(s.init.clone()));
+        c.eq("topic", e.ref_id(TOPIC), Some(s.second.clone()));
+        c.text("a.txt on disk", e.file("a.txt").as_deref(), Some("b\n"));
+        c.ok("u.txt not on disk", e.file("u.txt").is_none(), "u.txt");
+        c.eq("status", e.status_lines(), Vec::<String>::new());
         c.done()
     }
 }

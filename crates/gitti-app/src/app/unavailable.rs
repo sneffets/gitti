@@ -65,6 +65,7 @@ impl GittiApp {
                 .iter()
                 .filter(|r| r.kind == RefKind::LocalBranch && Some(r.short_name.as_str()) != current)
                 .count(),
+            ff_branches: gitti_core::branch_update::movable(&self.tracking, current),
             staged: self.working.staged.len(),
             unstaged: self.working.unstaged.len(),
             tracked_unstaged: gitti_core::ops::UnstagedCounts::of(&self.working).tracked,
@@ -80,6 +81,7 @@ impl GittiApp {
             this_version,
             old_version,
             cursor_file,
+            commit_diff: self.commit_origin().is_some() && self.rows.iter().any(|r| r.file_ref().is_some()),
             github_remote: gitti_core::signing_keys::github_repo(&self.remotes).is_some(),
             signing_keys: self.signing_key_offer().is_some(),
             fs_paths: self.working.fs_paths.shown().count(),
@@ -87,6 +89,7 @@ impl GittiApp {
             fs_hidden: self.working.fs_paths.hidden().count(),
             marked_commits: self.commit_marks.len(),
             head_marked: self.commit_marks.has(self.head.id),
+            shallow: self.history.is_shallow(),
         }
     }
 

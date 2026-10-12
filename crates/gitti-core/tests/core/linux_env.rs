@@ -735,7 +735,7 @@ mod linux {
         let terminal = dir.path().join("r22b-fake-term");
         std::os::unix::fs::symlink(true_program(), &editor).unwrap();
         std::os::unix::fs::symlink(true_program(), &terminal).unwrap();
-        gitti_core::editor::spawn_editor(&[editor.to_string_lossy().into_owned()], dir.path())
+        gitti_core::editor::spawn_editor(&[editor.into_os_string()], dir.path())
             .unwrap();
         gitti_core::desktop::open_terminal(dir.path(), &terminal.to_string_lossy()).unwrap();
         for name in ["r22b-fake-ed", "r22b-fake-term"] {

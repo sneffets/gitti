@@ -54,6 +54,7 @@ pub fn main() {
         ("folder_rule_files", folder_rule_files),
         ("clone_and_init", clone_and_init),
         ("clone_from_clipboard", clone_from_clipboard),
+        ("shallow_clone_and_history", shallow_clone_and_history),
         ("init_object_format", init_object_format),
         ("go_to_commit", go_to_commit),
         ("search_in_changes", search_in_changes),
@@ -71,6 +72,7 @@ pub fn main() {
         ("about_and_licences", about_and_licences),
         ("repository_statistics", repository_statistics),
         ("repository_statistics_count_all", repository_statistics_count_all),
+        ("commit_encoding_dialog", commit_encoding_dialog),
         ("unavailable_commands", unavailable_commands),
         ("detached_head_greys_branch_commands", detached_head_greys_branch_commands),
         ("fresh_repository_greys_what_needs_a_commit", fresh_repository_greys_what_needs_a_commit),
@@ -409,6 +411,9 @@ fn repository_statistics(ui: &mut Ui) {
         "\n  Whole .git:      ",
         "\n  Tracked files:   ",
         "\nCommits per author — all 5 commits",
+        "\nCommit messages\n  Encoding:        ",
+        "\n  In the history:  all 5 commits: UTF-8 (no encoding header)\n",
+        "\n  Change:          Repository ▸ Commit Encoding… (also in the palette) — for new commits only",
     ] {
         if !text.contains(part) {
             fail!(ui, "{title} lacks `{part}`:\n{text}");
@@ -480,6 +485,54 @@ fn repository_statistics_count_all(ui: &mut Ui) {
     let text = viewer(ui);
     if !text.contains("The Count All Commits button counts") {
         fail!(ui, "not offered again after closing:\n{text}");
+    }
+    ui.quick("cancel");
+}
+
+/// Repository ▸ Commit Encoding…: the dialog says that a change is for new commits only
+/// (re-encoding is not offered); its live line names the file and what follows, refuses
+/// a name gitti can't write; Save writes `.git/config` and the statistics show it.
+fn commit_encoding_dialog(ui: &mut Ui) {
+    use gitti_core::commit_encoding::change;
+    let ws = ui.ws.clone();
+    let dir = ui.workdir();
+    ui.quick("focuslist");
+    ui.step("action:gitti::ChangeCommitEncoding");
+    if modal_title(ui).as_deref() != Some(change::TITLE) {
+        fail!(ui, "dialog {:?}", modal_title(ui));
+    }
+    let message = ui.cx.update(|cx| testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("A change applies to the commits made from now on only") || !message.contains(change::NOT_OFFERED) {
+        fail!(ui, "intro: {message:?}");
+    }
+    let live = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_live(&ws, cx)).unwrap_or_default();
+    ui.quick("field:0=latin-x");
+    let refused = live(ui);
+    if !refused.2.as_deref().is_some_and(|b| b.starts_with("gitti can't write commit messages in “latin-x”")) {
+        fail!(ui, "unknown name not refused: {refused:?}");
+    }
+    ui.quick("field:0=ISO-8859-1");
+    let l = live(ui);
+    let want = "Writes i18n.commitEncoding = ISO-8859-1 to this repository's .git/config: new commit messages";
+    if !l.0.starts_with(want) || l.2.is_some() || l.3 != change::COMMON {
+        fail!(ui, "live: {l:?}");
+    }
+    ui.step("modalok");
+    let written = ui.wait_real(1500, |ui| {
+        ui.is_idle() && std::fs::read_to_string(dir.join(".git/config")).unwrap_or_default().contains("commitEncoding = ISO-8859-1")
+    });
+    if !written {
+        fail!(ui, "not written: {:?}", std::fs::read_to_string(dir.join(".git/config")));
+    }
+    ui.quick("focuslist");
+    ui.step("action:gitti::RepositoryStatistics");
+    let viewer = |ui: &mut Ui| ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+    ui.wait_real(1500, |ui| viewer(ui).contains("In the history:  all"));
+    let text = viewer(ui);
+    let part = "\n  Encoding:        ISO-8859-1 — i18n.commitEncoding set in .git/config (this repository): \
+                new commit messages are written in ISO-8859-1";
+    if !text.contains(part) {
+        fail!(ui, "statistics lack `{part}`:\n{text}");
     }
     ui.quick("cancel");
 }
@@ -943,6 +996,82 @@ fn bare_source(name: &str) -> PathBuf {
     bare
 }
 
+/// The Clone dialog's history options — a depth that is no number blocks OK with the
+/// reason, the newest 2 commits of one branch say what follows — clone shallow into a new
+/// tab, where Repository ▸ Fetch More History… (1) and Fetch Full History are on (greyed
+/// in the complete source with the reason); the history reloads after each, and the
+/// commands are greyed again once it is complete.
+/// Workflow: RM-19
+fn shallow_clone_and_history(ui: &mut Ui) {
+    use gitti_core::availability::NOT_SHALLOW;
+    let ws = ui.ws.clone();
+    let live = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_live(&ws, cx)).unwrap_or_default();
+    let parent = base().join("shallow-clones");
+    std::fs::create_dir_all(&parent).unwrap();
+    ui.quick("focuslist");
+    expect_menu(
+        ui,
+        &[("gitti::FetchFullHistory", Some(NOT_SHALLOW)), ("gitti::FetchMoreHistory", Some(NOT_SHALLOW))],
+    );
+    let source = ui.repo.clone();
+    ui.quick("action:gitti::CloneRepository");
+    ui.quick(&format!("field:0={}", source.display()));
+    ui.quick(&format!("field:1={}", parent.display()));
+    ui.quick("field:2=shallow");
+    ui.quick("field:3=x");
+    if !live(ui).2.is_some_and(|why| why.contains("no number of commits")) {
+        fail!(ui, "depth x: {:?}", live(ui));
+    }
+    ui.quick("field:3=2");
+    ui.quick("check:1");
+    let (text, _, blocked, _) = live(ui);
+    if blocked.is_some() || !text.contains("newest 2 commits") || !text.contains("One branch") {
+        fail!(ui, "depth 2, one branch: {text:?} {blocked:?}");
+    }
+    ui.step("modalok");
+    let clone = parent.join("shallow");
+    if !clone.join(".git/shallow").exists() || git_out(&clone, &["rev-list", "--count", "HEAD"]) != "2" {
+        fail!(ui, "no shallow clone at {}: {:?}", clone.display(), status(ui));
+        return;
+    }
+    if ui.tabs() != (2, 1) {
+        let t = ui.tabs();
+        fail!(ui, "clone not opened in a new tab: {t:?}");
+    }
+    ui.quick("focuslist");
+    expect_menu(ui, &[("gitti::FetchFullHistory", None), ("gitti::FetchMoreHistory", None)]);
+    let before = state(ui).commits;
+    ui.quick("action:gitti::FetchMoreHistory");
+    match modal(ui) {
+        Some((t, f)) if t == "Fetch More History" && f == ["100"] => {}
+        other => fail!(ui, "Fetch More History dialog: {other:?}"),
+    }
+    ui.quick("field:0=1");
+    if live(ui).1.as_deref() != Some("Fetch 1 More") {
+        fail!(ui, "OK label: {:?}", live(ui));
+    }
+    ui.step("modalok");
+    let n = git_out(&clone, &["rev-list", "--count", "HEAD"]);
+    if n != "3" || state(ui).commits != before + 1 {
+        let now = state(ui).commits;
+        fail!(ui, "after 1 more: {n} commits, list {before} → {now}, {:?}", status(ui));
+    }
+    ui.quick("action:gitti::FetchFullHistory");
+    let message = ui.cx.update(|cx| testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("--unshallow") {
+        fail!(ui, "Fetch Full History question: {message}");
+    }
+    ui.step("modalok");
+    if clone.join(".git/shallow").exists() || !status(ui).is_some_and(|s| s.0.contains("no longer shallow")) {
+        fail!(ui, "after the full history: {:?}", status(ui));
+    }
+    expect_menu(
+        ui,
+        &[("gitti::FetchFullHistory", Some(NOT_SHALLOW)), ("gitti::FetchMoreHistory", Some(NOT_SHALLOW))],
+    );
+    ui.quick("key:secondary-w");
+}
+
 /// The Clone dialog takes a repository location from the clipboard as if it was pasted:
 /// a forge's page URL cut back to the repository, selected (typing replaces it), the folder
 /// name derived, "From the clipboard" under it until it is changed; a local repository's
@@ -1085,7 +1214,7 @@ fn clone_and_init(ui: &mut Ui) {
     ui.quick("action:gitti::CloneRepository");
     ui.quick(&format!("field:0={}", bare.display()));
     match modal(ui) {
-        Some((t, f)) if t == "Clone Repository" && f.len() == 3 && f[2] == "upstream" => {}
+        Some((t, f)) if t == "Clone Repository" && f.len() == 4 && f[2] == "upstream" => {}
         other => fail!(ui, "clone dialog after typing the URL: {other:?}"),
     }
     ui.quick("field:0=git@example.com:team/other.git");
@@ -1915,6 +2044,7 @@ fn sidebar_menus(ui: &mut Ui) {
         remote: "origin".into(),
         branch: name.rsplit('/').next().unwrap_or(name).into(),
         fm: fm.clone(),
+        ..Default::default()
     };
     let cases: &[(SideMenu, &str, &str)] = &[
         (SideMenu::CurrentBranch, "side:ref-refs/heads/main", "main"),

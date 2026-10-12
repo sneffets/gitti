@@ -40,6 +40,7 @@ mod branch_cmds;
 mod change_search;
 mod commit_box;
 mod commit_flow;
+mod commit_lines;
 mod compare;
 mod context_lines;
 mod custom_commands;
@@ -2543,7 +2544,7 @@ impl App {
                 let stale = (result.as_ref().err())
                     .and_then(|e| gitti_core::lock::stale_lock(e, repo.workdir()));
                 let index = repo.index_stamp();
-                let read = (std::time::Instant::now(), std::time::SystemTime::now());
+                let read = gitti_core::watch::read_start();
                 let (working, scope) = match &paths {
                     Some(p) => match repo.working_state_reread(&opts, &prev, p) {
                         Ok((w, scope)) => (Ok(w), scope),
@@ -3275,7 +3276,7 @@ impl App {
         else {
             return;
         };
-        if !matches!(src, Src::Unstaged | Src::Staged) || !self.is_change(src, file, hunk, line) {
+        if !self.selectable(src) || !self.is_change(src, file, hunk, line) {
             return;
         }
         let row = self.diff_cursor;
@@ -3351,7 +3352,7 @@ impl App {
             self.move_diff_cursor(delta);
             return;
         };
-        if !matches!(src, Src::Unstaged | Src::Staged) {
+        if !self.selectable(src) {
             self.move_diff_cursor(delta);
             return;
         }
@@ -3374,17 +3375,28 @@ impl App {
             return;
         }
         self.diff_cursor = to;
-        let working = self.working.clone();
+        let Some(diff) = self.file_diff(src, file).cloned() else {
+            return;
+        };
         let is_change = |h: usize, l: usize| {
-            work_files(&working, src)
-                .get(file)
-                .and_then(|f| f.diff.as_ref())
-                .and_then(|d| d.hunks.get(h))
+            diff.hunks
+                .get(h)
                 .and_then(|hk| hk.lines.get(l))
                 .is_some_and(|l| l.is_change())
         };
         if let Some(sel) = self.line_sel.as_mut() {
             sel.select_range(&self.rows, to, is_change);
+        }
+    }
+
+    /// Whether lines of section `src` can be selected: the working directory's (stage /
+    /// unstage / discard) and a commit's or stash's (revert / apply in the working tree,
+    /// `app/commit_lines.rs`) — not a comparison's or a conflict's.
+    fn selectable(&self, src: Src) -> bool {
+        match src {
+            Src::Unstaged | Src::Staged => true,
+            Src::Commit => self.commit_origin().is_some(),
+            Src::Conflicted => false,
         }
     }
 
@@ -4219,6 +4231,7 @@ impl App {
                     Vec::new()
                 };
                 items.extend(self.restore_file_items(src, file));
+                items.extend(self.commit_lines_items(row));
                 items.extend(self.version_items(src, file));
                 items.extend(self.lfs_menu_items());
                 items.extend(self.external_diff_item(src, file));
@@ -4461,6 +4474,7 @@ impl App {
         items.extend(self.worktree_palette_items());
         items.extend(self.menu_palette_items());
         items.extend(self.restore_contains_palette_items());
+        items.extend(self.commit_lines_palette_items());
         items.extend(self.prepared_palette_items());
         items.extend(self.commit_box_palette_items());
         if self.repo_state != RepoState::Clean || !self.working.conflicted.is_empty() {

@@ -146,11 +146,15 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("ShowHiddenFsPaths", "Show Hidden Paths Again"),
     gitti("RepoGitSettings", CONFIG),
     gitti("GlobalGitSettings", CONFIG),
+    both("ChangeCommitEncoding", crate::commit_encoding::change::MENU_LABEL),
     gitti("EditRepoConfig", CONFIG),
     gitti("EditGlobalConfig", CONFIG),
     // The external diff / merge tool (`tool_setup`).
     both("ChooseExternalTool", crate::tool_setup::CHOOSE_LABEL),
     both("WriteCommitGraph", "Write Commit-Graph"),
+    // A shallow clone's history (`shallow`); greyed in a complete one.
+    both("FetchFullHistory", crate::shallow::FULL_LABEL),
+    both("FetchMoreHistory", crate::shallow::MORE_LABEL),
     both("RepositoryStatistics", crate::repo_stats::MENU_LABEL),
     // Branch
     both("SwitchBranch", "Switch Branch…"),
@@ -162,6 +166,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("DeleteBranchMenu", "Delete Branch…"),
     both("DeleteBranches", "Delete Branches…"),
     both("CleanUpMergedBranches", "Clean Up Merged Branches…"),
+    both("FastForwardAllBranches", crate::branch_update::ALL_LABEL),
     // Commit
     both("Commit", "Commit"),
     both("StageAllAndCommit", "Stage All and Commit"),
@@ -174,19 +179,16 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("StageAll", "Stage All"),
     both("UnstageAll", "Unstage All"),
     both("DiscardAll", "Discard All Unstaged…"),
-    gitti("RevertCommit", "gitty gap: the commit's menu (m) has it"),
-    gitti(
-        "CherryPickCommit",
-        "gitty gap: the commit's menu (m) has it",
-    ),
+    both("RevertCommit", "Revert Selected Commit"),
+    both("CherryPickCommit", "Cherry-pick Selected Commit"),
     both("CherryPickMarked", "Cherry-pick Marked Commits…"),
     both("RevertMarked", "Revert Marked Commits…"),
-    gitti(
-        "EditCommitMessage",
-        "gitty gap: the commit's menu (m) has it",
-    ),
+    both("EditCommitMessage", "Edit Commit Message…"),
     both("ShowContaining", "Branches and Tags Containing Selected Commit…"),
     both("RestoreFromCommit", "Restore File or Folder from Selected Commit…"),
+    // The shown commit's / stash's selected lines (`commit_lines`).
+    both("RevertLinesInWorkingTree", crate::commit_lines::REVERT_SELECTION_LABEL),
+    both("ApplyLinesToWorkingTree", crate::commit_lines::APPLY_SELECTION_LABEL),
     both("OpenThisVersion", crate::version_file::THIS_LABEL),
     both("OpenOldVersion", crate::version_file::OLD_LABEL),
     // On the file at the diff cursor (`ext_tool`).
@@ -207,8 +209,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("PopStash", "Pop Latest Stash"),
     both("ApplyStashIndex", crate::stash::APPLY_LATEST_INDEX_LABEL),
     both("PopStashIndex", crate::stash::POP_LATEST_INDEX_LABEL),
-    gitti("DropLatestStash", "gitty gap: the stash's menu (m) has it"),
-    gitti("DropStash", "gitty gap: the stash's menu (m) has it"),
+    both("DropLatestStash", "Drop Latest Stash…"),
+    both("DropStash", "Drop Stash…"),
     both("RenameStash", "Rename Stash…"),
     // Remote
     both("Fetch", "Fetch"),

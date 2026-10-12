@@ -176,6 +176,12 @@ impl History {
         self.worktree_row && row == 0
     }
 
+    /// A shallow clone's history: it ends at boundary commits whose parents aren't here
+    /// (`shallow`, read with the history).
+    pub fn is_shallow(&self) -> bool {
+        !self.basis.shallow.is_empty()
+    }
+
     /// Subject, author and date of `row` (empty for the working-directory row).
     pub fn meta(&self, row: usize) -> Arc<CommitMeta> {
         match self.commits.id(row) {
