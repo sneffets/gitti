@@ -212,6 +212,7 @@ fn sidebar_menus_have_the_shared_entries() {
             remote: "origin".into(),
             branch: name.rsplit('/').next().unwrap_or(name).into(),
             fm: fm.clone(),
+            ..Default::default()
         };
         let miss = missing(menu, &vars, labels);
         if !miss.is_empty() {

@@ -32,6 +32,11 @@ thread_local! {
     static SETUP: RefCell<Option<Setup>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    /// RV-08's fixture ids (its own history: `gitti_workflow::rv::lines`).
+    static LINES: RefCell<Option<rv::lines::Setup>> = const { RefCell::new(None) };
+}
+
 fn setup() -> Setup {
     SETUP.with(|s| s.borrow_mut().take()).expect("the fixture's ids")
 }
@@ -63,9 +68,15 @@ pub fn main() {
         ("rv04_revert_conflict_abort", rv04_revert_conflict_abort),
         ("rv06_revert_a_change_already_undone", rv06_revert_a_change_already_undone),
         ("rv07_revert_three_marked_commits", rv07_revert_three_marked_commits),
+        ("rv08_revert_lines_in_the_working_tree", rv08_revert_lines_in_the_working_tree),
     ];
     common::run(tests, |name| {
         let dir: PathBuf = base.join(name);
+        if name == "rv08_revert_lines_in_the_working_tree" {
+            let s = rv::lines::fixture(&dir);
+            LINES.with(|c| *c.borrow_mut() = Some(s));
+            return dir;
+        }
         let pick = ["cherry-pick", "clash~1"];
         let s = match name {
             "cp04_take_theirs" => wf::fixture_stopped(&dir, "", &pick),
@@ -612,4 +623,46 @@ fn rv07_revert_three_marked_commits(ui: &mut Ui) {
     ui.step("modalok");
     said(ui, "after the reverts", |t| t == "Reverted 3 commits on main, newest first.");
     expect(ui, rv::expect_several_reverted(&dir, &s));
+}
+
+/// RV-08: `Tune f` shown; a click on `-f 4`, ⌘-click on `+F 4`; the diff's menu ▸ Revert
+/// These Lines in Working Tree: line 4 back in the working tree only, said so.
+/// Workflow: RV-08
+fn rv08_revert_lines_in_the_working_tree(ui: &mut Ui) {
+    use gitti_core::commit_lines as cl;
+    let s = LINES.with(|c| c.borrow_mut().take()).expect("the fixture's ids");
+    let dir = ui.workdir();
+    row_of(ui, &s.tune_f);
+    let rows = ui.ui_state().rows;
+    // The block's second removed and second added line: `-f 4`, `+F 4`.
+    let nth = |kind: &str, n: usize| {
+        let want = format!("line Commit f.txt {kind}");
+        rows.iter().enumerate().filter(|(_, r)| **r == want).nth(n).map(|(i, _)| i)
+    };
+    let (Some(old), Some(new)) = (nth("Removed", 1), nth("Added", 1)) else {
+        return fail!(ui, "the commit's rows: {rows:?}");
+    };
+    ui.click_on(&format!("diff-row:{old}:line"), MouseButton::Left);
+    ui.click_on_with(&format!("diff-row:{new}:line"), MouseButton::Left, Modifiers::secondary_key());
+    let selected = ui.ui_state().selected_lines;
+    if selected != 2 {
+        return fail!(ui, "selected lines of the commit: {selected}");
+    }
+    testing::menu_labels();
+    ui.click_on(&format!("diff-row:{new}:line"), MouseButton::Right);
+    let labels = testing::menu_labels();
+    for want in [cl::REVERT_LINES, cl::REVERT_HUNK, cl::REVERT_FILE, cl::APPLY_LINES, cl::APPLY_HUNK, cl::APPLY_FILE] {
+        if !labels.iter().any(|l| l == want) {
+            return fail!(ui, "the diff menu lacks {want:?}: {labels:?}");
+        }
+    }
+    ui.step(&format!("menu:{}", cl::REVERT_LINES));
+    said(ui, "after the revert", |t| {
+        t == format!(
+            "Reverted 2 lines of f.txt (commit {}) — changed in the working tree; stage and \
+             commit to keep it",
+            &s.tune_f[..7]
+        )
+    });
+    expect(ui, rv::lines::expect_reverted(&dir, &s));
 }

@@ -142,6 +142,11 @@ pub fn run() {
     // Started from Finder / Dock: PATH etc. as in the user's terminal.
     shell_env::import_login_env();
     gitti_core::startup::mark("login environment read");
+    // A debug build's dock entry "gitti (dev)" with our icon (Linux; before the window opens,
+    // so the shell finds it for the window's app_id).
+    if !scripted {
+        app_icon::register_dev_build();
+    }
     // The git version probe (one process start, slow under a virus scanner) runs while
     // the GPU and the window come up; the first tab's `Repo::open` would wait for it.
     std::thread::spawn(|| {
@@ -1408,9 +1413,12 @@ actions!(
         RenormalizeLineEndings,
         RepoGitSettings,
         GlobalGitSettings,
+        ChangeCommitEncoding,
         EditRepoConfig,
         EditGlobalConfig,
         WriteCommitGraph,
+        FetchFullHistory,
+        FetchMoreHistory,
         RepositoryStatistics,
         CreateBranch,
         CreateTag,
@@ -1486,6 +1494,10 @@ actions!(gitti, [ToggleSignOff, RecentMessages, MessageHistoryPrev, MessageHisto
 // handlers in `app/from_commit.rs`.
 actions!(gitti, [ShowContaining, RestoreFromCommit]);
 
+// Commit ▸ Revert / Apply Selected Lines in / to Working Tree; handlers in
+// `app/commit_lines.rs`.
+actions!(gitti, [RevertLinesInWorkingTree, ApplyLinesToWorkingTree]);
+
 // Stash ▸ Stash Selected Lines or File… / Rename Stash…; handlers in `app/stash_ui.rs`.
 actions!(gitti, [StashSelection, RenameStash]);
 
@@ -1493,7 +1505,7 @@ actions!(gitti, [StashSelection, RenameStash]);
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
 // View ▸ Sort (Remote) Branches by …, Branch ▸ Delete Branches… / Clean Up Merged
-// Branches…; handlers in `app/branch_list.rs`.
+// Branches… / Fast-Forward All Branches; handlers in `app/branch_list.rs`.
 actions!(
     gitti,
     [
@@ -1504,6 +1516,7 @@ actions!(
         SortRemoteBranchesByDate,
         DeleteBranches,
         CleanUpMergedBranches,
+        FastForwardAllBranches,
     ]
 );
 // View ▸ Show Changes as Tree; handler in `app/file_marks.rs`.
@@ -1772,6 +1785,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Git Settings: This Repository…", RepoGitSettings),
                 MenuItem::action("Git Settings: Global…", GlobalGitSettings),
+                MenuItem::action(gitti_core::commit_encoding::change::MENU_LABEL, ChangeCommitEncoding),
                 MenuItem::action("Edit Repository Config File…", EditRepoConfig),
                 MenuItem::action("Edit Global Config File…", EditGlobalConfig),
                 MenuItem::action(gitti_core::tool_setup::CHOOSE_LABEL, ChooseExternalTool),
@@ -1780,6 +1794,9 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Run Custom Command…", RunCustomCommand),
                 MenuItem::action("Custom Commands…", CustomCommands),
                 MenuItem::action("Write Commit-Graph", WriteCommitGraph),
+                MenuItem::separator(),
+                MenuItem::action(gitti_core::shallow::FULL_LABEL, FetchFullHistory),
+                MenuItem::action(gitti_core::shallow::MORE_LABEL, FetchMoreHistory),
             ],
         ),
         menu(
@@ -1795,6 +1812,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Delete Branch…", DeleteBranchMenu),
                 MenuItem::action("Delete Branches…", DeleteBranches),
                 MenuItem::action("Clean Up Merged Branches…", CleanUpMergedBranches),
+                MenuItem::action(gitti_core::branch_update::ALL_LABEL, FastForwardAllBranches),
             ],
         ),
         menu(
@@ -1825,6 +1843,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Open This Version in Editor (read-only)", OpenThisVersion),
                 MenuItem::action("Open Old Version in Editor (read-only)", OpenOldVersion),
                 MenuItem::action(gitti_core::restore::MENU_LABEL, RestoreFromCommit),
+                MenuItem::action(gitti_core::commit_lines::REVERT_SELECTION_LABEL, RevertLinesInWorkingTree),
+                MenuItem::action(gitti_core::commit_lines::APPLY_SELECTION_LABEL, ApplyLinesToWorkingTree),
                 MenuItem::action(gitti_core::containing::SELECTED_LABEL, ShowContaining),
                 MenuItem::separator(),
                 MenuItem::action("Mark for Comparison", MarkCompare),

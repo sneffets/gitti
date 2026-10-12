@@ -153,8 +153,11 @@ fn lf06_clone_checks_out_the_content() {
     let parent = base.join("clones");
     std::fs::create_dir_all(&parent).unwrap();
     let config = base.join("gitty-config");
+    // Until the question shows, not until the refresh of the current repository that
+    // follows the clone is done too (nothing here depends on it).
     let script = format!(
-        "press:ctrl-p;{}press:enter;type:{};press:tab;press:ctrl-u;type:{};key:enter;dump;press:enter",
+        "press:ctrl-p;{}press:enter;type:{};press:tab;press:ctrl-u;type:{};press:enter;\
+         until:Open the new repository?;dump;press:enter",
         presses("clone repo"),
         gitti_workflow::rm::url_of(&wf::remote(&work)),
         parent.display(),
@@ -164,10 +167,12 @@ fn lf06_clone_checks_out_the_content() {
     assert!(screens(&out)[0].contains("Open the new repository?"), "{out}");
     assert!(out.contains(&format!("(reopen {})", clone.display())), "{out}");
     wf::expect_cloned(&clone, &head).unwrap();
-    // Nothing to commit in it, as gitty would read it there (with git-lfs's filters; a
-    // second gitty run would cost more than the time limit has left).
-    let mut repo = gitti_core::Repo::open(&clone).unwrap();
-    repo.set_env(env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
-    let state = repo.working_state().unwrap();
-    assert!(state.unstaged.is_empty() && state.staged.is_empty(), "nothing to commit");
+    // Nothing to commit in it, as git sees it with git-lfs's filters: one status (a
+    // second gitty run would cost more than the time limit has left; gitti-core's
+    // reading of the clone is the core test's). The checked-out file is racily clean, so
+    // every git that looks at it starts git-lfs, with a dozen git calls of its own.
+    let mut git = gitti_core::git_cli::Git::new(&clone);
+    git.set_env(env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+    let status = git.run(&["status", "--porcelain", "--untracked-files=all"]).unwrap().stdout_str();
+    assert!(status.is_empty(), "nothing to commit: {status}");
 }

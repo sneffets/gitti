@@ -102,7 +102,9 @@ fn repository_statistics() {
         "cmds;press:ctrl-p;{}key:enter;dump;cmds;press:y;state;dump;press:esc;click:9,0;dump",
         presses("repository statistics")
     );
-    let out = gitty(dir.path(), &script);
+    // Tall enough for the sizes below the commit messages' part.
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(dir.path(), config.path(), "120x50", &script);
     let s = screens(&out);
     for part in [
         " Repository Statistics ",
@@ -112,7 +114,12 @@ fn repository_statistics() {
         "  Whole .git:      ",
         "  Tracked files:   2 bytes in 1 file — ",
         "Commits per author — all 1 commit, ",
+        "│ Commit messages",
+        "  Encoding:        ",
+        "  In the history:  all 1 commit: UTF-8 (no encoding header)",
+        "  Change:          e (also Commit Encoding… in the palette) — ",
         "y copy as text",
+        "e commit encoding",
     ] {
         assert!(s[0].contains(part), "lacks `{part}`:\n{out}");
     }
@@ -128,6 +135,26 @@ fn repository_statistics() {
     assert!(states(&out)[0].contains("Copied ") && states(&out)[0].contains(" lines"), "{out}");
     assert!(s[1].contains(" Repository Statistics "), "y closed it:\n{out}");
     assert!(s[2].contains("Repository Statistics…") && s[2].contains("Copy Path"), "{out}");
+}
+
+/// Repository Statistics → e: Commit Encoding… refuses a name gitty can't write, says
+/// which file a name goes to and what follows; Enter writes `.git/config`.
+#[gitti_test::test]
+fn commit_encoding_from_the_statistics() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let script = format!(
+        "press:ctrl-p;{}key:enter;press:e;state;type:latin-x;dump;press:ctrl-u;type:ISO-8859-1;dump;key:enter;state",
+        presses("repository statistics")
+    );
+    let out = gitty(dir.path(), &script);
+    let s = screens(&out);
+    let st = states(&out);
+    assert!(st[0].contains("modal=Input \"Commit Encoding\""), "{out}");
+    assert!(s[0].contains("gitti can't write commit messages in “latin-x”"), "{out}");
+    assert!(s[1].contains("Writes i18n.commitEncoding = ISO-8859-1 to this"), "{out}");
+    assert!(st[1].contains("Set i18n.commitEncoding = ISO-8859-1 in .git/config"), "{out}");
+    let config = std::fs::read_to_string(dir.path().join(".git/config")).unwrap();
+    assert!(config.contains("commitEncoding = ISO-8859-1"), "{config}");
 }
 
 /// `gitty --licenses` prints this binary's part of the third-party list: its components
@@ -176,6 +203,74 @@ fn clone_from_the_palette() {
         out.contains(&format!("(reopen {})", clone.display())) || out.contains(&format!("(reopen {})", canon.display())),
         "{out}"
     );
+}
+
+/// The Clone dialog's history options: a depth that is no number blocks Enter with the
+/// reason; the newest 2 commits of one branch say what follows and clone shallow (a local
+/// path too). A complete repository greys Fetch Full History with the reason.
+/// Workflow: RM-19
+#[gitti_test::test]
+fn clone_shallow_single_branch() {
+    let dir = history_repo(5);
+    let d = dir.path();
+    git(d, &["branch", "side", "HEAD~1"]);
+    let target = tempfile::tempdir().unwrap();
+    let (parent, url) = (target.path().display().to_string(), d.display().to_string());
+    let out = gitty(
+        d,
+        &format!(
+            "press:ctrl-p;{}dump;press:esc;\
+             press:ctrl-p;{}press:enter;type:{url};press:tab;press:ctrl-u;type:{parent};press:tab;press:tab;\
+             type:x;dump;press:ctrl-u;type:2;press:tab;press:tab;press:space;dump;key:enter;dump;press:esc",
+            presses("fetch full history"),
+            presses("clone repo")
+        ),
+    );
+    let s = screens(&out);
+    let not_shallow = gitti_core::availability::NOT_SHALLOW;
+    assert!(s[0].contains("Fetch Full History") && s[0].contains(not_shallow), "{out}");
+    assert!(s[1].contains("\"x\" is no number of commits"), "{out}");
+    assert!(s[2].contains("Shallow: the history ends after the newest 2 commits") && s[2].contains("One branch"), "{out}");
+    assert!(s[3].contains("Open the new repository?"), "{out}");
+    let clone = target.path().join(d.file_name().unwrap());
+    assert!(clone.join(".git/shallow").exists(), "{out}");
+    assert_eq!(git(&clone, &["rev-list", "--count", "HEAD"]).trim(), "2");
+    assert_eq!(git(&clone, &["branch", "-r"]).lines().count(), 2, "origin/HEAD and origin/main only");
+}
+
+/// A shallow clone (3 commits of 6): Fetch More History… asks how many (1), Fetch Full
+/// History asks first; afterwards the history shows every commit and the commands are
+/// greyed again.
+/// Workflow: RM-19
+#[gitti_test::test]
+fn fetch_more_and_full_history() {
+    let src = history_repo(6);
+    let target = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", src.path().display().to_string().replace('\\', "/"));
+    git(target.path(), &["clone", "-q", "--depth=3", &url, "shallow"]);
+    let d = target.path().join("shallow");
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(
+        &d,
+        config.path(),
+        "160x45",
+        &format!(
+            "press:ctrl-p;{}press:enter;dump;press:ctrl-u;type:1;key:enter;state;\
+             press:ctrl-p;{}press:enter;dump;key:enter;state;press:ctrl-p;{}dump",
+            presses("fetch more history"),
+            presses("fetch full history"),
+            presses("fetch more history"),
+        ),
+    );
+    let s = screens(&out);
+    assert!(s[0].contains("Fetch More History") && s[0].contains("from origin") && s[0].contains("100"), "{out}");
+    let st = states(&out);
+    assert!(st[0].contains("still shallow"), "{out}");
+    assert!(s[1].contains("Fetch Full History") && s[1].contains("--unshallow"), "{out}");
+    assert!(st[1].contains("no longer shallow"), "{out}");
+    assert!(s[2].contains(gitti_core::availability::NOT_SHALLOW), "{out}");
+    assert!(!d.join(".git/shallow").exists());
+    assert_eq!(git(&d, &["rev-list", "--count", "HEAD"]).trim(), "6");
 }
 
 /// The Clone dialog takes a repository location from the clipboard: a forge's page URL

@@ -150,6 +150,7 @@ fn sidebar_and_menus(ui: &mut Ui) {
             remote: "origin".into(),
             branch: name.into(),
             fm: gitti_core::desktop::file_manager_name().to_string(),
+            ..Default::default()
         };
         testing::menu_labels();
         ui.click_on(target, MouseButton::Right);

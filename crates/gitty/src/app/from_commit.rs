@@ -67,7 +67,7 @@ impl App {
     }
 
     /// The selected commit, or why there is none (status line).
-    fn selected_commit_id(&mut self) -> Option<ObjectId> {
+    pub(super) fn selected_commit_id(&mut self) -> Option<ObjectId> {
         let why = match self.history.commits.get(self.selected) {
             _ if self.history.is_worktree_row(self.selected) => {
                 "Select a commit first — the working directory is selected"

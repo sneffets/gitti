@@ -239,3 +239,78 @@ fn br20_delete_the_selected_branch() {
     assert_eq!(history_row(&h1, side, &h2), Reselect::Replaced(h2.row_of(&id(&s.one)).unwrap()));
     wf::expect_gone(&dir, &s, &[wf::MERGED, wf::UNMERGED], "BR-20 after Force Delete").unwrap();
 }
+
+/// BR-21: Fast-Forward behind to origin/behind moves it (not checked out, no file
+/// changes); the others are refused in plain words and stay: diverged ("1 ahead, 1
+/// behind — merge or rebase it instead"), the branch checked out in a linked worktree
+/// (named), the checked-out one (a Pull), one without upstream. Two git commands each.
+/// Workflow: BR-21
+#[gitti_test::test]
+fn br21_fast_forward_a_branch_and_the_refusals() {
+    use br::fast_forward as wf;
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    let repo = Repo::open(&dir).unwrap();
+    let line = repo.fast_forward_branch(wf::BEHIND).unwrap();
+    assert!(
+        line.starts_with(&format!("Fast-forwarded behind: moved {} → {}", &s.init[..7], &s.up[..7]))
+            && line.ends_with("(2 commits from origin/behind)"),
+        "{line}"
+    );
+    wf::expect(&dir, &s).unwrap();
+    let refused = |name: &str| format!("{:#}", repo.fast_forward_branch(name).unwrap_err());
+    assert_eq!(refused(wf::DIVERGED), format!("Can't fast-forward diverged: {}", wf::DIVERGED_WHY));
+    let wt = gitti_core::paths::canonical(&wf::worktree(&dir));
+    let e = refused(wf::ELSEWHERE);
+    assert!(
+        e.starts_with("Can't fast-forward elsewhere: checked out in the worktree ")
+            && gitti_core::paths::canonical(std::path::Path::new(
+                e.trim_start_matches("Can't fast-forward elsewhere: checked out in the worktree ")
+                    .trim_end_matches(" — pull there")
+            )) == wt,
+        "{e}"
+    );
+    assert_eq!(refused("main"), "Can't fast-forward main: checked out here — Pull updates it");
+    assert!(refused(wf::TOPIC).starts_with("Can't fast-forward topic: no upstream"));
+    assert!(refused(wf::BEHIND).ends_with(wf::BEHIND_WHY));
+    wf::expect(&dir, &s).unwrap();
+}
+
+/// BR-21: Fast-Forward All Branches moves behind only and reports every branch: what
+/// moved, why each other one didn't. Two git commands.
+/// Workflow: BR-21
+#[gitti_test::test]
+fn br21_fast_forward_all_branches_reports_each() {
+    use br::fast_forward as wf;
+    use gitti_core::branch_update::{Outcome, report};
+    let (_tmp, dir) = repo_dir();
+    let s = wf::fixture(&dir);
+    let repo = Repo::open(&dir).unwrap();
+    let outcomes = repo.fast_forward_all().unwrap();
+    wf::expect(&dir, &s).unwrap();
+    let moved: Vec<&str> = outcomes
+        .iter()
+        .filter_map(|o| match o {
+            Outcome::Moved { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(moved, [wf::BEHIND], "{outcomes:?}");
+    let (summary, text) = report(&outcomes);
+    assert_eq!(summary, "Fast-forwarded 1 of 5 branches");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("behind: moved "), "{text}");
+    for want in [
+        format!("diverged: not moved — {}", wf::DIVERGED_WHY),
+        format!("main: not moved — {}", wf::MAIN_WHY),
+        format!("topic: not moved — {}", wf::TOPIC_WHY),
+        "elsewhere: not moved — checked out in the worktree ".to_string(),
+    ] {
+        assert!(lines.iter().any(|l| l.starts_with(&want)), "{want}: {text}");
+    }
+    // Again: nothing left to move; behind is up to date now.
+    let again = report(&repo.fast_forward_all().unwrap());
+    assert_eq!(again.0, "No branch fast-forwarded");
+    assert!(again.1.contains(&format!("behind: not moved — {}", wf::BEHIND_WHY)), "{}", again.1);
+    wf::expect(&dir, &s).unwrap();
+}

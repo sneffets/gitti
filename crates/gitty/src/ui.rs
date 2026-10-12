@@ -2526,6 +2526,10 @@ fn draw_diff_row(
             if let Some(label) = diff.and_then(|d| d.encoding.label()) {
                 spans.push(Span::styled(format!("  {label}"), Style::new().fg(p.text_muted)));
             }
+            // A symbolic link: says so, with its target.
+            if let Some(link) = diff.and_then(|d| d.link_change()) {
+                spans.push(Span::styled(format!("  {}", link.label()), Style::new().fg(p.text_muted)));
+            }
             // Git LFS: the lock's owner.
             if let Some(lock) = diff
                 .filter(|d| d.lfs.is_some())

@@ -33,3 +33,13 @@ debug = false
 [profile.release]
 lto = "fat"
 codegen-units = 1
+
+# Release for machines with little RAM (`cargo build --profile release-lowmem`, output in
+# target/release-lowmem/; scripts/install-linux.sh picks it below 12 GB on its own). Fat
+# LTO's final step for gitti needs more than 6 GB in a single rustc: on an 8 GB machine
+# with a desktop running the OOM killer ended it. Without LTO the largest rustc stays
+# under 2 GB; the exe is bigger, nothing else changes.
+[profile.release-lowmem]
+inherits = "release"
+lto = false
+codegen-units = 16

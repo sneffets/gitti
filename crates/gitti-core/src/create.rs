@@ -103,6 +103,146 @@ pub fn clone_repo_outcome(
     recurse_submodules: bool,
     progress: &mut dyn FnMut(&str),
 ) -> Result<Cloned> {
+    let opts = CloneOptions {
+        recurse_submodules,
+        ..Default::default()
+    };
+    clone_with_options(git, url, dest, &opts, progress)
+}
+
+// ------------------------------------------------------------------ clone options
+
+/// What `git clone` fetches: the Clone dialogs' options (gitti and gitty).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloneOptions {
+    /// `--recurse-submodules`: submodules cloned and checked out too.
+    pub recurse_submodules: bool,
+    /// `--depth N`: only the newest N commits of each branch (a shallow clone).
+    pub depth: Option<u32>,
+    /// `--single-branch`: only the remote's default branch.
+    pub single_branch: bool,
+    /// `--filter=blob:none`: file contents are downloaded when needed (a partial clone).
+    pub blobless: bool,
+}
+
+/// The Clone dialogs' depth field.
+pub const DEPTH_FIELD: &str = "Only the newest N commits (empty: the full history)";
+/// The Clone dialogs' checkboxes.
+pub const SUBMODULES_CHECK: &str = "Also clone the submodules (--recurse-submodules)";
+pub const SINGLE_BRANCH_CHECK: &str = "Only one branch: the remote's default (--single-branch)";
+pub const BLOBLESS_CHECK: &str = "Download file contents on demand (--filter=blob:none)";
+
+/// The depth field's value: empty = the full history, else a whole number ≥ 1; the error
+/// says what is wrong in plain words.
+pub fn parse_depth(text: &str) -> std::result::Result<Option<u32>, String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    match t.parse::<u32>() {
+        Ok(0) => Err("the number of commits must be at least 1 (empty: the full history)".into()),
+        Ok(n) => Ok(Some(n)),
+        Err(_) => Err(format!(
+            "\"{t}\" is no number of commits: enter a whole number like 50, or leave it empty for \
+             the full history"
+        )),
+    }
+}
+
+impl CloneOptions {
+    /// The arguments after `git clone --progress` (before `--`). A shallow or partial
+    /// clone of a local path goes through git's transport (`--no-local`): git ignores
+    /// `--depth` / `--filter` for local clones otherwise. A shallow clone of every branch
+    /// says so (`--no-single-branch`): `--depth` alone implies `--single-branch`.
+    pub fn args(&self) -> Vec<String> {
+        let mut a = Vec::new();
+        if self.recurse_submodules {
+            a.push("--recurse-submodules".to_string());
+        }
+        if let Some(n) = self.depth {
+            a.push(format!("--depth={n}"));
+            if !self.single_branch {
+                a.push("--no-single-branch".to_string());
+            }
+        }
+        if self.single_branch {
+            a.push("--single-branch".to_string());
+        }
+        if self.blobless {
+            a.push("--filter=blob:none".to_string());
+        }
+        if self.depth.is_some() || self.blobless {
+            a.push("--no-local".to_string());
+        }
+        a
+    }
+
+    /// What follows from the chosen options, in plain words (the dialogs show it under
+    /// the options): one sentence per option.
+    pub fn explain(&self) -> String {
+        let mut s: Vec<String> = Vec::new();
+        if let Some(n) = self.depth {
+            s.push(format!(
+                "Shallow: the history ends after the newest {} of {} — log and blame stop \
+                 there. Repository ▸ Fetch More History… / Fetch Full History get the rest \
+                 later.",
+                crate::discard::count(n as usize, "commit"),
+                if self.single_branch { "the branch" } else { "each branch" }
+            ));
+        }
+        if self.single_branch {
+            s.push(
+                "One branch: only the remote's default branch is fetched, now and by later \
+                 fetches; other branches aren't fetched until they are added \
+                 (git remote set-branches --add)."
+                    .into(),
+            );
+        }
+        if self.blobless {
+            s.push(
+                "On demand: only the checked-out files are downloaded; older file contents \
+                 are fetched when needed (a diff, blame, checking out an old version) — that \
+                 needs network access to the remote."
+                    .into(),
+            );
+        }
+        if s.is_empty() {
+            s.push("The full history of every branch with all file contents.".into());
+        }
+        s.join("\n")
+    }
+}
+
+/// What git's warnings after a clone with `opts` mean for the user: an option the server
+/// (or git) ignored. `None` when every option took effect.
+fn ignored_options_note(opts: &CloneOptions, stderr: &str) -> Option<String> {
+    let mut notes = Vec::new();
+    for line in stderr.lines().map(str::trim) {
+        let Some(w) = line.strip_prefix("warning:").map(str::trim) else {
+            continue;
+        };
+        if opts.blobless && w.contains("filtering not recognized by server") {
+            notes.push(
+                "The server doesn't offer partial clones (uploadpack.allowFilter): all file \
+                 contents were downloaded — a complete clone."
+                    .to_string(),
+            );
+        } else if w.contains("ignored") || w.contains("ignoring") {
+            notes.push(format!("git said: {w}"));
+        }
+    }
+    (!notes.is_empty()).then(|| notes.join("\n"))
+}
+
+/// [`clone_repo_outcome`] with every option of the Clone dialogs ([`CloneOptions`]).
+pub fn clone_with_options(
+    git: &Git,
+    url: &str,
+    dest: &Path,
+    opts: &CloneOptions,
+    progress: &mut dyn FnMut(&str),
+) -> Result<Cloned> {
+    let recurse_submodules = opts.recurse_submodules;
     let url = url.trim();
     if url.is_empty() {
         bail!("no repository URL given");
@@ -124,17 +264,25 @@ pub fn clone_repo_outcome(
         );
     }
     let dest_arg = dest.to_string_lossy();
+    let opt_args = opts.args();
     let mut args = vec!["clone", "--progress"];
-    if recurse_submodules {
-        args.push("--recurse-submodules");
-    }
+    args.extend(opt_args.iter().map(String::as_str));
     args.extend(["--", url, &dest_arg]);
     let cloned = |dir, note| Cloned { dir, note, refused: None };
     match git.with_workdir(parent).run_with_progress(&args, progress) {
-        Ok(out) => Ok(cloned(
-            crate::paths::canonical(dest),
-            crate::fs_paths::clone_note(&out.stderr),
-        )),
+        Ok(out) => {
+            let notes: Vec<String> = [
+                ignored_options_note(opts, &out.stderr),
+                crate::fs_paths::clone_note(&out.stderr),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            Ok(cloned(
+                crate::paths::canonical(dest),
+                (!notes.is_empty()).then(|| notes.join("\n\n")),
+            ))
+        }
         Err(e) => {
             let text = e.to_string();
             let stderr = match &e {

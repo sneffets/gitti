@@ -10,8 +10,9 @@
 //!   read), and the commits counted on the history the app has loaded already (no walk).
 //! - [`Storage`] — one `git count-objects -v` (the object store: packs and loose objects)
 //!   plus walks of the whole `.git` folder and the Git LFS store (file sizes only).
-//! - [`Authors`] — commits per author (`.mailmap` applied, like `git shortlog -sn`) of
-//!   the newest [`RECENT_COMMITS`] commits, read in-process; a whole history of up to
+//! - [`Authors`] — commits per author (`.mailmap` applied, like `git shortlog -sn`) and
+//!   per `encoding` header of the newest [`RECENT_COMMITS`] commits, read in-process
+//!   (the overview has the configured `i18n.commitEncoding`); a whole history of up to
 //!   [`ALL_AT_ONCE`] commits is counted right away. Bigger ones are counted whole only
 //!   when asked ([`COUNT_ALL_LABEL`]): in the background with progress, cancelled when
 //!   the window closes (linux.git has 1.3 million commits).
@@ -25,6 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::Result;
 use gix::ObjectId;
 
+use crate::commit_encoding::CommitEncoding;
 use crate::history::History;
 use crate::repo::Repo;
 
@@ -61,6 +63,9 @@ pub struct Overview {
     pub shallow: bool,
     /// The remotes that hand out missing objects on demand (a partial clone).
     pub promisors: Vec<String>,
+    /// Remotes that fetch only some branches (a `--single-branch` clone): `(remote,
+    /// branches)`.
+    pub narrow_fetch: Vec<(String, Vec<String>)>,
     pub branches: usize,
     pub remote_branches: usize,
     pub tags: usize,
@@ -72,6 +77,8 @@ pub struct Overview {
     pub tracked: Tracked,
     /// `None`: no history loaded (yet).
     pub commits: Option<CommitCounts>,
+    /// `i18n.commitEncoding` and where it is set (in-process).
+    pub commit_encoding: CommitEncoding,
 }
 
 /// The files the index tracks in this worktree.
@@ -200,6 +207,9 @@ pub struct Authors {
     pub people: Vec<(String, usize)>,
     /// A `.mailmap` was read (and applied).
     pub mailmap: bool,
+    /// The commits per `encoding` header as recorded (`None`: no header, UTF-8), most
+    /// first.
+    pub encodings: Vec<(Option<String>, usize)>,
 }
 
 /// The whole-history count of [`Authors`] for a history bigger than [`ALL_AT_ONCE`].
@@ -248,6 +258,7 @@ impl Repo {
             git_dir,
             common_dir,
             commits: history.map(commit_counts),
+            commit_encoding: self.commit_encoding_shown(),
             ..Default::default()
         };
         let Ok(repo) = self.gix() else {
@@ -257,6 +268,19 @@ impl Repo {
         let config = repo.config_snapshot();
         let names: Vec<String> = repo.remote_names().iter().map(|n| n.to_string()).collect();
         o.remotes = names.len();
+        o.narrow_fetch = names
+            .iter()
+            .filter_map(|n| {
+                let specs: Vec<String> = config
+                    .strings(format!("remote.{n}.fetch").as_str())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                let narrow = crate::shallow::narrow_branches(&specs);
+                (!narrow.is_empty()).then(|| (n.clone(), narrow))
+            })
+            .collect();
         o.promisors = names
             .into_iter()
             .filter(|n| config.boolean(format!("remote.{n}.promisor").as_str()).unwrap_or(false))
@@ -464,6 +488,7 @@ pub fn authors(
         ..Default::default()
     };
     let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut encodings: HashMap<Option<String>, usize> = HashMap::new();
     for (i, &row) in rows.iter().enumerate() {
         if i % PROGRESS_STEP == 0 && i > 0 {
             if cancel.load(Ordering::Relaxed) {
@@ -474,10 +499,14 @@ pub fn authors(
         let Some(id) = history.commits.id(row) else {
             continue;
         };
-        let name = repo
-            .as_ref()
-            .and_then(|r| author_name(r, &mailmap, id))
-            .unwrap_or_else(|| "(unreadable commit)".to_string());
+        let read = repo.as_ref().and_then(|r| author_and_encoding(r, &mailmap, id));
+        let name = match read {
+            Some((name, encoding)) => {
+                *encodings.entry(encoding).or_default() += 1;
+                name
+            }
+            None => "(unreadable commit)".to_string(),
+        };
         *counts.entry(name).or_default() += 1;
         let t = history.commits.commit_time(row);
         out.from = out.from.min(t);
@@ -489,18 +518,26 @@ pub fn authors(
     }
     out.people = counts.into_iter().collect();
     out.people.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.encodings = encodings.into_iter().collect();
+    out.encodings.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Some(out)
 }
 
-/// The author's name of commit `id` as `git shortlog` groups it (`.mailmap` applied).
-fn author_name(repo: &gix::Repository, mailmap: &gix::mailmap::Snapshot, id: ObjectId) -> Option<String> {
+/// The author's name of commit `id` as `git shortlog` groups it (`.mailmap` applied),
+/// and its `encoding` header (`None`: none, UTF-8).
+fn author_and_encoding(
+    repo: &gix::Repository,
+    mailmap: &gix::mailmap::Snapshot,
+    id: ObjectId,
+) -> Option<(String, Option<String>)> {
     let commit = repo.find_commit(id).ok()?;
     let decoded = commit.decode().ok()?;
     let author = decoded.author().ok()?;
     let enc = decoded.encoding.map(|e| e.as_ref());
     let resolved = mailmap.resolve_cow(author);
     let name: &[u8] = &resolved.name;
-    Some(crate::history::decode_text(name, enc))
+    let header = enc.map(|e| String::from_utf8_lossy(e).trim().to_string());
+    Some((crate::history::decode_text(name, enc), header))
 }
 
 // ---------------------------------------------------------------------------- text
@@ -562,6 +599,8 @@ pub struct TextOptions<'a> {
     pub now: i64,
     /// How to start the whole-history count, e.g. "Count All Commits below".
     pub count_all: &'a str,
+    /// Where `i18n.commitEncoding` is changed, e.g. "Repository ▸ Commit Encoding…".
+    pub change_encoding: &'a str,
 }
 
 /// The window's text: what has arrived of `stats`, each number with what it means.
@@ -594,8 +633,19 @@ pub fn text(stats: &Stats, opts: &TextOptions) -> String {
         line(
             &mut s,
             "Shallow clone",
-            "only the newest part of the history was fetched (`git fetch --unshallow` \
-             gets the rest)",
+            "only the newest part of the history was fetched (Repository ▸ Fetch More \
+             History… / Fetch Full History get the rest)",
+        );
+    }
+    for (remote, branches) in &o.narrow_fetch {
+        line(
+            &mut s,
+            "Single branch",
+            &format!(
+                "{remote} fetches only {} — other branches aren't fetched until they are \
+                 added (git remote set-branches --add)",
+                branches.join(", ")
+            ),
         );
     }
     if !o.promisors.is_empty() {
@@ -667,6 +717,9 @@ pub fn text(stats: &Stats, opts: &TextOptions) -> String {
         ]
         .join(", "),
     );
+    // ------------------------------------------------------------- encoding
+    s.push_str("\nCommit messages\n");
+    encoding_lines(&mut s, &line, o, stats, opts);
     // ------------------------------------------------------------- size
     s.push_str("\nSize on disk\n");
     match &stats.storage {
@@ -832,6 +885,66 @@ pub fn text(stats: &Stats, opts: &TextOptions) -> String {
         _ => {}
     }
     s
+}
+
+/// The configured `i18n.commitEncoding` and where it is set, the encodings the counted
+/// commits hold, and where to change it.
+fn encoding_lines(
+    s: &mut String,
+    line: &dyn Fn(&mut String, &str, &str),
+    o: &Overview,
+    stats: &Stats,
+    opts: &TextOptions,
+) {
+    use crate::commit_encoding::{KEY, Target};
+    let e = &o.commit_encoding;
+    let what = match e.target() {
+        Target::Utf8 => "new commit messages are written in UTF-8".to_string(),
+        Target::Legacy(_) => format!(
+            "new commit messages are written in {}; characters it lacks become their closest \
+             equivalent",
+            e.name()
+        ),
+        Target::Unsupported => format!("gitti can't write commit messages in {}: committing is refused", e.name()),
+    };
+    line(s, "Encoding", &format!("{} — {KEY} {}: {what}", e.name(), e.where_text()));
+    let read = match &stats.all {
+        AllCount::Done(a) => Some(a),
+        _ => stats.authors.as_ref(),
+    };
+    match read {
+        None => line(s, "In the history", "counting…"),
+        Some(a) if a.encodings.is_empty() => line(s, "In the history", "no commits"),
+        Some(a) => {
+            let which = if a.commits >= a.total {
+                format!("all {}", counted(a.commits, "commit", "commits"))
+            } else {
+                format!("the newest {} of {} commits", count_text(a.commits as u64), count_text(a.total as u64))
+            };
+            let name = |h: &Option<String>| match h {
+                Some(h) => h.clone(),
+                None => "UTF-8 (no encoding header)".to_string(),
+            };
+            let list = match a.encodings.as_slice() {
+                [(only, _)] => name(only),
+                many => many
+                    .iter()
+                    .map(|(h, n)| format!("{} {}", count_text(*n as u64), name(h)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            };
+            line(s, "In the history", &format!("{which}: {list}"));
+        }
+    }
+    line(
+        s,
+        "Change",
+        &format!(
+            "{} — for new commits only; existing ones keep their encoding. {}",
+            opts.change_encoding,
+            crate::commit_encoding::change::NOT_OFFERED
+        ),
+    );
 }
 
 #[cfg(test)]

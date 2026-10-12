@@ -1,9 +1,11 @@
 //! Repository Statistics (`gitti_core::repo_stats`) against small fixtures: the overview
 //! from the index and the loaded history, the object store from `git count-objects`,
-//! commits per author with `.mailmap`, the whole-history count's progress and cancel.
+//! commits per author with `.mailmap`, the whole-history count's progress and cancel, the
+//! commit encoding set and the ones the history holds.
 
 use std::sync::atomic::AtomicBool;
 
+use gitti_core::commit_encoding::SetIn;
 use gitti_core::repo_stats::{self, AllCount, Scope, Stats, TextOptions};
 use gitti_core::{LogOrder, Repo};
 
@@ -47,6 +49,7 @@ fn options<'a>(date: &'a dyn Fn(i64) -> String) -> TextOptions<'a> {
         date,
         now: 1_700_000_000 + 400 * 86_400,
         count_all: "Count All Commits",
+        change_encoding: "Repository ▸ Commit Encoding…",
     }
 }
 
@@ -177,4 +180,66 @@ fn whole_count_progress_and_cancel() {
     assert_eq!(seen, vec![(4_096, 5_000)]);
     let stop = AtomicBool::new(true);
     assert!(repo_stats::authors(&history, Scope::All, &stop, &mut |_, _| {}).is_none());
+}
+
+/// `i18n.commitEncoding` and where it is set (in-process), and the commits per `encoding`
+/// header counted in the authors' pass (no git process per commit). Three git processes.
+#[gitti_test::test]
+fn commit_encodings_set_and_in_the_history() {
+    let mut h = History::new();
+    let mut c = h.commit("main", &[], "plain", &[("a.txt", f("a\n"))]);
+    c = h.commit("main", &[c], "plain too", &[]);
+    h.encoding(Some("ISO-8859-1"));
+    c = h.commit("main", &[c], "latin one", &[]);
+    c = h.commit("main", &[c], "latin two", &[]);
+    h.encoding(Some("KOI8-R"));
+    c = h.commit("main", &[c], "cyrillic", &[]);
+    h.encoding(None);
+    h.commit("main", &[c], "plain again", &[]);
+    let (_tmp, dir, _) = repo_with(&h);
+    append_config(&dir, "[i18n]\n\tcommitEncoding = ISO-8859-1\n");
+    let repo = Repo::open(&dir).unwrap();
+    let history = repo.history(LogOrder::Topo).unwrap();
+
+    let git_before = repo.command_log().snapshot().len();
+    let o = repo.stats_overview(Some(&history));
+    let no = AtomicBool::new(false);
+    let all = repo_stats::authors(&history, Scope::All, &no, &mut |_, _| {}).unwrap();
+    let newest = repo_stats::authors(&history, Scope::Newest(2), &no, &mut |_, _| {}).unwrap();
+    assert_eq!(repo.command_log().snapshot().len(), git_before, "read in-process");
+
+    let e = &o.commit_encoding;
+    assert_eq!((e.name(), e.scope), ("ISO-8859-1", Some(SetIn::Repository)));
+    assert_eq!(e.where_text(), "set in .git/config (this repository)");
+    let enc = |v: &[(Option<&str>, usize)]| -> Vec<(Option<String>, usize)> {
+        v.iter().map(|(h, n)| (h.map(String::from), *n)).collect()
+    };
+    assert_eq!(all.encodings, enc(&[(None, 3), (Some("ISO-8859-1"), 2), (Some("KOI8-R"), 1)]));
+    // The newest two: "plain again" and "cyrillic".
+    assert_eq!(newest.encodings, enc(&[(None, 1), (Some("KOI8-R"), 1)]));
+
+    let date = |s: i64| s.to_string();
+    let mut stats = Stats {
+        overview: Some(o),
+        authors: Some(newest),
+        ..Default::default()
+    };
+    let text = repo_stats::text(&stats, &options(&date));
+    for part in [
+        "\nCommit messages\n  Encoding:        ISO-8859-1 — i18n.commitEncoding set in .git/config \
+         (this repository): new commit messages are written in ISO-8859-1",
+        "\n  In the history:  the newest 2 of 6 commits: 1 UTF-8 (no encoding header), 1 KOI8-R\n",
+        "\n  Change:          Repository ▸ Commit Encoding… — for new commits only; existing ones \
+         keep their encoding. Re-encoding existing commits is not offered",
+    ] {
+        assert!(text.contains(part), "lacks `{part}`:\n{text}");
+    }
+    stats.all = AllCount::Done(all);
+    let text = repo_stats::text(&stats, &options(&date));
+    let part = "\n  In the history:  all 6 commits: 3 UTF-8 (no encoding header), 2 ISO-8859-1, 1 KOI8-R\n";
+    assert!(text.contains(part), "lacks `{part}`:\n{text}");
+    stats.authors = None;
+    stats.all = AllCount::Offered;
+    let text = repo_stats::text(&stats, &options(&date));
+    assert!(text.contains("\n  In the history:  counting…\n"), "{text}");
 }

@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use gitti_core::commit_encoding::{self, CommitEncoding};
+use gitti_core::commit_encoding::{self, CommitEncoding, SetIn};
 use gitti_core::commit_message::CommitOptions;
 use gitti_core::ops::{CommitKind, FastForward, MergeOptions, StashFlags};
 use gitti_core::Repo;
@@ -210,6 +210,7 @@ fn the_setting_is_read_as_git_resolves_it() {
     std::fs::write(&config, format!("{base}{}[include]\n\tpath = enc.inc\n", encoding_config("ISO-8859-1"))).unwrap();
     let e = repo.commit_encoding();
     assert_eq!((e.name(), e.origin.as_deref()), ("KOI8-R", Some(".git/enc.inc")));
+    assert_eq!(e.where_text(), "set in .git/enc.inc (this repository)");
     // The worktree's own config (extensions.worktreeConfig) wins over the repository's.
     std::fs::write(
         &config,
@@ -219,6 +220,7 @@ fn the_setting_is_read_as_git_resolves_it() {
     std::fs::write(dir.join(".git/config.worktree"), encoding_config("EUC-JP")).unwrap();
     let e = repo.commit_encoding();
     assert_eq!((e.name(), e.origin.as_deref()), ("EUC-JP", Some(".git/config.worktree")));
+    assert_eq!(e.scope, Some(SetIn::Worktree));
     std::fs::remove_file(dir.join(".git/config.worktree")).unwrap();
     std::fs::write(&config, &base).unwrap();
     // The runner's own user config: asked from git.
@@ -228,8 +230,51 @@ fn the_setting_is_read_as_git_resolves_it() {
     let e = repo.commit_encoding();
     assert_eq!(e.name(), "windows-1251");
     assert!(e.is_legacy());
+    assert_eq!(e.scope, Some(SetIn::Global), "git's --show-scope");
     let shown = e.origin.unwrap();
     assert!(shown.ends_with("global.gitconfig"), "{shown}");
+}
+
+/// Changing the setting (Commit Encoding…): the dialog's texts name the file and what
+/// follows, refuse a name gitti can't write and a change that changes nothing, say when
+/// a stronger level keeps another value; the write is for new commits only.
+#[gitti_test::test]
+fn changing_the_setting_says_what_follows() {
+    use gitti_core::commit_encoding::change::{self, describe};
+    use gitti_core::ops::ConfigScope::{Global, Local};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let mut fx = Fixture::new();
+    fx.commit("main", "base", &[put("a.txt", "a\n")]);
+    fx.build(dir);
+    let repo = Repo::open(dir).unwrap();
+    let unset = repo.commit_encoding_shown();
+    assert!(change::intro(&unset).starts_with("New commit messages are written in UTF-8 — i18n.commitEncoding not set."));
+    assert!(describe("", Local, &unset).unwrap_err().contains("not set"));
+    assert!(describe("latin-x", Local, &unset).unwrap_err().starts_with("gitti can't write commit messages in “latin-x”"));
+    let latin = describe(" ISO-8859-1 ", Local, &unset).unwrap();
+    for part in [
+        "Writes i18n.commitEncoding = ISO-8859-1 to this repository's .git/config: new commit messages are \
+         written in ISO-8859-1 and git records “encoding ISO-8859-1” in them",
+        "Existing commits keep their encoding and stay readable.",
+    ] {
+        assert!(latin.contains(part), "lacks `{part}`: {latin}");
+    }
+    assert!(describe("UTF-8", Global, &unset).unwrap().contains("every repository of yours"));
+
+    assert!(repo.set_commit_encoding(Local, "latin-x").is_err(), "refused before git");
+    let done = repo.set_commit_encoding(Local, "ISO-8859-15").unwrap();
+    assert_eq!(done, "Set i18n.commitEncoding = ISO-8859-15 in .git/config: new commits are written in it, existing ones keep theirs");
+    let set = repo.commit_encoding_shown();
+    assert_eq!((set.name(), set.scope), ("ISO-8859-15", Some(SetIn::Repository)));
+    assert_eq!(change::initial_scope(&set), Local);
+    assert!(describe("ISO-8859-15", Local, &set).unwrap_err().contains("already"));
+    let global = describe("windows-1252", Global, &set).unwrap();
+    assert!(global.contains("But i18n.commitEncoding is ISO-8859-15 set in .git/config (this repository) — that wins here"), "{global}");
+    assert!(describe("", Local, &set).unwrap().starts_with("Removes i18n.commitEncoding from this repository's .git/config"));
+    let removed = repo.set_commit_encoding(Local, "").unwrap();
+    assert!(removed.starts_with("Removed i18n.commitEncoding from .git/config"), "{removed}");
+    assert_eq!(repo.commit_encoding_shown(), CommitEncoding::utf8());
 }
 
 /// Messages read back by their header in history, details and the amend prefill, for
