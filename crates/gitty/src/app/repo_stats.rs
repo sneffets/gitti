@@ -6,15 +6,18 @@
 //! (in-process; the commits are counted on the loaded history), the sizes (one `git
 //! count-objects`) and the commits per author of the newest commits. `a` counts the
 //! authors of a big history whole, with progress; closing the window stops it. `y` copies
-//! the text.
+//! the text. `e` opens Commit Encoding… (`i18n.commitEncoding` for new commits; also in
+//! the palette), whose texts are `gitti_core::commit_encoding::change`'s, as in gitti.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use gitti_core::commit_encoding::change;
+use gitti_core::ops::ConfigScope;
 use gitti_core::repo_stats::{self, AllCount, Scope, Stats, TextOptions};
 
-use super::{App, MenuItem, Modal, Msg, spawn};
-use crate::modal::TextKey;
+use super::{After, App, MenuItem, Modal, Msg, spawn};
+use crate::modal::{Live, TextKey};
 
 /// The statistics window's state.
 #[derive(Default)]
@@ -137,6 +140,7 @@ impl App {
                 },
                 now,
                 count_all: "a",
+                change_encoding: "e (also Commit Encoding… in the palette)",
             },
         )
     }
@@ -158,6 +162,12 @@ impl App {
                 app.set_info(format!("Copied {lines} lines"));
             },
         }];
+        keys.push(TextKey {
+            key: 'e',
+            label: "commit encoding",
+            keep: false,
+            run: App::commit_encoding_dialog,
+        });
         if self.repo_stats.stats.offers_count_all() {
             keys.push(TextKey {
                 key: 'a',
@@ -170,6 +180,49 @@ impl App {
             *body = text;
             *k = keys;
         }
+    }
+
+    /// Commit Encoding… (`e` in the statistics, the palette): `i18n.commitEncoding` for
+    /// new commits, in this repository or globally (the check) — the dialog says which
+    /// file gets written and what follows, as gitti's.
+    pub fn commit_encoding_dialog(&mut self) {
+        let current = self.repo.commit_encoding_shown();
+        let global = change::initial_scope(&current) == ConfigScope::Global;
+        let scope = |checks: &[bool]| {
+            if checks.first().copied().unwrap_or(false) { ConfigScope::Global } else { ConfigScope::Local }
+        };
+        let value = current.configured.clone().unwrap_or_default();
+        let intro = change::intro(&current);
+        self.modal = Some(
+            Modal::input_checks(
+                change::TITLE,
+                vec![(change::FIELD_LABEL, value.as_str())],
+                vec![(change::scope_label(ConfigScope::Global), global)],
+                move |app: &mut App, values, checks| {
+                    let value = values.into_iter().next().unwrap_or_default();
+                    let scope = scope(&checks);
+                    app.run_op("Commit encoding", true, After::Nothing, move |r| {
+                        r.set_commit_encoding(scope, &value)
+                    });
+                },
+            )
+            .with_note(intro)
+            .with_live(move |values, checks| {
+                let value = values.first().map(String::as_str).unwrap_or("");
+                let (text, blocked) = match change::describe(value, scope(checks), &current) {
+                    Ok(text) => (text, None),
+                    Err(why) => (String::new(), Some(why)),
+                };
+                Live {
+                    text,
+                    ok_label: "Save".into(),
+                    blocked,
+                    fills: change::COMMON.iter().map(|n| (0, n.to_string())).collect(),
+                    fills_label: "Common".into(),
+                    ..Default::default()
+                }
+            }),
+        );
     }
 
     /// The repository name's menu (a click on it in the top line; gitti: a right click

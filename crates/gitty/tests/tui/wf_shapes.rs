@@ -580,7 +580,7 @@ fn fs04_nfc_and_nfd_names() {
 }
 
 /// FS-05 / FS-06: the retargeted link, new_link and dangling — shown as their targets,
-/// never what they point at — and real/x.txt marked (space) and staged (s). Nothing
+/// never what they point at, their file rows saying "symlink → target" — and real/x.txt marked (space) and staged (s). Nothing
 /// beyond the `alias` symlink is listed.
 /// Workflow: FS-05, FS-06
 #[cfg(unix)]
@@ -601,6 +601,10 @@ fn fs05_fs06_stage_symlinks() {
     let screen = screens(&out)[0];
     assert!(screen.contains("+ target.txt") && screen.contains("+ nowhere"), "the links' targets: {out}");
     assert!(!screen.contains("alias/"), "nothing beyond the symlink: {out}");
+    // The file rows say they are links, with their targets.
+    for label in ["symlink → other.txt", "symlink → target.txt", "symlink → nowhere"] {
+        assert!(screen.contains(label), "{label:?} on a file row: {out}");
+    }
     let st = states(&out);
     assert!(st[0].contains("unstaged=1 staged=4"), "only gone's deletion left: {out}");
     no_error(st[0], &out);

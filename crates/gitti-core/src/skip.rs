@@ -173,11 +173,9 @@ impl Repo {
         let state = self.state();
         // A revert in a sequence that comes out empty stops without `REVERT_HEAD`, only
         // its `sequencer/todo` says where it is.
-        let stopped = self.git_dir().is_some_and(|d| {
-            d.join("CHERRY_PICK_HEAD").exists()
-                || d.join("REVERT_HEAD").exists()
-                || d.join("sequencer").join("todo").exists()
-        });
+        let stopped = self.pseudo_ref_exists("CHERRY_PICK_HEAD")
+            || self.pseudo_ref_exists("REVERT_HEAD")
+            || self.git_dir().is_some_and(|d| d.join("sequencer").join("todo").exists());
         if !matches!(state, RepoState::CherryPicking | RepoState::Reverting) || !stopped {
             return Err(e);
         }

@@ -104,6 +104,8 @@ pub struct History {
     time: i64,
     /// `Name <email>` of the next commits' author (default `T <t@example.com>`).
     author: Option<String>,
+    /// The `encoding` header of the next commits (`None`: none, UTF-8).
+    encoding: Option<String>,
 }
 
 /// The object ids of a [`History`]'s commits, by [`C`].
@@ -150,6 +152,9 @@ impl History {
             None => who.clone(),
         };
         write!(self.stream, "commit {refname}\nmark :{mark}\nauthor {author}\ncommitter {who}\n").unwrap();
+        if let Some(e) = &self.encoding {
+            writeln!(self.stream, "encoding {e}").unwrap();
+        }
         self.data(message.as_bytes());
         for (i, p) in parents.iter().enumerate() {
             let kind = if i == 0 { "from" } else { "merge" };
@@ -178,6 +183,12 @@ impl History {
     /// The author (`Name <email>`) of the commits that follow; the committer stays `T`.
     pub fn author(&mut self, who: &str) {
         self.author = Some(who.to_string());
+    }
+
+    /// The `encoding` header of the commits that follow (`None`: none, UTF-8); their
+    /// messages are written as given.
+    pub fn encoding(&mut self, name: Option<&str>) {
+        self.encoding = name.map(str::to_string);
     }
 
     /// An annotated tag on a commit.

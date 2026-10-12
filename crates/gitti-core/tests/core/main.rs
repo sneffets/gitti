@@ -29,6 +29,7 @@ mod op_safety;
 mod pull;
 mod push;
 mod reflog;
+mod reftable;
 mod repo_ops;
 mod repo_setup;
 mod repo_stats;

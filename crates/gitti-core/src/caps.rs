@@ -9,7 +9,8 @@
 //! - `cat-file --batch -Z` (2.43) — without it paths containing a newline aren't read
 //!   (highlighting falls back to the hunk text);
 //! - SHA-256 repositories (2.29, `extensions.objectFormat`) — an older git can't read
-//!   them at all, so opening one refuses with a message (`crate::Repo::open`).
+//!   them at all, so opening one refuses with a message (`crate::Repo::open`);
+//! - reftable repositories (2.45, `extensions.refStorage`; git 3.0's default) — the same.
 //!
 //! A git older than [`MIN_GIT`] still opens (most things work) with a warning
 //! ([`GitCaps::warning`]); no git at all refuses to open a repository
@@ -50,6 +51,9 @@ const FORCE_IF_INCLUDES: GitVersion = GitVersion::new(2, 30, 0);
 const CAT_FILE_NUL: GitVersion = GitVersion::new(2, 43, 0);
 /// SHA-256 repositories (`git init --object-format=sha256`).
 pub const SHA256: GitVersion = GitVersion::new(2, 29, 0);
+/// Repositories with the reftable ref backend (`git init --ref-format=reftable`), and
+/// `git for-each-ref --include-root-refs` (`crate::reftable`).
+pub const REFTABLE: GitVersion = GitVersion::new(2, 45, 0);
 
 /// `git version 2.39.3 (Apple Git-146)`, `git version 2.45.1.windows.1`,
 /// `git version 2.30` → the version (a missing patch level is 0).
@@ -170,6 +174,20 @@ impl GitCaps {
                 "This is a SHA-256 repository, which needs git {} or newer; {have} cannot read \
                  it. Please update git.",
                 short(SHA256)
+            )
+        })
+    }
+
+    /// Why a repository with the reftable ref backend can't be used with this git; `None`
+    /// when it can.
+    pub fn reftable_refusal(&self) -> Option<String> {
+        (!self.at_least(REFTABLE)).then(|| {
+            let have = self.version.map_or_else(|| self.probe.clone(), |v| format!("git {v}"));
+            format!(
+                "This repository keeps its branches and tags in a reftable (the ref storage \
+                 format git 3.0 uses for new repositories), which needs git {} or newer; {have} \
+                 cannot read it. Please update git.",
+                short(REFTABLE)
             )
         })
     }

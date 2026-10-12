@@ -223,6 +223,9 @@ impl GittiApp {
                     let stat = gitti_core::commit_files::placeholder_stat(f)
                         .unwrap_or_else(|| format!("+{a} −{r}"));
                     let mut detail = format!("{}, {stat}", change_name(f.change.letter()));
+                    if let Some(link) = f.link_change() {
+                        detail.push_str(&format!(", {}", link.label()));
+                    }
                     // A path this file system can't hold: why, in the warning colour.
                     let fs = self.fs_issue_of(super::Src::Commit, i).map(|is| is.problem.short());
                     if let Some(why) = &fs {

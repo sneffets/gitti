@@ -730,7 +730,7 @@ fn client(
 }
 
 /// `bytes` random bytes from the OS generator, hex-encoded.
-fn random_hex(bytes: usize) -> Result<String> {
+pub(crate) fn random_hex(bytes: usize) -> Result<String> {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).map_err(|e| anyhow!("OS random number generator: {e}"))?;
     Ok(buf.iter().map(|b| format!("{b:02x}")).collect())

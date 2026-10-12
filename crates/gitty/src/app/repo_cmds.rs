@@ -351,6 +351,11 @@ impl App {
             PickItem::new(gitti_core::repo_stats::MENU_LABEL, "sizes, commits, authors", |app: &mut App| {
                 app.show_repo_stats()
             }),
+            PickItem::new(
+                gitti_core::commit_encoding::change::MENU_LABEL,
+                gitti_core::commit_encoding::change::PALETTE_DETAIL,
+                |app: &mut App| app.commit_encoding_dialog(),
+            ),
             PickItem::new(format!("Open in {fm}"), "", |app: &mut App| {
                 app.open_folder()
             }),

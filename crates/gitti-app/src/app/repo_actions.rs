@@ -23,7 +23,7 @@ use crate::probe::ProbeExt as _;
 use crate::rows::Src;
 use crate::theme::PaletteExt as _;
 use crate::{
-    About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, CreateBranch, CreateTag, EditGitattributes,
+    About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, ChangeCommitEncoding, CreateBranch, CreateTag, EditGitattributes,
     EditGitignore, EditGlobalConfig, EditRepoConfig, GlobalGitSettings, GoToWorkingDirectory,
     MergeBranch, OpenInFileManager, OpenTerminal, PopStash, PopStashIndex, RenormalizeLineEndings,
     RepoGitSettings, RepositoryStatistics, StartupTimings,
@@ -140,6 +140,9 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &GlobalGitSettings, w, cx| {
             this.open_config_dialog(ConfigScope::Global, w, cx)
         }))
+        .on_action(cx.listener(|this, _: &ChangeCommitEncoding, w, cx| {
+            this.commit_encoding_dialog(w, cx)
+        }))
         .on_action(cx.listener(|this, _: &EditRepoConfig, w, cx| {
             this.edit_config_file(ConfigScope::Local, w, cx)
         }))
@@ -219,6 +222,12 @@ impl GittiApp {
                 |t, w, cx| t.show_repo_stats(w, cx),
             )
             .act(&RepositoryStatistics),
+            entry(
+                gitti_core::commit_encoding::change::MENU_LABEL,
+                gitti_core::commit_encoding::change::PALETTE_DETAIL,
+                |t, w, cx| t.commit_encoding_dialog(w, cx),
+            )
+            .act(&ChangeCommitEncoding),
             entry(format!("Open in {fm}"), "repository folder", |t, _, cx| {
                 t.open_in_file_manager(cx)
             }),
@@ -853,6 +862,17 @@ impl GittiApp {
                 h_flex()
                     .gap_2()
                     .flex_wrap()
+                    // A missing folder (a drive not connected): read it again once it is back.
+                    .when_some(self.path.clone().filter(|_| self.folder_missing()), |d, dir| {
+                        d.child(
+                            Button::new("start-retry")
+                                .label("Try Again")
+                                .small()
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(AppEvent::OpenRepository(dir.clone()))
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("start-open")
                             .label(format!("Open Repository…  ({}O)", crate::theme::MOD_KEY))

@@ -22,6 +22,7 @@
 //! Reading: [`decode`] — a message (and the names) of a commit by its `encoding` header,
 //! for every encoding gitti can write; without a header UTF-8 (git's rule).
 
+pub mod change;
 pub mod translit;
 
 use std::borrow::Cow;
@@ -314,6 +315,48 @@ pub struct CommitEncoding {
     file: Option<PathBuf>,
     /// Set in the repository's own config (`.git/config`).
     local: bool,
+    /// Which level of git's config sets it (`None` while unset).
+    pub scope: Option<SetIn>,
+}
+
+/// The level of git's config a setting comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetIn {
+    /// The repository's config (`.git/config`, or a file it includes).
+    Repository,
+    /// This worktree's own config (`config.worktree`, `extensions.worktreeConfig`).
+    Worktree,
+    /// The user's config (`~/.gitconfig`, `~/.config/git/config`): every repository.
+    Global,
+    /// The system's (or the git installation's) config: every user.
+    System,
+    /// `git -c` or the environment (`GIT_CONFIG_COUNT`, …).
+    CommandLine,
+}
+
+impl SetIn {
+    /// `this repository`, `global`, … — what the level means, for messages.
+    pub fn text(self) -> &'static str {
+        match self {
+            SetIn::Repository => "this repository",
+            SetIn::Worktree => "this worktree",
+            SetIn::Global => "global: all your repositories",
+            SetIn::System => "system: all users",
+            SetIn::CommandLine => "the command line",
+        }
+    }
+
+    /// `git config --show-scope`'s word.
+    fn from_git(word: &str) -> Option<SetIn> {
+        Some(match word {
+            "local" => SetIn::Repository,
+            "worktree" => SetIn::Worktree,
+            "global" => SetIn::Global,
+            "system" => SetIn::System,
+            "command" => SetIn::CommandLine,
+            _ => return None,
+        })
+    }
 }
 
 impl CommitEncoding {
@@ -334,6 +377,24 @@ impl CommitEncoding {
             origin: Some(origin),
             file: file.map(Path::to_path_buf),
             local,
+            scope: None,
+        }
+    }
+
+    /// The same, set at config level `scope`.
+    pub fn set_in(mut self, scope: SetIn) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// Where the setting comes from, in words: `not set`, `set in .git/config (this
+    /// repository)`, `set on the command line (-c)`.
+    pub fn where_text(&self) -> String {
+        match (&self.origin, self.scope) {
+            (None, _) => "not set".into(),
+            (Some(_), _) if self.file.is_none() => "set on the command line (-c)".into(),
+            (Some(o), Some(scope)) => format!("set in {o} ({})", scope.text()),
+            (Some(o), None) => format!("set in {o}"),
         }
     }
 
@@ -590,12 +651,20 @@ impl crate::Repo {
             Source::Cli | Source::Api | Source::Env | Source::EnvOverride => None,
             _ => meta.path.clone(),
         };
-        Some(CommitEncoding::new(&value, file.as_deref(), local, self.workdir()))
+        let scope = match meta.source {
+            Source::Local => SetIn::Repository,
+            Source::Worktree => SetIn::Worktree,
+            Source::User | Source::Git => SetIn::Global,
+            Source::System | Source::GitInstallation => SetIn::System,
+            Source::Cli | Source::Api | Source::Env | Source::EnvOverride => SetIn::CommandLine,
+        };
+        Some(CommitEncoding::new(&value, file.as_deref(), local, self.workdir()).set_in(scope))
     }
 
-    /// `git config --show-origin --get i18n.commitEncoding`.
+    /// `git config --show-scope --show-origin --get i18n.commitEncoding`.
     fn commit_encoding_by_git(&self) -> CommitEncoding {
-        let Ok(out) = self.git().run_raw(&["config", "--show-origin", "--get", KEY], None) else {
+        let args = ["config", "--show-scope", "--show-origin", "--get", KEY];
+        let Ok(out) = self.git().run_raw(&args, None) else {
             return CommitEncoding::utf8();
         };
         let text = out.stdout_str();
@@ -603,6 +672,7 @@ impl crate::Repo {
         if out.code != 0 || line.is_empty() {
             return CommitEncoding::utf8();
         }
+        let (scope, line) = line.split_once('\t').unwrap_or(("", line));
         let (origin, value) = line.split_once('\t').unwrap_or(("", line));
         let file = origin.strip_prefix("file:").map(PathBuf::from).map(|p| {
             if p.is_relative() { self.workdir().join(p) } else { p }
@@ -611,7 +681,11 @@ impl crate::Repo {
             let common = self.common_dir();
             f == &common.join("config") || f.canonicalize().ok() == common.join("config").canonicalize().ok()
         });
-        CommitEncoding::new(value, file.as_deref(), local, self.workdir())
+        let encoding = CommitEncoding::new(value, file.as_deref(), local, self.workdir());
+        match SetIn::from_git(scope) {
+            Some(scope) => encoding.set_in(scope),
+            None => encoding,
+        }
     }
 }
 

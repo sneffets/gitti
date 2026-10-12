@@ -197,6 +197,7 @@ impl GittiApp {
                 date: &local_date,
                 now,
                 count_all: "The Count All Commits button",
+                change_encoding: "Repository ▸ Commit Encoding… (also in the palette)",
             },
         )
     }
