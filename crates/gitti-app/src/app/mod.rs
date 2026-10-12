@@ -572,6 +572,11 @@ impl GittiApp {
         self.repo.is_some()
     }
 
+    /// This tab's folder was not there when it opened (e.g. on a drive not connected).
+    pub fn folder_missing(&self) -> bool {
+        matches!(self.open_kind, Some(gitti_core::OpenError::FolderMissing(_)))
+    }
+
     fn create(
         path: Option<PathBuf>,
         askpass_env: Vec<(String, String)>,
@@ -879,9 +884,15 @@ impl GittiApp {
 
     /// Tab title.
     pub fn title(&self) -> String {
-        self.repo
+        if let Some(r) = &self.repo {
+            return r.name();
+        }
+        // A folder that is missing keeps its name: the tab says which one comes back.
+        self.path
             .as_ref()
-            .map(|r| r.name())
+            .filter(|_| self.folder_missing())
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "(no repository)".into())
     }
 

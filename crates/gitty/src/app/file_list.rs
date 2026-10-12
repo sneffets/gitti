@@ -30,6 +30,9 @@ impl App {
                 .map(|(i, f)| {
                     let path = f.path().to_string();
                     let mut detail = change_name(f.change.letter()).to_string();
+                    if let Some(link) = f.link_change() {
+                        detail.push_str(&format!(", {}", link.label()));
+                    }
                     // A path this file system can't hold: why.
                     let fs = self.fs_issue_of(Src::Commit, i).map(|is| is.problem.short());
                     if let Some(why) = &fs {

@@ -696,9 +696,9 @@ impl Repo {
             RepoState::Rebasing
         } else if dir.join("MERGE_HEAD").exists() {
             RepoState::Merging
-        } else if dir.join("CHERRY_PICK_HEAD").exists() {
+        } else if self.pseudo_ref_exists("CHERRY_PICK_HEAD") {
             RepoState::CherryPicking
-        } else if dir.join("REVERT_HEAD").exists() {
+        } else if self.pseudo_ref_exists("REVERT_HEAD") {
             RepoState::Reverting
         } else {
             sequence_state(&dir)
@@ -793,7 +793,7 @@ impl Repo {
                 let branch = read("rebase-merge/head-name")
                     .or_else(|| read("rebase-apply/head-name"))
                     .map(|h| h.trim_start_matches("refs/heads/").to_string());
-                let replayed = if git_dir.join("REBASE_HEAD").exists() {
+                let replayed = if self.pseudo_ref_exists("REBASE_HEAD") {
                     self.git()
                         .run(&["log", "-1", "--format=%h %s", "REBASE_HEAD"])
                         .map(|o| o.stdout_str().trim().to_string())
@@ -991,7 +991,8 @@ impl Repo {
         opts: crate::commit_message::CommitOptions,
     ) -> Result<String> {
         let dir = self.git_dir();
-        let has = |name: &str| dir.as_ref().is_some_and(|d| d.join(name).exists());
+        // `rebase-apply` a directory, the pseudo refs a file or (reftable) a ref.
+        let has = |name: &str| self.pseudo_ref_exists(name);
         match self.state() {
             RepoState::Clean => Ok(String::new()),
             RepoState::Merging => self.commit_with(message, CommitKind::Staged, opts),

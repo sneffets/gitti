@@ -31,6 +31,7 @@ pub fn main() {
         ("huge_commit_shows_after_one_load", huge_commit_shows_after_one_load),
         ("non_utf8_line_stages_exactly", non_utf8_line_stages_exactly),
         ("restored_tabs_load_in_turn", restored_tabs_load_in_turn),
+        ("restored_tab_of_a_missing_folder_stays", restored_tab_of_a_missing_folder_stays),
         ("restore_rereads_only_its_paths", restore_rereads_only_its_paths),
         ("repository_statistics_run_one_git", repository_statistics_run_one_git),
     ];
@@ -335,6 +336,48 @@ fn restored_tabs_load_in_turn(ui: &mut Ui) {
             ui.fail(format!("not every restored tab read its repository: {now:?}"));
             break;
         }
+    }
+}
+
+/// A saved tab whose folder is missing at the start (a drive not connected) keeps its
+/// place — named, saved, saying what is wrong — and reads its repository once the folder
+/// is back; dropped, the next save lost it for good.
+fn restored_tab_of_a_missing_folder_stays(ui: &mut Ui) {
+    let base = ui.repo.parent().unwrap().to_path_buf();
+    let (here, gone) = (base.join("miss-here"), base.join("miss-gone"));
+    init_repo(&here);
+    let repos = vec![gone.clone(), here.clone()];
+    let ws = ui.ws.clone();
+    ui.cx
+        .update_window(ui.window, |_, window, cx| testing::restore_tabs(&ws, &repos, 1, window, cx))
+        .unwrap();
+    let paths = ui.cx.update(|cx| testing::tab_paths(&ws, cx));
+    if paths[1..] != repos[..] {
+        ui.fail(format!("restored tabs: {paths:?}"));
+    }
+    let saved = gitti_core::store::load_tabs().0;
+    if !saved.contains(&gone) {
+        ui.fail(format!("the missing folder's tab was not saved: {saved:?}"));
+    }
+    ui.step("tab:1");
+    let titles = ui.cx.update(|cx| testing::tab_loads(&ws, cx));
+    if !titles[1].starts_with("miss-gone ") {
+        ui.fail(format!("the missing folder's tab is not named after it: {titles:?}"));
+    }
+    match ui.cx.update(|cx| gitti_app::testing_menus::open_problem(&ws, cx)) {
+        Some((t, m)) if t == "Folder not found" && m.contains("not connected") => {}
+        other => ui.fail(format!("missing folder page: {other:?}")),
+    }
+    // The drive is back: showing the tab again reads it.
+    init_repo(&gone);
+    ui.step("tab:2");
+    ui.step("tab:1");
+    if let Some(p) = ui.cx.update(|cx| gitti_app::testing_menus::open_problem(&ws, cx)) {
+        ui.fail(format!("the folder is back, the tab still says {p:?}"));
+    }
+    let paths = ui.cx.update(|cx| testing::tab_paths(&ws, cx));
+    if paths[1..] != repos[..] {
+        ui.fail(format!("tabs after the folder came back: {paths:?}"));
     }
 }
 
