@@ -2200,7 +2200,7 @@ impl GittiApp {
             let stale = (done.as_ref().err())
                 .and_then(|e| gitti_core::lock::stale_lock(e, repo.workdir()));
             let index = repo.index_stamp();
-            let read_at = (std::time::Instant::now(), std::time::SystemTime::now());
+            let read_at = gitti_core::watch::read_start();
             let (working, scope) = match &paths {
                 Some(p) => match repo.working_state_reread(&opts, &prev, p) {
                     Ok((w, scope)) => (Ok(w), scope),

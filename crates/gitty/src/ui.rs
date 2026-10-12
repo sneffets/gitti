@@ -4263,5 +4263,7 @@ mod tests {
         assert_eq!(word_wrap("abcdefgh", 3), vec!["abc", "def", "gh"]);
         assert_eq!(word_wrap("  x.txt", 20), vec!["  x.txt"]);
         assert_eq!(word_wrap("", 20), vec![""]);
+        // No-break spaces glue (a dialog's `key = value`).
+        assert_eq!(word_wrap("a b\u{a0}=\u{a0}c", 6), vec!["a", "b\u{a0}=\u{a0}c"]);
     }
 }
