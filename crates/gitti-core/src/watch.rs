@@ -322,8 +322,9 @@ fn stamp_clock() -> SystemTime {
     let now = SystemTime::now();
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: `ts` is a valid, writable timespec.
+        // Zeroed, not a literal: some targets' timespec has private padding fields.
+        // SAFETY: all-zero is a valid timespec; `ts` is valid and writable for the call.
+        let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
         if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME_COARSE, &mut ts) } == 0
             && let (Ok(secs), Ok(nanos)) = (u64::try_from(ts.tv_sec), u32::try_from(ts.tv_nsec))
             && let Some(coarse) = SystemTime::UNIX_EPOCH.checked_add(Duration::new(secs, nanos))
