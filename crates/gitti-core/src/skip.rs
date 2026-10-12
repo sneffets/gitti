@@ -23,7 +23,10 @@ use crate::ops::{CommitKind, MessageCommitted, RepoState};
 
 /// Whether the stopped commit of `state` can be skipped.
 pub fn can_skip(state: RepoState) -> bool {
-    matches!(state, RepoState::CherryPicking | RepoState::Reverting | RepoState::Rebasing)
+    matches!(
+        state,
+        RepoState::CherryPicking | RepoState::Reverting | RepoState::Rebasing | RepoState::Applying
+    )
 }
 
 /// The banner's / palette's label of Skip in `state`.
@@ -31,6 +34,12 @@ pub const SKIP_LABEL: &str = "Skip This Commit";
 
 /// What Skip does in `state`, in plain words (tooltip, palette detail, the question).
 pub fn skip_explain(state: RepoState) -> String {
+    if state == RepoState::Applying {
+        return "Leaves the patch being applied out: its changes — and what you resolved or \
+                staged for it — are thrown away, then git goes on with the next patch of the \
+                file, if any (git am --skip). Changes of other files you had before stay."
+            .to_string();
+    }
     let (cmd, what) = match state {
         RepoState::Rebasing => ("rebase --skip", "rebased"),
         RepoState::Reverting => ("revert --skip", "reverted"),
@@ -128,6 +137,11 @@ impl Repo {
             RepoState::CherryPicking => "cherry-pick",
             RepoState::Reverting => "revert",
             RepoState::Rebasing => "rebase",
+            // The next patch that doesn't apply stops it again: said with its number.
+            RepoState::Applying => {
+                let out = self.git().run(&["-c", "core.editor=true", "am", "--skip"]);
+                return self.am_stopped_as(out.map(|o| format!("{}{}", o.stdout_str(), o.stderr).trim().to_string()).map_err(Into::into));
+            }
             RepoState::Merging | RepoState::Clean => {
                 anyhow::bail!("There is no cherry-pick, revert or rebase to skip a commit of")
             }

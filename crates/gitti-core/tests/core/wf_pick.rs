@@ -219,6 +219,35 @@ fn cp18_pick_a_lost_commit_from_the_reflog() {
     wf::expect_lost_picked(dir, &s).unwrap();
 }
 
+/// CP-19: `Fix a` and `Change b` marked, saved into one patch file (oldest first), then
+/// the file previewed (two commits, applies) and applied on `main` with `git am`.
+/// Workflow: CP-19
+#[gitti_test::test]
+fn cp19_carry_two_commits_by_patch_file() {
+    use gitti_core::patch_files;
+    use gitti_workflow::cp::carry_by_patch as carry;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let s = carry::fixture(dir);
+    let repo = open(dir);
+    let history = repo.history(LogOrder::Topo).unwrap();
+    let mut marks = CommitMarks::default();
+    for id in [&s.fix, &s.change_b] {
+        let row = history.row_of(&ObjectId::from_hex(id.as_bytes()).unwrap()).expect("a listed commit");
+        assert!(marks.toggle(&history, row));
+    }
+    let commits = patch_files::patch_commits(&history, &marks, 0, true).expect("the marked commits");
+    let file = carry::patch_file(dir);
+    repo.save_patches(&commits, &file, true).unwrap();
+    carry::expect_saved(dir).unwrap();
+    let preview = repo.preview_patch_file(&file).unwrap();
+    assert_eq!(preview.mbox.as_ref().map(Vec::len), Some(2));
+    assert_eq!(preview.blocked(false, None), None);
+    repo.am_patch_file(&file).unwrap();
+    assert_eq!(repo.state(), RepoState::Clean);
+    carry::expect_applied(dir, &s).unwrap();
+}
+
 /// RV-01, RV-05: `Change c again` reverted, then the revert reverted: c:8 back and forth.
 /// Workflow: RV-01, RV-05
 #[gitti_test::test]

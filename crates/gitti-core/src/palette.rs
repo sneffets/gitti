@@ -155,6 +155,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // A shallow clone's history (`shallow`); greyed in a complete one.
     both("FetchFullHistory", crate::shallow::FULL_LABEL),
     both("FetchMoreHistory", crate::shallow::MORE_LABEL),
+    // An mbox with `git am`, a plain diff with `git apply` (`patch_files`).
+    both("ApplyPatchFile", crate::patch_files::APPLY_LABEL),
     both("RepositoryStatistics", crate::repo_stats::MENU_LABEL),
     // Branch
     both("SwitchBranch", "Switch Branch…"),
@@ -182,6 +184,10 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("RevertCommit", "Revert Selected Commit"),
     both("CherryPickCommit", "Cherry-pick Selected Commit"),
     both("CherryPickMarked", "Cherry-pick Marked Commits…"),
+    // The selected or marked commits (`patch_files`).
+    both("SaveAsPatch", crate::patch_files::SAVE_LABEL),
+    both("CopyAsPatch", crate::patch_files::COPY_LABEL),
+    both("ExportSnapshot", crate::patch_files::SNAPSHOT_LABEL),
     both("RevertMarked", "Revert Marked Commits…"),
     both("EditCommitMessage", "Edit Commit Message…"),
     both("ShowContaining", "Branches and Tags Containing Selected Commit…"),

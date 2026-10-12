@@ -57,6 +57,7 @@ mod op_cancel;
 mod op_output;
 mod op_stops;
 mod overwrite;
+mod patch_cmds;
 mod pick_several;
 pub mod reflog;
 mod remote_cmds;
@@ -4060,6 +4061,8 @@ impl App {
         );
         items.extend(self.restore_contains_items(c.id));
         items.push(MenuItem::separator());
+        items.extend(self.patch_commit_items());
+        items.push(MenuItem::separator());
         items.extend(self.mark_commit_items());
         items.push(MenuItem::separator());
         items.extend(self.subtree_ref_items(&sha, ObjectId::from_hex(sha.as_bytes()).ok(), None));
@@ -4535,6 +4538,7 @@ impl App {
         items.extend(self.stash_palette_items());
         items.extend(self.file_marks_palette_items());
         items.extend(self.pick_several_palette_items());
+        items.extend(self.patch_palette_items());
         // Last: on an equal match the everyday commands come first ("merge").
         items.extend(self.subtree_palette_items());
         items.extend(self.custom_palette_items());

@@ -244,6 +244,7 @@ impl ResetPlan {
                 RepoState::Rebasing => "rebase",
                 RepoState::CherryPicking => "cherry-pick",
                 RepoState::Reverting => "revert",
+                RepoState::Applying => "git am",
                 RepoState::Clean => "",
             };
             let _ = writeln!(s, "The {op} in progress ends.");

@@ -21,12 +21,14 @@ pub enum OpState {
     Rebasing,
     CherryPicking,
     Reverting,
+    /// `git am` stopped at a patch (`rebase-apply/applying`).
+    Applying,
 }
 
 impl OpState {
     /// The word the apps' test hooks use (gitti `testing::UiState::repo_state`, gitty's
     /// `state` line `repo_state=`): `clean`, `merging`, `rebasing`, `cherrypicking`,
-    /// `reverting`.
+    /// `reverting`, `applying`.
     pub fn name(self) -> &'static str {
         match self {
             OpState::Clean => "clean",
@@ -34,6 +36,7 @@ impl OpState {
             OpState::Rebasing => "rebasing",
             OpState::CherryPicking => "cherrypicking",
             OpState::Reverting => "reverting",
+            OpState::Applying => "applying",
         }
     }
 }
@@ -185,7 +188,9 @@ impl Expect {
     /// The operation git left half-done (no git).
     pub fn state(&self) -> OpState {
         let d = &self.git_dir;
-        if d.join("rebase-merge").exists() || d.join("rebase-apply").exists() {
+        if d.join("rebase-apply").join("applying").exists() {
+            OpState::Applying
+        } else if d.join("rebase-merge").exists() || d.join("rebase-apply").exists() {
             OpState::Rebasing
         } else if d.join("MERGE_HEAD").exists() {
             OpState::Merging

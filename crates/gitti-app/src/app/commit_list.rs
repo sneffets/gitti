@@ -541,6 +541,7 @@ impl GittiApp {
                     (Some(c), None) => {
                         let menu = super::pick_several::marked_commands(menu, &app, ix, cx);
                         let menu = super::menus::commit_menu(menu, &app, c, window, cx);
+                        let menu = super::patch_ui::commit_entries(menu, &app, ix, cx);
                         let menu = super::pick_several::mark_entries(menu, &app, ix, cx);
                         let given = super::custom_commands::Given {
                             commit: Some(c.rev.clone()),

@@ -39,6 +39,7 @@ mod op_progress;
 mod op_stops;
 mod overlay_keys;
 mod panes;
+mod patch_ui;
 mod pick_several;
 mod picker;
 mod push_ui;
@@ -3852,6 +3853,7 @@ impl Render for GittiApp {
         let root = self.stash_ui_actions(root, cx);
         let root = self.file_marks_actions(root, cx);
         let root = self.pick_several_actions(root, cx);
+        let root = self.patch_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
         let root = self.branch_list_actions(root, cx);
         let root = self.worktree_actions(root, cx);

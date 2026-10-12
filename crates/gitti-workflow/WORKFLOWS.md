@@ -306,6 +306,7 @@ working tree or the index while the app shows an older state.
 | CP-16 | Pick into a dirty tree | local change in a file the pick changes | refused in plain words naming the file, ways out offered; nothing changed | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` |
 | CP-17 | Pick HEAD | Cherry-pick on HEAD (also HEAD among marked commits) | greyed with the reason; no git | `availability::changes_stashes_and_selection_turn_them_on` (unit) | `wf_pick::cp17_pick_head_is_greyed`, ~`menus::unavailable_commands` | `wf_pick::cp17_pick_head_is_greyed`, ~`palette::palette_and_menu_grey_what_cannot_act_with_the_reason` |
 | CP-18 | Pick a lost commit from the reflog | reflog entry → Cherry-pick | its change on HEAD | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` |
+| CP-19 | Carry commits by patch file | mark two commits of `feat`; Save as Patch… (all in one file); Apply Patch File… on `main` | the file holds both (mbox, oldest first); `main` gets two copies with their author and messages (`git am`) | `wf_pick::cp19_carry_two_commits_by_patch_file` | `wf_pick::cp19_carry_two_commits_by_patch_file` | `wf_pick::cp19_save_two_marked_commits_as_one_patch_file`, `wf_pick::cp19_apply_the_patch_file` |
 
 ## RV — Revert
 
@@ -526,7 +527,7 @@ checks these numbers against the rows.
 | SH stash | 22 | 21 | 20 | 21 |
 | BR branches | 21 | 21 | 21 | 20 |
 | MG merge | 27 | 27 | 26 | 27 |
-| CP cherry-pick | 18 | 18 | 18 | 18 |
+| CP cherry-pick | 19 | 19 | 19 | 19 |
 | RV revert | 8 | 8 | 8 | 8 |
 | RB rebase | 9 | 9 | 9 | 9 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
@@ -543,7 +544,7 @@ checks these numbers against the rows.
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **277** | **267** | **257** | **258** |
+| **Total** | **278** | **268** | **258** | **259** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

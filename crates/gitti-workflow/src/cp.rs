@@ -799,3 +799,85 @@ pub mod picks {
         k.done()
     }
 }
+
+/// **CP-19 — carry commits by patch file.** `main` and `feat` diverged from `init` (see
+/// [`pick_then_merge`]). The user marks [`FIX`] and [`CHANGE_B`] on `feat`, saves them
+/// with Save as Patch… into one file ([`patch_file`]), then
+/// applies that file on `main` with Apply Patch File… (`git am`).
+///
+/// Expected: the file holds both commits (format-patch's mbox, oldest first); `main` has
+/// two new commits on [`CHANGE_C`] — [`FIX`] then [`CHANGE_B`], with [`ADA`] as author
+/// and the user as committer — whose tree has the fix, `b.txt`'s change and
+/// [`CHANGE_C`]'s; nothing in progress, clean ([`expect_applied`]).
+pub mod carry_by_patch {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+    use crate::expect::{Checks, Expect, OpState};
+
+    /// The commit ids the steps need.
+    pub struct Setup {
+        /// [`FIX`] and [`CHANGE_B`] on `feat`: the commits to save.
+        pub fix: String,
+        pub change_b: String,
+        /// `main`'s tip ([`CHANGE_C`]).
+        pub main: String,
+    }
+
+    /// The history of [`super::base`], HEAD on `main`, clean. Three git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let (fx, [_, fix, change_b, change_c]) = base();
+        let ids = fx.build(dir);
+        Setup { fix: ids[fix].into(), change_b: ids[change_b].into(), main: ids[change_c].into() }
+    }
+
+    /// The state after the save step (for the apply step on its own): [`fixture`] and
+    /// [`patch_file`] holding [`FIX`] and [`CHANGE_B`] as format-patch wrote them. One git
+    /// process more.
+    pub fn fixture_saved(dir: &Path) -> Setup {
+        let s = fixture(dir);
+        let out = crate::git::bytes(dir, &["format-patch", "--stdout", &format!("{}~2..{}", s.change_b, s.change_b)]);
+        std::fs::write(patch_file(dir), out).unwrap();
+        s
+    }
+
+    /// Where the steps save the patch: in the git dir (not the working tree's status, no
+    /// file outside the test's own folder).
+    pub fn patch_file(dir: &Path) -> PathBuf {
+        dir.join(".git").join("cp19-feat.patch")
+    }
+
+    /// The saved file: format-patch's mbox of [`FIX`] then [`CHANGE_B`]. No git.
+    pub fn expect_saved(dir: &Path) -> Result<(), String> {
+        let mut k = Checks::new("CP-19 the saved patch file");
+        let text = std::fs::read_to_string(patch_file(dir)).unwrap_or_default();
+        let subjects: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("Subject: ")).collect();
+        k.eq("subjects", subjects, vec![&*format!("[PATCH 1/2] {FIX}"), &*format!("[PATCH 2/2] {CHANGE_B}")]);
+        k.ok("from Ada", text.contains("From: Ada <ada@example.com>"), text.lines().take(4).collect::<Vec<_>>());
+        k.done()
+    }
+
+    /// After Apply Patch File…: `main` = [`CHANGE_B`] on [`FIX`] on [`CHANGE_C`] (copies:
+    /// other ids, [`ADA`] as author, the user as committer); the tree has all three
+    /// changes; clean. Three git processes.
+    pub fn expect_applied(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("CP-19 after applying the patch file");
+        k.eq("state", e.state(), OpState::Clean);
+        k.eq("branch", e.branch().as_deref(), Some("main"));
+        let log = e.log("HEAD", 3);
+        k.eq("subjects", log.iter().map(|c| c.subject()).collect::<Vec<_>>(), vec![CHANGE_B, FIX, CHANGE_C]);
+        k.eq("on main's tip", log.get(2).map(|c| c.id.clone()), Some(s.main.clone()));
+        for c in log.iter().take(2) {
+            k.eq("author", c.author.as_str(), ADA);
+            k.eq("committer", c.committer.as_str(), crate::fixture::TESTER);
+            k.ok("a copy", c.id != s.fix && c.id != s.change_b, &c.id);
+        }
+        let blobs = e.blobs(&["HEAD:a.txt", "HEAD:b.txt", "HEAD:c.txt"]);
+        k.text("a.txt", blobs[0].as_deref(), Some(&a(Some(FIXED))));
+        k.text("b.txt", blobs[1].as_deref(), Some(&b(true)));
+        k.text("c.txt", blobs[2].as_deref(), Some(&c(true)));
+        k.eq("status", e.status_lines(), Vec::<String>::new());
+        k.done()
+    }
+}

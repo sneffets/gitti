@@ -27,6 +27,7 @@ mod merge_preview;
 mod navigate;
 mod non_utf8;
 mod op_safety;
+mod patch_files;
 mod pull;
 mod push;
 mod reflog;

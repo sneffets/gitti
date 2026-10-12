@@ -65,6 +65,7 @@ pub mod overwrite;
 pub mod palette;
 pub mod panic_log;
 pub mod patch;
+pub mod patch_files;
 pub mod pick_several;
 pub mod paths;
 pub mod process;
