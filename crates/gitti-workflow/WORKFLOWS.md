@@ -538,7 +538,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **275** | **265** | **255** | **256** |
+| **Total** | **277** | **267** | **257** | **258** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
