@@ -90,7 +90,7 @@ impl NoteWrapper {
         let mut wrapper = self.text_system.line_wrapper(font(self.family.clone()), size);
         let mut start = 0;
         let mut parts = Vec::new();
-        for b in wrapper.wrap_line(&[LineFragment::text(text)], width) {
+        for b in wrapper.wrap_line(&[LineFragment::text(text)], width, gpui_kit::IndentAdjustment::SameIndent) {
             parts.push(start..b.ix);
             start = b.ix;
         }

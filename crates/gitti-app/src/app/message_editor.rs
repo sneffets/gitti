@@ -92,7 +92,7 @@ fn wrapped_rows(text: &str, font: Font, size: Pixels, wrap_width: Pixels, cx: &A
     text.split('\n')
         .map(|line| {
             1 + wrapper
-                .wrap_line(&[LineFragment::text(line)], wrap_width)
+                .wrap_line(&[LineFragment::text(line)], wrap_width, gpui_kit::IndentAdjustment::SameIndent)
                 .count()
         })
         .sum()
