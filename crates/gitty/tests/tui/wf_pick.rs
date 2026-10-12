@@ -436,3 +436,27 @@ fn rv07_revert_three_marked_commits() {
 }
 
 
+
+/// RV-08: `Tune f` (row 2) shown; `n` to its hunk, space on `-f 4` (four lines down) and
+/// on `+F 4` (three more); the diff menu (m) ▸ Revert These Lines in Working Tree: line 4
+/// back in the working tree only, said so.
+/// Workflow: RV-08
+#[gitti_test::test]
+fn rv08_revert_lines_in_the_working_tree() {
+    use gitti_core::commit_lines as cl;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    let s = rv::lines::fixture(d);
+    let lines = "key:j;".repeat(4) + "key:space;" + &"key:j;".repeat(3) + "key:space;";
+    // The menu: Restore This Version…, Restore Version Before…, then the revert entries.
+    let out = run(d, &format!("press:j;key:j;key:l;key:n;{lines}state;key:m;items;press:down;press:down;key:enter;state"));
+    let menu = &item_lists(&out)[0];
+    for want in [cl::REVERT_LINES, cl::REVERT_HUNK, cl::REVERT_FILE, cl::APPLY_LINES, cl::APPLY_HUNK, cl::APPLY_FILE] {
+        assert!(menu.contains(&want), "the diff menu lacks {want:?}: {out}");
+    }
+    assert_eq!(menu.get(2).copied(), Some(cl::REVERT_LINES), "{out}");
+    let st = states(&out);
+    assert!(st[1].contains(&format!("Reverted 2 lines of f.txt (commit {})", &s.tune_f[..7])), "{out}");
+    assert!(st[1].contains("stage and commit to keep it") && !st[1].contains("ERROR"), "{out}");
+    rv::lines::expect_reverted(d, &s).unwrap();
+}

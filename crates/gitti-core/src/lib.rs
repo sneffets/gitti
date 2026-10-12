@@ -16,6 +16,7 @@ pub mod clone_source;
 pub mod commit_cache;
 pub mod commit_encoding;
 pub mod commit_files;
+pub mod commit_lines;
 pub mod commit_marks;
 pub mod commit_message;
 pub mod commit_search;

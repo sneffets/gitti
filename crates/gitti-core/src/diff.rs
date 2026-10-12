@@ -180,6 +180,133 @@ impl FileDiff {
         }
         (a, r)
     }
+
+    /// The file modes the header names, old and new (`None` where it names none: an
+    /// added file has no old one). `index a..b <mode>` names both when they are equal.
+    pub fn modes(&self) -> (Option<&str>, Option<&str>) {
+        let (mut old, mut new) = (None, None);
+        for h in &self.header {
+            if let Some(m) = h.strip_prefix("old mode ").or_else(|| h.strip_prefix("deleted file mode ")) {
+                old = Some(m.trim());
+            } else if let Some(m) = h.strip_prefix("new mode ").or_else(|| h.strip_prefix("new file mode ")) {
+                new = Some(m.trim());
+            } else if let Some(ids) = h.strip_prefix("index ")
+                && let Some((_, m)) = ids.split_once(' ')
+            {
+                old = old.or(Some(m.trim()));
+                new = new.or(Some(m.trim()));
+            }
+        }
+        (old, new)
+    }
+
+    /// Whether this is the diff of a symbolic link, and how ([`LinkChange`]). A type change
+    /// of the working directory is the new side's diff ([`FileChange::TypeChanged`]): its
+    /// old side is the other kind.
+    pub fn link_change(&self) -> Option<LinkChange> {
+        const LINK: &str = "120000";
+        let (old, new) = self.modes();
+        let (old_link, new_link) = (old == Some(LINK), new == Some(LINK));
+        let old_link = match (old, self.change) {
+            // Only the addition of git's deletion + addition pair is kept: the old side
+            // was the other kind (a file ↔ link change; a submodule is no link).
+            (None, FileChange::TypeChanged) => !new_link && new.is_some_and(|m| m.starts_with("100")),
+            _ => old_link,
+        };
+        let target = |kind: LineKind| {
+            let line = self.hunks.iter().flat_map(|h| &h.lines).find(|l| l.kind == kind)?;
+            Some(line.text.clone())
+        };
+        let new_target = || target(LineKind::Added).or_else(|| target(LineKind::Context));
+        match (old_link, new_link) {
+            (true, true) => Some(LinkChange::Link { target: new_target() }),
+            (false, true) if old.is_none() && self.change != FileChange::TypeChanged => {
+                Some(LinkChange::Link { target: new_target() })
+            }
+            (false, true) => Some(LinkChange::NowLink { target: new_target() }),
+            (true, false) if new.is_none() => Some(LinkChange::Link {
+                target: target(LineKind::Removed).or_else(|| target(LineKind::Context)),
+            }),
+            (true, false) => Some(LinkChange::WasLink),
+            (false, false) => None,
+        }
+    }
+
+    /// Whether line `line` of hunk `hunk` is only the end of a UTF-16 LE file's last
+    /// newline, unchanged. git splits lines at the byte `0x0A`, so the newline's second
+    /// byte `0x00` becomes a line of its own after the file's last line, followed by
+    /// `\ No newline at end of file` — although the file ends with a newline. As context it
+    /// is never selected and every patch keeps it; the diff view leaves it and its marker
+    /// out ([`Self::is_hidden_line`]). A changed one (the file gained or lost its last
+    /// newline) stays: it is the change.
+    pub fn is_newline_tail(&self, hunk: usize, line: usize) -> bool {
+        if self.encoding != TextEncoding::Utf16Le {
+            return false;
+        }
+        let Some(lines) = self.hunks.get(hunk).map(|h| &h.lines) else {
+            return false;
+        };
+        lines.get(line).is_some_and(|l| l.kind == LineKind::Context && l.bytes() == [0])
+            && lines.get(line + 1).is_some_and(|l| l.kind == LineKind::NoNewline)
+    }
+
+    /// Whether the diff view leaves line `line` of hunk `hunk` out: a UTF-16 newline's
+    /// tail ([`Self::is_newline_tail`]) and its `\ No newline at end of file`.
+    pub fn is_hidden_line(&self, hunk: usize, line: usize) -> bool {
+        self.is_newline_tail(hunk, line) || (line > 0 && self.is_newline_tail(hunk, line - 1))
+    }
+}
+
+/// What a file's diff says about symbolic links (git mode 120000): git stores a link's
+/// target path as its content, so the diff of a link is a change of that path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkChange {
+    /// A symbolic link on both sides (or added / deleted as one), pointing to `target`
+    /// (the new side's; a deleted link's old one), `None` when the diff has no lines.
+    Link { target: Option<String> },
+    /// A file before, a symbolic link to `target` now.
+    NowLink { target: Option<String> },
+    /// A symbolic link before, a file now.
+    WasLink,
+}
+
+/// Longest target a label shows (characters); the tooltip has all of it.
+const LINK_LABEL_TARGET: usize = 48;
+
+impl LinkChange {
+    /// The short text a file row shows next to the path: `symlink → ../a`,
+    /// `now a symlink → ../a`, `was a symlink`.
+    pub fn label(&self) -> String {
+        let to = |t: &Option<String>| match t {
+            Some(t) if t.chars().count() > LINK_LABEL_TARGET => {
+                let cut: String = t.chars().take(LINK_LABEL_TARGET - 1).collect();
+                format!(" → {cut}…")
+            }
+            Some(t) => format!(" → {t}"),
+            None => String::new(),
+        };
+        match self {
+            LinkChange::Link { target } => format!("symlink{}", to(target)),
+            LinkChange::NowLink { target } => format!("now a symlink{}", to(target)),
+            LinkChange::WasLink => "was a symlink".to_string(),
+        }
+    }
+
+    /// The label's longer explanation (a tooltip).
+    pub fn note(&self) -> String {
+        const STORED: &str = "git stores the path a link points to as its content, so its diff \
+                              shows that path.";
+        let to = |t: &Option<String>| t.as_ref().map(|t| format!(" to {t}")).unwrap_or_default();
+        match self {
+            LinkChange::Link { target } => format!("A symbolic link{}: {STORED}", to(target)),
+            LinkChange::NowLink { target } => {
+                format!("Was a file, now a symbolic link{}: {STORED}", to(target))
+            }
+            LinkChange::WasLink => "Was a symbolic link, now a file: the diff shows the file's \
+                                    content."
+                .to_string(),
+        }
+    }
 }
 
 /// Parses the output of `git diff` (no color, default prefixes) into file diffs.

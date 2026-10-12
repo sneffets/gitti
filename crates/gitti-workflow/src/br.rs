@@ -247,6 +247,11 @@ pub mod blocked {
 /// **BR-09 — many blocking untracked files.** `feat` adds [`COUNT`] generated files;
 /// the same paths exist untracked on `main` (with other content), next to `keep.txt`.
 /// Stash & Switch moves all of them into one stash and switches; `keep.txt` stays.
+///
+/// "Many" = more than the switch dialog lists (eight, then "… and N more"). git's own
+/// limit — it cuts its message after 4 KiB, about a hundred paths — is the core test's
+/// (`switching::many_blocking_untracked_files_are_stashed_in_one_go`): the stash's cost
+/// grows with every path, and these short names stay under it anyway.
 pub mod many_untracked {
     use std::path::Path;
 
@@ -255,7 +260,7 @@ pub mod many_untracked {
     use crate::fixture::{Change, Fixture, put};
 
     pub const TARGET: &str = "feat";
-    pub const COUNT: usize = 200;
+    pub const COUNT: usize = 20;
 
     pub fn path(i: usize) -> String {
         format!("gen/out-{i:03}.txt")

@@ -268,8 +268,9 @@ fn br06_stash_and_switch_whose_reapply_conflicts(ui: &mut Ui) {
     expect(ui, wf::expect_conflicted(&dir, &s));
 }
 
-/// BR-09: 200 untracked files feat tracks: the dialog lists some and says how many more;
-/// Stash & Switch puts them all into one stash and switches; keep.txt stays listed.
+/// BR-09: more untracked files feat tracks than the dialog lists: it lists some and says
+/// how many more; Stash & Switch puts them all into one stash and switches; keep.txt
+/// stays listed.
 /// Workflow: BR-09
 fn br09_many_blocking_untracked_files_go_into_one_stash(ui: &mut Ui) {
     use br::many_untracked as wf;

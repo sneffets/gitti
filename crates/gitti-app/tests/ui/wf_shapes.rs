@@ -628,7 +628,7 @@ fn fs04_nfc_and_nfd_names(ui: &mut Ui) {
 }
 
 /// FS-05 / FS-06: the links show their targets (`+target.txt`, `+nowhere`), never what
-/// they point at, and nothing beyond the `alias` symlink is listed; the retargeted
+/// they point at, their file rows say they are links, and nothing beyond the `alias` symlink is listed; the retargeted
 /// link's hunk staged, Stage on new_link, dangling and real/x.txt; Discard on the deleted
 /// `gone` (asks): a link again.
 /// Workflow: FS-05, FS-06
@@ -651,6 +651,11 @@ fn fs05_fs06_symlinks(ui: &mut Ui) {
                 let rows = ui.ui_state().rows;
                 fail!(ui, "{path} doesn't show its target {target:?}: {rows:#?}");
             }
+        }
+        // The file rows say they are links: link, gone, new_link, dangling.
+        let links = ui.frame().iter().filter(|p| p.name.starts_with("link:")).count();
+        if links != 4 {
+            fail!(ui, "{links} file rows marked as symlinks, want 4");
         }
         ui.step(&format!("stagehunk:{},0", wf::LINK));
         for p in [wf::NEW_LINK, wf::DANGLING, wf::BEYOND] {

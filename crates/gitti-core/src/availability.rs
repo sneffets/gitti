@@ -82,6 +82,9 @@ pub struct RepoFacts {
     pub old_version: bool,
     /// The file at the diff's cursor (the external tools act on it).
     pub cursor_file: CursorFile,
+    /// A commit's or a stash's diff is shown (not a comparison): its lines can be
+    /// reverted / applied in the working tree (`commit_lines`).
+    pub commit_diff: bool,
     /// A remote points to github.com.
     pub github_remote: bool,
     /// The shown commit's signature can't be checked for a missing key that GitHub may
@@ -125,6 +128,7 @@ impl Default for RepoFacts {
             this_version: false,
             old_version: false,
             cursor_file: CursorFile::None,
+            commit_diff: false,
             github_remote: false,
             signing_keys: false,
             fs_paths: 0,
@@ -159,6 +163,7 @@ pub const STASH_SELECTED: &str = "a stash is selected";
 pub const IS_HEAD: &str = "the selected commit is HEAD";
 pub const NO_FILE: &str = "no file shown";
 pub const NO_COMMIT_FILE: &str = "no commit's file shown";
+pub const NO_COMMIT_DIFF: &str = "no commit's changes shown";
 pub const NO_OLD_VERSION: &str = "the commit has no parent";
 pub const CONFLICTED_FILE: &str = "the file at the diff cursor is conflicted";
 pub const NO_CONFLICTS: &str = "no conflicts";
@@ -288,6 +293,7 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             let kind = if action == "RevertMarked" { SeveralKind::Revert } else { SeveralKind::CherryPick };
             why_not(kind, f.marked_commits, f.head_marked, f.state)
         }
+        "RevertLinesInWorkingTree" | "ApplyLinesToWorkingTree" => check(!f.commit_diff, NO_COMMIT_DIFF),
         "OpenThisVersion" => check(!f.this_version, NO_COMMIT_FILE),
         "OpenOldVersion" => {
             check(!f.this_version && !f.old_version, NO_COMMIT_FILE).or(check(!f.old_version, NO_OLD_VERSION))
@@ -337,6 +343,7 @@ pub fn what_to_do(why: &str) -> Option<&'static str> {
         WORKING_DIR_SELECTED | NO_COMMIT_SELECTED => Some("select a commit first"),
         STASH_SELECTED => Some("the Stash menu acts on stashes"),
         NO_COMMIT_FILE => Some("the working directory's files open with Open in Editor"),
+        NO_COMMIT_DIFF => Some("select a commit or a stash first"),
         CONFLICTED_FILE => Some("Open in External Merge Tool resolves it"),
         NO_CONFLICTED_FILE => Some("go to a conflicted file in the working directory first"),
         MAIN_WORKTREE => Some("linked worktrees are moved or removed from the WORKTREES section"),
@@ -461,6 +468,8 @@ mod tests {
             ("CleanUpMergedBranches", NO_OTHER_BRANCH),
             ("FastForwardAllBranches", NO_OTHER_BRANCH),
             ("ShowWholeFile", NO_FILE),
+            ("RevertLinesInWorkingTree", NO_COMMIT_DIFF),
+            ("ApplyLinesToWorkingTree", NO_COMMIT_DIFF),
         ] {
             assert_eq!(why_not(a, &f), Some(why), "{a}");
         }
@@ -486,6 +495,7 @@ mod tests {
             this_version: true,
             old_version: true,
             cursor_file: CursorFile::Changed,
+            commit_diff: true,
             github_remote: true,
             signing_keys: true,
             fs_paths: 2,

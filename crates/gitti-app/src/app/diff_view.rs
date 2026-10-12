@@ -1810,6 +1810,24 @@ impl GittiApp {
                     )
                 },
             )
+            // A symbolic link: says so, with its target.
+            .when_some(self.file_diff(src, file).and_then(|d| d.link_change()), |d, link| {
+                let note = link.note();
+                d.child(
+                    div()
+                        .id(("file-link", ix))
+                        .probe(format!("link:{ix}"))
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(FontWeight::NORMAL)
+                        .text_size(px(self.settings.diff_font_size - 1.))
+                        .text_color(p.text_muted)
+                        .child(link.label())
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(note.clone()).build(window, cx)
+                        }),
+                )
+            })
             .when_some(
                 self.file_diff(src, file).and_then(gitti_core::commit_files::placeholder_stat),
                 |d, size| {

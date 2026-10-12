@@ -71,6 +71,7 @@ pub fn main() {
         ("about_and_licences", about_and_licences),
         ("repository_statistics", repository_statistics),
         ("repository_statistics_count_all", repository_statistics_count_all),
+        ("commit_encoding_dialog", commit_encoding_dialog),
         ("unavailable_commands", unavailable_commands),
         ("detached_head_greys_branch_commands", detached_head_greys_branch_commands),
         ("fresh_repository_greys_what_needs_a_commit", fresh_repository_greys_what_needs_a_commit),
@@ -409,6 +410,9 @@ fn repository_statistics(ui: &mut Ui) {
         "\n  Whole .git:      ",
         "\n  Tracked files:   ",
         "\nCommits per author — all 5 commits",
+        "\nCommit messages\n  Encoding:        ",
+        "\n  In the history:  all 5 commits: UTF-8 (no encoding header)\n",
+        "\n  Change:          Repository ▸ Commit Encoding… (also in the palette) — for new commits only",
     ] {
         if !text.contains(part) {
             fail!(ui, "{title} lacks `{part}`:\n{text}");
@@ -480,6 +484,54 @@ fn repository_statistics_count_all(ui: &mut Ui) {
     let text = viewer(ui);
     if !text.contains("The Count All Commits button counts") {
         fail!(ui, "not offered again after closing:\n{text}");
+    }
+    ui.quick("cancel");
+}
+
+/// Repository ▸ Commit Encoding…: the dialog says that a change is for new commits only
+/// (re-encoding is not offered); its live line names the file and what follows, refuses
+/// a name gitti can't write; Save writes `.git/config` and the statistics show it.
+fn commit_encoding_dialog(ui: &mut Ui) {
+    use gitti_core::commit_encoding::change;
+    let ws = ui.ws.clone();
+    let dir = ui.workdir();
+    ui.quick("focuslist");
+    ui.step("action:gitti::ChangeCommitEncoding");
+    if modal_title(ui).as_deref() != Some(change::TITLE) {
+        fail!(ui, "dialog {:?}", modal_title(ui));
+    }
+    let message = ui.cx.update(|cx| testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("A change applies to the commits made from now on only") || !message.contains(change::NOT_OFFERED) {
+        fail!(ui, "intro: {message:?}");
+    }
+    let live = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_live(&ws, cx)).unwrap_or_default();
+    ui.quick("field:0=latin-x");
+    let refused = live(ui);
+    if !refused.2.as_deref().is_some_and(|b| b.starts_with("gitti can't write commit messages in “latin-x”")) {
+        fail!(ui, "unknown name not refused: {refused:?}");
+    }
+    ui.quick("field:0=ISO-8859-1");
+    let l = live(ui);
+    let want = "Writes i18n.commitEncoding = ISO-8859-1 to this repository's .git/config: new commit messages";
+    if !l.0.starts_with(want) || l.2.is_some() || l.3 != change::COMMON {
+        fail!(ui, "live: {l:?}");
+    }
+    ui.step("modalok");
+    let written = ui.wait_real(1500, |ui| {
+        ui.is_idle() && std::fs::read_to_string(dir.join(".git/config")).unwrap_or_default().contains("commitEncoding = ISO-8859-1")
+    });
+    if !written {
+        fail!(ui, "not written: {:?}", std::fs::read_to_string(dir.join(".git/config")));
+    }
+    ui.quick("focuslist");
+    ui.step("action:gitti::RepositoryStatistics");
+    let viewer = |ui: &mut Ui| ui.cx.update(|cx| testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+    ui.wait_real(1500, |ui| viewer(ui).contains("In the history:  all"));
+    let text = viewer(ui);
+    let part = "\n  Encoding:        ISO-8859-1 — i18n.commitEncoding set in .git/config (this repository): \
+                new commit messages are written in ISO-8859-1";
+    if !text.contains(part) {
+        fail!(ui, "statistics lack `{part}`:\n{text}");
     }
     ui.quick("cancel");
 }

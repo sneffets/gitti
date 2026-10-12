@@ -3,15 +3,17 @@
 # hicolor theme and the desktop entry (its name = the windows' app_id, so the shell shows our
 # icon for running windows too).
 #   scripts/install-linux.sh
+# Below 12 GB of RAM it builds without LTO (profile `release-lowmem`, scripts/build-profile.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/build-profile.sh
 ID=io.github.sneffets.gitti
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 # Icon files from assets/icon/*.svg (rewrites only what changed, so usually no rebuild).
-cargo run --release -q -p gitti-app --example make_icons
-cargo build --release -p gitti-app -p gitty
-install -Dm755 target/release/gitti "$HOME/.local/bin/gitti"
-install -Dm755 target/release/gitty "$HOME/.local/bin/gitty"
+cargo run --profile "$PROFILE" -q -p gitti-app --example make_icons
+cargo build --profile "$PROFILE" -p gitti-app -p gitty
+install -Dm755 "target/$PROFILE/gitti" "$HOME/.local/bin/gitti"
+install -Dm755 "target/$PROFILE/gitty" "$HOME/.local/bin/gitty"
 for png in assets/icon/hicolor/*/apps/$ID.png; do
   size=$(basename "$(dirname "$(dirname "$png")")")
   install -Dm644 "$png" "$DATA/icons/hicolor/$size/apps/$ID.png"

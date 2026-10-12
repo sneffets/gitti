@@ -300,6 +300,11 @@ fn changed_stamp(m: &std::fs::Metadata) -> Option<SystemTime> {
 /// seconds comes from a file system that keeps no finer time (FAT: 2 s, HFS+: 1 s, some
 /// network mounts) — a write just after `start` can carry an earlier stamp there, so it
 /// counts as before only when it is at least 2 s older.
+// TODO(Linux): the kernel stamps ctime from its coarse clock, which lags the `SystemTime`
+// taken just before: on Linux (HZ=1000) a file created right after `start` was seen with a
+// ctime up to 0.9 ms before it, every time. So a change in the first moments
+// of a read can count as already read (no refresh); `watch::tests::
+// an_old_modification_time_is_not_taken_as_read` fails there. Needs a margin on Linux too.
 fn changed_before(stamp: SystemTime, start: SystemTime) -> bool {
     let coarse = stamp
         .duration_since(SystemTime::UNIX_EPOCH)
