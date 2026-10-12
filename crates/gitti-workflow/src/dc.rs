@@ -264,3 +264,97 @@ pub mod read_only_file {
         c.done()
     }
 }
+
+/// **DC-10 — clean untracked and ignored files.** `a.txt`, `src/main.rs` and a
+/// `.gitignore` (`target/`, `*.log`) committed; untracked `new.txt` and the new folder
+/// `notes/` (two files, and an ignored `notes/debug.log`); ignored `app.log`, `.env`
+/// (by `.git/info/exclude`) and the build folder `target/` (two files, and the worktree
+/// [`WORKTREE`] — a folder with a `.git` file of its own); the separate repository
+/// [`NESTED`] in the new folder `vendor/`. The user opens "Clean Untracked / Ignored
+/// Files…", chooses Untracked and Ignored, ticks `target/` besides what is ticked already
+/// (the untracked entries) and deletes.
+///
+/// Expected ([`expect`]): `new.txt` and `notes/`'s two files are gone, `notes/debug.log`
+/// stays (not ticked, so `notes/` stays too); `target/`'s files are gone but the worktree
+/// in it stays; `app.log`, `.env` and the nested repository stay; tracked files untouched.
+pub mod clean {
+    use std::path::Path;
+
+    use crate::expect::{Checks, Expect, OpState};
+    use crate::fixture::{Fixture, put};
+    use crate::st::status;
+
+    /// The list as Clean shows it (Untracked and Ignored), sorted.
+    pub const ENTRIES: [&str; 8] = [
+        ".env",
+        "app.log",
+        "new.txt",
+        "notes/",
+        "notes/debug.log",
+        "target/",
+        "target/wt/",
+        "vendor/lib/",
+    ];
+    /// The index of `target/` among [`ENTRIES`] (its check box).
+    pub const TARGET: usize = 5;
+    pub const WORKTREE: &str = "target/wt";
+    pub const NESTED: &str = "vendor/lib";
+    /// What deleting with the default ticks plus `target/` deletes: `new.txt`, two in
+    /// `notes/`, two in `target/`.
+    pub const DELETED_FILES: usize = 5;
+
+    /// The commit, the files written, the nested repository (`git init`); `info/exclude`
+    /// and the worktree's `.git` file written directly. Four git processes.
+    pub fn fixture(dir: &Path) {
+        let mut fx = Fixture::new();
+        fx.commit(
+            "main",
+            "init",
+            &[
+                put("a.txt", "a\n"),
+                put("src/main.rs", "fn main() {}\n"),
+                put(".gitignore", "target/\n*.log\n"),
+            ],
+        );
+        fx.write("new.txt", "new\n");
+        fx.write("notes/todo.txt", "todo\n");
+        fx.write("notes/more/idea.txt", "idea\n");
+        fx.write("notes/debug.log", "debug\n");
+        fx.write("app.log", "log\n");
+        fx.write(".env", "SECRET=1\n");
+        fx.write("target/debug/app", "bin\n");
+        fx.write("target/debug/deps/x.o", "obj\n");
+        fx.write(&format!("{WORKTREE}/work.txt"), "work\n");
+        fx.write(&format!("{NESTED}/lib.rs"), "lib\n");
+        fx.git_after(&["init", "-q", NESTED]);
+        fx.build(dir);
+        std::fs::create_dir_all(dir.join(".git/info")).unwrap();
+        std::fs::write(dir.join(".git/info/exclude"), ".env\n").unwrap();
+        std::fs::write(
+            dir.join(WORKTREE).join(".git"),
+            "gitdir: /elsewhere/repo/.git/worktrees/wt\n",
+        )
+        .unwrap();
+    }
+
+    /// After the clean; one git process.
+    pub fn expect(dir: &Path) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut c = Checks::new("DC-10 after cleaning");
+        c.eq("state", e.state(), OpState::Clean);
+        for gone in ["new.txt", "notes/todo.txt", "notes/more", "target/debug"] {
+            c.ok(&format!("{gone} deleted"), !dir.join(gone).exists(), gone);
+        }
+        c.text("notes/debug.log (ignored, not ticked)", e.file("notes/debug.log").as_deref(), Some("debug\n"));
+        c.text("app.log (ignored, not ticked)", e.file("app.log").as_deref(), Some("log\n"));
+        c.text(".env (ignored, not ticked)", e.file(".env").as_deref(), Some("SECRET=1\n"));
+        c.text("the worktree in target/", e.file(&format!("{WORKTREE}/work.txt")).as_deref(), Some("work\n"));
+        c.ok("its .git file", dir.join(WORKTREE).join(".git").is_file(), WORKTREE);
+        c.text("the nested repository", e.file(&format!("{NESTED}/lib.rs")).as_deref(), Some("lib\n"));
+        c.ok("its .git", dir.join(NESTED).join(".git/HEAD").is_file(), NESTED);
+        c.text("a.txt", e.file("a.txt").as_deref(), Some("a\n"));
+        c.text("src/main.rs", e.file("src/main.rs").as_deref(), Some("fn main() {}\n"));
+        c.eq("status", e.status_lines(), status(&["?? vendor/lib/"]));
+        c.done()
+    }
+}

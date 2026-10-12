@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 use common::*;
 use gitti_workflow::cp::picks::{self as wf, Setup};
+use gitti_workflow::cp::carry_by_patch as carry;
 use gitti_workflow::rv;
 
 macro_rules! fail {
@@ -30,6 +31,11 @@ macro_rules! fail {
 thread_local! {
     /// The running scenario's fixture ids.
     static SETUP: RefCell<Option<Setup>> = const { RefCell::new(None) };
+}
+
+thread_local! {
+    /// CP-19's fixture ids (its own history: `gitti_workflow::cp::carry_by_patch`).
+    static CARRY: RefCell<Option<carry::Setup>> = const { RefCell::new(None) };
 }
 
 thread_local! {
@@ -62,6 +68,7 @@ pub fn main() {
         ("cp16_pick_into_a_dirty_tree_is_refused", cp16_pick_into_a_dirty_tree_is_refused),
         ("cp17_pick_head_is_greyed", cp17_pick_head_is_greyed),
         ("cp18_pick_a_lost_commit_from_the_reflog", cp18_pick_a_lost_commit_from_the_reflog),
+        ("cp19_carry_two_commits_by_patch_file", cp19_carry_two_commits_by_patch_file),
         ("rv01_revert_then_revert_the_revert", rv01_revert_then_revert_the_revert),
         ("rv02_revert_a_merge_commit", rv02_revert_a_merge_commit),
         ("rv03_revert_conflict_continue_with_an_edited_message", rv03_revert_conflict_continue_with_an_edited_message),
@@ -75,6 +82,11 @@ pub fn main() {
         if name == "rv08_revert_lines_in_the_working_tree" {
             let s = rv::lines::fixture(&dir);
             LINES.with(|c| *c.borrow_mut() = Some(s));
+            return dir;
+        }
+        if name == "cp19_carry_two_commits_by_patch_file" {
+            let s = carry::fixture(&dir);
+            CARRY.with(|c| *c.borrow_mut() = Some(s));
             return dir;
         }
         let pick = ["cherry-pick", "clash~1"];
@@ -398,6 +410,71 @@ fn cp08_pick_three_marked_commits(ui: &mut Ui) {
             "CP-08",
         ),
     );
+}
+
+/// CP-19: `Fix a` and `Change b` marked; the marked commit's menu ▸ Save 2 Marked
+/// Commits as Patches… — "All in One File", the live text says where — writes the mbox;
+/// Copy as Patch puts the same text on the clipboard; Repository ▸ Apply Patch File…
+/// previews the file (two commits) and applies them on `main` with `git am`.
+/// Workflow: CP-19
+fn cp19_carry_two_commits_by_patch_file(ui: &mut Ui) {
+    let s = CARRY.with(|c| c.borrow_mut().take()).expect("the fixture's ids");
+    let dir = ui.workdir();
+    let ws = ui.ws.clone();
+    let live = |ui: &mut Ui| ui.cx.update(|cx| gitti_app::testing_menus::modal_live(&ws, cx)).unwrap_or_default();
+    let file = carry::patch_file(&dir);
+    mark(ui, &[&s.fix, &s.change_b]);
+    let save = "Save 2 Marked Commits as Patches…";
+    if !commit_menu(ui, &s.fix, save) {
+        return;
+    }
+    ui.step(&format!("menu:{save}"));
+    match ui.modal() {
+        Some((t, _)) if t == "Save as Patch" => {}
+        other => return fail!(ui, "the Save as Patch dialog: {other:?}"),
+    }
+    if !message(ui).contains("1. ") || !message(ui).contains(gitti_workflow::cp::FIX) {
+        fail!(ui, "the dialog lists the commits oldest first: {}", message(ui));
+    }
+    ui.quick("option:1");
+    ui.quick(&format!("field:1={}", file.display()));
+    let (text, ok, blocked, _) = live(ui);
+    if blocked.is_some() || ok.as_deref() != Some("Save") || !text.contains("Writes 2 patches into the one file") {
+        fail!(ui, "the live text: {text:?} {ok:?} {blocked:?}");
+    }
+    ui.step("modalok");
+    said(ui, "after saving", |t| t.starts_with("Saved 2 commits as patches into"));
+    expect(ui, carry::expect_saved(&dir));
+    // Copy as Patch of the same marks: the same text.
+    ui.cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+    ui.step("action:gitti::CopyAsPatch");
+    let copied = ui.cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+    if copied != std::fs::read_to_string(&file).unwrap_or_default() {
+        fail!(ui, "the clipboard: {copied:?}");
+    }
+    said(ui, "after copying", |t| t.starts_with("Copied 2 commits as patches"));
+    ui.quick("key:escape");
+    // Apply it on main.
+    ui.quick("action:gitti::ApplyPatchFile");
+    ui.quick(&format!("field:0={}", file.display()));
+    if live(ui).2.is_some() {
+        fail!(ui, "Apply Patch File with an existing file: {:?}", live(ui));
+    }
+    ui.step("modalok");
+    match ui.modal() {
+        Some((t, _)) if t == "Apply cp19-feat.patch" => {}
+        other => return fail!(ui, "the preview: {other:?}"),
+    }
+    let text = message(ui);
+    if !text.contains("2 commits made by git format-patch") || !text.contains("It applies cleanly.") {
+        fail!(ui, "the preview's text: {text}");
+    }
+    if live(ui).1.as_deref() != Some("Apply 2 Commits") {
+        fail!(ui, "the preview's button: {:?}", live(ui));
+    }
+    ui.step("modalok");
+    said(ui, "after applying", |t| t.starts_with("Applied 2 patches as 2 new commits on main"));
+    expect(ui, carry::expect_applied(&dir, &s));
 }
 
 /// CP-09: `Fix a` is on `main` already (picked before); ▸ Cherry-pick again stops with

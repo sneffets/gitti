@@ -191,6 +191,7 @@ pub fn in_progress(state: RepoState) -> Option<&'static str> {
         RepoState::Rebasing => Some("a rebase is in progress"),
         RepoState::CherryPicking => Some("a cherry-pick is in progress"),
         RepoState::Reverting => Some("a revert is in progress"),
+        RepoState::Applying => Some("applying patches (git am) is in progress"),
     }
 }
 
@@ -246,7 +247,8 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             check(!f.diff_file, NO_FILE)
         }
         // Repository.
-        "WriteCommitGraph" | "GoToCommit" | "GoToHead" | "MarkCompare" | "ToggleAmend" => {
+        "WriteCommitGraph" | "GoToCommit" | "GoToHead" | "MarkCompare" | "ToggleCompareMergeBase"
+        | "ToggleAmend" => {
             check(f.unborn, UNBORN)
         }
         "AddWorktree" => check(f.unborn, UNBORN),
@@ -297,6 +299,9 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             let kind = if action == "RevertMarked" { SeveralKind::Revert } else { SeveralKind::CherryPick };
             why_not(kind, f.marked_commits, f.head_marked, f.state)
         }
+        // The marked commits, else the selected one (`patch_files`).
+        "SaveAsPatch" | "CopyAsPatch" => if f.marked_commits > 0 { None } else { commit(f) },
+        "ExportSnapshot" => commit(f),
         "RevertLinesInWorkingTree" | "ApplyLinesToWorkingTree" => check(!f.commit_diff, NO_COMMIT_DIFF),
         "OpenThisVersion" => check(!f.this_version, NO_COMMIT_FILE),
         "OpenOldVersion" => {
@@ -479,9 +484,29 @@ mod tests {
             ("FetchMoreHistory", NOT_SHALLOW),
             ("RevertLinesInWorkingTree", NO_COMMIT_DIFF),
             ("ApplyLinesToWorkingTree", NO_COMMIT_DIFF),
+            ("SaveAsPatch", WORKING_DIR_SELECTED),
+            ("CopyAsPatch", WORKING_DIR_SELECTED),
+            ("ExportSnapshot", WORKING_DIR_SELECTED),
         ] {
             assert_eq!(why_not(a, &f), Some(why), "{a}");
         }
+    }
+
+    /// Save / Copy as Patch take the marked commits, else the selected commit; Export
+    /// Snapshot only the selected commit; Apply Patch File… needs nothing.
+    #[gitti_test::test]
+    fn patches_take_a_commit_or_the_marked_ones() {
+        let stash = RepoFacts { selection: Selection::Stash, ..plain() };
+        for a in ["SaveAsPatch", "CopyAsPatch", "ExportSnapshot"] {
+            assert_eq!(why_not(a, &stash), Some(STASH_SELECTED), "{a}");
+        }
+        let marked = RepoFacts { marked_commits: 2, ..plain() };
+        assert_eq!(why_not("SaveAsPatch", &marked), None);
+        assert_eq!(why_not("CopyAsPatch", &marked), None);
+        assert_eq!(why_not("ExportSnapshot", &marked), Some(WORKING_DIR_SELECTED));
+        let merging = RepoFacts { state: RepoState::Merging, ..plain() };
+        assert_eq!(why_not("ApplyPatchFile", &merging), None);
+        assert_eq!(in_progress(RepoState::Applying), Some("applying patches (git am) is in progress"));
     }
 
     /// A shallow clone fetches more of its history; without a remote it can't.

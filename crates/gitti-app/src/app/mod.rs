@@ -5,6 +5,7 @@
 
 mod branch_list;
 mod change_search;
+mod clean;
 mod commit_box;
 mod commit_lines;
 mod commit_list;
@@ -39,6 +40,7 @@ mod op_progress;
 mod op_stops;
 mod overlay_keys;
 mod panes;
+mod patch_ui;
 mod pick_several;
 mod picker;
 mod push_ui;
@@ -1122,6 +1124,10 @@ impl GittiApp {
         }
         self.check_compare_base(cx);
         self.refresh_worktree_compare(cx);
+        // `.mailmap` changed: the shown header's names (the list re-reads its rows).
+        if s.mailmap_changed && matches!(&self.detail, Detail::Commit(cv) if cv.compare.is_none()) {
+            self.show_selected_commit(cx);
+        }
     }
 
     /// (Re)loads the history in the background, apart from the working state: `force` loads
@@ -3852,6 +3858,7 @@ impl Render for GittiApp {
         let root = self.stash_ui_actions(root, cx);
         let root = self.file_marks_actions(root, cx);
         let root = self.pick_several_actions(root, cx);
+        let root = self.patch_actions(root, cx);
         let root = self.list_layout_actions(root, cx);
         let root = self.branch_list_actions(root, cx);
         let root = self.worktree_actions(root, cx);

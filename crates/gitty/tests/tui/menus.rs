@@ -646,6 +646,39 @@ fn compare_mode_swaps_ends_and_compares_the_working_directory() {
     assert!(sc[1].contains("Working Directory") && sc[1].contains("one.rs"), "{out}");
 }
 
+/// Sidebar "Compare zfork with main" (D in the branch's menu): compare mode on main's
+/// commit, zfork's selected, since their common ancestor A — only zfork's file, the banner
+/// names A; the palette toggle switches to the direct difference (main's b.txt too).
+#[gitti_test::test]
+fn compare_branch_with_head_since_the_common_ancestor() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "A", files: &[("a.txt", "a\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "B", files: &[("b.txt", "b\n")] },
+        Commit { branch: "zfork", from: Some(1), merge: None, msg: "F", files: &[("f.txt", "f\n")] },
+    ]);
+    let d = dir.path();
+    let [a, b, f] = ["main~1", "main", "zfork"].map(|r| rev(d, r)[..7].to_string());
+    // Sidebar rows: 0 BRANCHES, 1 main, 2 zfork.
+    let out = gitty_with(
+        d,
+        tempfile::tempdir().unwrap().path(),
+        "140x30",
+        &format!(
+            "press:backtab;press:g;press:j;press:j;press:m;items;key:D;wait;state;dump;\
+             press:ctrl-p;{}press:enter;wait;state;dump",
+            presses("since common ancestor")
+        ),
+    );
+    assert!(items(&out).contains(&"Compare zfork with main"), "{out}");
+    let st = states(&out);
+    let sc = screens(&out);
+    assert_eq!(compare_of(st[0]), format!("base={b},shown={a}..{f},since={a}/1"), "{out}");
+    assert!(sc[0].contains("f.txt") && !sc[0].contains("b.txt"), "{out}");
+    assert!(sc[0].contains(&format!("since the common ancestor {a} A")), "{out}");
+    assert_eq!(compare_of(st[1]), format!("base={b},shown={b}..{f}"), "{out}");
+    assert!(sc[1].contains("b.txt") && sc[1].contains("f.txt"), "{out}");
+}
+
 /// The commit header's ids (a merge): a right click on the commit id's line offers Copy SHA
 /// / Copy Short SHA, on the Parents line both entries for each parent (numbered); `y` on
 /// the id's line copies the id, on the Parents line the parents. No git for any of it.

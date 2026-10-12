@@ -38,6 +38,7 @@ use crate::theme::Palette;
 
 mod branch_cmds;
 mod change_search;
+mod clean;
 mod commit_box;
 mod commit_flow;
 mod commit_lines;
@@ -49,6 +50,7 @@ mod file_list;
 mod file_marks;
 mod from_commit;
 mod fs_paths;
+mod git_settings;
 mod keybar;
 mod lfs;
 mod lfs_fetch;
@@ -57,6 +59,7 @@ mod op_cancel;
 mod op_output;
 mod op_stops;
 mod overwrite;
+mod patch_cmds;
 mod pick_several;
 pub mod reflog;
 mod remote_cmds;
@@ -1725,6 +1728,10 @@ impl App {
         self.rebuild_sidebar();
         self.check_compare_base();
         self.refresh_worktree_compare();
+        // `.mailmap` changed: the shown header's names (the list re-reads its rows).
+        if s.mailmap_changed && matches!(&self.detail, Detail::Commit(cv) if cv.compare.is_none()) {
+            self.load_detail();
+        }
         if matches!(self.detail, Detail::Worktree) {
             self.rebuild_rows();
             self.apply_regroup(regroup);
@@ -4060,6 +4067,8 @@ impl App {
         );
         items.extend(self.restore_contains_items(c.id));
         items.push(MenuItem::separator());
+        items.extend(self.patch_commit_items());
+        items.push(MenuItem::separator());
         items.extend(self.mark_commit_items());
         items.push(MenuItem::separator());
         items.extend(self.subtree_ref_items(&sha, ObjectId::from_hex(sha.as_bytes()).ok(), None));
@@ -4126,6 +4135,7 @@ impl App {
             MenuItem::new(gitti_core::commit_message::RECENT_LABEL, |app| {
                 app.open_recent_messages()
             }),
+            MenuItem::new(gitti_core::co_author::LABEL, |app| app.open_co_author_picker()),
         ]
     }
 
@@ -4535,6 +4545,7 @@ impl App {
         items.extend(self.stash_palette_items());
         items.extend(self.file_marks_palette_items());
         items.extend(self.pick_several_palette_items());
+        items.extend(self.patch_palette_items());
         // Last: on an equal match the everyday commands come first ("merge").
         items.extend(self.subtree_palette_items());
         items.extend(self.custom_palette_items());
@@ -4689,13 +4700,7 @@ impl App {
     /// started. A terminal editor runs with the terminal handed over (the main loop).
     pub fn open_file_in_editor(&mut self, full: &std::path::Path, line: u32, info: String) {
         let workdir = self.repo.workdir().to_path_buf();
-        let mut template = self.settings.editor_command.clone();
-        if template.trim().is_empty() {
-            // A set but empty `$VISUAL` counts as unset (`VISUAL= gitty` must not hide
-            // `$EDITOR` behind the system default application).
-            let var = |name| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-            template = var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_default();
-        }
+        let template = self.editor_template();
         match gitti_core::editor::editor_argv(&template, full, line) {
             // A file name that is not UTF-8 reaches the editor as its bytes.
             Ok(argv) if gitti_core::editor::is_terminal_editor(&argv) => {
@@ -4707,6 +4712,19 @@ impl App {
             },
             Err(e) => self.set_error(format!("{e:#}")),
         }
+    }
+
+    /// The editor command: the setting `editor_command`, else `$VISUAL` / `$EDITOR`;
+    /// empty: none set (the system default application opens files then).
+    pub fn editor_template(&self) -> String {
+        let template = self.settings.editor_command.clone();
+        if !template.trim().is_empty() {
+            return template;
+        }
+        // A set but empty `$VISUAL` counts as unset (`VISUAL= gitty` must not hide
+        // `$EDITOR` behind the system default application).
+        let var = |name| std::env::var(name).ok().filter(|v: &String| !v.trim().is_empty());
+        var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_default()
     }
 
     /// A terminal editor (`run_in_terminal`, run by the main loop — or the script runner)

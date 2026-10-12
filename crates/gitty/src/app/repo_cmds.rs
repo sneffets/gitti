@@ -444,7 +444,7 @@ impl App {
             .as_ref()
             .map(|(p, _)| p.clone())
             .unwrap_or_default();
-        vec![
+        let mut items = vec![
             PickItem::new("Clone Repository…", "", |app: &mut App| {
                 app.clone_dialog()
             }),
@@ -488,6 +488,9 @@ impl App {
                 "git add --renormalize — after .gitattributes or core.autocrlf changed",
                 |app: &mut App| app.renormalize_dialog(),
             ),
+            PickItem::new(gitti_core::clean::MENU_LABEL, gitti_core::clean::PALETTE_DETAIL, |app: &mut App| {
+                app.clean_dialog()
+            }),
             PickItem::new("Start-up Timings…", "", |app: &mut App| {
                 let records = gitti_core::startup::load();
                 let text = gitti_core::startup::format_all(&records, &crate::app::local_time);
@@ -495,7 +498,9 @@ impl App {
             }),
             PickItem::new("About gitty", "", |app: &mut App| app.show_about()),
             PickItem::new("Third-Party Licences…", "", |app: &mut App| app.show_licences()),
-        ]
+        ];
+        items.extend(self.git_settings_palette_items());
+        items
     }
 
     /// Help ▸ About: version and build commit first (`y` copies them), licence, the

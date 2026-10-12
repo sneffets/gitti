@@ -107,6 +107,7 @@ actions!(
         MarkCompare,
         EndCompare,
         SwapCompare,
+        ToggleCompareMergeBase,
         LineUp,
         LineDown,
         HalfPageUp,
@@ -1363,6 +1364,14 @@ pub mod testing_menus {
         ws.read(cx).script_app()?.read(cx).script_modal_option()
     }
 
+    /// The check boxes of the open dialog: label, ticked, shown for the chosen option.
+    pub fn modal_checks(ws: &Entity<Workspace>, cx: &App) -> Vec<(String, bool, bool)> {
+        ws.read(cx)
+            .script_app()
+            .map(|a| a.read(cx).script_modal_checks())
+            .unwrap_or_default()
+    }
+
     /// Whether the active tab shows a repository (else the start / "not a repository" page).
     pub fn has_repo(ws: &Entity<Workspace>, cx: &App) -> bool {
         ws.read(cx)
@@ -1411,6 +1420,7 @@ actions!(
         TrackWithLfs,
         EditGitattributes,
         RenormalizeLineEndings,
+        CleanUntrackedIgnored,
         RepoGitSettings,
         GlobalGitSettings,
         ChangeCommitEncoding,
@@ -1473,6 +1483,10 @@ actions!(
         CherryPickCommit,
         CherryPickMarked,
         RevertMarked,
+        SaveAsPatch,
+        CopyAsPatch,
+        ExportSnapshot,
+        ApplyPatchFile,
         EditCommitMessage,
         GetSigningKeys,
         DropLatestStash,
@@ -1486,9 +1500,12 @@ actions!(
     ]
 );
 
-// Commit ▸ Sign Off Commits / Recent Commit Messages…, ↑ / ↓ in the message box (earlier
-// messages); handlers in `app/commit_box.rs`.
-actions!(gitti, [ToggleSignOff, RecentMessages, MessageHistoryPrev, MessageHistoryNext]);
+// Commit ▸ Sign Off Commits / Recent Commit Messages… / Add Co-Author…, ↑ / ↓ in the
+// message box (earlier messages); handlers in `app/commit_box.rs`.
+actions!(
+    gitti,
+    [ToggleSignOff, RecentMessages, AddCoAuthor, MessageHistoryPrev, MessageHistoryNext]
+);
 
 // Commit ▸ Branches and Tags Containing / Restore File or Folder from Selected Commit;
 // handlers in `app/from_commit.rs`.
@@ -1538,8 +1555,9 @@ actions!(gitti, [FsPaths, HideFsPaths, ShowHiddenFsPaths]);
 actions!(gitti, [ResetRemoteBranch]);
 
 // Navigate ▸ Reflog (Recover Lost Commits)…: HEAD's reflog in place of the commit
-// list; handler in `app/reflog.rs`.
-actions!(gitti, [ShowReflog]);
+// list; Navigate ▸ Find Lost Commits (`git fsck`, below the reflog); handlers in
+// `app/reflog.rs`.
+actions!(gitti, [ShowReflog, FindLostCommits]);
 
 // Commit ▸ Open in External Diff / Merge Tool (the file at the diff cursor), Repository ▸
 // Choose External Diff / Merge Tool…; handlers in `app/ext_tools.rs`.
@@ -1778,16 +1796,17 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Track with Git LFS…", TrackWithLfs),
                 MenuItem::action("Edit .gitattributes…", EditGitattributes),
                 MenuItem::action(gitti_core::renormalize::MENU_LABEL, RenormalizeLineEndings),
+                MenuItem::action(gitti_core::clean::MENU_LABEL, CleanUntrackedIgnored),
                 MenuItem::separator(),
                 MenuItem::action("Paths This File System Can't Hold…", FsPaths),
                 MenuItem::action("Hide Paths This File System Can't Hold", HideFsPaths),
                 MenuItem::action("Show Hidden Paths Again", ShowHiddenFsPaths),
                 MenuItem::separator(),
-                MenuItem::action("Git Settings: This Repository…", RepoGitSettings),
-                MenuItem::action("Git Settings: Global…", GlobalGitSettings),
+                MenuItem::action(gitti_core::git_settings::REPO_LABEL, RepoGitSettings),
+                MenuItem::action(gitti_core::git_settings::GLOBAL_LABEL, GlobalGitSettings),
                 MenuItem::action(gitti_core::commit_encoding::change::MENU_LABEL, ChangeCommitEncoding),
-                MenuItem::action("Edit Repository Config File…", EditRepoConfig),
-                MenuItem::action("Edit Global Config File…", EditGlobalConfig),
+                MenuItem::action(gitti_core::git_settings::EDIT_REPO_LABEL, EditRepoConfig),
+                MenuItem::action(gitti_core::git_settings::EDIT_GLOBAL_LABEL, EditGlobalConfig),
                 MenuItem::action(gitti_core::tool_setup::CHOOSE_LABEL, ChooseExternalTool),
                 MenuItem::separator(),
                 MenuItem::action("Run Git Command…", RunGitCommand),
@@ -1797,6 +1816,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action(gitti_core::shallow::FULL_LABEL, FetchFullHistory),
                 MenuItem::action(gitti_core::shallow::MORE_LABEL, FetchMoreHistory),
+                MenuItem::separator(),
+                MenuItem::action(gitti_core::patch_files::APPLY_LABEL, ApplyPatchFile),
             ],
         ),
         menu(
@@ -1825,6 +1846,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Amend Previous Commit", ToggleAmend),
                 MenuItem::action("Sign Off Commits", ToggleSignOff),
                 MenuItem::action(gitti_core::commit_message::RECENT_LABEL, RecentMessages),
+                MenuItem::action(gitti_core::co_author::LABEL, AddCoAuthor),
                 MenuItem::action("Go to Working Directory", GoToWorkingDirectory),
                 MenuItem::separator(),
                 MenuItem::action("Stage All", StageAll),
@@ -1835,6 +1857,9 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Cherry-pick Selected Commit", CherryPickCommit),
                 MenuItem::action(gitti_core::pick_several::CHERRY_PICK_MARKED, CherryPickMarked),
                 MenuItem::action(gitti_core::pick_several::REVERT_MARKED, RevertMarked),
+                MenuItem::action(gitti_core::patch_files::SAVE_LABEL, SaveAsPatch),
+                MenuItem::action(gitti_core::patch_files::COPY_LABEL, CopyAsPatch),
+                MenuItem::action(gitti_core::patch_files::SNAPSHOT_LABEL, ExportSnapshot),
                 MenuItem::action("Edit Commit Message…", EditCommitMessage),
                 MenuItem::action("Get Signing Keys from GitHub…", GetSigningKeys),
                 MenuItem::separator(),
@@ -1849,6 +1874,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Mark for Comparison", MarkCompare),
                 MenuItem::action("Swap Comparison Sides", SwapCompare),
+                MenuItem::action(gitti_core::compare::SINCE_MERGE_BASE_LABEL, ToggleCompareMergeBase),
                 MenuItem::action("End Comparison", EndCompare),
                 MenuItem::separator(),
                 MenuItem::action("Create Tag at HEAD…", CreateTag),
@@ -1893,6 +1919,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Go to Branch / Tag…", GoToRef),
                 MenuItem::action("Go to HEAD", GoToHead),
                 MenuItem::action("Reflog (Recover Lost Commits)…", ShowReflog),
+                MenuItem::action(gitti_core::reflog::FIND_LOST_LABEL, FindLostCommits),
                 MenuItem::action("Go to File…", FileList),
                 MenuItem::separator(),
                 MenuItem::action("Next Commit", SelectNext),

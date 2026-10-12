@@ -51,7 +51,6 @@ const fn when(action: &'static str, when: &'static str, gitty: Gitty) -> MenuCom
 
 const TABS: &str = "gitty shows one repository (no tabs)";
 const FONT: &str = "the terminal's font";
-const CONFIG: &str = "git config dialogs: gitty gap (`:` runs git config)";
 const STATE: &str = "only while comparing";
 
 pub const MENU_COMMANDS: &[MenuCommand] = &[
@@ -139,22 +138,25 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("TrackWithLfs", "Track with Git LFS…"),
     both("EditGitattributes", "Edit .gitattributes…"),
     both("RenormalizeLineEndings", crate::renormalize::MENU_LABEL),
+    both("CleanUntrackedIgnored", crate::clean::MENU_LABEL),
     // Paths this file system can't hold (`fs_paths`): the note, hide (skip-worktree),
     // the undo.
     both("FsPaths", "Paths This File System Can't Hold…"),
     both("HideFsPaths", "Hide Paths This File System Can't Hold"),
     both("ShowHiddenFsPaths", "Show Hidden Paths Again"),
-    gitti("RepoGitSettings", CONFIG),
-    gitti("GlobalGitSettings", CONFIG),
+    both("RepoGitSettings", crate::git_settings::REPO_LABEL),
+    both("GlobalGitSettings", crate::git_settings::GLOBAL_LABEL),
     both("ChangeCommitEncoding", crate::commit_encoding::change::MENU_LABEL),
-    gitti("EditRepoConfig", CONFIG),
-    gitti("EditGlobalConfig", CONFIG),
+    both("EditRepoConfig", crate::git_settings::EDIT_REPO_LABEL),
+    both("EditGlobalConfig", crate::git_settings::EDIT_GLOBAL_LABEL),
     // The external diff / merge tool (`tool_setup`).
     both("ChooseExternalTool", crate::tool_setup::CHOOSE_LABEL),
     both("WriteCommitGraph", "Write Commit-Graph"),
     // A shallow clone's history (`shallow`); greyed in a complete one.
     both("FetchFullHistory", crate::shallow::FULL_LABEL),
     both("FetchMoreHistory", crate::shallow::MORE_LABEL),
+    // An mbox with `git am`, a plain diff with `git apply` (`patch_files`).
+    both("ApplyPatchFile", crate::patch_files::APPLY_LABEL),
     both("RepositoryStatistics", crate::repo_stats::MENU_LABEL),
     // Branch
     both("SwitchBranch", "Switch Branch…"),
@@ -182,6 +184,10 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("RevertCommit", "Revert Selected Commit"),
     both("CherryPickCommit", "Cherry-pick Selected Commit"),
     both("CherryPickMarked", "Cherry-pick Marked Commits…"),
+    // The selected or marked commits (`patch_files`).
+    both("SaveAsPatch", crate::patch_files::SAVE_LABEL),
+    both("CopyAsPatch", crate::patch_files::COPY_LABEL),
+    both("ExportSnapshot", crate::patch_files::SNAPSHOT_LABEL),
     both("RevertMarked", "Revert Marked Commits…"),
     both("EditCommitMessage", "Edit Commit Message…"),
     both("ShowContaining", "Branches and Tags Containing Selected Commit…"),
@@ -198,6 +204,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("GetSigningKeys", "Get Signing Keys from GitHub…"),
     both("MarkCompare", "Mark Selected Commit for Comparison"),
     when("SwapCompare", STATE, Gitty::No(STATE)),
+    both("ToggleCompareMergeBase", "Changes Since Common Ancestor"),
     when("EndCompare", STATE, Gitty::No(STATE)),
     both("CreateTag", "Create Tag at HEAD…"),
     // Stash

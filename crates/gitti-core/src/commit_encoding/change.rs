@@ -125,7 +125,7 @@ pub fn describe(value: &str, scope: ConfigScope, current: &CommitEncoding) -> Re
 }
 
 /// Why `name` can't be set: one gitti can't write commit messages in.
-fn refusal(name: &str) -> Option<String> {
+pub(crate) fn refusal(name: &str) -> Option<String> {
     if name.is_empty() || lookup(name) != Target::Unsupported {
         return None;
     }

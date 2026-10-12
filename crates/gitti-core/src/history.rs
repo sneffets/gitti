@@ -4,7 +4,8 @@
 //! - The *structure* (ids, parents, commit time) is read from git's commit-graph file when
 //!   there is one; only commits newer than the file are decoded from the object database.
 //! - *Metadata* (subject, author, date) is loaded lazily per row when it is displayed and
-//!   cached ([`History::meta`]).
+//!   cached ([`History::meta`]); the author as `git log` shows it (`.mailmap` applied,
+//!   [`crate::mailmap`]).
 //! - The lane layout is stored compactly ([`crate::graph::Graph`]).
 
 use std::collections::{HashMap, HashSet};
@@ -22,8 +23,11 @@ use crate::repo::{LogOrder, RefInfo, RefKind};
 #[derive(Debug, Clone, Default)]
 pub struct CommitMeta {
     pub summary: String,
+    /// The author's name and e-mail with the mailmap applied.
     pub author: String,
     pub email: String,
+    /// `(name, email)` as the commit records them, when the mailmap changed them.
+    pub raw_author: Option<Box<(String, String)>>,
     /// Author time, seconds since epoch.
     pub time: i64,
     pub tz_offset: i32,
@@ -33,12 +37,16 @@ pub struct CommitMeta {
 #[derive(Debug, Default)]
 struct MetaStore {
     inner: Mutex<MetaInner>,
+    /// The repository's mailmap; a new generation empties the cache.
+    mailmap: Arc<crate::mailmap::Shared>,
 }
 
 #[derive(Debug, Default)]
 struct MetaInner {
     repo: Option<gix::Repository>,
     cache: HashMap<ObjectId, Arc<CommitMeta>>,
+    /// The mailmap generation the cache was filled with, and that mailmap.
+    mailmap: (u64, crate::mailmap::Mailmap),
 }
 
 impl MetaStore {
@@ -46,13 +54,26 @@ impl MetaStore {
     /// cache is emptied, re-reading a commit costs microseconds).
     const MAX_CACHED: usize = 16_384;
 
-    fn new(repo: gix::Repository) -> Self {
+    fn new(repo: gix::Repository, mailmap: Arc<crate::mailmap::Shared>) -> Self {
         MetaStore {
             inner: Mutex::new(MetaInner {
                 repo: Some(repo),
                 cache: HashMap::new(),
+                mailmap: mailmap.get(),
             }),
+            mailmap,
         }
+    }
+
+    /// The mailmap rows are shown with (the current one; a changed one empties the
+    /// cache).
+    fn current_mailmap(&self, inner: &mut MetaInner) -> crate::mailmap::Mailmap {
+        let generation = self.mailmap.get().0;
+        if inner.mailmap.0 != generation {
+            inner.mailmap = self.mailmap.get();
+            inner.cache.clear();
+        }
+        inner.mailmap.1.clone()
     }
 
     /// This store (its cache) for a newer history, reading through `repo` (which sees
@@ -66,12 +87,13 @@ impl MetaStore {
 
     fn get(&self, id: ObjectId) -> Arc<CommitMeta> {
         let mut inner = self.inner.lock().expect("meta lock");
+        let mailmap = self.current_mailmap(&mut inner);
         if let Some(m) = inner.cache.get(&id) {
             return m.clone();
         }
         // A commit that can't be read (yet: its pack arrived meanwhile) shows empty and is
         // read again next time — never kept as an empty row.
-        let Some(meta) = inner.repo.as_ref().and_then(|r| read_meta(r, id)) else {
+        let Some(meta) = inner.repo.as_ref().and_then(|r| read_meta(r, &mailmap, id)) else {
             return Arc::default();
         };
         let meta = Arc::new(meta);
@@ -83,16 +105,18 @@ impl MetaStore {
     }
 }
 
-fn read_meta(repo: &gix::Repository, id: ObjectId) -> Option<CommitMeta> {
+fn read_meta(repo: &gix::Repository, mailmap: &crate::mailmap::Mailmap, id: ObjectId) -> Option<CommitMeta> {
     let commit = repo.find_commit(id).ok()?;
     let decoded = commit.decode().ok()?;
     let author = decoded.author().ok()?;
     let time = author.time().ok()?;
     let enc = decoded.encoding.map(|e| e.as_ref());
+    let who = mailmap.map(&decode_text(author.name, enc), &decode_text(author.email, enc));
     Some(CommitMeta {
         summary: subject(decoded.message, enc),
-        author: decode_text(author.name, enc),
-        email: decode_text(author.email, enc),
+        author: who.name,
+        email: who.email,
+        raw_author: who.raw.map(Box::new),
         time: time.seconds,
         tz_offset: time.offset,
     })
@@ -170,6 +194,12 @@ impl History {
     /// scans over many commits ([`crate::commit_search`]).
     pub(crate) fn meta_reader(&self) -> Option<gix::Repository> {
         self.meta.inner.lock().ok()?.repo.clone()
+    }
+
+    /// The mailmap the rows are shown with ([`crate::mailmap`]), for scans reading
+    /// commits themselves.
+    pub(crate) fn mailmap(&self) -> crate::mailmap::Mailmap {
+        self.meta.mailmap.get().1
     }
 
     /// The row of commit `id`, if it is loaded (never the working-directory row).
@@ -252,6 +282,8 @@ pub(crate) struct LoadInput {
     pub order: LogOrder,
     /// Load only the newest `limit` commits (by commit time) for a quick first screen.
     pub limit: Option<usize>,
+    /// The repository's mailmap, applied to the rows' authors.
+    pub mailmap: Arc<crate::mailmap::Shared>,
 }
 
 /// The label both apps put on a [`History::merge_heads`] commit's row.
@@ -509,6 +541,7 @@ pub(crate) fn load(repo: gix::Repository, input: LoadInput) -> Result<History> {
         merge_heads: _,
         order,
         limit,
+        mailmap,
     } = input;
 
     let (mut commits, used_commit_graph) = match limit {
@@ -559,7 +592,7 @@ pub(crate) fn load(repo: gix::Repository, input: LoadInput) -> Result<History> {
             basis,
             used_commit_graph,
             partial: limit.is_some(),
-            meta: Arc::new(MetaStore::new(meta_repo)),
+            meta: Arc::new(MetaStore::new(meta_repo, mailmap)),
             load: HistoryLoad::Full,
         },
     );
@@ -799,7 +832,7 @@ mod tests {
         git(b.path(), &["commit", "-q", "--allow-empty", "-m", "the subject"]);
         // (Its refs through the snapshot in a reftable repository, git 3.0's default.)
         let id = crate::reftable::open(b.path()).unwrap().head_id().unwrap().detach();
-        let store = MetaStore::new(gix::open(a.path()).unwrap());
+        let store = MetaStore::new(gix::open(a.path()).unwrap(), Default::default());
         assert_eq!(store.get(id).summary, "", "not in this repository yet");
         let hex = id.to_string();
         let (dir, file) = hex.split_at(2);

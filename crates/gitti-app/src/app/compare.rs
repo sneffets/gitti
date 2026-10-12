@@ -5,16 +5,23 @@
 //! selection are prefetched with their highlights, so arrowing through the history shows
 //! each pair in the first frame. The view is read-only (it is a commit view underneath:
 //! rows, file tabs and expansion work as there).
+//!
+//! "Changes Since Common Ancestor" (a toggle kept for the session, carried into the next
+//! comparison) shows `git diff A...B` instead: what the selected side changed since the
+//! merge base of the two; the banner names that ancestor.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use gitti_core::DiffOptions;
 use gitti_core::rows::LineTotals;
-use gitti_core::compare::{CompareData, CompareMode, CompareSide, describe, side_of_row};
+use gitti_core::compare::{
+    CompareData, CompareKind, CompareMode, CompareSide, MergeBase, SINCE_MERGE_BASE_LABEL, describe,
+    merge_base_line, side_of_row,
+};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::component::{Sizable as _, h_flex};
+use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -62,7 +69,10 @@ pub(super) struct CompareState {
     again: bool,
     /// Row shown before, for the prefetch direction.
     last_row: usize,
-    prefetching: Arc<Mutex<HashSet<Pair>>>,
+    /// "Changes Since Common Ancestor" is on: new comparisons start with it (for this run
+    /// of the app, like the other compare choices).
+    since_merge_base: bool,
+    prefetching: Arc<Mutex<HashSet<(Pair, CompareKind)>>>,
     hl: Arc<Mutex<CompareHighlights>>,
     /// Line totals of the shown comparison, summed once per diff (the banner shows them).
     totals: std::cell::RefCell<Option<(Arc<gitti_core::commit_cache::CommitData>, LineTotals)>>,
@@ -111,7 +121,7 @@ impl GittiApp {
             self.end_compare(cx);
             return;
         }
-        self.compare.mode = Some(CompareMode::new(side));
+        self.compare.mode = Some(CompareMode::new(side).with_kind(self.compare_kind_pref()));
         // Prefetch direction: from the base on.
         self.compare.last_row = row;
         let (short, _) = describe(&self.history, side);
@@ -137,6 +147,65 @@ impl GittiApp {
             m.swapped = !m.swapped;
             self.reshow_selected(cx);
         }
+    }
+
+    /// The kind new comparisons start with.
+    fn compare_kind_pref(&self) -> CompareKind {
+        if self.compare.since_merge_base {
+            CompareKind::SinceMergeBase
+        } else {
+            CompareKind::Direct
+        }
+    }
+
+    /// Whether "Changes Since Common Ancestor" is on (palette / menu state).
+    pub(super) fn compare_since_merge_base(&self) -> bool {
+        self.compare.since_merge_base
+    }
+
+    /// Banner / menu / palette: "Changes Since Common Ancestor" on or off — for the shown
+    /// comparison and the next ones.
+    pub(super) fn toggle_compare_merge_base(&mut self, cx: &mut Context<Self>) {
+        self.compare.since_merge_base = !self.compare.since_merge_base;
+        let kind = self.compare_kind_pref();
+        match &mut self.compare.mode {
+            Some(m) => {
+                m.kind = kind;
+                self.reshow_selected(cx);
+            }
+            None => {
+                self.set_info(if self.compare.since_merge_base {
+                    "Comparisons show the changes since the common ancestor (git diff A...B)"
+                } else {
+                    "Comparisons show the direct difference (git diff A B)"
+                });
+                cx.notify();
+            }
+        }
+    }
+
+    /// Sidebar "Compare {name} with {head}": marks HEAD's commit and selects `target`'s,
+    /// with "Changes Since Common Ancestor" on — what `name` changed since it split off.
+    pub(super) fn compare_with_head(&mut self, name: &str, target: gitti_core::ObjectId, cx: &mut Context<Self>) {
+        let (Some(head), Some(row)) = (
+            self.history.head().and_then(|h| self.history.row_of(&h)),
+            self.history.row_of(&target),
+        ) else {
+            self.set_info(format!("{name} or HEAD is not in the loaded history"));
+            cx.notify();
+            return;
+        };
+        let Some(base) = side_of_row(&self.history, head) else {
+            return;
+        };
+        self.compare.since_merge_base = true;
+        self.compare.mode = Some(CompareMode::new(base).with_kind(CompareKind::SinceMergeBase));
+        self.compare.last_row = head;
+        self.set_info(format!(
+            "Showing what {name} changed since it split off from the current branch (Esc ends)"
+        ));
+        self.show_row(row, cx);
+        cx.notify();
     }
 
     /// The selected row's view again after the compare state changed (like `select_row`
@@ -177,8 +246,14 @@ impl GittiApp {
             .shown_compare()
             .map(|c| format!(" shown={}..{}", id(c.old), id(c.new)))
             .unwrap_or_default();
+        let since = match self.shown_compare().and_then(|c| c.merge_base.as_ref()) {
+            Some(MergeBase::Found { id, count, .. }) => format!(" since={}/{count}", id.to_hex_with_len(7)),
+            Some(MergeBase::None) => " since=none".into(),
+            None if mode.kind == CompareKind::SinceMergeBase => " since=?".into(),
+            None => String::new(),
+        };
         Some(format!(
-            "base={}{}{shown}",
+            "base={}{}{shown}{since}",
             id(mode.base),
             if mode.swapped { " swapped" } else { "" }
         ))
@@ -194,8 +269,9 @@ impl GittiApp {
         let Some(repo) = self.repo.clone() else {
             return false;
         };
+        let kind = self.compare.mode.map(|m| m.kind).unwrap_or_default();
         let opts = self.settings.diff_options();
-        if let Some(data) = repo.cached_compare(old, new, &opts) {
+        if let Some(data) = repo.cached_compare_as(kind, old, new, &opts) {
             self.show_compare_data(data, cx);
             cx.notify();
             return true;
@@ -213,13 +289,14 @@ impl GittiApp {
         self.compare.loading = true;
         let task = cx
             .background_executor()
-            .spawn(async move { repo.compare_diff(old, new, &opts) });
+            .spawn(async move { repo.compare_diff_as(kind, old, new, &opts) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 this.compare.loading = false;
                 let again = std::mem::take(&mut this.compare.again);
                 let current = this.compare_pair() == Some((old, new))
+                    && this.compare.mode.map(|m| m.kind) == Some(kind)
                     && this.settings.diff_options() == opts;
                 match result {
                     Ok(data) if current => this.show_compare_data(data, cx),
@@ -246,7 +323,7 @@ impl GittiApp {
     fn show_compare_data(&mut self, data: Arc<CompareData>, cx: &mut Context<Self>) {
         let same_pair = self
             .shown_compare()
-            .is_some_and(|c| (c.old, c.new) == (data.old, data.new));
+            .is_some_and(|c| (c.compared, c.kind, c.old) == (data.compared, data.kind, data.old));
         if self.shown_compare().is_some_and(|c| Arc::ptr_eq(c, &data)) {
             self.prefetch_compare_around(self.selected, cx);
             return;
@@ -274,9 +351,10 @@ impl GittiApp {
 
     /// The working tree changed: a comparison with it is read again.
     pub(super) fn refresh_worktree_compare(&mut self, cx: &mut Context<Self>) {
-        let with_worktree = self
-            .shown_compare()
-            .is_some_and(|c| c.old == CompareSide::Worktree || c.new == CompareSide::Worktree);
+        // Since the common ancestor, a working-tree side's ancestor is HEAD's (may move).
+        let with_worktree = self.shown_compare().is_some_and(|c| {
+            [c.old, c.new, c.compared.0, c.compared.1].contains(&CompareSide::Worktree)
+        });
         if with_worktree {
             self.show_compare(cx);
         }
@@ -296,6 +374,7 @@ impl GittiApp {
         let back = if down { row.checked_sub(1) } else { row.checked_add(1) };
         let opts = self.settings.diff_options();
         let highlight = self.settings.syntax_highlight;
+        let kind = mode.kind;
         let mut todo = Vec::new();
         for r in [step(1), step(2), step(3), back].into_iter().flatten() {
             let Some((old, new)) = side_of_row(&self.history, r).and_then(|s| mode.pair(s)) else {
@@ -304,12 +383,13 @@ impl GittiApp {
             if old == CompareSide::Worktree || new == CompareSide::Worktree {
                 continue;
             }
-            if repo.cached_compare(old, new, &opts).is_some()
-                && (!highlight || self.compare.hl.lock().expect("hl").get(&((old, new), opts)).is_some())
+            if let Some(data) = repo.cached_compare_as(kind, old, new, &opts)
+                && (!highlight
+                    || hl_key(&data, opts).is_none_or(|k| self.compare.hl.lock().expect("hl").get(&k).is_some()))
             {
                 continue;
             }
-            if self.compare.prefetching.lock().expect("prefetching").insert((old, new)) {
+            if self.compare.prefetching.lock().expect("prefetching").insert(((old, new), kind)) {
                 todo.push((old, new));
             }
         }
@@ -320,7 +400,7 @@ impl GittiApp {
         let (hl_cache, compare_hl) = (self.hl_cache.clone(), self.compare.hl.clone());
         cx.background_executor()
             .spawn(async move {
-                for data in repo.compare_diffs(&todo, &opts).unwrap_or_default() {
+                for data in repo.compare_diffs_as(kind, &todo, &opts).unwrap_or_default() {
                     if highlight
                         && let Some(key) = hl_key(&data, opts)
                         && compare_hl.lock().expect("hl").get(&key).is_none()
@@ -331,7 +411,7 @@ impl GittiApp {
                 }
                 let mut prefetching = prefetching.lock().expect("prefetching");
                 for pair in &todo {
-                    prefetching.remove(pair);
+                    prefetching.remove(&(*pair, kind));
                 }
             })
             .detach();
@@ -394,19 +474,34 @@ impl GittiApp {
         };
         let base = self.compare.mode.map(|m| m.base);
         let role = |s: CompareSide| if Some(s) == base { "base" } else { "selected" };
-        h_flex()
-            .id("compare-banner")
-            .probe("compare-banner")
-            .flex_none()
+        // The sides the user compares (since the common ancestor the diff itself starts at
+        // the merge base, named in the line below).
+        let (old, new) = data.compared;
+        let since = data.kind == CompareKind::SinceMergeBase;
+        let unrelated = matches!(data.merge_base, Some(MergeBase::None));
+        let toggle = Button::new("compare-since")
+            .probe("compare-since")
+            .label("Since Ancestor")
+            .xsmall()
+            .ghost()
+            .selected(since && !unrelated)
+            .disabled(unrelated)
+            .tooltip(if unrelated {
+                "No common ancestor: these histories are unrelated, so there is nothing to start from"
+                    .to_string()
+            } else {
+                format!(
+                    "{SINCE_MERGE_BASE_LABEL} ({}): show only what the {} side changed since the \
+                     two split (git diff A...B) — not what changed on the other side",
+                    if since { "on" } else { "off" },
+                    role(new)
+                )
+            })
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_compare_merge_base(cx)));
+        let row = h_flex()
             .w_full()
-            .px_2()
-            .py_1()
             .gap_2()
             .items_center()
-            .bg(p.bg_compare)
-            .border_b_2()
-            .border_color(p.compare)
-            .text_size(s.ui_small())
             .child(
                 // Gives way first when the panel is narrow (big fonts): the buttons stay.
                 div()
@@ -423,14 +518,14 @@ impl GittiApp {
                     .gap_2()
                     .items_center()
                     .overflow_hidden()
-                    .child(side(data.old))
-                    .child(div().flex_none().text_color(p.compare).child("→"))
-                    .child(side(data.new))
+                    .child(side(old))
+                    .child(div().flex_none().text_color(p.compare).child(if since { "⋯" } else { "→" }))
+                    .child(side(new))
                     .child(
                         div()
                             .flex_none()
                             .text_color(p.text_muted)
-                            .child(format!("({} → {})", role(data.old), role(data.new))),
+                            .child(format!("({} → {})", role(old), role(new))),
                     ),
             )
             // Totals over all files of the comparison; a narrow banner clips them
@@ -447,6 +542,8 @@ impl GittiApp {
                     .child(format!("{} files", data.files().len()))
                     .children(super::diff_view::totals_pills(self.compare_totals(data), &p)),
             )
+            // Clipped before the swap / end buttons when the banner is narrow.
+            .child(div().min_w_0().flex_shrink(1.).overflow_hidden().child(toggle))
             .child(
                 Button::new("compare-swap")
                     .probe("compare-swap")
@@ -466,7 +563,32 @@ impl GittiApp {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.end_compare(cx);
                     })),
-            )
+            );
+        v_flex()
+            .id("compare-banner")
+            .probe("compare-banner")
+            .flex_none()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_0p5()
+            .bg(p.bg_compare)
+            .border_b_2()
+            .border_color(p.compare)
+            .text_size(s.ui_small())
+            .child(row)
+            .when_some(merge_base_line(&self.history, data), |d, line| {
+                d.child(
+                    div()
+                        .id("compare-base-line")
+                        .probe("compare-base-line")
+                        .w_full()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(p.text)
+                        .child(line),
+                )
+            })
             .into_any_element()
     }
 

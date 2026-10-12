@@ -300,6 +300,9 @@ pub enum RepoState {
     Rebasing,
     CherryPicking,
     Reverting,
+    /// `git am` stopped at a patch (`rebase-apply/applying`; Apply Patch File…,
+    /// [`crate::patch_files`]).
+    Applying,
 }
 
 impl RepoState {
@@ -310,6 +313,7 @@ impl RepoState {
             RepoState::Rebasing => "Rebasing",
             RepoState::CherryPicking => "Cherry-picking",
             RepoState::Reverting => "Reverting",
+            RepoState::Applying => "Applying patches",
         }
     }
 
@@ -320,6 +324,7 @@ impl RepoState {
             RepoState::Rebasing => Some("rebase"),
             RepoState::CherryPicking => Some("cherry-pick"),
             RepoState::Reverting => Some("revert"),
+            RepoState::Applying => Some("am"),
         }
     }
 }
@@ -692,7 +697,11 @@ impl Repo {
         let Some(dir) = self.git_dir() else {
             return RepoState::Clean;
         };
-        if dir.join("rebase-merge").exists() || dir.join("rebase-apply").exists() {
+        // `git am` keeps its state in `rebase-apply` too, marked by `applying`
+        // (a `rebase --apply` by `rebasing`).
+        if dir.join("rebase-apply").join("applying").exists() {
+            RepoState::Applying
+        } else if dir.join("rebase-merge").exists() || dir.join("rebase-apply").exists() {
             RepoState::Rebasing
         } else if dir.join("MERGE_HEAD").exists() {
             RepoState::Merging
@@ -822,6 +831,13 @@ impl Repo {
                 ours: head_branch(),
                 theirs: format!("revert of {}", describe("REVERT_HEAD")),
             },
+            RepoState::Applying => ConflictSides {
+                ours: head_branch(),
+                theirs: match self.am_position() {
+                    Some((_, _, subject)) if !subject.is_empty() => format!("patch {subject}"),
+                    _ => "patch".into(),
+                },
+            },
             // Conflicts without an operation come from `git stash apply/pop`.
             RepoState::Clean => ConflictSides {
                 ours: head_branch(),
@@ -886,7 +902,8 @@ impl Repo {
         let dir = self.git_dir()?;
         let mut merge = std::fs::read(dir.join("MERGE_MSG")).ok();
         let squash = std::fs::read(dir.join("SQUASH_MSG")).ok();
-        if merge.is_none() && squash.is_none() && dir.join("rebase-apply").join("rebasing").exists() {
+        let apply_backend = ["rebasing", "applying"].iter().any(|f| dir.join("rebase-apply").join(f).exists());
+        if merge.is_none() && squash.is_none() && apply_backend {
             merge = std::fs::read(dir.join("rebase-apply").join("final-commit")).ok();
         }
         if merge.is_none() && squash.is_none() {
@@ -935,6 +952,10 @@ impl Repo {
     }
 
     fn continue_operation_plain(&self, opts: crate::commit_message::CommitOptions) -> Result<String> {
+        // `git am` stops at the next patch that doesn't apply: said with its number.
+        if self.state() == RepoState::Applying {
+            return self.am_stopped_as(self.continue_operation_raw(opts));
+        }
         self.stop_on_conflicts(|| self.empty_pick_as(self.continue_operation_raw(opts)))
     }
 
@@ -1009,6 +1030,11 @@ impl Repo {
                 let more = self.continue_operation().context(MessageCommitted)?;
                 Ok(format!("{}\n{}", committed.trim_end(), more).trim().to_string())
             }
+            RepoState::Applying => anyhow::bail!(
+                "git am takes each commit's message from its patch and asks for none: the text \
+                 in the commit box can't be used. Empty the box (or Use It) to continue with the \
+                 patch's own message, and change it afterwards (Edit Commit Message…)."
+            ),
             RepoState::Rebasing => {
                 if has("rebase-apply") {
                     anyhow::bail!(
@@ -1430,6 +1456,7 @@ pub fn amend_blocker(state: RepoState) -> Option<String> {
         RepoState::Merging => ("a merge", "Commit concludes the merge"),
         RepoState::CherryPicking => ("a cherry-pick", "Commit (or Continue) concludes the cherry-pick"),
         RepoState::Reverting => ("a revert", "Commit (or Continue) concludes the revert"),
+        RepoState::Applying => ("applying patches (git am)", "Continue commits the stopped patch"),
         RepoState::Clean | RepoState::Rebasing => return None,
     };
     Some(format!(

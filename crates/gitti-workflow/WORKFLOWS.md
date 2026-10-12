@@ -107,7 +107,11 @@ after 10 s the process is killed. git processes are the cost (~35 ms each on Win
 checks both ways: every test named in a row exists and carries that row's ID in its
 `/// Workflow:` line, and every ID a test carries is in this catalog with that test in its
 row. Rename a test → change its row; add a test to a workflow → add it to the row and tag
-it.
+it. `wf_catalog::totals_match_the_catalog` recounts the [Totals](#totals) from the rows —
+every area's row and the Total row, per column — and names each number to fix: after
+adding a workflow or covering a layer, adjust the area's row and the Total row (after a
+merge of branches that each bumped them from the same base, the test says which numbers
+the merge got wrong).
 
 ---
 
@@ -302,6 +306,7 @@ working tree or the index while the app shows an older state.
 | CP-16 | Pick into a dirty tree | local change in a file the pick changes | refused in plain words naming the file, ways out offered; nothing changed | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` | `wf_pick::cp16_pick_into_a_dirty_tree_is_refused` |
 | CP-17 | Pick HEAD | Cherry-pick on HEAD (also HEAD among marked commits) | greyed with the reason; no git | `availability::changes_stashes_and_selection_turn_them_on` (unit) | `wf_pick::cp17_pick_head_is_greyed`, ~`menus::unavailable_commands` | `wf_pick::cp17_pick_head_is_greyed`, ~`palette::palette_and_menu_grey_what_cannot_act_with_the_reason` |
 | CP-18 | Pick a lost commit from the reflog | reflog entry → Cherry-pick | its change on HEAD | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` | `wf_pick::cp18_pick_a_lost_commit_from_the_reflog` |
+| CP-19 | Carry commits by patch file | mark two commits of `feat`; Save as Patch… (all in one file); Apply Patch File… on `main` | the file holds both (mbox, oldest first); `main` gets two copies with their author and messages (`git am`) | `wf_pick::cp19_carry_two_commits_by_patch_file` | `wf_pick::cp19_carry_two_commits_by_patch_file` | `wf_pick::cp19_save_two_marked_commits_as_one_patch_file`, `wf_pick::cp19_apply_the_patch_file` |
 
 ## RV — Revert
 
@@ -431,6 +436,7 @@ working tree or the index while the app shows an older state.
 | DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | `wf_staging::dc07_discard_a_group` | `wf_staging::dc07_discard_a_group` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
 | DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file`, ~`staging::working_state_after_whole_files_match_a_full_read` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` |
 | DC-09 | Discard lines of a read-only file | 0444 file (unix) | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | `wf_discard::dc09_discard_lines_of_a_read_only_file` | `wf_discard::dc09_discard_lines_of_a_read_only_file` |
+| DC-10 | Clean untracked and ignored files | Clean Untracked / Ignored Files…; Untracked and Ignored; tick `target/` besides the ticked untracked entries; Delete | exactly the ticked files go (in-process); an ignored file in a ticked new folder, a worktree in the ticked build folder and a nested repository stay; each ignored entry names its rule | `clean::dc10_clean_untracked_and_ignored_files`, `clean::list_names_rules_files_and_nested_repositories` | `wf_discard::dc10_clean_untracked_and_ignored_files` | `wf_discard::dc10_clean_untracked_and_ignored_files` |
 
 ## RL — Undo and recovery
 
@@ -511,7 +517,8 @@ working tree or the index while the app shows an older state.
 ## Totals
 
 Counted per workflow: covered = at least one test that covers the whole workflow on that
-layer (partial `~` and `n/a` don't count as covered).
+layer (partial `~` and `n/a` don't count as covered). `wf_catalog::totals_match_the_catalog`
+checks these numbers against the rows.
 
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
@@ -521,7 +528,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | SH stash | 22 | 21 | 20 | 21 |
 | BR branches | 21 | 21 | 21 | 20 |
 | MG merge | 27 | 27 | 26 | 27 |
-| CP cherry-pick | 18 | 18 | 18 | 18 |
+| CP cherry-pick | 19 | 19 | 19 | 19 |
 | RV revert | 8 | 8 | 8 | 8 |
 | RB rebase | 9 | 9 | 9 | 9 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
@@ -530,7 +537,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
-| DC discard | 9 | 9 | 9 | 9 |
+| DC discard | 10 | 10 | 10 | 10 |
 | RL recovery | 4 | 4 | 4 | 4 |
 | IG ignore | 6 | 6 | 6 | 6 |
 | RN renames | 5 | 5 | 5 | 5 |
@@ -538,7 +545,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **277** | **267** | **257** | **258** |
+| **Total** | **279** | **269** | **259** | **260** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

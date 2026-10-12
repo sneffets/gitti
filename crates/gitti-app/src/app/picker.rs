@@ -585,20 +585,16 @@ impl GittiApp {
                 t.open_file_list(w, cx)
             })
             .act(&crate::FileList),
-            item(
-                "Git Settings: This Repository…",
-                "user.name, email, pull, push…",
-                |t, w, cx| t.open_config_dialog(gitti_core::ops::ConfigScope::Local, w, cx),
-            ),
-            item("Git Settings: Global…", "~/.gitconfig", |t, w, cx| {
+            item(gitti_core::git_settings::REPO_LABEL, gitti_core::git_settings::REPO_DETAIL, |t, w, cx| {
+                t.open_config_dialog(gitti_core::ops::ConfigScope::Local, w, cx)
+            }),
+            item(gitti_core::git_settings::GLOBAL_LABEL, gitti_core::git_settings::GLOBAL_DETAIL, |t, w, cx| {
                 t.open_config_dialog(gitti_core::ops::ConfigScope::Global, w, cx)
             }),
-            item(
-                "Edit Repository Config File…",
-                ".git/config",
-                |t, w, cx| t.edit_config_file(gitti_core::ops::ConfigScope::Local, w, cx),
-            ),
-            item("Edit Global Config File…", "~/.gitconfig", |t, w, cx| {
+            item(gitti_core::git_settings::EDIT_REPO_LABEL, gitti_core::git_settings::EDIT_REPO_DETAIL, |t, w, cx| {
+                t.edit_config_file(gitti_core::ops::ConfigScope::Local, w, cx)
+            }),
+            item(gitti_core::git_settings::EDIT_GLOBAL_LABEL, gitti_core::git_settings::EDIT_GLOBAL_DETAIL, |t, w, cx| {
                 t.edit_config_file(gitti_core::ops::ConfigScope::Global, w, cx)
             }),
             item(
@@ -700,6 +696,7 @@ impl GittiApp {
         items.extend(self.stash_palette_items());
         items.extend(self.file_marks_palette_items());
         items.extend(self.pick_several_palette_items());
+        items.extend(self.patch_palette_items());
         items.extend(self.prepared_palette_items(cx));
         items.extend(self.commit_box_palette_items());
         items.extend(self.list_layout_palette_items());
@@ -757,6 +754,18 @@ impl GittiApp {
             }));
             items.push(item("Swap Comparison Sides", k(&crate::SwapCompare), |t, _, cx| t.swap_compare(cx)));
         }
+        items.push(
+            item(
+                format!(
+                    "{}: {}",
+                    gitti_core::compare::SINCE_MERGE_BASE_LABEL,
+                    on_off(self.compare_since_merge_base())
+                ),
+                k(&crate::ToggleCompareMergeBase),
+                |t, _, cx| t.toggle_compare_merge_base(cx),
+            )
+            .act(&crate::ToggleCompareMergeBase),
+        );
         if !self.is_compare_base(self.selected) {
             items.push(
                 item("Mark Selected Commit for Comparison", k(&crate::MarkCompare), |t, _, cx| {

@@ -3,7 +3,8 @@
 //! reflog without git; selecting an entry shows its commit — also the lost one — and once
 //! loaded, moving through the entries runs no git; Create Branch Here… keeps the lost
 //! commit (it is in the history afterwards); Esc / ✕ goes back to the history; the menu
-//! bar entry and the branch menu open it.
+//! bar entry and the branch menu open it; Find Lost Commits lists the commit below the
+//! entries (one `git fsck`), selectable and kept by Create Branch Here….
 //!
 //! `cargo test --workspace --test ui -- reflog[::FILTER]`.
 
@@ -67,6 +68,7 @@ pub fn main() {
         ("lists_shows_and_navigates", lists_shows_and_navigates),
         ("create_branch_keeps_a_lost_commit", create_branch_keeps_a_lost_commit),
         ("menu_bar_and_branch_menu_open_it", menu_bar_and_branch_menu_open_it),
+        ("find_lost_commits_lists_and_keeps_them", find_lost_commits_lists_and_keeps_them),
     ];
     let counter = std::cell::Cell::new(0);
     common::run(tests, |_| {
@@ -173,5 +175,62 @@ fn menu_bar_and_branch_menu_open_it(ui: &mut Ui) {
     let st = state(ui);
     if !st.open || st.title != "Reflog of main" {
         fail!(ui, "main's reflog: {st:?}");
+    }
+}
+
+/// Find Lost Commits: one `git fsck` (a read, never `--lost-found`); the "Lost commits"
+/// section lists the commit the reset dropped; ↑ / ↓ cross from the entries into it,
+/// selecting it shows the commit, Create Branch Here… keeps it.
+fn find_lost_commits_lists_and_keeps_them(ui: &mut Ui) {
+    ui.step("reflog:HEAD");
+    let n = ui.n_git();
+    ui.step("reflog:find-lost");
+    let ran = ui.git_since(n);
+    let fsck: Vec<_> = ran.iter().filter(|c| c.contains("fsck")).collect();
+    if fsck.len() != 1 || fsck.iter().any(|c| c.contains("--lost-found")) {
+        fail!(ui, "Find Lost Commits ran {ran:?}");
+    }
+    let lost = lost_id(ui);
+    let st = state(ui);
+    let want = [format!("lost {} Lost work", &lost[..7])];
+    if st.finding || st.lost != want || st.lost_note.as_deref() != Some("1 commit found") {
+        fail!(ui, "lost commits {st:?}");
+    }
+    let probes = ui.check("lost commits found");
+    for name in ["reflog-find-lost", "reflog-lost-header", "reflog-lost-commit:0"] {
+        if !probes.iter().any(|p| p.name == name) {
+            fail!(ui, "no {name} probe");
+        }
+    }
+    // Item 4 (after the four entries) is the lost commit.
+    ui.step("reflogentry:4");
+    let st = state(ui);
+    if st.selected != Some(4) || st.shown.as_deref() != Some(lost.as_str()) {
+        fail!(ui, "lost commit 0: selected {:?}, shows {:?}", st.selected, st.shown);
+    }
+    ui.step("focuslist");
+    ui.step("key:up");
+    ui.step("key:down");
+    if state(ui).selected != Some(4) {
+        fail!(ui, "↑ ↓ across the section title: selected {:?}", state(ui).selected);
+    }
+    ui.click_on("reflog-branch", MouseButton::Left);
+    match ui.modal() {
+        Some((t, _)) if t.starts_with("Create branch at ") => {}
+        other => return fail!(ui, "Create Branch Here… on a lost commit: {other:?}"),
+    }
+    ui.step("field:0=kept");
+    ui.step("check:0");
+    ui.step("modalok");
+    let at = git_out(&ui.workdir(), &["rev-parse", "kept"]);
+    if at.trim() != lost {
+        fail!(ui, "kept at {at:?}, expected {lost}");
+    }
+    let st = state(ui);
+    if st.lost.first().is_none_or(|r| !r.ends_with("[in history]")) {
+        fail!(ui, "after keeping it: {:?}", st.lost);
+    }
+    if ui.workdir().join(".git/lost-found").exists() {
+        fail!(ui, ".git/lost-found written");
     }
 }

@@ -1681,10 +1681,15 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
         val(d.id.to_string()),
     ]));
     debug_assert_eq!(out.len(), AUTHOR_LINE);
-    out.push(Line::from(vec![
-        label("Author"),
-        val(format!("{} <{}>", d.author, d.author_email)),
-    ]));
+    let mut author = vec![label("Author"), val(format!("{} <{}>", d.author, d.author_email))];
+    // `.mailmap` changed it: what the commit records (gitti: the tooltip).
+    if let Some((name, email)) = &d.raw_author {
+        author.push(Span::styled(
+            format!("  (recorded as {name} <{email}>)"),
+            Style::new().fg(p.text_muted),
+        ));
+    }
+    out.push(Line::from(author));
     debug_assert_eq!(out.len(), DATE_LINE);
     let mut date = format_time_full(d.author_time);
     if d.commit_time != d.author_time || d.committer != d.author {
@@ -1860,7 +1865,10 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
     app.areas.prepared_use = Rect::default();
     app.areas.prepared_keep = Rect::default();
     // Compare mode: what is compared (or the base hint), pinned above everything else.
-    if let Some(banner) = compare_banner(app, p) {
+    for banner in compare_banner(app, p) {
+        if content.height == 0 {
+            break;
+        }
         let row = Rect::new(content.x, content.y, content.width, 1);
         f.buffer_mut().set_style(row, Style::new().bg(p.bg_compare));
         put(f.buffer_mut(), row.x, row.y, row.width, banner.spans);
@@ -1985,10 +1993,13 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
 }
 
 /// The compare banner: `COMPARING a1b2c3d subject → e4f5g6h subject`, or the hint while
-/// the base itself is selected; `None` when not comparing.
-fn compare_banner(app: &App, p: &Palette) -> Option<Line<'static>> {
-    use gitti_core::compare::describe;
-    let mode = app.compare.mode?;
+/// the base itself is selected; since the common ancestor a second line names it. Empty
+/// when not comparing.
+fn compare_banner(app: &App, p: &Palette) -> Vec<Line<'static>> {
+    use gitti_core::compare::{CompareKind, describe};
+    let Some(mode) = app.compare.mode else {
+        return Vec::new();
+    };
     let strong = Style::new().fg(p.compare).add_modifier(Modifier::BOLD);
     let hint = Style::new().fg(p.text_muted);
     let side = |s| {
@@ -2000,13 +2011,18 @@ fn compare_banner(app: &App, p: &Palette) -> Option<Line<'static>> {
         v
     };
     let mut spans = vec![Span::raw(" ")];
+    let mut second = None;
     match app.shown_compare() {
         Some(c) if app.compare_pair().is_some() => {
+            let since = c.kind == CompareKind::SinceMergeBase;
             spans.push(Span::styled("COMPARING ", strong));
-            spans.extend(side(c.old));
-            spans.push(Span::styled(" → ", strong));
-            spans.extend(side(c.new));
-            spans.push(Span::styled("   (m: swap · esc: end)", hint));
+            spans.extend(side(c.compared.0));
+            spans.push(Span::styled(if since { " ⋯ " } else { " → " }, strong));
+            spans.extend(side(c.compared.1));
+            spans.push(Span::styled("   (m: swap, since common ancestor · esc: end)", hint));
+            second = gitti_core::compare::merge_base_line(&app.history, c).map(|text| {
+                Line::from(vec![Span::raw(" "), Span::styled(text, Style::new().fg(p.text))])
+            });
         }
         _ => {
             spans.push(Span::styled("COMPARE BASE ", strong));
@@ -2017,7 +2033,9 @@ fn compare_banner(app: &App, p: &Palette) -> Option<Line<'static>> {
             ));
         }
     }
-    Some(Line::from(spans))
+    let mut lines = vec![Line::from(spans)];
+    lines.extend(second);
+    lines
 }
 
 /// `  -714  +5012` after a section / group title; nothing without lines.

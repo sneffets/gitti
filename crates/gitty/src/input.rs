@@ -1057,10 +1057,13 @@ impl App {
                         self.log_top = None;
                     }
                 } else if a.commits.contains(pos) && self.reflog.open {
-                    let i = self.reflog.offset + (m.row - a.commits.y) as usize;
-                    self.select_reflog_entry(i);
-                    if right {
-                        self.reflog_entry_menu_open();
+                    let row = self.reflog.offset + (m.row - a.commits.y) as usize;
+                    // The "Lost commits" title rows select nothing.
+                    if let Some(i) = self.reflog.item_at_row(row) {
+                        self.select_reflog_entry(i);
+                        if right {
+                            self.reflog_entry_menu_open();
+                        }
                     }
                 } else if a.commits.contains(pos) && self.change.active() {
                     self.change.editing = false;

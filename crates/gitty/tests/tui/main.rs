@@ -15,6 +15,7 @@ mod ext_tools;
 mod faults;
 mod file_tree;
 mod fs_paths;
+mod git_settings;
 mod keybar;
 mod lfs;
 mod linux;

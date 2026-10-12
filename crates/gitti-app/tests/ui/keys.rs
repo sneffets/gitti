@@ -63,6 +63,8 @@ pub fn main() {
         ("merge_editor_keys", merge_editor_keys),
         ("pane_keys", pane_keys),
         ("compare_keys", compare_keys),
+        ("compare_since_ancestor", compare_since_ancestor),
+        ("mailmap_header", mailmap_header),
         ("git_log_keys", git_log_keys),
         ("git_log_link", git_log_link),
         ("list_keys", list_keys),
@@ -80,7 +82,12 @@ pub fn main() {
         let dir = base().join(name);
         let ids = match name {
             "commit_list_nav" | "commit_nav_anywhere" => make_nav_repo(&dir),
-            "graph_chooser" => make_fork_repo(&dir),
+            "graph_chooser" | "compare_since_ancestor" => make_fork_repo(&dir),
+            "mailmap_header" => {
+                let ids = make_repo_ids(&dir);
+                std::fs::write(dir.join(".mailmap"), "Mapped Name <mapped@example.com> <layout@example.com>\n").unwrap();
+                ids
+            }
             "remote_keys" => make_remote_repo(&dir),
             "merge_editor_keys" => {
                 make_merge_repo(&dir);
@@ -1750,6 +1757,73 @@ fn compare_keys(ui: &mut Ui) {
     ks(ui, "r", "compare mode ended with its base", |s| {
         s.compare.is_none() && s.detail == "commit" && s.status.as_ref().is_some_and(|(t, _)| t.contains("no longer in the history"))
     });
+}
+
+/// Sidebar "Compare feature with main": main's commit marked, feature's selected, since
+/// their common ancestor — the banner names it and only feature's own file shows; the
+/// banner's toggle switches to the direct difference and back, and the choice carries
+/// into the next comparison (⇧C).
+fn compare_since_ancestor(ui: &mut Ui) {
+    let ids = ids();
+    let (a, f, b) = (&ids[1], &ids[2], &ids[4]);
+    let short = |id: &str| id[..7].to_string();
+    let has = |p: &[Probe], name: &str| p.iter().any(|q| q.name == name);
+    ui.click_on("side:ref-refs/heads/feature", MouseButton::Right);
+    ui.step("menu:Compare feature with main");
+    ui.settle();
+    let since = format!("base={} shown={}..{} since={}/1", short(b), short(a), short(f), short(a));
+    let s = ui.ui_state();
+    if s.compare.as_deref() != Some(since.as_str()) || compared_files(&s) != ["f.txt"] {
+        ui.fail(format!("since the ancestor: {:?} {:?}, expected {since}", s.compare, compared_files(&s)));
+    }
+    let p = ui.frame();
+    if !has(&p, "compare-base-line") || !has(&p, "compare-since") {
+        ui.fail("since the ancestor: no base line / toggle in the banner".into());
+    }
+    // Off: the direct difference (main's b.txt shows as removed).
+    ui.click_on("compare-since", MouseButton::Left);
+    ui.settle();
+    let direct = format!("base={} shown={}..{}", short(b), short(b), short(f));
+    let s = ui.ui_state();
+    if s.compare.as_deref() != Some(direct.as_str()) || compared_files(&s) != ["b.txt", "f.txt"] {
+        ui.fail(format!("direct: {:?} {:?}, expected {direct}", s.compare, compared_files(&s)));
+    }
+    if has(&ui.frame(), "compare-base-line") {
+        ui.fail("direct: the base line is still drawn".into());
+    }
+    // On again (from the cache: no git), then a new comparison keeps it.
+    let n = ui.n_git();
+    ui.click_on("compare-since", MouseButton::Left);
+    ui.settle();
+    ui.no_git_since(n, "toggle back on");
+    if ui.ui_state().compare.as_deref() != Some(since.as_str()) {
+        ui.fail("toggled back: not since the ancestor".into());
+    }
+    ui.quick("focuslist");
+    ui.key0("escape");
+    ui.quick(&format!("select:{b}"));
+    ui.quick("focuslist");
+    ui.key0("shift-c");
+    ui.step(&format!("select:{f}"));
+    ui.settle();
+    let now = ui.ui_state().compare;
+    if now.as_deref() != Some(since.as_str()) {
+        ui.fail(format!("next comparison: {now:?}, expected {since}"));
+    }
+}
+
+/// `.mailmap` maps the fixture's author: the commit header's author line carries the
+/// identity the commit records (its tooltip); selecting the commit runs no extra git for it.
+fn mailmap_header(ui: &mut Ui) {
+    ui.step("select:1");
+    ui.settle();
+    let p = ui.frame();
+    if !p.iter().any(|q| q.name == "commit-header") {
+        ui.fail("no commit header".into());
+    }
+    if !p.iter().any(|q| q.name == "header-recorded:0") {
+        ui.fail("the author line has no recorded-identity tooltip".into());
+    }
 }
 
 /// Height of a git log row (from two neighbouring row probes).

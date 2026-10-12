@@ -99,7 +99,7 @@ pub fn count(n: usize, what: &str) -> String {
 }
 
 /// `a/, b/, c/ and 2 more`.
-fn short_list(items: &[String], max: usize) -> String {
+pub(crate) fn short_list(items: &[String], max: usize) -> String {
     let mut s = items.iter().take(max).cloned().collect::<Vec<_>>().join(", ");
     if items.len() > max {
         s.push_str(&format!(" and {} more", items.len() - max));
@@ -257,7 +257,7 @@ pub fn done_note(done: &str, report: &DiscardReport) -> String {
 
 /// Feeds a progress meter (`Deleting untracked files:  45% (450/1000)`) to the
 /// operation's progress sink, once per percent.
-struct Meter {
+pub(crate) struct Meter {
     sink: Option<crate::process::ProgressSink>,
     phase: &'static str,
     total: usize,
@@ -265,7 +265,7 @@ struct Meter {
 }
 
 impl Meter {
-    fn new(phase: &'static str, total: usize) -> Self {
+    pub(crate) fn new(phase: &'static str, total: usize) -> Self {
         Self {
             sink: crate::process::scope_progress(),
             phase,
@@ -274,7 +274,7 @@ impl Meter {
         }
     }
 
-    fn at(&mut self, done: usize) {
+    pub(crate) fn at(&mut self, done: usize) {
         let Some(sink) = &self.sink else {
             return;
         };
@@ -509,7 +509,7 @@ impl Repo {
 /// Deletes one file (or symlink); gone already is fine. A read-only file (Windows refuses
 /// to delete one) is made writable first; a symlink to a folder on Windows is a directory
 /// entry.
-fn remove_file(path: &Path) -> std::io::Result<()> {
+pub(crate) fn remove_file(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),

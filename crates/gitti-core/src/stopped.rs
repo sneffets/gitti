@@ -22,6 +22,9 @@ pub fn stop_line(state: RepoState, conflicts: usize) -> String {
              stash entry is kept."
         ),
         RepoState::Merging => format!("Merge stopped on {n} — resolve {them}, then Continue (or Abort)."),
+        RepoState::Applying => format!(
+            "Applying patches (git am) stopped on {n} — resolve {them}, then Continue (or Skip / Abort)."
+        ),
         RepoState::CherryPicking | RepoState::Reverting | RepoState::Rebasing => format!(
             "{} stopped on {n} — resolve {them}, then Continue (or Skip / Abort).",
             match state {

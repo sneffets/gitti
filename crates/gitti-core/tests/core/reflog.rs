@@ -1,6 +1,7 @@
 //! Reflogs (`gitti_core::reflog`): HEAD's and a branch's, read in-process and through
 //! the CLI fallback alike; a commit a reset left on no branch is still listed (and can
-//! be shown); moving another branch to a commit of its reflog.
+//! be shown); moving another branch to a commit of its reflog; lost commits (`git fsck
+//! --unreachable --no-reflogs`), a dropped stash recognised.
 
 use gitti_core::Repo;
 use gitti_core::ops::ResetMode;
@@ -65,4 +66,52 @@ fn another_branch_moves_to_a_reflog_commit() {
     // The checked-out branch is refused (git branch -f).
     assert!(repo.reset_branch_to("main", &ids[a].to_string()).is_err());
     assert_eq!(sh(&dir, &["rev-parse", "main"]).trim(), ids[b].to_string());
+}
+
+/// A commit a reset dropped (its reflog expired) and a dropped stash with its index
+/// commit: found by `unreachable_commits`, newest first, the stash marked and its index commit
+/// left out; a commit on a ref is not; nothing written (no `--lost-found`).
+#[gitti_test::test]
+fn lost_commits_found_after_reset_and_dropped_stash() {
+    let mut h = History::new();
+    let a = h.commit("main", &[], "a", &[("a.txt", f("a\n"))]);
+    let kept = h.commit("main", &[a], "kept", &[("a.txt", f("b\n"))]);
+    let dropped = h.commit("main", &[kept], "lost work", &[("a.txt", f("c\n"))]);
+    // `git stash`: the index commit, then the stash (HEAD, index) — under a ref that goes.
+    let index = h.commit("refs/gitti-test/s", &[kept], "index on main: 1234567 kept", &[]);
+    let stash = h.commit(
+        "refs/gitti-test/s",
+        &[kept, index],
+        "WIP on main: 1234567 kept",
+        &[("a.txt", f("wip\n"))],
+    );
+    h.drop_ref("refs/gitti-test/s");
+    let (_tmp, dir, ids) = repo_with(&h);
+    let repo = Repo::open(&dir).unwrap();
+    repo.reset("HEAD~1", ResetMode::Hard).unwrap();
+    sh(&dir, &["reflog", "expire", "--expire=now", "--all"]);
+    let before = repo.command_log().snapshot().len();
+    let lost = repo.unreachable_commits().unwrap();
+    let got: Vec<_> = lost.commits.iter().map(|c| (c.id, c.subject.as_str(), c.stash)).collect();
+    assert_eq!(
+        got,
+        [(ids[stash], "WIP on main: 1234567 kept", true), (ids[dropped], "lost work", false)],
+        "{lost:?}"
+    );
+    assert_eq!(lost.helpers, 1);
+    assert_eq!(lost.commits[0].kind(), Some("dropped stash?"));
+    assert_eq!(lost.commits[0].parents, 2);
+    assert_eq!(lost.commits[1].author, "T");
+    assert_eq!(lost.note(), "2 commits found, 1 of them dropped stashes");
+    assert!(!lost.commits.iter().any(|c| c.id == ids[kept] || c.id == ids[a]));
+    // One git call, a read, never --lost-found; nothing written.
+    let log = repo.command_log().snapshot();
+    let new: Vec<_> = log[before..].iter().filter(|e| !e.in_process).collect();
+    assert_eq!(new.len(), 1, "{new:?}");
+    assert!(new[0].read_only, "{:?}", new[0]);
+    assert!(new[0].args.iter().any(|a| a == "fsck"), "{:?}", new[0].args);
+    assert!(!new[0].args.iter().any(|a| a == "--lost-found"), "{:?}", new[0].args);
+    assert!(!dir.join(".git/lost-found").exists());
+    // The lost commit loads like any other (its diff).
+    assert_eq!(repo.load_commit(ids[dropped], None, &Default::default()).unwrap().details.id, ids[dropped]);
 }

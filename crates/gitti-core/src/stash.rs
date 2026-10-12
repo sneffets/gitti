@@ -93,6 +93,7 @@ pub fn refusal_during(state: crate::ops::RepoState) -> Option<String> {
         RepoState::Rebasing => "rebase",
         RepoState::CherryPicking => "cherry-pick",
         RepoState::Reverting => "revert",
+        RepoState::Applying => "git am",
     };
     let effect = if state == RepoState::Rebasing {
         "would move the changes of the stopped step into the stash: continuing would commit \
@@ -978,6 +979,7 @@ pub fn branch_during_refusal(name: &str, state: crate::ops::RepoState, what: &st
         RepoState::Rebasing => "rebase",
         RepoState::CherryPicking => "cherry-pick",
         RepoState::Reverting => "revert",
+        RepoState::Applying => "git am",
         RepoState::Clean => "operation",
     };
     format!(

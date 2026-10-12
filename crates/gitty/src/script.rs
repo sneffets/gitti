@@ -17,7 +17,7 @@
 //! `repo_state=` the operation in progress — `clean`, `merging`, `rebasing`,
 //! `cherrypicking`, `reverting` — and `conflicted=` the number of conflicted files),
 //! `changes` (Search in Changes: query, toggles, scans, hits with why, note), `reflog`
-//! (the reflog view: title, note, selection, shown commit, entries),
+//! (the reflog view: title, note, selection, shown commit, entries, lost commits),
 //! `write:PATH=TEXT` (writes a working-tree file as another program would; `\n` = newline),
 //! `git:ARGS` (a git command run in the work tree as from a terminal next to gitty — e.g.
 //! `git:stash push -q -m x`; arguments split at spaces; it must succeed),

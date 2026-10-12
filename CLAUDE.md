@@ -60,7 +60,8 @@ IDs, steps, expected results, coverage per layer, how to add one — is
 `crates/gitti-workflow/WORKFLOWS.md`. Every test that covers a workflow carries its ID(s)
 in a doc-comment line `/// Workflow: ST-13` (several: `/// Workflow: ST-03, CP-07`);
 `cargo test --workspace --test core -- wf_catalog` checks that catalog and tags agree
-(keep both in sync when adding, renaming or moving a test).
+and that its Totals table matches the rows (keep them in sync when adding, renaming or
+moving a test).
 **Faults and stress** (`gitti-core/src/fault.rs`, debug builds only): tests inject faults
 into the git runner — a late pipe reader, cut output, a killed child, short output with
 exit code 0, a failed start, an exit without a message — per repository (`fault::inject`)

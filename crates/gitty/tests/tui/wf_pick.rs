@@ -338,6 +338,57 @@ fn cp18_pick_a_lost_commit_from_the_reflog() {
     wf::expect_lost_picked(d, &s).unwrap();
 }
 
+/// CP-19, the save: `Change b` and `Fix a` marked (space); the marked commit's menu
+/// offers Save 2 Marked Commits as Patches…; the palette's Save as Patch… with "All in
+/// one file" on writes the mbox; Copy as Patch says what it copied.
+/// Workflow: CP-19
+#[gitti_test::test]
+fn cp19_save_two_marked_commits_as_one_patch_file() {
+    use gitti_workflow::cp::carry_by_patch as carry;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    carry::fixture(d);
+    let file = carry::patch_file(d).display().to_string();
+    // Rows: 1 `Change c` (main), 2 `Change b`, 3 `Fix a` (feat), 4 `init`.
+    let out = run(
+        d,
+        &format!(
+            "press:j;press:j;key:space;press:j;key:space;state;press:.;dump;press:esc;\
+             {}press:ctrl-u;type:{file};press:tab;press:space;dump;key:enter;state;{}state",
+            palette("save as pa"),
+            palette("copy as pa"),
+        ),
+    );
+    let st = states(&out);
+    let sc = screens(&out);
+    assert_eq!(num(st[0], "commit_marks"), 2, "{out}");
+    assert!(sc[0].contains("Save 2 Marked Commits as Patches…"), "{out}");
+    let text = dialog_text(sc[1]);
+    assert!(text.contains("Writes 2 patches into the one file"), "{text}");
+    assert!(status_of(st[1]).contains("Saved 2 commits as patches into"), "{out}");
+    carry::expect_saved(d).unwrap();
+    assert!(status_of(st[2]).starts_with("Copied 2 commits as patches"), "{out}");
+}
+
+/// CP-19, the apply: the saved file; the palette's Apply Patch File… previews it (two
+/// commits, applies cleanly) and ⏎ applies them on `main` with `git am`.
+/// Workflow: CP-19
+#[gitti_test::test]
+fn cp19_apply_the_patch_file() {
+    use gitti_workflow::cp::carry_by_patch as carry;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    let s = carry::fixture_saved(d);
+    let file = carry::patch_file(d).display().to_string();
+    let out = run(d, &format!("{}type:{file};key:enter;dump;key:enter;state", palette("apply pat")));
+    let sc = screens(&out);
+    let text = dialog_text(sc[0]);
+    assert!(sc[0].contains("Apply cp19-feat.patch") && text.contains("2 commits made by git format-patch"), "{out}");
+    assert!(text.contains("It applies cleanly."), "{text}");
+    assert!(status_of(states(&out)[0]).contains("Applied 2 patches as 2 new commits on main"), "{out}");
+    carry::expect_applied(d, &s).unwrap();
+}
+
 /// RV-01, RV-05: `Change c again` ▸ Revert (v); then the new HEAD's ▸ Revert: c:8 back
 /// and forth.
 /// Workflow: RV-01, RV-05

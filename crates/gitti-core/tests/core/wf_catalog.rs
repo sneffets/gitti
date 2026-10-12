@@ -1,7 +1,8 @@
 //! The workflow catalog (`crates/gitti-workflow/WORKFLOWS.md`) and the tests agree, both
 //! ways: every test a catalog row names exists and carries the row's ID in its
 //! `/// Workflow: …` line; every ID a test carries is a row of the catalog that names
-//! that test. Reads files only (no git).
+//! that test. The catalog's "Totals" table matches its rows (`totals_match_the_catalog`).
+//! Reads files only (no git).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -36,26 +37,48 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn catalog_text() -> String {
+    fs::read_to_string(crates().join("gitti-workflow/WORKFLOWS.md")).unwrap()
+}
+
+/// The ID of a catalog row (`ST-13`): the first cell alone (other tables cite IDs with
+/// more).
+fn row_id(line: &str) -> Option<&str> {
+    let id = line.strip_prefix("| ")?.split(" |").next().unwrap_or("");
+    let is_id = id.len() == 5
+        && id.as_bytes()[2] == b'-'
+        && id[..2].bytes().all(|b| b.is_ascii_uppercase())
+        && id[3..].bytes().all(|b| b.is_ascii_digit());
+    is_id.then_some(id)
+}
+
+/// The last three cells of a catalog row: core, gitti, gitty (test names hold no `|`).
+fn layer_cells(line: &str) -> [&str; 3] {
+    let cells: Vec<&str> = line.trim().trim_end_matches('|').rsplitn(4, '|').collect();
+    assert!(cells.len() == 4, "catalog row {line:?}: fewer than four cells");
+    [cells[2], cells[1], cells[0]]
+}
+
+/// Whether a layer's cell covers the whole workflow, as the Totals count it: one test
+/// (`module::test`, or a whole test binary marked `(binary)`) not marked partial (`~`);
+/// `—` and `n/a` don't count.
+fn covers(cell: &str) -> bool {
+    let parts: Vec<&str> = cell.split('`').collect();
+    (1..parts.len()).step_by(2).any(|i| {
+        let partial = parts[i - 1].trim_end().ends_with('~');
+        let after = parts.get(i + 1).copied().unwrap_or("");
+        !partial && (parts[i].contains("::") || after.trim_start().starts_with("(binary)"))
+    })
+}
+
 /// The catalog's rows: ID → the tests of each layer.
 fn catalog() -> BTreeMap<String, Vec<TestRef>> {
-    let text = fs::read_to_string(crates().join("gitti-workflow/WORKFLOWS.md")).unwrap();
+    let text = catalog_text();
     let mut rows = BTreeMap::new();
     for line in text.lines() {
-        let Some(rest) = line.strip_prefix("| ") else { continue };
-        // A catalog row's first cell is the ID alone (other tables cite IDs with more).
-        let id = rest.split(" |").next().unwrap_or("");
-        let is_id = id.len() == 5
-            && id.as_bytes()[2] == b'-'
-            && id[..2].bytes().all(|b| b.is_ascii_uppercase())
-            && id[3..].bytes().all(|b| b.is_ascii_digit());
-        if !is_id {
-            continue;
-        }
-        // The last three cells: core, gitti, gitty (test names hold no `|`).
-        let cells: Vec<&str> = line.trim().trim_end_matches('|').rsplitn(4, '|').collect();
-        assert!(cells.len() == 4, "catalog row {id}: fewer than four cells");
+        let Some(id) = row_id(line) else { continue };
         let mut tests = Vec::new();
-        for (layer, cell) in [cells[2], cells[1], cells[0]].into_iter().enumerate() {
+        for (layer, cell) in layer_cells(line).into_iter().enumerate() {
             for (i, part) in cell.split('`').enumerate() {
                 if i % 2 == 0 || !part.contains("::") {
                     continue;
@@ -200,6 +223,94 @@ fn catalog_and_tests_agree() {
     assert!(
         problems.is_empty(),
         "WORKFLOWS.md and the tests disagree ({}):\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
+}
+
+/// The "Totals" table counts what the catalog rows say: per area (the first two letters
+/// of its IDs) the workflows and, per layer, those covered ([`covers`]); the Total row
+/// their sums. Several branches each bumping the counts from the same base end up wrong
+/// after the merge — this names the number to fix.
+#[gitti_test::test]
+fn totals_match_the_catalog() {
+    const COLUMNS: [&str; 4] = ["Workflows", "core", "gitti", "gitty"];
+    let text = catalog_text();
+    // Per area, in catalog order: [workflows, core, gitti, gitty].
+    let mut counted: Vec<(String, [usize; 4])> = Vec::new();
+    for line in text.lines() {
+        let Some(id) = row_id(line) else { continue };
+        let area = &id[..2];
+        if counted.last().is_none_or(|(a, _)| a != area) {
+            assert!(
+                !counted.iter().any(|(a, _)| a == area),
+                "catalog rows of {area} are not together in one table"
+            );
+            counted.push((area.to_string(), [0; 4]));
+        }
+        let n = &mut counted.last_mut().unwrap().1;
+        n[0] += 1;
+        for (layer, cell) in layer_cells(line).into_iter().enumerate() {
+            n[layer + 1] += usize::from(covers(cell));
+        }
+    }
+    let totals = text.split("\n## Totals").nth(1).expect("WORKFLOWS.md has no \"## Totals\" section");
+    let totals = totals.split("\n## ").next().unwrap_or(totals);
+    let mut problems = Vec::new();
+    let mut seen = Vec::new();
+    let mut total_row = None;
+    for line in totals.lines() {
+        let Some(rest) = line.strip_prefix("| ") else { continue };
+        let cells: Vec<&str> = rest.trim_end().trim_end_matches('|').split('|').map(str::trim).collect();
+        let name = cells[0].trim_matches('*');
+        if name == "Area" || name.starts_with("---") {
+            continue;
+        }
+        let numbers: Vec<Option<usize>> = cells[1..].iter().map(|c| c.trim_matches('*').parse().ok()).collect();
+        if numbers.len() != 4 || numbers.iter().any(Option::is_none) {
+            problems.push(format!("Totals row {name:?}: not four numbers ({cells:?})"));
+            continue;
+        }
+        let numbers: Vec<usize> = numbers.into_iter().flatten().collect();
+        if name == "Total" {
+            total_row = Some(numbers);
+            continue;
+        }
+        let area = name.split_whitespace().next().unwrap_or("");
+        seen.push(area.to_string());
+        let Some((_, want)) = counted.iter().find(|(a, _)| a == area) else {
+            problems.push(format!("Totals row {name:?}: no catalog rows of {area} — remove the row"));
+            continue;
+        };
+        for (col, (has, want)) in COLUMNS.iter().zip(numbers.iter().zip(want)) {
+            if has != want {
+                problems.push(format!(
+                    "Totals row {name:?}, column {col}: says {has}, the {area} rows give {want} — change it to {want}"
+                ));
+            }
+        }
+    }
+    for (area, _) in &counted {
+        if !seen.contains(area) {
+            problems.push(format!("Totals: no row for the area {area} — add one"));
+        }
+    }
+    let sums: Vec<usize> = (0..4).map(|c| counted.iter().map(|(_, n)| n[c]).sum()).collect();
+    match total_row {
+        None => problems.push("Totals: no **Total** row".to_string()),
+        Some(has) => {
+            for (col, (has, want)) in COLUMNS.iter().zip(has.iter().zip(&sums)) {
+                if has != want {
+                    problems.push(format!(
+                        "Totals row \"Total\", column {col}: says {has}, the catalog rows give {want} — change it to {want}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "WORKFLOWS.md's Totals disagree with its rows ({}):\n{}",
         problems.len(),
         problems.join("\n")
     );
