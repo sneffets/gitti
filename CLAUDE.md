@@ -123,6 +123,10 @@ Three crates; the core is strictly separated from both frontends:
 - `crates/gitti-core` — **no gpui dependency**. Sync, thread-safe API; the UI calls it on
   background executors. Git access is split deliberately:
   - reads of history/refs/objects via **gix** (`history.rs`, `graph.rs`, `blobs.rs`);
+    gix can't read the reftable ref backend (git 3.0's default), so a gix handle on such
+    a repository (`Repo::gix`, `reftable::open`) gets a snapshot of its refs
+    (`reftable.rs`) and its `git_dir()` names that snapshot: take the repository's
+    directories from `Repo::git_dir` / `Repo::common_dir`, reflogs from git;
   - status and working-tree diffs via the git CLI, because its unified diff is exactly what
     `git apply` needs;
   - all writes via the **git CLI** (`git_cli.rs`, `ops.rs`, `repo.rs`) so hooks, credential

@@ -661,12 +661,15 @@ impl Repo {
     fn worktree_stamp_files(&self) -> Vec<PathBuf> {
         let common = self.common_dir();
         let dir = common.join("worktrees");
-        let mut files = vec![common.join("HEAD"), dir.clone()];
+        // A reftable repository keeps the HEADs in its tables (`crate::reftable`).
+        let tables = |d: &Path| d.join("reftable").join("tables.list");
+        let mut files = vec![common.join("HEAD"), tables(&common), dir.clone()];
         if let Ok(entries) = std::fs::read_dir(&dir) {
             let mut names: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
             names.sort();
             for meta in names {
                 files.push(meta.join("HEAD"));
+                files.push(tables(&meta));
                 files.push(meta.join("locked"));
                 // `gitdir` holds the path of the worktree's `.git` file.
                 let gitdir = meta.join("gitdir");

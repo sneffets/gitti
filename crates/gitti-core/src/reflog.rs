@@ -143,9 +143,12 @@ impl Repo {
     /// in-process; the git CLI when gix can't read it. A ref without a reflog has none.
     pub fn reflog(&self, name: &str) -> Result<Reflog> {
         let refname = refname_of(name);
-        let entries = match self.reflog_gix(&refname) {
-            Ok(entries) => entries,
-            Err(_) => self.reflog_cli(&refname)?,
+        // gix reads reflogs from `logs/` only; a reftable repository keeps them in its
+        // tables (its gix handle's refs are a snapshot without reflogs).
+        let gix = if self.uses_reftable() { None } else { self.reflog_gix(&refname).ok() };
+        let entries = match gix {
+            Some(entries) => entries,
+            None => self.reflog_cli(&refname)?,
         };
         Ok(Reflog {
             name: short_of(&refname).to_string(),

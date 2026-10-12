@@ -302,6 +302,8 @@ struct Statics {
     fs_probe: std::sync::OnceLock<(Option<crate::fs_paths::FsProbe>, crate::fs_paths::Os)>,
     /// The index paths it can't hold (`Repo::fs_paths`).
     fs_paths: StampCache<Arc<crate::fs_paths::PathReport>>,
+    /// The branches checked out last, in a reftable repository (`Repo::recent_checkouts`).
+    recent_checkouts: StampCache<Vec<String>>,
 }
 
 /// One `stash list` line, for the sidebar and the history.
@@ -476,6 +478,14 @@ impl Repo {
         {
             return Err(anyhow!(why));
         }
+        if crate::reftable::in_use(&repo)
+            && let Some(why) = crate::caps::GitCaps::get().reftable_refusal()
+        {
+            return Err(anyhow!(why));
+        }
+        // From this handle: the ones `gix()` opens name the ref snapshot in a reftable
+        // repository (`crate::reftable`).
+        let common_dir = crate::paths::canonical(repo.common_dir());
         let log = CommandLog::default();
         let mut git = Git::new(workdir.clone());
         git.set_log(log.clone());
@@ -484,8 +494,8 @@ impl Repo {
             workdir,
             log,
             commits: Default::default(),
-            git_dir: Default::default(),
-            common_dir: Default::default(),
+            git_dir: std::sync::OnceLock::from(Some(git_dir)),
+            common_dir: std::sync::OnceLock::from(common_dir),
             statics: Default::default(),
             object_hash,
         })
@@ -549,6 +559,10 @@ impl Repo {
         &self.static_files().0
     }
 
+    pub(crate) fn statics_recent_checkouts(&self) -> &StampCache<Vec<String>> {
+        &self.statics.recent_checkouts
+    }
+
     pub(crate) fn statics_subtrees(&self) -> &std::sync::Mutex<Vec<crate::subtree::detect::Scan>> {
         &self.statics.subtrees
     }
@@ -557,11 +571,44 @@ impl Repo {
         &self.statics.compares
     }
 
+    /// A gix handle on the repository. In a reftable repository its refs are a snapshot
+    /// gix can read, and its `git_dir()` / `common_dir()` name that snapshot
+    /// ([`crate::reftable`]): use [`Self::git_dir`] / [`Self::common_dir`].
     pub(crate) fn gix(&self) -> Result<gix::Repository> {
+        let mut repo = self.gix_plain()?;
+        if crate::reftable::in_use(&repo) {
+            crate::reftable::attach(&mut repo, &self.git)?;
+        }
+        Ok(repo)
+    }
+
+    /// [`Self::gix`] without the ref snapshot: refs unreadable in a reftable repository.
+    fn gix_plain(&self) -> Result<gix::Repository> {
         let opts = gix::open::Options::default().permissions(gix_permissions());
         let mut repo = gix::open_opts(&self.workdir, opts).map_err(gx)?;
         repo.object_cache_size_if_unset(64 * 1024 * 1024);
         Ok(repo)
+    }
+
+    /// Whether the repository keeps its refs in a reftable ([`crate::reftable`]): gix
+    /// can't read its reflogs. (A stat first: only such a repository has `reftable/`.)
+    pub fn uses_reftable(&self) -> bool {
+        self.common_dir().join("reftable").is_dir()
+            && self.gix_plain().is_ok_and(|r| crate::reftable::in_use(&r))
+    }
+
+    /// Whether pseudo ref `name` (`CHERRY_PICK_HEAD`, `REVERT_HEAD`, `REBASE_HEAD`, …)
+    /// exists: a file in the git dir, or a ref in the reftable of a reftable repository —
+    /// only `MERGE_HEAD` and `FETCH_HEAD` stay files there.
+    pub fn pseudo_ref_exists(&self, name: &str) -> bool {
+        let Some(dir) = self.git_dir() else {
+            return false;
+        };
+        dir.join(name).exists()
+            || (self.uses_reftable()
+                && self
+                    .gix()
+                    .is_ok_and(|r| r.try_find_reference(name).ok().flatten().is_some()))
     }
 
     // ---------------------------------------------------------------- reads (gix)
@@ -649,7 +696,10 @@ impl Repo {
             } else {
                 self.stash_commits().unwrap_or_default()
             },
-            merge_heads: crate::history::read_merge_heads(repo.git_dir()),
+            merge_heads: self
+                .git_dir()
+                .map(|d| crate::history::read_merge_heads(&d))
+                .unwrap_or_default(),
             order,
             limit,
         };
@@ -1470,7 +1520,7 @@ impl Repo {
     /// The repository's git dir (`.git`, or the worktree's dir under it), in-process.
     pub fn git_dir(&self) -> Option<PathBuf> {
         self.git_dir
-            .get_or_init(|| Some(crate::paths::canonical(self.gix().ok()?.git_dir())))
+            .get_or_init(|| Some(crate::paths::canonical(self.gix_plain().ok()?.git_dir())))
             .clone()
     }
 
@@ -1478,7 +1528,7 @@ impl Repo {
     /// git dir itself in the main worktree, in-process.
     pub fn common_dir(&self) -> PathBuf {
         self.common_dir
-            .get_or_init(|| match self.gix() {
+            .get_or_init(|| match self.gix_plain() {
                 Ok(r) => crate::paths::canonical(r.common_dir()),
                 Err(_) => self.git_dir().unwrap_or_else(|| self.workdir.join(".git")),
             })
