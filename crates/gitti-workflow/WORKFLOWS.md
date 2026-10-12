@@ -545,7 +545,7 @@ checks these numbers against the rows.
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **278** | **268** | **258** | **259** |
+| **Total** | **279** | **269** | **259** | **260** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
