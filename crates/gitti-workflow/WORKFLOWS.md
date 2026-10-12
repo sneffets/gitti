@@ -203,7 +203,7 @@ working tree or the index while the app shows an older state.
 | SH-02 | Stash including untracked | a new file; "Include untracked" | the file goes into the stash and comes back on pop | `wf_stash::sh02_stash_and_pop_including_untracked`, ~`stash::stash_paths_literal_and_all` | `menus::branch_commit_stash_menus` | `wf_stash::sh02_stash_including_untracked`, `wf_stash::sh02_pop_including_untracked`, ~`menus::stash_dialog_fields_checkboxes_and_cancel` |
 | SH-03 | Stash `--all` | an ignored file too | ignored file stashed | `stash::stash_paths_literal_and_all`, `wf_stash::sh03_stash_and_pop_including_ignored` | `wf_stash::sh03_stash_including_ignored_files_and_pop` | `wf_stash::sh03_stash_including_ignored`, `wf_stash::sh03_pop_including_ignored` |
 | SH-04 | Stash keeping the index | staged + unstaged; keep index | staged part stays staged, the rest stashed | `wf_stash::sh04_stash_keeping_the_index` | `wf_stash::sh04_stash_keeping_the_index` | `wf_stash::sh04_stash_keeping_the_index` |
-| SH-05 | Stash only staged | staged part only | refused when git couldn't finish; else only staged stashed | `stash::stash_staged_only_refuses_what_git_cannot_finish` | `wf_stash::sh05_stash_only_the_staged_changes`, `wf_stash::sh05_staged_only_refused_next_to_unstaged_lines`, ~`menus::stash_dialogs` | `wf_stash::sh05_stash_only_the_staged_changes`, `wf_stash::sh05_staged_only_refused_next_to_unstaged_lines` |
+| SH-05 | Stash only staged | staged part only (also: a staged line changed again in the working tree; chosen paths) | only the staged changes stashed, the unstaged ones stay; refused in plain words when an unstaged change is on a staged line itself (nothing changed); of chosen paths only theirs, other files untouched | `wf_stash::sh05_stash_only_the_staged_changes_or_refuse_an_overlap`, `stash::stash_staged_only_refuses_overlapping_changes`, `stash::stash_staged_only_of_chosen_paths` | `wf_stash::sh05_stash_only_the_staged_changes`, `wf_stash::sh05_staged_only_refused_on_a_staged_line_changed_again`, ~`menus::stash_dialogs` | `wf_stash::sh05_stash_only_the_staged_changes`, `wf_stash::sh05_staged_only_refused_on_a_staged_line_changed_again` |
 | SH-06 | Stash selected lines | select lines of one hunk; Stash Selected Lines | only those lines leave; other hunk, other file and index stay | `stash::stash_unstaged_hunk_keeps_everything_else`, `stash::stash_unstaged_lines_over_staged_changes`, `stash::stash_staged_lines_keeps_unstaged_changes` | `menus::stash_dialogs` | `stash::stash_selected_lines` |
 | SH-07 | Stash one file | cursor on a file; stash it | that file only; literal path | `stash::stash_paths_literal_and_all`, `stash::stash_lines_of_an_untracked_file` | `menus::stash_dialogs` | `stash::stash_file_and_rename` |
 | SH-08 | Stash lines with odd bytes / EOL | Latin-1 + CRLF + no final newline; `eol=crlf` | exact bytes in the stash and in what stays | `stash::stash_lines_keeps_exact_bytes`, `stash::stash_lines_with_eol_conversion`, `stash::stash_lines_keep_crlf_and_line_places` | `wf_stash::sh08_stash_lines_with_odd_bytes` | `wf_stash::sh08_stash_lines_with_odd_bytes` |
@@ -220,6 +220,7 @@ working tree or the index while the app shows an older state.
 | SH-19 | Pop blocked by an untracked file | the stash has `x`; an untracked `x` exists | refused in plain words; nothing changed; stash kept | `wf_stash::sh19_pop_blocked_by_an_untracked_file`, `wf_stash::sh19_what_is_in_the_way` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` | `wf_stash::sh19_pop_blocked_by_an_untracked_file` |
 | SH-20 | Branch from a stash, blocked | the stash has `x`; an untracked `x` exists (or a file the stash changes has local changes); Create Branch from Stash… | refused in plain words before anything changes (git alone would create and check out the branch, then stop half applied); still on `main`, no new branch, stash kept; with `x` moved away the branch is created at the stash's base | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file`, `wf_stash::sh20_branch_from_a_stash_blocked_by_local_changes`, `wf_stash::sh20_what_blocks_a_branch_from_a_stash` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` | `wf_stash::sh20_branch_from_a_stash_blocked_by_an_untracked_file` |
 | SH-21 | Drop the stash being looked at | stash row selected (its diff shown, sidebar cursor on it); drop it from its menu, or a terminal runs `git stash drop` (also: pop it) | its base commit selected and shown, nothing of the stash left on screen — not the other stash that took over `stash@{0}`; the sidebar cursor on its neighbour | `wf_stash::sh21_drop_the_stash_looked_at` | `wf_stash::sh21_drop_the_stash_looked_at_from_its_menu`, `wf_stash::sh21_drop_the_stash_looked_at_in_a_terminal`, `wf_stash::sh21_the_stash_below_stays_shown_renumbered` | `wf_stash::sh21_drop_the_stash_looked_at`, `wf_stash::sh21_the_stash_below_stays_shown_renumbered` |
+| SH-22 | Stash only staged lines next to unstaged ones | four lines inserted (two blank lines, `bla`, a blank line), the upper two blank lines staged; in another file a staged line and the line below it changed, not staged; Stash Changes… "Only staged changes" | stashed (git alone saves the stash and stops: "Cannot remove worktree changes"); nothing staged; each file HEAD's version plus exactly its unstaged lines, in their places | `wf_stash::sh22_stash_only_staged_lines_next_to_unstaged_ones`, `stash::stash_staged_only_part_of_an_inserted_block`, `stash::stash_staged_only_next_to_unstaged_changes` | `wf_stash::sh22_stash_only_staged_lines_next_to_unstaged_ones` | `wf_stash::sh22_stash_only_staged_lines_next_to_unstaged_ones` |
 
 ## BR — Branches
 
@@ -514,7 +515,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | ST staging | 21 | 16 | 19 | 15 |
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
-| SH stash | 21 | 20 | 19 | 20 |
+| SH stash | 22 | 21 | 20 | 21 |
 | BR branches | 20 | 20 | 20 | 19 |
 | MG merge | 27 | 27 | 26 | 27 |
 | CP cherry-pick | 18 | 18 | 18 | 18 |
@@ -534,7 +535,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **273** | **263** | **253** | **254** |
+| **Total** | **274** | **264** | **254** | **255** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

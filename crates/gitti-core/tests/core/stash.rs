@@ -255,23 +255,103 @@ fn stash_paths_literal_and_all() {
 }
 
 /// "Only staged changes" when an unstaged change sits right next to a staged one: git
-/// would save the stash and fail to take the lines out — refused before.
-/// Workflow: SH-05
+/// would save the stash and fail to take the lines out — made by hand, the unstaged
+/// change stays exactly; further away git does it itself.
+/// Workflow: SH-22
 #[gitti_test::test]
-fn stash_staged_only_refuses_what_git_cannot_finish() {
+fn stash_staged_only_next_to_unstaged_changes() {
     let (_tmp, r) = repo(&[("a.txt", TEN.as_bytes())]);
     write(&r, "a.txt", b"1\n2\n3\nS\n5\n6\n7\n8\n9\n10\n");
     r.stage_paths(&["a.txt"]).unwrap();
     write(&r, "a.txt", b"1\n2\n3\nS\nU\n6\n7\n8\n9\n10\n");
     let staged_only = StashFlags { staged_only: true, ..Default::default() };
-    let err = r.stash_save_with("", staged_only).unwrap_err();
-    assert!(err.to_string().contains("a.txt also has unstaged changes"), "{err}");
-    assert!(r.stashes().unwrap().is_empty());
-    // Further away it works, as git does it.
-    write(&r, "a.txt", b"1\n2\n3\nS\n5\n6\nU\n8\n9\n10\n");
-    r.stash_save_with("", staged_only).unwrap();
-    assert_eq!(read(&r, "a.txt"), b"1\n2\n3\n4\n5\n6\nU\n8\n9\n10\n");
+    let msg = r.stash_save_with("next to it", staged_only).unwrap();
+    assert!(msg.contains("On main: next to it"), "{msg}");
+    assert_eq!(read(&r, "a.txt"), b"1\n2\n3\n4\nU\n6\n7\n8\n9\n10\n");
     assert_eq!(index(&r, "a.txt"), TEN.trim_end());
+    assert_eq!(stash_changes(&r, 0), ["a.txt:-4", "a.txt:+S"]);
+    assert_eq!(fx::git(r.workdir(), &["show", "stash@{0}^2:a.txt"]), "1\n2\n3\nS\n5\n6\n7\n8\n9\n10");
+    assert_eq!(fx::git(r.workdir(), &["stash", "list", "--format=%gs"]), "On main: next to it");
+    // Further away git does it, the same way.
+    r.stage_paths(&["a.txt"]).unwrap();
+    write(&r, "a.txt", b"1\n2\n3\n4\nU\n6\nW\n8\n9\n10\n");
+    r.stash_save_with("", staged_only).unwrap();
+    assert_eq!(read(&r, "a.txt"), b"1\n2\n3\n4\n5\n6\nW\n8\n9\n10\n");
+    assert_eq!(index(&r, "a.txt"), TEN.trim_end());
+    assert_eq!(r.stashes().unwrap().len(), 2);
+}
+
+/// The reported case: four lines inserted (two blank lines, `bla`, a blank line), the
+/// upper two blank lines staged by line; "Only staged changes" stashes the two blank lines
+/// and leaves `bla` and the blank line below it, unstaged, where they were.
+/// Workflow: SH-22
+#[gitti_test::test]
+fn stash_staged_only_part_of_an_inserted_block() {
+    let (_tmp, r) = repo(&[("a.txt", b"a\nb\nc\nd\n"), ("b.txt", b"b\n")]);
+    write(&r, "a.txt", b"a\nb\n\n\nbla\n\nc\nd\n");
+    write(&r, "b.txt", b"b2\n");
+    r.stage_paths(&["b.txt"]).unwrap();
+    let d = unstaged(&r, "a.txt");
+    r.apply_selection(&d, &Selection::lines(0, [2, 3]), gitti_core::patch::PatchMode::Stage).unwrap();
+    assert_eq!(index(&r, "a.txt"), "a\nb\n\n\nc\nd");
+    let staged_only = StashFlags { staged_only: true, ..Default::default() };
+    r.stash_save_with("", staged_only).unwrap();
+    assert_eq!(read(&r, "a.txt"), b"a\nb\nbla\n\nc\nd\n");
+    assert_eq!(index(&r, "a.txt"), "a\nb\nc\nd");
+    assert_eq!(read(&r, "b.txt"), b"b\n");
+    assert_eq!(index(&r, "b.txt"), "b");
+    assert_eq!(stash_changes(&r, 0), ["a.txt:+", "a.txt:+", "b.txt:-b", "b.txt:+b2"]);
+    // " M a.txt" (trimmed): changed, nothing staged.
+    assert_eq!(fx::git(r.workdir(), &["status", "--porcelain"]), "M a.txt");
+    assert_eq!(fx::git(r.workdir(), &["show", "stash@{0}^2:a.txt"]), "a\nb\n\n\nc\nd", "staged in the stash too");
+}
+
+/// What can't be taken out without losing the unstaged change is refused before anything
+/// changes, saying what to do: a staged line changed again, a new file changed again.
+/// Workflow: SH-05
+#[gitti_test::test]
+fn stash_staged_only_refuses_overlapping_changes() {
+    let (_tmp, r) = repo(&[("a.txt", TEN.as_bytes())]);
+    write(&r, "a.txt", b"1\n2\n3\nS\n5\n6\n7\n8\n9\n10\n");
+    write(&r, "n.txt", b"new\n");
+    r.stage_paths(&["a.txt", "n.txt"]).unwrap();
+    write(&r, "a.txt", b"1\n2\n3\nS again\n5\n6\n7\n8\n9\n10\n");
+    write(&r, "n.txt", b"new\nmore\n");
+    let staged_only = StashFlags { staged_only: true, ..Default::default() };
+    let err = r.stash_save_with("", staged_only).unwrap_err().to_string();
+    assert!(err.starts_with("Not stashed: a.txt has unstaged changes on the staged lines themselves"), "{err}");
+    assert!(err.contains("n.txt is a new file with unstaged changes"), "{err}");
+    assert!(r.stashes().unwrap().is_empty());
+    assert_eq!(fx::git(r.workdir(), &["status", "--porcelain"]), "MM a.txt\nAM n.txt");
+}
+
+/// Of chosen paths: only their staged changes go; another file's staged change stays
+/// staged and in the working tree (git itself would revert that file in the working
+/// tree, too). A staged new file goes, a staged deletion comes back; a file only taken
+/// out of the index (`git rm --cached`) is tracked again, untouched.
+/// Workflow: SH-05
+#[gitti_test::test]
+fn stash_staged_only_of_chosen_paths() {
+    let (_tmp, r) = repo(&[("a.txt", b"a\n"), ("b.txt", b"b\n"), ("d/gone.txt", b"g\n"), ("k.txt", b"k\n")]);
+    write(&r, "a.txt", b"a2\n");
+    write(&r, "b.txt", b"b2\n");
+    fs::create_dir_all(r.workdir().join("d/new")).unwrap();
+    write(&r, "d/new/n.txt", b"n\n");
+    fs::remove_file(r.workdir().join("d/gone.txt")).unwrap();
+    r.stage_paths(&["a.txt", "b.txt", "d/new/n.txt", "d/gone.txt"]).unwrap();
+    fx::git(r.workdir(), &["rm", "-q", "--cached", "k.txt"]);
+    write(&r, "k.txt", b"k2\n");
+    let staged_only = StashFlags { staged_only: true, ..Default::default() };
+    r.stash_push("", staged_only, &["a.txt".into(), "d".into(), "k.txt".into()]).unwrap();
+    assert_eq!(read(&r, "k.txt"), b"k2\n");
+    assert_eq!(read(&r, "a.txt"), b"a\n");
+    assert_eq!(read(&r, "d/gone.txt"), b"g\n");
+    assert!(!r.workdir().join("d/new").exists(), "the new file and its folder are gone");
+    assert_eq!(fx::git(r.workdir(), &["status", "--porcelain"]), "M  b.txt\n M k.txt");
+    assert_eq!(read(&r, "b.txt"), b"b2\n");
+    let mut changed = stash_changes(&r, 0);
+    changed.sort();
+    assert_eq!(changed, ["a.txt:+a2", "a.txt:-a", "d/gone.txt:-g", "d/new/n.txt:+n", "k.txt:-k"]);
 }
 
 fn rename_keeps_order(r: &Repo) {

@@ -68,6 +68,45 @@ fn sh04_stash_keeping_the_index() {
     stash_and_pop(sh::stash_and_pop::Kind::KeepIndex);
 }
 
+const STAGED_ONLY: StashFlags = StashFlags {
+    include_untracked: false,
+    include_ignored: false,
+    keep_index: false,
+    staged_only: true,
+};
+
+/// SH-05: only the staged file goes, the edit stays; with a staged line changed again in
+/// the working tree it is refused, saying why, and nothing changes.
+/// Workflow: SH-05
+#[gitti_test::test]
+fn sh05_stash_only_the_staged_changes_or_refuse_an_overlap() {
+    use sh::staged_only as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = &tmp.path().join("plain");
+    wf::fixture(dir);
+    Repo::open(dir).unwrap().stash_save_with("", STAGED_ONLY).unwrap();
+    wf::expect_stashed(dir).unwrap();
+    let dir = &tmp.path().join("overlap");
+    wf::fixture_overlap(dir);
+    let err = Repo::open(dir).unwrap().stash_save_with("", STAGED_ONLY).unwrap_err().to_string();
+    assert!(err.starts_with(wf::REFUSAL), "{err}");
+    wf::expect_refused(dir).unwrap();
+}
+
+/// SH-22: staged lines right next to unstaged ones (part of an inserted block, the line
+/// below a staged one): stashed, the unstaged lines stay exactly — where git alone stops
+/// half-way.
+/// Workflow: SH-22
+#[gitti_test::test]
+fn sh22_stash_only_staged_lines_next_to_unstaged_ones() {
+    use sh::staged_next_to_unstaged as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    wf::fixture(dir);
+    Repo::open(dir).unwrap().stash_save_with("", STAGED_ONLY).unwrap();
+    wf::expect_stashed(dir).unwrap();
+}
+
 /// SH-11: dropping the middle one of three stashes leaves the other two, in order.
 /// Workflow: SH-11
 #[gitti_test::test]
