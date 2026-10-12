@@ -840,6 +840,77 @@ fn symlink_to_file_type_change() {
     assert!(fx.is_clean());
 }
 
+/// Symlink rows say they are links (`FileDiff::link_change`): a retargeted, a new
+/// (untracked, diffed in-process) and a deleted link with their targets; a file that
+/// became a link and a link that became a file, unstaged and staged; a commit's link
+/// changes (git's deletion + addition pair for a type change). Plain files say nothing.
+/// Workflow: FS-05, EX-13
+#[cfg(unix)]
+#[gitti_test::test]
+fn symlink_rows_say_they_are_links() {
+    use gitti_core::diff::LinkChange;
+    let fx = fixture(&[("g", "gee\n"), ("tf", "file\n")]);
+    for (target, name) in [("g", "link"), ("g", "gone"), ("g", "tl")] {
+        symlink(target, &fx.path(name));
+    }
+    fx.commit_all("links");
+    let retarget = |name: &str, target: &str| {
+        fs::remove_file(fx.path(name)).unwrap();
+        symlink(target, &fx.path(name));
+    };
+    retarget("link", "other");
+    fs::remove_file(fx.path("gone")).unwrap();
+    // Not `g`: git would pair the deleted and the new link as a rename (whose diff names
+    // no mode).
+    symlink("../far/away", &fx.path("new"));
+    retarget("tf", "g");
+    fs::remove_file(fx.path("tl")).unwrap();
+    fx.write("tl", "a file\n");
+    fx.write("g", "changed\n");
+
+    let st = fx.state();
+    let link_of = |f: &[WorkFile], name: &str| {
+        let w = f.iter().find(|w| w.path() == name).unwrap_or_else(|| panic!("{name} not listed"));
+        w.diff.as_ref().unwrap().link_change()
+    };
+    let link = |t: &str| Some(LinkChange::Link { target: Some(t.to_string()) });
+    assert_eq!(link_of(&st.unstaged, "link"), link("other"));
+    assert_eq!(link_of(&st.unstaged, "gone"), link("g"));
+    assert_eq!(link_of(&st.unstaged, "new"), link("../far/away"));
+    assert_eq!(link_of(&st.unstaged, "tf"), Some(LinkChange::NowLink { target: Some("g".into()) }));
+    assert_eq!(link_of(&st.unstaged, "tl"), Some(LinkChange::WasLink));
+    assert_eq!(link_of(&st.unstaged, "g"), None);
+    assert_eq!(link("other").unwrap().label(), "symlink → other");
+    assert_eq!(LinkChange::WasLink.label(), "was a symlink");
+    let long = LinkChange::Link { target: Some("x/".repeat(40)) }.label();
+    assert!(long.ends_with('…') && long.chars().count() < 60, "{long}");
+    // The file tabs / file list say it too.
+    let tabs = gitti_core::rows::worktree_tabs(&st);
+    let tab = tabs.iter().find(|t| t.path == "tf").unwrap();
+    assert_eq!(tab.describe(), "type changed, unstaged, now a symlink → g");
+
+    fx.repo.stage_paths(&["link", "tf", "tl"]).unwrap();
+    let st = fx.state();
+    assert_eq!(link_of(&st.staged, "link"), link("other"));
+    assert_eq!(link_of(&st.staged, "tf"), Some(LinkChange::NowLink { target: Some("g".into()) }));
+    assert_eq!(link_of(&st.staged, "tl"), Some(LinkChange::WasLink));
+
+    fx.commit_all("change");
+    let head = fx.repo.head().unwrap().id.unwrap();
+    let files = fx.repo.commit_diff(head).unwrap();
+    let links: Vec<(&str, char, Option<String>)> = (files.iter())
+        .map(|f| (f.path(), f.change.letter(), f.link_change().map(|l| l.label())))
+        .collect();
+    let some = |s: &str| Some(s.to_string());
+    assert!(links.contains(&("link", 'M', some("symlink → other"))), "{links:?}");
+    assert!(links.contains(&("gone", 'D', some("symlink → g"))), "{links:?}");
+    assert!(links.contains(&("tf", 'A', some("symlink → g"))), "{links:?}");
+    assert!(links.contains(&("new", 'A', some("symlink → ../far/away"))), "{links:?}");
+    assert!(links.contains(&("tl", 'D', some("symlink → g"))), "{links:?}");
+    assert!(links.contains(&("tl", 'A', None)), "{links:?}");
+    assert!(links.contains(&("g", 'M', None)), "{links:?}");
+}
+
 /// Type change of a staged file, then a further content change: both sides listed, each
 /// operable.
 #[cfg(unix)]

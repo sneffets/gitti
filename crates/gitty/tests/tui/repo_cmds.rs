@@ -102,7 +102,9 @@ fn repository_statistics() {
         "cmds;press:ctrl-p;{}key:enter;dump;cmds;press:y;state;dump;press:esc;click:9,0;dump",
         presses("repository statistics")
     );
-    let out = gitty(dir.path(), &script);
+    // Tall enough for the sizes below the commit messages' part.
+    let config = tempfile::tempdir().unwrap();
+    let out = gitty_with(dir.path(), config.path(), "120x50", &script);
     let s = screens(&out);
     for part in [
         " Repository Statistics ",
@@ -112,7 +114,12 @@ fn repository_statistics() {
         "  Whole .git:      ",
         "  Tracked files:   2 bytes in 1 file — ",
         "Commits per author — all 1 commit, ",
+        "│ Commit messages",
+        "  Encoding:        ",
+        "  In the history:  all 1 commit: UTF-8 (no encoding header)",
+        "  Change:          e (also Commit Encoding… in the palette) — ",
         "y copy as text",
+        "e commit encoding",
     ] {
         assert!(s[0].contains(part), "lacks `{part}`:\n{out}");
     }
@@ -128,6 +135,26 @@ fn repository_statistics() {
     assert!(states(&out)[0].contains("Copied ") && states(&out)[0].contains(" lines"), "{out}");
     assert!(s[1].contains(" Repository Statistics "), "y closed it:\n{out}");
     assert!(s[2].contains("Repository Statistics…") && s[2].contains("Copy Path"), "{out}");
+}
+
+/// Repository Statistics → e: Commit Encoding… refuses a name gitty can't write, says
+/// which file a name goes to and what follows; Enter writes `.git/config`.
+#[gitti_test::test]
+fn commit_encoding_from_the_statistics() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let script = format!(
+        "press:ctrl-p;{}key:enter;press:e;state;type:latin-x;dump;press:ctrl-u;type:ISO-8859-1;dump;key:enter;state",
+        presses("repository statistics")
+    );
+    let out = gitty(dir.path(), &script);
+    let s = screens(&out);
+    let st = states(&out);
+    assert!(st[0].contains("modal=Input \"Commit Encoding\""), "{out}");
+    assert!(s[0].contains("gitti can't write commit messages in “latin-x”"), "{out}");
+    assert!(s[1].contains("Writes i18n.commitEncoding = ISO-8859-1 to this"), "{out}");
+    assert!(st[1].contains("Set i18n.commitEncoding = ISO-8859-1 in .git/config"), "{out}");
+    let config = std::fs::read_to_string(dir.path().join(".git/config")).unwrap();
+    assert!(config.contains("commitEncoding = ISO-8859-1"), "{config}");
 }
 
 /// `gitty --licenses` prints this binary's part of the third-party list: its components

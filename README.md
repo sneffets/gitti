@@ -152,6 +152,8 @@ macOS: run `scripts/bundle-macos.sh` from terminal. That builds `target/release/
 
 Linux: run `scripts/install-linux.sh`. This installs both binaries into `~/.local/bin` plus the
 desktop entry and icons. `scripts/install-gitty-linux.sh` installs only the terminal UI. See build dependencies below.
+With less than 12 GB of RAM (e.g. a Raspberry Pi) both scripts build without link-time
+optimisation, which needs far less memory; by hand that is `cargo build --profile release-lowmem`.
 
 Windows: run `scripts\install-windows.cmd`. This builds and installs both with a Start menu entry.
 

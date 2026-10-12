@@ -146,6 +146,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("ShowHiddenFsPaths", "Show Hidden Paths Again"),
     gitti("RepoGitSettings", CONFIG),
     gitti("GlobalGitSettings", CONFIG),
+    both("ChangeCommitEncoding", crate::commit_encoding::change::MENU_LABEL),
     gitti("EditRepoConfig", CONFIG),
     gitti("EditGlobalConfig", CONFIG),
     // The external diff / merge tool (`tool_setup`).
