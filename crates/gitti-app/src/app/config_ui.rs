@@ -1,11 +1,12 @@
 //! Editing git configuration (identity and common settings) per scope, plus raw editing
-//! of the config files.
+//! of the config files; Commit Encoding… (`i18n.commitEncoding` with what it means).
 
+use gitti_core::commit_encoding::change;
 use gitti_core::ops::ConfigScope;
 use gpui_kit::*;
 
 use super::GittiApp;
-use super::modal::ModalSpec;
+use super::modal::{ModalLive, ModalSpec};
 
 /// Settings offered in the dialog: (key, description).
 pub const KEYS: &[(&str, &str)] = &[
@@ -36,6 +37,10 @@ pub const KEYS: &[(&str, &str)] = &[
     ("init.defaultBranch", "Branch name for new repositories"),
     ("core.autocrlf", "Line ending conversion (true/false/input)"),
     ("core.excludesFile", "Global ignore file"),
+    (
+        "i18n.commitEncoding",
+        "Encoding of new commit messages (empty: UTF-8; existing commits keep theirs)",
+    ),
 ];
 
 impl GittiApp {
@@ -100,6 +105,47 @@ impl GittiApp {
                 }
                 Ok(format!("Saved {n} setting(s)"))
             });
+        });
+    }
+
+    /// Repository ▸ Commit Encoding…: `i18n.commitEncoding` for new commits, in this
+    /// repository or globally — the dialog says which file gets written and what follows
+    /// (texts in `gitti_core::commit_encoding::change`, the same in gitty).
+    pub(super) fn commit_encoding_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let current = repo.commit_encoding_shown();
+        let scopes = [ConfigScope::Local, ConfigScope::Global];
+        let labels = scopes.map(change::scope_label);
+        let start = usize::from(change::initial_scope(&current) == ConfigScope::Global);
+        let spec = ModalSpec::new(change::TITLE)
+            .message(change::intro(&current))
+            .options(&labels, start)
+            .field(change::FIELD_LABEL, current.configured.clone().unwrap_or_default())
+            .ok("Save")
+            .live(move |r| {
+                let value = r.values.first().map(String::as_str).unwrap_or("");
+                let fills = change::COMMON.iter().map(|n| (0, n.to_string())).collect();
+                match change::describe(value, scopes[r.option.min(1)], &current) {
+                    Ok(text) => ModalLive {
+                        text,
+                        fills,
+                        fills_label: "Common:".into(),
+                        ..Default::default()
+                    },
+                    Err(why) => ModalLive {
+                        blocked: Some(why),
+                        fills,
+                        fills_label: "Common:".into(),
+                        ..Default::default()
+                    },
+                }
+            });
+        self.open_modal(spec, window, cx, move |this, res, w, cx| {
+            let scope = scopes[res.option.min(1)];
+            let value = res.values.first().cloned().unwrap_or_default();
+            this.git_op("Commit encoding", w, cx, move |r| r.set_commit_encoding(scope, &value));
         });
     }
 
