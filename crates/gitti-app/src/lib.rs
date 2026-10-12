@@ -1486,6 +1486,10 @@ actions!(gitti, [ToggleSignOff, RecentMessages, MessageHistoryPrev, MessageHisto
 // handlers in `app/from_commit.rs`.
 actions!(gitti, [ShowContaining, RestoreFromCommit]);
 
+// Commit ▸ Revert / Apply Selected Lines in / to Working Tree; handlers in
+// `app/commit_lines.rs`.
+actions!(gitti, [RevertLinesInWorkingTree, ApplyLinesToWorkingTree]);
+
 // Stash ▸ Stash Selected Lines or File… / Rename Stash…; handlers in `app/stash_ui.rs`.
 actions!(gitti, [StashSelection, RenameStash]);
 
@@ -1825,6 +1829,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Open This Version in Editor (read-only)", OpenThisVersion),
                 MenuItem::action("Open Old Version in Editor (read-only)", OpenOldVersion),
                 MenuItem::action(gitti_core::restore::MENU_LABEL, RestoreFromCommit),
+                MenuItem::action(gitti_core::commit_lines::REVERT_SELECTION_LABEL, RevertLinesInWorkingTree),
+                MenuItem::action(gitti_core::commit_lines::APPLY_SELECTION_LABEL, ApplyLinesToWorkingTree),
                 MenuItem::action(gitti_core::containing::SELECTED_LABEL, ShowContaining),
                 MenuItem::separator(),
                 MenuItem::action("Mark for Comparison", MarkCompare),

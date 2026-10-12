@@ -319,3 +319,38 @@ fn pick_fixture_lists_its_branches() {
     assert!(line(&s.main_c).ends_with(&format!("{} (already in main)", wf::MAIN_C)), "{lines:?}");
     assert!(line(&s.fix).ends_with(wf::FIX), "{lines:?}");
 }
+
+/// RV-08: the `-f 4` / `+F 4` pair of `Tune f` reverted in the working tree only — line 4
+/// back in its place, HEAD and the index as they were.
+/// Workflow: RV-08
+#[gitti_test::test]
+fn rv08_revert_lines_of_an_older_commit_in_the_working_tree() {
+    use gitti_core::commit_lines::{Origin, Request, Scope, Way};
+    use rv::lines as wf8;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let s = wf8::fixture(dir);
+    let repo = open(dir);
+    let id = ObjectId::from_hex(s.tune_f.as_bytes()).unwrap();
+    let file = repo.commit_diff(id).unwrap().into_iter().find(|f| f.path() == "f.txt").unwrap();
+    let lines: Vec<usize> = file.hunks[0]
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.is_change() && (l.text == wf8::OLD_4 || l.text == wf8::NEW_4))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(lines.len(), 2);
+    let said = repo
+        .commit_lines_to_worktree(&Request {
+            origin: Origin { id, stash: None },
+            file,
+            sel: gitti_core::patch::Selection::lines(0, lines),
+            scope: Scope::Lines,
+            way: Way::Revert,
+            shown: gitti_core::repo::DiffOptions::default(),
+        })
+        .unwrap();
+    assert!(said.ends_with("changed in the working tree; stage and commit to keep it"), "{said}");
+    wf8::expect_reverted(dir, &s).unwrap();
+}

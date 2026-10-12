@@ -502,6 +502,8 @@ pub(super) fn diff_menu(
     let menu = super::ext_tools::diff_menu_item(menu, app, cx);
     // A commit's file into the working tree, as it is here or was before.
     let menu = super::from_commit::diff_menu_items(menu, app, cx);
+    // A commit's lines, hunk or file reverted / applied in the working tree.
+    let menu = super::commit_lines::diff_menu_items(menu, app, cx);
     let mut menu = menu
         .separator()
         .item(

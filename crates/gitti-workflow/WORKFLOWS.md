@@ -313,6 +313,7 @@ working tree or the index while the app shows an older state.
 | RV-05 | Revert the revert | revert `A`, then revert that | `A`'s change back | `wf_pick::rv05_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` |
 | RV-06 | Revert a change already undone | revert gives nothing | alone: nothing changed, said in plain words (git leaves no state); in a sequence: stops, Skip / Commit Empty / Abort offered — never stuck | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` |
 | RV-07 | Revert several selected commits | mark three commits; Revert Marked Commits… | the dialog says newest first; reverted newest first in one sequence | `wf_pick::rv07_revert_several_marked_commits_newest_first` | `wf_pick::rv07_revert_three_marked_commits` | `wf_pick::rv07_revert_three_marked_commits` |
+| RV-08 | Revert some lines of an older commit in the working tree | show the commit; select the `-` / `+` pair of one line of a replaced block; Revert These Lines in Working Tree | that line back in its place in the working tree only (unstaged, said so); HEAD and the index unchanged | `wf_pick::rv08_revert_lines_of_an_older_commit_in_the_working_tree` | `wf_pick::rv08_revert_lines_in_the_working_tree` | `wf_pick::rv08_revert_lines_in_the_working_tree` |
 
 ## RB — Rebase
 
@@ -519,7 +520,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BR branches | 20 | 20 | 20 | 19 |
 | MG merge | 27 | 27 | 26 | 27 |
 | CP cherry-pick | 18 | 18 | 18 | 18 |
-| RV revert | 7 | 7 | 7 | 7 |
+| RV revert | 8 | 8 | 8 | 8 |
 | RB rebase | 9 | 9 | 9 | 9 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
@@ -535,7 +536,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **274** | **264** | **254** | **255** |
+| **Total** | **275** | **265** | **255** | **256** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

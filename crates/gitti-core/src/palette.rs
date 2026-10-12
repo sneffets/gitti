@@ -187,6 +187,9 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     ),
     both("ShowContaining", "Branches and Tags Containing Selected Commit…"),
     both("RestoreFromCommit", "Restore File or Folder from Selected Commit…"),
+    // The shown commit's / stash's selected lines (`commit_lines`).
+    both("RevertLinesInWorkingTree", crate::commit_lines::REVERT_SELECTION_LABEL),
+    both("ApplyLinesToWorkingTree", crate::commit_lines::APPLY_SELECTION_LABEL),
     both("OpenThisVersion", crate::version_file::THIS_LABEL),
     both("OpenOldVersion", crate::version_file::OLD_LABEL),
     // On the file at the diff cursor (`ext_tool`).
