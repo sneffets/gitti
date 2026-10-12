@@ -92,7 +92,8 @@ fn br06_stash_and_switch_whose_reapply_conflicts() {
 /// BR-09: more untracked files feat tracks than the dialog lists: it lists some and says
 /// how many more; Stash & Switch puts them all into one stash; keep.txt stays. The
 /// question is answered as soon as it shows, as a quick user would — not after the
-/// refresh that follows the refused switch.
+/// refresh that follows the refused switch — and the result read as soon as the status
+/// line says it (not after the refresh that follows the switch).
 /// Workflow: BR-09
 #[gitti_test::test]
 fn br09_many_blocking_untracked_files_go_into_one_stash() {
@@ -100,7 +101,7 @@ fn br09_many_blocking_untracked_files_go_into_one_stash() {
     let (_tmp, d) = repo_dir();
     wf::fixture(&d);
     let script = format!(
-        "press:b;{}press:enter;until:Switch to {}?;dump;key:s;state",
+        "press:b;{}press:enter;until:Switch to {}?;dump;press:s;until:saved in stash;state",
         presses(wf::TARGET),
         wf::TARGET
     );

@@ -3,7 +3,8 @@
 //!
 //! Steps: `wait` (until no job is running), `sleep:MS`, `closed` (until no dialog is open —
 //! one that closes by itself; at most 5 s), `until:TEXT` (until the screen shows TEXT — a
-//! running operation's progress, instead of a guessed sleep; at most 5 s), `watched` /
+//! running operation's progress, instead of a guessed sleep; at most 5 s; a terminal
+//! editor / tool asked for meanwhile runs), `watched` /
 //! `watched:PATH` (until the file watcher reports a change — of PATH, a path relative to the
 //! work tree — after a `write:`, then as `wait`; at most 5 s), `seen:PATH` (until the file
 //! watcher has reported PATH at any time in this run — also during an earlier step, e.g.
@@ -165,6 +166,9 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
                         break;
                     }
                     pump(app, &rx, Duration::from_millis(10));
+                    // A terminal editor / tool asked for meanwhile runs, as the terminal
+                    // loop would run it.
+                    hand_over(app);
                 }
             }
             "key" => {
@@ -385,29 +389,7 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
         }
         // Like `App::handle` after every message: view options go to the database.
         app.save_settings();
-        // Like the terminal loop, without handing over a terminal.
-        if let Some((argv, dir)) = app.run_in_terminal.take() {
-            let line: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-            println!("(terminal editor: {})", line.join(" "));
-            let status = std::process::Command::new(&argv[0])
-                .args(&argv[1..])
-                .current_dir(dir)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .status();
-            app.terminal_editor_done(&argv[0].to_string_lossy(), status);
-            settle(app, &rx, &mut term, Duration::from_secs(20))?;
-        }
-        // The same for a terminal diff / merge tool.
-        if let Some(run) = app.run_tool_in_terminal.take() {
-            println!("(terminal tool: {})", run.command_line());
-            let start = std::time::Instant::now();
-            let status = run
-                .command()
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .status();
-            app.terminal_tool_done(*run, status, start.elapsed());
+        if hand_over(app) {
             settle(app, &rx, &mut term, Duration::from_secs(20))?;
         }
         // Like the terminal loop: a quit key / command ends the run.
@@ -502,6 +484,38 @@ fn settle(
             return Err(anyhow!("timeout waiting for gitty to settle"));
         }
     }
+}
+
+/// Like the terminal loop, without handing over a terminal: a terminal editor or diff /
+/// merge tool the app asked for runs (stdin / stdout null) after a `(terminal editor:
+/// ARGV)` / `(terminal tool: COMMAND)` line. Whether one ran.
+fn hand_over(app: &mut App) -> bool {
+    let mut ran = false;
+    if let Some((argv, dir)) = app.run_in_terminal.take() {
+        let line: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        println!("(terminal editor: {})", line.join(" "));
+        let status = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status();
+        app.terminal_editor_done(&argv[0].to_string_lossy(), status);
+        ran = true;
+    }
+    // The same for a terminal diff / merge tool.
+    if let Some(run) = app.run_tool_in_terminal.take() {
+        println!("(terminal tool: {})", run.command_line());
+        let start = std::time::Instant::now();
+        let status = run
+            .command()
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status();
+        app.terminal_tool_done(*run, status, start.elapsed());
+        ran = true;
+    }
+    ran
 }
 
 pub fn screen_text(buf: &Buffer) -> String {

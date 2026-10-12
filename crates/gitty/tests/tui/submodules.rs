@@ -97,17 +97,19 @@ fn submodule_pointer_change_shows_commits_and_stages_as_one_unit() {
 /// Workflow: SM-01, SM-03
 #[gitti_test::test]
 fn submodule_out_of_date_badge_and_update_from_the_palette() {
-    let (_tmp, sup) = super_repo();
-    let sub = sup.join("libs/lib");
-    write_files(&sub, &[("l.txt", "1\n2\n")]);
-    commit_all(&sub, "lib two");
-    git(&sup, &["commit", "-qam", "lib two"]);
-    git(&sub, &["checkout", "-q", "HEAD~1"]);
-    let checked_out = rev(&sub, "HEAD");
+    // The superproject records "lib two"; its submodule is checked out at "lib one".
+    let tmp = tempfile::tempdir().unwrap();
+    let sup = gitti_core::paths::canonical(tmp.path()).join("super");
+    let lib = gitti_workflow::sm::superproject(&sup, "");
+    git(&gitti_workflow::sm::sub(&sup), &["checkout", "-q", &lib.lib_one]);
+    let checked_out = lib.lib_one;
+    // Until the update's refresh shows the submodule up to date (not until the file
+    // watcher's echo of it settles too).
     let out = run(
         &sup,
         &format!(
-            "dump;cmds;press:backtab;press:G;press:m;items;key:h;state;press:ctrl-p;{}key:enter;cmds;dump",
+            "dump;cmds;press:backtab;press:G;press:m;items;key:h;state;press:ctrl-p;{}press:enter;\
+             until:✓ libs/lib;cmds;dump",
             presses("update submodules")
         ),
     );
@@ -216,23 +218,22 @@ fn refusing_env(home: &Path) -> String {
     global.display().to_string()
 }
 
-/// `lib` (one commit) and `super`, which records it as the submodule `libs/lib` by its
-/// local path — not checked out (as after a plain clone): eight git processes.
-fn uninitialised_super() -> (tempfile::TempDir, tempfile::TempDir) {
-    let lib = import(&[Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("l.txt", "1\n")] }]);
-    let modules = format!("[submodule \"libs/lib\"]\n\tpath = libs/lib\n\turl = {}\n", lib.path().display());
-    // The pointer commit in the same fast-import (no update-index + commit processes).
-    let tip = branch_tip(lib.path(), "main");
-    let pointer = format!(
-        "commit refs/heads/main\ncommitter Tester <t@example.com> 1700000600 +0000\ndata 8\nadd lib\n\
-         M 160000 {} libs/lib\n\n",
-        tip.trim()
-    );
-    let sup = import_with(
-        &[Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("s.txt", "s\n"), (".gitmodules", modules.as_str())] }],
-        &pointer,
-    );
-    (lib, sup)
+/// `<tmp>/super`, which records the bare `<tmp>/super-lib.git` (one commit) as the
+/// submodule `libs/lib` by its local path — not checked out (as after a plain clone):
+/// four git processes.
+fn uninitialised_super() -> (tempfile::TempDir, std::path::PathBuf) {
+    use gitti_workflow::{Fixture, gitlink, put, sm};
+    let tmp = tempfile::tempdir().unwrap();
+    let sup = gitti_core::paths::canonical(tmp.path()).join("super");
+    let mut lib = Fixture::new();
+    let one = lib.commit("main", "init", &[put("l.txt", "1\n")]);
+    let ids = lib.build_bare(&sm::lib_remote(&sup));
+    let url = gitti_workflow::rm::url_of(&sm::lib_remote(&sup));
+    let modules = format!("[submodule \"libs/lib\"]\n\tpath = libs/lib\n\turl = {url}\n");
+    let mut fx = Fixture::new();
+    fx.commit("main", "add lib", &[put("s.txt", "s\n"), put(".gitmodules", &modules), gitlink("libs/lib", &ids[one])]);
+    fx.build(&sup);
+    (tmp, sup)
 }
 
 /// Update Submodules where `.gitmodules` names a local path git refuses for submodules
@@ -240,12 +241,16 @@ fn uninitialised_super() -> (tempfile::TempDir, tempfile::TempDir) {
 /// for This Update") runs `git -c protocol.file.allow=always submodule update`.
 #[gitti_test::test]
 fn update_from_a_local_path_asks_first() {
-    let (_lib, sup) = uninitialised_super();
+    let (_tmp, sup) = uninitialised_super();
     let home = tempfile::tempdir().unwrap();
     let global = refusing_env(home.path());
     let env = [("GIT_CONFIG_GLOBAL", global.as_str()), ("GIT_CONFIG_NOSYSTEM", "1")];
-    let script = format!("press:ctrl-p;{}key:enter;dump;key:a;cmds;dump", presses("update submodules"));
-    let out = gitty_env(sup.path(), home.path(), "160x45", &env, &script);
+    // Until what each step shows (not until the file watcher's echo settles too).
+    let script = format!(
+        "press:ctrl-p;{}press:enter;until:Allow for This Update;dump;press:a;until:✓ libs/lib;cmds;dump",
+        presses("update submodules")
+    );
+    let out = gitty_env(&sup, home.path(), "160x45", &env, &script);
     let s = screens(&out);
     assert!(s[0].contains("Clone submodules from local paths?") && s[0].contains("libs/lib (from"), "{out}");
     assert!(s[0].contains("git's default since") && s[0].contains("Allow for This Update"), "{out}");
@@ -253,7 +258,7 @@ fn update_from_a_local_path_asks_first() {
         cmds(&out)[0].iter().any(|l| l.contains("protocol.file.allow=always") && l.contains("submodule update")),
         "{out}"
     );
-    assert!(sup.path().join("libs/lib/l.txt").is_file() && s[1].contains("✓ libs/lib"), "{out}");
+    assert!(sup.join("libs/lib/l.txt").is_file() && s[1].contains("✓ libs/lib"), "{out}");
 }
 
 /// Clone with `--recurse-submodules` of a repository whose submodule git refuses (a
@@ -261,19 +266,28 @@ fn update_from_a_local_path_asks_first() {
 /// the `file` transport allowed once, then gitty offers to open it.
 #[gitti_test::test]
 fn clone_with_local_submodules_asks_first() {
-    let (_lib, sup) = uninitialised_super();
+    use gitti_workflow::sm::clone_with_submodules as wf;
+    // The bare superproject and its submodule's bare remote; gitty runs in an empty
+    // repository next to them.
+    let tmp = tempfile::tempdir().unwrap();
+    let work = gitti_core::paths::canonical(tmp.path()).join("work");
+    wf::fixture(&work);
+    gitti_workflow::Fixture::new().build(&work);
     let into = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let global = refusing_env(home.path());
     let env = [("GIT_CONFIG_GLOBAL", global.as_str()), ("GIT_CONFIG_NOSYSTEM", "1")];
+    // Until each question shows, not until the refresh of the current repository that
+    // follows the clone is done too (nothing here depends on it).
     let script = format!(
-        "press:ctrl-p;{}press:enter;type:{};press:tab;press:ctrl-u;type:{};press:tab;{}key:enter;dump;key:a;dump",
+        "press:ctrl-p;{}press:enter;type:{};press:tab;press:ctrl-u;type:{};press:tab;{}press:enter;\
+         until:Open Without the Submodules;dump;press:a;until:Open the new repository?;dump",
         presses("clone repository"),
-        sup.path().display(),
+        gitti_workflow::rm::url_of(&wf::super_remote(&work)),
         into.path().display(),
         presses("deep")
     );
-    let out = gitty_env(sup.path(), home.path(), "160x45", &env, &script);
+    let out = gitty_env(&work, home.path(), "160x45", &env, &script);
     let s = screens(&out);
     assert!(s[0].contains("The repository is cloned") && s[0].contains("Open Without the Submodules"), "{out}");
     assert!(s[1].contains("Open the new repository?"), "{out}");

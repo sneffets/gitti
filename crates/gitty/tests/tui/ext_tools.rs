@@ -226,7 +226,8 @@ fn merge_tool_from_the_resolve_menu() {
          \ttrustExitCode = true\n[mergetool]\n\tkeepBackup = false\n",
     );
     // The diff (⏎), the conflicted file (j), its resolve menu (⏎), the merge tool (x).
-    let out = run(dir.path(), "press:enter;press:j;press:enter;items;key:x;state");
+    // Until the tool's result shows (not until the refresh after it settles too).
+    let out = run(dir.path(), "press:enter;press:j;press:enter;items;press:x;until:git staged it;state");
     assert!(out.contains("item: Open in External Merge Tool"), "{out}");
     let state = states(&out).last().copied().unwrap_or_default();
     assert!(state.contains("fake resolved a.txt: git staged it"), "{state}");
@@ -264,7 +265,7 @@ fn merge_tool_set_up_on_the_way() {
         dir.path(),
         config.path(),
         &[],
-        "press:enter;press:j;press:enter;key:x;dump;press:ctrl-n;dump;key:enter;state",
+        "press:enter;press:j;press:enter;key:x;dump;press:ctrl-n;dump;press:enter;until:git staged it;state",
     );
     let screens = out.split("focus=").next().unwrap_or_default();
     assert!(screens.contains(gitti_core::tool_setup::DIALOG_TITLE), "{out}");
@@ -303,7 +304,7 @@ fn terminal_merge_tool_gets_the_terminal() {
     );
     let config = tempfile::tempdir().unwrap();
     let path = fake_vim(config.path());
-    let out = run_in(dir.path(), config.path(), &[("PATH", &path)], "press:enter;press:j;press:enter;key:x;state");
+    let out = run_in(dir.path(), config.path(), &[("PATH", &path)], "press:enter;press:j;press:enter;press:x;until:git staged it;state");
     assert!(out.contains("(terminal tool: git mergetool -y --tool=tv -- a.txt)"), "{out}");
     let state = states(&out).last().copied().unwrap_or_default();
     assert!(state.contains("tv resolved a.txt: git staged it"), "{state}");
