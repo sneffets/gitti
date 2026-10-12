@@ -1,7 +1,8 @@
 //! The commit box beyond drafts (gitti: `tests/ui/commit.rs`): `commit.template` fills an
 //! empty box and is refused unedited, its comment lines go when committed; Sign Off adds
 //! the trailer and is remembered; ↑ in the empty box and "Recent Commit Messages…" bring
-//! back earlier messages.
+//! back earlier messages; "Add Co-Author…" offers the other authors and adds the
+//! `Co-authored-by` trailer once.
 
 use crate::common::*;
 use crate::support::items;
@@ -84,6 +85,30 @@ fn earlier_messages_by_up_and_the_picker() {
     assert!(s[3].contains("Replace your commit message?"), "asks over typed text: {out}");
     let replaced = message_box(s[4]);
     assert!(replaced.contains("Session one") && !replaced.contains("typed"), "replaced: {out}");
+}
+
+/// "Add Co-Author…" (palette): the other authors, most commits first (not the user); the
+/// chosen one's trailer goes after a blank line, and not twice.
+#[gitti_test::test]
+fn co_author_picker_adds_the_trailer_once() {
+    let dir = repo();
+    let d = dir.path();
+    for (who, n) in [("Ann", 2), ("Bob", 1)] {
+        for _ in 0..n {
+            let (name, mail) = (format!("user.name={who}"), format!("user.email={}@example.com", who.to_lowercase()));
+            git(d, &["-c", &name, "-c", &mail, "commit", "-q", "--allow-empty", "-m", who]);
+        }
+    }
+    let script = "wait;press:c;type:Fix the parser;press:esc;press:ctrl-p;type:add co-author;\
+                  press:enter;items;press:enter;dump;press:esc;press:ctrl-p;type:add co-author;\
+                  press:enter;type:ann;press:enter;state;dump";
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "160x30", script);
+    let s = screens(&out);
+    assert_eq!(items(&out), ["Ann <ann@example.com>", "Bob <bob@example.com>"], "{out}");
+    let first = message_box(s[0]);
+    assert!(first.contains("Fix the parser") && first.contains("Co-authored-by: Ann <ann@example.com>"), "{out}");
+    assert!(out.contains("Ann <ann@example.com> is a co-author already"), "{out}");
+    assert_eq!(message_box(s[1]).matches("Co-authored-by").count(), 1, "{out}");
 }
 
 /// The detail pane's lines down to the message box's bottom row ("☐ amend"): the box.

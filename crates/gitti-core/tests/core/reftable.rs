@@ -169,3 +169,52 @@ fn a_shallow_reftable_clone() {
     assert!(history.contains(&ids[second]) && !history.contains(&ids[root]));
     assert_eq!(short_names(&r), ["main", "origin/main"]);
 }
+
+/// What gitti reads besides the refs, in a reftable repository: the stash list (its
+/// reflog is in the table — the stash commands found every stash "no longer in the stash
+/// list"), the statistics' stash count, a branch's reflog for the overwrite plan
+/// ("amended after the push"), and `.git/info/exclude` (it went into the ref snapshot's
+/// folder, where git never reads it).
+#[gitti_test::test]
+fn stashes_reflogs_and_info_exclude() {
+    if !reftable_git() {
+        return;
+    }
+    let mut h = History::new();
+    let one = h.commit("main", &[], "one", &[("a.txt", f("1\n"))]);
+    h.set_ref("refs/remotes/origin/main", one);
+    let (_tmp, p, ids) = reftable_repo(&h, &[]);
+    for content in ["2\n", "3\n"] {
+        std::fs::write(p.join("a.txt"), content).unwrap();
+        sh(&p, &["stash", "-q"]);
+    }
+    let r = Repo::open(&p).unwrap();
+    let stashes = r.stashes().unwrap();
+    assert_eq!(stashes.len(), 2);
+    assert_eq!(r.stats_overview(None).stashes, 2);
+    r.stash_drop(stashes[1].target()).unwrap();
+    assert_eq!(r.stashes().unwrap().len(), 1);
+
+    // main amended after the push: origin/main's commit is in main's reflog.
+    sh(&p, &["commit", "-q", "--amend", "--allow-empty", "-m", "one, amended"]);
+    let plan = r
+        .overwrite_plan(
+            "origin",
+            "main",
+            gitti_core::overwrite::Source::Branch("main".into()),
+            r.tracking_lease("origin", "main"),
+            Some("main"),
+        )
+        .unwrap();
+    assert_eq!(plan.lost_total, 1);
+    assert_eq!(plan.lost[0].short, ids[one].to_hex_with_len(7).to_string());
+    assert!(plan.rewritten, "amended after the push");
+
+    std::fs::write(p.join("new.txt"), "new\n").unwrap();
+    let which = gitti_core::ignore::IgnoreFile::InfoExclude;
+    assert_eq!(r.ignore_file_path(&which).unwrap(), p.join(".git").join("info").join("exclude"));
+    assert!(r.add_ignore_pattern("new.txt", which, false).unwrap().added);
+    let exclude = std::fs::read_to_string(p.join(".git/info/exclude")).unwrap();
+    assert!(exclude.lines().any(|l| l == "new.txt"), "{exclude}");
+    assert!(r.working_state().unwrap().unstaged.is_empty(), "new.txt is ignored");
+}

@@ -263,6 +263,8 @@ pub fn is_read_only(args: &[&str]) -> bool {
             | "diff-tree",
         ) => true,
         Some("remote") => a.get(1) == Some(&"-v"),
+        // `--lost-found` writes `.git/lost-found`.
+        Some("fsck") => !a.contains(&"--lost-found"),
         Some("stash") => matches!(a.get(1).copied(), Some("list" | "show")),
         // Only tests whether a patch applies (a failure is an answer, not an error).
         Some("apply") => a.contains(&"--check") && !a.contains(&"--apply"),
@@ -1210,6 +1212,8 @@ mod tests {
         assert!(!is_read_only(&["symbolic-ref", "-m", "why", "HEAD", "refs/heads/x"]));
         assert!(!is_read_only(&["symbolic-ref", "-d", "HEAD"]));
         assert!(is_read_only(&["lfs", "locks", "--json"]));
+        assert!(is_read_only(&["fsck", "--unreachable", "--no-reflogs"]));
+        assert!(!is_read_only(&["fsck", "--lost-found"]));
         assert!(!is_read_only(&["lfs", "lock", "a.bin"]));
         assert!(!is_read_only(&["lfs", "unlock", "a.bin"]));
         assert!(!is_read_only(&[

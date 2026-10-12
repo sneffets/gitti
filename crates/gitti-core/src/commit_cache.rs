@@ -301,6 +301,8 @@ mod tests {
                 committer_email: String::new(),
                 commit_time: 0,
                 message: String::new(),
+                raw_author: None,
+                raw_committer: None,
             },
             sig_kind: None,
             files: crate::diff::parse_unified(&text),

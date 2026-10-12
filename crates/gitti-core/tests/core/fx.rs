@@ -48,6 +48,40 @@ pub fn init(dir: &Path) {
     crate::test_config(dir);
 }
 
+/// [`init`] with the refs in files whatever git's default (git 3.0: reftable), for
+/// fixtures that write ref or reflog files (`HEAD`, `logs/…`) by hand.
+pub fn init_files(dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    let mut args = crate::fixture_kit::FILES_REF_FORMAT.to_vec();
+    args.extend(["init", "-q", "-b", "main"]);
+    git(dir, &args);
+    crate::test_config(dir);
+}
+
+/// Whether logged git command `cmd` is the ref snapshot of a reftable repository (git
+/// 3.0's default backend): `gitti_core::reftable` writes it once per ref change, apart
+/// from what an operation runs itself. Counts of an operation's git processes leave it
+/// out, so they hold for either backend.
+pub fn is_ref_snapshot(cmd: &str) -> bool {
+    cmd.starts_with("for-each-ref --include-root-refs ")
+}
+
+/// The git commands `repo` ran since entry `from` of its log, the ref snapshot of a
+/// reftable repository left out ([`is_ref_snapshot`]).
+pub fn ran_since(repo: &gitti_core::Repo, from: usize) -> Vec<String> {
+    commands(repo).split_off(from).into_iter().filter(|c| !is_ref_snapshot(c)).collect()
+}
+
+/// Makes `reftable/tables.list` in git dir `git_dir` (when the repository keeps its refs
+/// in a reftable) look ten seconds old like [`age`]: every ref change rewrites it, and
+/// caches of what refs decide stamp it.
+pub fn age_tables(git_dir: &Path) {
+    let list = git_dir.join("reftable").join("tables.list");
+    if list.exists() {
+        age(&list);
+    }
+}
+
 /// A new, empty bare repository at `dir`, laid out by hand (no git process).
 pub fn bare(dir: &Path) {
     for sub in ["objects", "refs/heads", "refs/tags"] {
@@ -97,9 +131,16 @@ pub fn upstream(repo: &Path, branch: &str, remote: &str) {
 }
 
 /// The commit (or tag object) `refname` points at, read from the files (no git): loose
-/// ref first, then `packed-refs`. `None` while it doesn't exist.
+/// ref first, then `packed-refs`. `None` while it doesn't exist. A reftable repository
+/// (git 3.0's default for `git init`) has no such files: there git answers.
 pub fn ref_id(repo: &Path, refname: &str) -> Option<String> {
     let dir = git_dir(repo);
+    if dir.join("reftable").is_dir() {
+        let git_dir_arg = format!("--git-dir={}", dir.display());
+        let out = run(repo, &[&git_dir_arg, "rev-parse", "-q", "--verify", refname], None);
+        let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        return (out.status.success() && !id.is_empty()).then_some(id);
+    }
     if let Ok(text) = fs::read_to_string(dir.join(refname)) {
         let text = text.trim();
         return match text.strip_prefix("ref: ") {
@@ -268,7 +309,10 @@ impl Import {
     pub fn run(&self, repo: &Path) -> Vec<String> {
         let marks = git_dir(repo).join("gitti-marks");
         let arg = format!("--export-marks={}", marks.display());
-        let out = run(repo, &["fast-import", "--quiet", &arg], Some(&self.s));
+        // Named: git doesn't find a bare repository from its working directory with
+        // `safe.bareRepository=explicit` (git 3.0's default).
+        let git_dir_arg = format!("--git-dir={}", git_dir(repo).display());
+        let out = run(repo, &[&git_dir_arg, "fast-import", "--quiet", &arg], Some(&self.s));
         assert!(
             out.status.success(),
             "fast-import: {}",

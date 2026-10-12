@@ -15,11 +15,15 @@ pub fn empty_repo() -> tempfile::TempDir {
     dir
 }
 
-/// The commit `branch` points at, read from the ref files (no git); empty while it
-/// doesn't exist.
-fn branch_tip(dir: &Path, branch: &str) -> String {
+/// The commit `branch` points at, read from the ref files (no git; git in a repository
+/// with the reftable backend, git 3.0's default); empty while it doesn't exist.
+pub fn branch_tip(dir: &Path, branch: &str) -> String {
     let git_dir = dir.join(".git");
     let refname = format!("refs/heads/{branch}");
+    if git_dir.join("reftable").is_dir() {
+        let out = Command::new("git").args(["rev-parse", "-q", "--verify", &refname]).current_dir(dir).output().unwrap();
+        return String::from_utf8_lossy(&out.stdout).trim().to_string();
+    }
     if let Ok(id) = std::fs::read_to_string(git_dir.join(&refname)) {
         return id.trim().to_string();
     }
@@ -62,7 +66,14 @@ pub fn add_commits(dir: &Path, branch: &str, prefix: &str, file: &str, n: usize)
         .unwrap();
     child.stdin.take().unwrap().write_all(s.as_bytes()).unwrap();
     assert!(child.wait().unwrap().success());
-    let head = std::fs::read_to_string(dir.join(".git/HEAD")).unwrap();
+    let head = if dir.join(".git/reftable").is_dir() {
+        // The HEAD file of a reftable repository (git 3.0's default) only names
+        // `refs/heads/.invalid`.
+        let out = Command::new("git").args(["symbolic-ref", "-q", "HEAD"]).current_dir(dir).output().unwrap();
+        format!("ref: {}", String::from_utf8_lossy(&out.stdout).trim())
+    } else {
+        std::fs::read_to_string(dir.join(".git/HEAD")).unwrap()
+    };
     if head.trim() == format!("ref: refs/heads/{branch}") {
         git(dir, &["reset", "-q", "--hard"]);
     }
@@ -240,6 +251,15 @@ pub fn init(dir: &Path) {
     add_test_config(&dir.join(".git/config"));
 }
 
+/// [`init`] with the refs in files whatever git's default (git 3.0: reftable), for
+/// fixtures that write ref or reflog files by hand: one git process. git before 2.45
+/// has only files and ignores the keys.
+pub fn init_files(dir: &Path) {
+    let files = ["-c", "init.defaultRefFormat=files", "-c", "init.defaultRefStorageFormat=files"];
+    git(dir, &[&files[..], &["init", "-q", "-b", "main"]].concat());
+    add_test_config(&dir.join(".git/config"));
+}
+
 /// Appends the test identity to a repository's `config` file (no git process) — also for
 /// clones such as submodules, which don't get it from their origin.
 pub fn add_test_config(config: &Path) {
@@ -327,6 +347,7 @@ pub fn assert_no_git(blocks: &[Vec<String>], what: &str, out: &str) {
 /// `git rev-parse --verify -q REV` in `dir` ("" when it doesn't exist).
 pub fn rev(dir: &Path, rev: &str) -> String {
     let out = Command::new("git")
+        .args(crate::common::bare_arg(dir))
         .args(["rev-parse", "--verify", "-q", rev])
         .current_dir(dir)
         .output()
@@ -389,9 +410,23 @@ pub fn import(commits: &[Commit]) -> tempfile::TempDir {
 /// [`import`] with `extra` appended to the fast-import stream (e.g. `reset refs/tags/v1`
 /// / `from :2` blocks for more refs).
 pub fn import_with(commits: &[Commit], extra: &str) -> tempfile::TempDir {
+    import_in(commits, extra, false)
+}
+
+/// [`import`] with the refs in files ([`init_files`]), for fixtures that write ref or
+/// reflog files by hand.
+pub fn import_files(commits: &[Commit]) -> tempfile::TempDir {
+    import_in(commits, "", true)
+}
+
+fn import_in(commits: &[Commit], extra: &str, files: bool) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    init(d);
+    if files {
+        init_files(d);
+    } else {
+        init(d);
+    }
     let mut s = String::new();
     for (i, c) in commits.iter().enumerate() {
         let msg = format!("{}\n", c.msg);

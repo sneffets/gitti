@@ -16,7 +16,7 @@
 //! `repo_state=` the operation in progress — `clean`, `merging`, `rebasing`,
 //! `cherrypicking`, `reverting` — and `conflicted=` the number of conflicted files),
 //! `changes` (Search in Changes: query, toggles, scans, hits with why, note), `reflog`
-//! (the reflog view: title, note, selection, shown commit, entries),
+//! (the reflog view: title, note, selection, shown commit, entries, lost commits),
 //! `write:PATH=TEXT` (writes a working-tree file as another program would; `\n` = newline),
 //! `git:ARGS` (a git command run in the work tree as from a terminal next to gitty — e.g.
 //! `git:stash push -q -m x`; arguments split at spaces; it must succeed),
@@ -24,7 +24,8 @@
 //! reads the system clipboard, and copies land there too), `paste:TEXT` (a bracketed paste),
 //! `focus` (terminal focus gained), `cmds` (the git commands run since the previous `cmds`:
 //! a `cmds: N` line, then one `  git …` line each), `items` (the entries of the open picker /
-//! menu: one `item: LABEL` line each; after a typed query the matches, best first), `bar`
+//! menu: one `item: LABEL` line each; after a typed query the matches, best first),
+//! `pick:LABEL` (chooses the open menu's first entry whose label starts with LABEL, as ⏎ does), `bar`
 //! (the status line's context key hints, all pages: `bar: PAGE/PAGES`, then one
 //! `hint: KEY | LABEL` line each, `hint (dim): …` for a greyed entry), `resize:WxH` (the terminal changes size, as on
 //! SIGWINCH), `check` (screen invariants: `check: ok` or `check: N issues` and one `  …`
@@ -168,6 +169,22 @@ fn run_steps(app: &mut App, rx: Receiver<Msg>, script: &str) -> Result<()> {
             }
             "key" => {
                 app.on_event(Event::Key(parse_key(arg)?));
+                settle(app, &rx, &mut term, Duration::from_secs(20))?;
+            }
+            // The open menu's first entry whose label starts with ARG, chosen as by ⏎ —
+            // by name, so a test doesn't break when an entry is added above it.
+            "pick" => {
+                let Some(Modal::Menu { items, cursor, .. }) = &mut app.modal else {
+                    anyhow::bail!("pick:{arg}: no menu open");
+                };
+                let Some(i) = items
+                    .iter()
+                    .position(|it| it.action.is_some() && it.label.starts_with(arg))
+                else {
+                    anyhow::bail!("pick:{arg}: no such entry in the open menu");
+                };
+                *cursor = i;
+                app.on_event(Event::Key(parse_key("enter")?));
                 settle(app, &rx, &mut term, Duration::from_secs(20))?;
             }
             "press" => {

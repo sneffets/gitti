@@ -436,6 +436,7 @@ working tree or the index while the app shows an older state.
 | DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | `wf_staging::dc07_discard_a_group` | `wf_staging::dc07_discard_a_group` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
 | DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file`, ~`staging::working_state_after_whole_files_match_a_full_read` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` |
 | DC-09 | Discard lines of a read-only file | 0444 file (unix) | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | `wf_discard::dc09_discard_lines_of_a_read_only_file` | `wf_discard::dc09_discard_lines_of_a_read_only_file` |
+| DC-10 | Clean untracked and ignored files | Clean Untracked / Ignored Files…; Untracked and Ignored; tick `target/` besides the ticked untracked entries; Delete | exactly the ticked files go (in-process); an ignored file in a ticked new folder, a worktree in the ticked build folder and a nested repository stay; each ignored entry names its rule | `clean::dc10_clean_untracked_and_ignored_files`, `clean::list_names_rules_files_and_nested_repositories` | `wf_discard::dc10_clean_untracked_and_ignored_files` | `wf_discard::dc10_clean_untracked_and_ignored_files` |
 
 ## RL — Undo and recovery
 
@@ -536,7 +537,7 @@ checks these numbers against the rows.
 | WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
-| DC discard | 9 | 9 | 9 | 9 |
+| DC discard | 10 | 10 | 10 | 10 |
 | RL recovery | 4 | 4 | 4 | 4 |
 | IG ignore | 6 | 6 | 6 | 6 |
 | RN renames | 5 | 5 | 5 | 5 |
@@ -560,4 +561,3 @@ at the step; once fixed, the assertion goes in and the entry goes.
 | RB-01, RB-03 (both apps) | Whether a rebase asks first differs: gitti's Rebase Current Branch onto… picker and the commit list's ref menu ask ("Rebase feat onto main? Rewrites the commits of the current branch."), gitti's sidebar branch menu and gitty (palette, branch menus) start it at once. A design choice: ask everywhere — and then say what follows (the commits get new ids; a branch pushed before needs a force push) — or nowhere. | gitti `wf_history::rb03_rebase_from_the_sidebar_stops_then_abort`, gitty `wf_history::rb01_rebase_onto_main_from_the_palette` |
 | FS-03 (gitty, Linux) | Fails on Linux (ext4, temp dirs on tmpfs; passes on macOS, and core / gitti pass on Linux): after staging both halves of a rename that only changes case, `README.md` is `A ` instead of `R ` from `Readme.md`. Cause not investigated yet. | — (the test fails) |
 | FS-04 (gitty, Linux) | Fails on Linux (same set-up; core / gitti pass): after staging the NFD name and discarding the NFC one, the index still has the NFD file's old content and the NFC file keeps its change while the NFD file lost it — staging and discarding seem to hit the other name. Cause not investigated yet. | — (the test fails) |
-| MG-25 (gitty, Linux) | Fails on Linux, a test problem: the set-up dialog's line "Writes to <config file>: diff.tool = fake" wraps between `=` and the value with Linux's shorter temp path, so `contains("diff.tool = fake")` misses it; `merge_tool_set_up_on_the_way` fails the same "what it writes" check. The check should not depend on where the line wraps (or the dialog should keep `key = value` together). | — (the tests fail) |

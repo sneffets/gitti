@@ -6,6 +6,7 @@
 mod allowed_signers;
 mod branches;
 mod change_search;
+mod clean;
 mod commit_box;
 mod commit_encoding;
 mod commit_lines;
@@ -18,6 +19,7 @@ mod faults;
 mod fixture_kit;
 mod fs_paths;
 mod fx;
+mod git_settings;
 mod history_diffs;
 mod hostile_config;
 mod lfs;

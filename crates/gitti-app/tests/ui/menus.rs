@@ -73,6 +73,7 @@ pub fn main() {
         ("repository_statistics", repository_statistics),
         ("repository_statistics_count_all", repository_statistics_count_all),
         ("commit_encoding_dialog", commit_encoding_dialog),
+        ("git_settings_dialog", git_settings_dialog),
         ("unavailable_commands", unavailable_commands),
         ("detached_head_greys_branch_commands", detached_head_greys_branch_commands),
         ("fresh_repository_greys_what_needs_a_commit", fresh_repository_greys_what_needs_a_commit),
@@ -110,7 +111,7 @@ pub fn main() {
         }
         if name == "detached_head_greys_branch_commands" {
             // HEAD on the commit itself, written as git would (no git process).
-            std::fs::write(d.join(".git/HEAD"), format!("{}\n", ids[5])).unwrap();
+            detach_head(&d, &ids[5]);
         }
         if name == "merge_unrelated_histories" {
             // Branch `other`: a root commit of its own.
@@ -128,7 +129,7 @@ pub fn main() {
             std::fs::create_dir_all(origin.join("objects/info")).unwrap();
             std::fs::write(origin.join("objects/info/alternates"), format!("{}\n", d.join(".git/objects").display())).unwrap();
             for (name, id) in [("main", &ids[5]), ("older", &ids[3])] {
-                std::fs::write(origin.join(format!("refs/heads/{name}")), format!("{id}\n")).unwrap();
+                write_ref_at(&origin, &format!("refs/heads/{name}"), id);
                 write_ref(&d, &format!("refs/remotes/origin/{name}"), id);
             }
             append_config(
@@ -180,6 +181,7 @@ fn modal(ui: &mut Ui) -> Option<(String, Vec<String>)> {
 
 fn git_out(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
+        .args(bare_arg(dir))
         .args(args)
         .current_dir(dir)
         .output()
@@ -535,6 +537,44 @@ fn commit_encoding_dialog(ui: &mut Ui) {
         fail!(ui, "statistics lack `{part}`:\n{text}");
     }
     ui.quick("cancel");
+}
+
+/// Git Settings: This Repository…: one field per setting of the shared list
+/// (`gitti_core::git_settings::SETTINGS`, the external tool keys too); a tool typed in
+/// and an emptied value are written to .git/config, the status names the file.
+fn git_settings_dialog(ui: &mut Ui) {
+    use gitti_core::git_settings::SETTINGS;
+    let dir = ui.workdir();
+    let at = |key: &str| SETTINGS.iter().position(|s| s.key == key).unwrap();
+    ui.quick("focuslist");
+    ui.step("action:gitti::RepoGitSettings");
+    let Some((title, fields)) = modal(ui) else {
+        return fail!(ui, "no dialog");
+    };
+    if !title.starts_with("Git settings for this repository") || fields.len() != SETTINGS.len() {
+        fail!(ui, "dialog {title:?} with {} fields", fields.len());
+    }
+    ui.quick(&format!("field:{}=meld", at("diff.tool")));
+    ui.quick(&format!("field:{}=false", at("mergetool.keepBackup")));
+    ui.step("modalok");
+    let config = || std::fs::read_to_string(dir.join(".git/config")).unwrap_or_default();
+    if !ui.wait_real(1500, |ui| ui.is_idle() && config().contains("tool = meld") && config().contains("keepBackup = false")) {
+        fail!(ui, "not written: {}", config());
+    }
+    match status(ui) {
+        Some((s, false)) if s.contains("Saved 2 settings in .git/config") => {}
+        other => fail!(ui, "status {other:?}"),
+    }
+    ui.step("action:gitti::RepoGitSettings");
+    ui.quick(&format!("field:{}=", at("diff.tool")));
+    ui.step("modalok");
+    if !ui.wait_real(1500, |ui| ui.is_idle() && !config().contains("meld")) {
+        fail!(ui, "not removed: {}", config());
+    }
+    match status(ui) {
+        Some((s, false)) if s.contains("Removed diff.tool from .git/config") => {}
+        other => fail!(ui, "status {other:?}"),
+    }
 }
 
 // ------------------------------------------------------------------ lean scenarios
@@ -1857,7 +1897,7 @@ fn diverged_repo(d: &Path) {
     std::fs::create_dir_all(origin.join("objects/info")).unwrap();
     let objects = d.join(".git/objects");
     std::fs::write(origin.join("objects/info/alternates"), format!("{}\n", objects.display())).unwrap();
-    std::fs::write(origin.join("refs/heads/main"), format!("{}\n", ids[theirs])).unwrap();
+    write_ref_at(&origin, "refs/heads/main", &ids[theirs]);
     append_config(
         d,
         &format!(

@@ -134,12 +134,14 @@ fn settle_stamps(repo: &Path) {
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
     let common = repo.join(".git");
     let dir = common.join("worktrees");
-    let mut files = vec![common.join("HEAD"), dir.clone()];
+    // A reftable repository (git 3.0's default): its table lists instead of ref files.
+    let tables = |d: &Path| d.join("reftable").join("tables.list");
+    let mut files = vec![common.join("HEAD"), tables(&common), dir.clone()];
     for meta in std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()) {
         if let Ok(text) = std::fs::read_to_string(meta.join("gitdir")) {
             files.push(PathBuf::from(text.trim()));
         }
-        files.extend([meta.join("HEAD"), meta.join("locked"), meta.join("gitdir")]);
+        files.extend([meta.join("HEAD"), tables(&meta), meta.join("locked"), meta.join("gitdir")]);
     }
     for f in files.iter().filter(|f| f.exists()) {
         let mut o = std::fs::OpenOptions::new();

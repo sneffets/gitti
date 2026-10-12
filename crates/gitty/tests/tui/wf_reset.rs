@@ -118,15 +118,14 @@ fn rs09_move_another_branch_from_its_reflog() {
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     let s = wf::fixture(d);
-    // Sidebar row 1: feat; its menu's ninth entry: Show Reflog…
-    let downs = "press:j;".repeat(8);
+    // Sidebar row 1: feat; its menu's Show Reflog….
     let downs_entry = "key:down;".repeat(wf::F2_ENTRY + 1);
     let out = gitty_with(
         d,
         tempfile::tempdir().unwrap().path(),
         "160x45",
         &format!(
-            "press:backtab;press:g;press:j;press:m;{downs}key:enter;reflog;{downs_entry}reflog;\
+            "press:backtab;press:g;press:j;press:m;pick:Show Reflog;reflog;{downs_entry}reflog;\
              key:enter;key:r;dump;key:enter;state"
         ),
     );

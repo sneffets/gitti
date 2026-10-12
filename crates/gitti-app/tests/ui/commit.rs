@@ -15,7 +15,8 @@
 //! template fills the empty box (no draft), is refused unedited before git runs and loses
 //! its comment lines when committed; Sign Off adds the trailer; ↑ in the empty box brings
 //! back earlier messages (not in the template: the cursor moves), "Recent Commit
-//! Messages…" lists them and asks before replacing typed text.
+//! Messages…" lists them and asks before replacing typed text. Add Co-Author… offers the
+//! repository's other authors and adds the `Co-authored-by` trailer once.
 //!
 //! Own `main` like `layout.rs`: `cargo test --workspace --test ui -- commit[::FILTER]`.
 
@@ -45,6 +46,7 @@ pub fn main() {
         ("continue_with_the_edited_message", continue_with_the_edited_message),
         ("amend_draft_for_its_commit", amend_draft_for_its_commit),
         ("template_sign_off_and_earlier_messages", template_sign_off_and_earlier_messages),
+        ("co_author_picker_adds_the_trailer_once", co_author_picker_adds_the_trailer_once),
     ];
     common::run(tests, |name| {
         let dir = BASE.with(|b| b.borrow().join(name));
@@ -54,6 +56,8 @@ pub fn main() {
             make_pick_repo(&dir)
         } else if name.starts_with("continue") {
             make_conflict_repo(&dir)
+        } else if name.starts_with("co_author") {
+            make_authors_repo(&dir)
         } else {
             make_repo(&dir)
         }
@@ -114,7 +118,9 @@ fn sha256_stage_a_line_and_commit(ui: &mut Ui) {
     if rows != 4 {
         ui.fail(format!("history rows after the commit: {rows}"));
     }
-    ui.step(&format!("select:{}", &head[..12]));
+    // `select:` takes a number as a row: a prefix of digits only grows to its first letter.
+    let len = head.find(|c: char| c.is_ascii_alphabetic()).map_or(head.len(), |i| (i + 1).max(12));
+    ui.step(&format!("select:{}", &head[..len]));
     let selected = ui.ui_state().selected_commit;
     if selected.as_deref() != Some(head.as_str()) {
         ui.fail(format!("select by a 12-digit prefix: {selected:?}, HEAD {head}"));
@@ -406,6 +412,50 @@ fn template_sign_off_and_earlier_messages(ui: &mut Ui) {
     if message(ui) != want {
         let m = message(ui);
         ui.fail(format!("after Replace: {m:?}"));
+    }
+}
+
+/// Commits by Ann (two), Bob and the user (Layout Test, the newest). Two git processes.
+fn make_authors_repo(dir: &std::path::Path) -> PathBuf {
+    init_repo(dir);
+    let mut s = Stream::new();
+    let ann = "Ann <ann@example.com>";
+    let a = s.commit_by("refs/heads/main", ann, "a", None, &[("a.txt", Some("a\n"))]);
+    let b = s.commit_by("refs/heads/main", "Bob <bob@example.com>", "b", Some(a), &[("a.txt", Some("b\n"))]);
+    let c = s.commit_by("refs/heads/main", ann, "c", Some(b), &[("a.txt", Some("c\n"))]);
+    s.commit_by("refs/heads/main", "Layout Test <layout@example.com>", "d", Some(c), &[("a.txt", Some("d\n"))]);
+    let ids = s.import(dir);
+    read_tree(dir, &ids[ids.len() - 1]);
+    dir.to_path_buf()
+}
+
+/// Commit ▸ Add Co-Author…: the other authors, most commits first (not the user); the
+/// chosen one's trailer goes after a blank line, next to Signed-off-by in the trailer
+/// block, and never twice (the palette's entry the same).
+fn co_author_picker_adds_the_trailer_once(ui: &mut Ui) {
+    ui.step("msg:Fix the parser\n\nSigned-off-by: Layout Test <layout@example.com>");
+    let n = ui.n_git();
+    ui.step("action:gitti::AddCoAuthor");
+    ui.no_git_since(n, "listing the co-authors");
+    let labels = ui.ui_state().picker.map(|p| p.labels).unwrap_or_default();
+    if labels != ["Ann <ann@example.com>", "Bob <bob@example.com>"] {
+        ui.fail(format!("Add Co-Author…: {labels:?}"));
+    }
+    ui.step("pick:bob");
+    ui.step("pickok");
+    let want = "Fix the parser\n\nSigned-off-by: Layout Test <layout@example.com>\n\
+                Co-authored-by: Bob <bob@example.com>";
+    if message(ui) != want {
+        let m = message(ui);
+        ui.fail(format!("after choosing Bob: {m:?}"));
+    }
+    ui.step("palette:add co-author");
+    ui.step("pick:bob");
+    ui.step("pickok");
+    let status = ui.status().map(|s| s.0).unwrap_or_default();
+    if message(ui) != want || !status.contains("co-author already") {
+        let m = message(ui);
+        ui.fail(format!("Bob twice: box {m:?}, status {status:?}"));
     }
 }
 

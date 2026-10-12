@@ -103,7 +103,7 @@ impl App {
         spawn(
             &self.tx,
             move || {
-                let started = (Instant::now(), SystemTime::now());
+                let started = gitti_core::watch::read_start();
                 let working = repo.working_state_reread(&opts, &prev, &paths);
                 // A directory stands for the files below it: those are highlighted again.
                 let touched = working

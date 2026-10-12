@@ -54,6 +54,7 @@ fn diverged_from_origin() -> (tempfile::TempDir, tempfile::TempDir, String) {
 fn fast_import(dir: &Path, stream: &str) {
     use std::io::Write as _;
     let mut child = std::process::Command::new("git")
+        .args(common::bare_arg(dir))
         .args(["fast-import", "--quiet"])
         .current_dir(dir)
         .stdin(std::process::Stdio::piped())

@@ -32,7 +32,7 @@ fn setup(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let (work, origin, backup) = (dir.join("work"), dir.join("origin.git"), dir.join("backup.git"));
     fx::bare(&origin);
     fx::bare(&backup);
-    fx::init(&work);
+    fx::init_files(&work); // A test writes HEAD by hand.
     fx::remote(&work, "origin", &origin);
     fx::remote(&work, "backup", &backup);
     let mut i = Import::new();
@@ -217,7 +217,7 @@ fn push_to_several_remotes_with_a_new_name_tags_and_a_failing_one() {
 fn rewritten_after_push(dir: &Path) -> (PathBuf, PathBuf, String) {
     let (work, origin) = (dir.join("work"), dir.join("origin.git"));
     fx::bare(&origin);
-    fx::init(&work);
+    fx::init_files(&work); // The reflogs are written by hand below.
     fx::remote(&work, "origin", &origin);
     fx::upstream(&work, "main", "origin");
     fx::config(&work, "[core]\n\thooksPath = .git/hooks\n");

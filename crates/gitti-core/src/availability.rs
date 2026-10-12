@@ -247,7 +247,8 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             check(!f.diff_file, NO_FILE)
         }
         // Repository.
-        "WriteCommitGraph" | "GoToCommit" | "GoToHead" | "MarkCompare" | "ToggleAmend" => {
+        "WriteCommitGraph" | "GoToCommit" | "GoToHead" | "MarkCompare" | "ToggleCompareMergeBase"
+        | "ToggleAmend" => {
             check(f.unborn, UNBORN)
         }
         "AddWorktree" => check(f.unborn, UNBORN),
