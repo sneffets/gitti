@@ -52,7 +52,7 @@ fn diverged_from(forced: bool) -> Diverged {
         theirs.commit("main", None, &[], "theirs", &[put("t.txt", "theirs\n")]);
     }
     let theirs = theirs.run(&origin).remove(1);
-    fx::init(&work);
+    fx::init_files(&work); // Reflogs, refs and HEAD are written by hand.
     fx::remote(&work, "origin", &origin);
     fx::upstream(&work, "main", "origin");
     base.commit("main", None, &[], "mine", &[put("m.txt", "mine\n")]);

@@ -5,7 +5,7 @@
 use gitti_core::Repo;
 use gitti_core::ops::ResetMode;
 
-use crate::fixture_kit::{History, f, repo_with, rev, sh, write_ref};
+use crate::fixture_kit::{History, f, repo_with, rev, sh};
 
 /// Workflow: RS-04, RL-01
 #[gitti_test::test]
@@ -41,7 +41,8 @@ fn heads_reflog_keeps_the_commit_a_reset_dropped() {
     let main = repo.reflog("main").unwrap();
     assert_eq!((main.refname.as_str(), main.name.as_str()), ("refs/heads/main", "main"));
     assert_eq!(main.entries[0].new, ids[a]);
-    write_ref(&dir, "refs/heads/unlogged", &ids[a].to_string());
+    let id = ids[a].to_string();
+    sh(&dir, &["-c", "core.logAllRefUpdates=false", "update-ref", "refs/heads/unlogged", &id]);
     assert!(repo.reflog("unlogged").unwrap().entries.is_empty());
     assert!(repo.reflog_cli("refs/heads/unlogged").unwrap().is_empty());
 }

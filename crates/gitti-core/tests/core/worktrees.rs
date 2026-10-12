@@ -19,9 +19,18 @@ fn sh(dir: &Path, args: &[&str]) -> String {
 /// `<tmp>/repo` with two commits on `main` (checked out) and a branch `feature` on the
 /// first.
 fn repo() -> (tempfile::TempDir, PathBuf, Repo) {
+    repo_in(false)
+}
+
+/// [`repo`]; `files`: the refs in files whatever git's default (git 3.0: reftable).
+fn repo_in(files: bool) -> (tempfile::TempDir, PathBuf, Repo) {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("repo");
-    fx::init(&p);
+    if files {
+        fx::init_files(&p);
+    } else {
+        fx::init(&p);
+    }
     let mut i = Import::new();
     let one = i.commit("main", None, &[], "one", &[put("a.txt", "a\n")]);
     i.reset("feature", &one);
@@ -181,11 +190,14 @@ fn plan_add_tracks_a_remote_branch() {
 /// waiting two seconds for them to settle.
 fn settle(common: &Path) {
     fx::age(&common.join("HEAD"));
+    // A reftable repository: its table lists instead of ref files.
+    fx::age_tables(common);
     let meta = common.join("worktrees");
     fx::age(&meta);
     for entry in fs::read_dir(&meta).unwrap().flatten() {
         let e = entry.path();
         fx::age(&e.join("HEAD"));
+        fx::age_tables(&e);
         fx::age(&e.join("locked"));
         let gitdir = e.join("gitdir");
         fx::age(Path::new(fs::read_to_string(&gitdir).unwrap().trim()));
@@ -195,7 +207,9 @@ fn settle(common: &Path) {
 
 #[gitti_test::test]
 fn list_is_cached_until_a_worktree_changes() {
-    let (dir, p, repo) = repo();
+    // Files: what the list is kept by. (With the reftable backend every ref change
+    // rewrites the table list it watches too, and a commit reads the list again.)
+    let (dir, p, repo) = repo_in(true);
     let w1 = dir.path().join("w1");
     repo.add_worktree(&w1, &AddMode::Existing("feature".into())).unwrap();
     settle(&p.join(".git"));
@@ -525,8 +539,8 @@ fn tree_folders_for_the_picker() {
     assert_eq!(old[0].1.as_ref().map(Vec::len), Some(0));
     assert!(repo.tree_folders("no-such-rev", &[String::new()]).is_err());
     assert_eq!(
-        repo.command_log().snapshot().len(),
-        before,
+        fx::ran_since(&repo, before),
+        Vec::<String>::new(),
         "the tree is read without git"
     );
 

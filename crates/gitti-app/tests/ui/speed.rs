@@ -776,8 +776,7 @@ fn watcher_rereads_only_what_changed(ui: &mut Ui) {
     expect_state(ui, "new directory", &["U newdir/deep/n.txt 1"], &[]);
     // A branch created in a terminal: refs and history (a whole snapshot).
     let n = ui.n_git();
-    let main = std::fs::read_to_string(path.join(".git/refs/heads/main")).unwrap();
-    std::fs::write(path.join(".git/refs/heads/made-outside"), main).unwrap();
+    write_ref(&path, "refs/heads/made-outside", &read_ref(&path, "refs/heads/main"));
     let seen = ui.wait_real(1500, |ui| {
         ui.is_idle() && ui.git_since(n).iter().any(|c| c.starts_with("status") && !c.contains(" -- "))
     });

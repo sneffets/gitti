@@ -495,7 +495,11 @@ impl Fixture {
             Head::Branch(b) => b.as_str(),
             Head::Detached(_) => "main",
         };
-        let mut init = vec!["init", "-q", "-b", initial];
+        // Files, not reftable (git 3.0's default): HEAD, the stash's reflog and the
+        // reflogs of `rs::write_reflog` are written here by hand, and `Expect` reads refs
+        // from the files.
+        let mut init = git::FILES_REF_FORMAT.to_vec();
+        init.extend(["init", "-q", "-b", initial]);
         if self.sha256 {
             init.push("--object-format=sha256");
         }

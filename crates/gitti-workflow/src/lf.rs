@@ -23,6 +23,27 @@ pub const NO_FILTER: &str = "[filter \"lfs\"]\n\tclean =\n\tsmudge =\n\tprocess 
 pub const LFS_FILTERS: &str = "[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\
                                 \tprocess = git-lfs filter-process\n\trequired = true\n";
 
+/// The user's global git config for the drivers that clone or push with git-lfs: its
+/// filters ([`LFS_FILTERS`]) and `safe.bareRepository = all` — git-lfs serves a local
+/// remote by running git inside that bare repository, which git 3.0 refuses by default
+/// (`explicit`). Written into `dir` (`global.gitconfig`, and `home/.gitconfig`: git-lfs
+/// runs that git without the `GIT_*` variables, so there `HOME`'s config counts); the
+/// environment that makes it the user's: `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`,
+/// `HOME`.
+pub fn global_env(dir: &Path) -> Vec<(String, String)> {
+    let text = format!("{LFS_FILTERS}[safe]\n\tbareRepository = all\n");
+    let global = dir.join("global.gitconfig");
+    let home = dir.join("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(&global, &text).unwrap();
+    fs::write(home.join(".gitconfig"), &text).unwrap();
+    vec![
+        ("GIT_CONFIG_GLOBAL".into(), global.display().to_string()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        ("HOME".into(), home.display().to_string()),
+    ]
+}
+
 /// An LFS file's content and its SHA-256 (hex).
 #[derive(Clone, Copy, Debug)]
 pub struct Content {

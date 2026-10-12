@@ -26,8 +26,8 @@ fn stash_branch_checks_out_a_branch_with_the_stash() {
     let repo = Repo::open(work).unwrap();
     repo.stash_branch("from-stash", repo.stashes().unwrap()[0].target()).unwrap();
     assert_eq!(
-        fs::read_to_string(work.join(".git/HEAD")).unwrap().trim(),
-        "ref: refs/heads/from-stash"
+        fx::git(work, &["symbolic-ref", "HEAD"]),
+        "refs/heads/from-stash"
     );
     assert_eq!(fx::head(work), Some(ids[0].clone()));
     assert_eq!(fs::read_to_string(work.join("a.txt")).unwrap(), "changed\n");

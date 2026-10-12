@@ -336,8 +336,7 @@ fn reword_the_root_commit_and_not_pushed_ones() {
 
     // Pushed (a remote-tracking branch contains it): refused.
     let head = crate::fixture_kit::oid(&log[..40]);
-    fs::create_dir_all(p.join(".git/refs/remotes/origin")).unwrap();
-    fs::write(p.join(".git/refs/remotes/origin/main"), format!("{head}\n")).unwrap();
+    sh(&p, &["update-ref", "refs/remotes/origin/main", &head.to_string()]);
     let why = repo.reword_blocker(head).unwrap().unwrap();
     assert!(why.contains("pushed"), "{why}");
     assert!(repo.reword(head, "nope").is_err());

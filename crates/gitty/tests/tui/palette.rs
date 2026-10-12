@@ -360,11 +360,8 @@ fn palette_and_menu_grey_what_cannot_act_with_the_reason() {
 fn palette_greys_branch_commands_on_a_detached_head() {
     let dir = fixture(&[("a.txt", "a\n")], &[]);
     let d = dir.path();
-    // HEAD on the commit itself, written as git would (no git process).
-    let head = std::fs::read_to_string(d.join(".git/HEAD")).unwrap();
-    let branch = head.trim().strip_prefix("ref: ").unwrap().to_string();
-    let id = std::fs::read_to_string(d.join(".git").join(branch)).unwrap();
-    std::fs::write(d.join(".git/HEAD"), id).unwrap();
+    // HEAD on the commit itself.
+    git(d, &["checkout", "-q", "--detach"]);
     let out = gitty(d, "press:ctrl-p;items");
     let off = offs(&out);
     for want in [

@@ -150,6 +150,8 @@ fn stamp_caches_keep_no_failed_read() {
     append_config(&p, "[remote \"o\"]\n\turl = https://example.com/o.git\n");
     // Older than the "racily clean" window, so a good read is kept.
     crate::fx::age(&p.join(".git").join("config"));
+    // The stash list of a reftable repository stamps its table list.
+    crate::fx::age_tables(&p.join(".git"));
     let r = Repo::open(&p).unwrap();
     for fault in [Fault::Kill, Fault::PipesCut, Fault::SpawnFails, Fault::SilentExit(1)] {
         let _f = inject(&p, "*", fault, usize::MAX);

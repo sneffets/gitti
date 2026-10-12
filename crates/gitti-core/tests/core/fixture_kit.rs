@@ -54,10 +54,30 @@ pub fn rev(dir: &Path, rev: &str) -> ObjectId {
     oid(&sh(dir, &["rev-parse", rev]))
 }
 
-/// `git init` (branch `main`) + the test config: one git process.
+/// `git init` (branch `main`) + the test config: one git process. The ref backend is
+/// git's default (reftable from git 3.0 on).
 pub fn init(dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     sh(dir, &["init", "-q", "-b", "main"]);
+    crate::test_config(dir);
+}
+
+/// Config to put before `init` / `clone` so the new repository keeps its refs in files
+/// (loose refs, `packed-refs`, `logs/`) whatever git's default is — git 3.0 makes new
+/// repositories with the reftable backend. For fixtures that write ref files by hand
+/// ([`write_ref`], [`write_git_dir`] over an initialised git dir). git before 2.45 has
+/// only the files backend and ignores the keys (`init.defaultRefFormat` is the older
+/// spelling of `init.defaultRefStorageFormat`).
+pub const FILES_REF_FORMAT: [&str; 4] =
+    ["-c", "init.defaultRefFormat=files", "-c", "init.defaultRefStorageFormat=files"];
+
+/// [`init`] with the refs in files ([`FILES_REF_FORMAT`]), for fixtures that write ref
+/// files themselves: one git process.
+pub fn init_files(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    let mut args = FILES_REF_FORMAT.to_vec();
+    args.extend(["init", "-q", "-b", "main"]);
+    sh(dir, &args);
     crate::test_config(dir);
 }
 
@@ -319,7 +339,23 @@ pub fn write_objects(dir: &Path, kind: &str, bodies: &[Vec<u8>]) -> Vec<ObjectId
     ids
 }
 
-/// Points `refname` at `target` by writing the loose ref file.
+/// Points each ref at its id through one `git update-ref --stdin`: works with either
+/// ref backend (files, or git 3.0's reftable).
+pub fn update_refs(dir: &Path, refs: &[(&str, String)]) {
+    let input: String = refs.iter().map(|(name, id)| format!("update {name} {id}\n")).collect();
+    let mut child = git(dir, &["update-ref", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "update-ref: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// Points `refname` at `target` by writing the loose ref file (a repository with its refs
+/// in files: [`init_files`]).
 pub fn write_ref(dir: &Path, refname: &str, target: &str) {
     let path = dir.join(".git").join(refname);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
