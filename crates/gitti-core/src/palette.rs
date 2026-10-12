@@ -190,6 +190,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("ExportSnapshot", crate::patch_files::SNAPSHOT_LABEL),
     both("RevertMarked", "Revert Marked Commits…"),
     both("EditCommitMessage", "Edit Commit Message…"),
+    both("AddCoAuthor", crate::co_author::LABEL),
     both("ShowContaining", "Branches and Tags Containing Selected Commit…"),
     both("RestoreFromCommit", "Restore File or Folder from Selected Commit…"),
     // The shown commit's / stash's selected lines (`commit_lines`).
@@ -234,6 +235,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     gitti("GoToRef", "gitty: b switches, the sidebar lists them"),
     both("GoToHead", "Go to HEAD"),
     both("ShowReflog", "Reflog (Recover Lost Commits)…"),
+    both("FindLostCommits", crate::reflog::FIND_LOST_LABEL),
     // The file list (`t`): gitti's file tabs ▾ (or under the command bar without
     // tabs), gitty's file picker.
     both("FileList", "Go to File…"),
