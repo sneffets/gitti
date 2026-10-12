@@ -30,6 +30,14 @@ fn run_in(dir: &Path, config: &Path, env: &[(&str, &str)], script: &str) -> Stri
     gitty_env(dir, config, "120x50", &all, script)
 }
 
+/// What the dialogs of `out`'s dumps say, wherever their lines wrap: each dump's dialog
+/// rows joined, runs of whitespace (also the no-break spaces that keep `key = value`
+/// together) as one space. Dumps separated by a blank line.
+fn dialog_text(out: &str) -> String {
+    let joined = |screen: &str| crate::common::box_rows(screen).join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
+    crate::common::screens(out).into_iter().map(joined).collect::<Vec<_>>().join("\n\n")
+}
+
 /// A fake `--tool-help` folder in `dir` (git's own takes seconds): meld installed,
 /// vimdiff in a terminal, kdiff3 missing.
 fn tool_help(dir: &Path) -> std::path::PathBuf {
@@ -164,7 +172,7 @@ fn set_up_dialog_then_the_diff_tool_runs() {
     assert!(screens.contains(gitti_core::tool_setup::DIALOG_TITLE), "{out}");
     assert!(screens.contains("No external diff tool is set up yet"), "{out}");
     assert!(screens.contains("Choose a diff tool"), "OK waits for a tool: {out}");
-    assert!(screens.contains("diff.tool = fake"), "what it writes: {out}");
+    assert!(dialog_text(&out).contains("global.gitconfig: diff.tool = fake."), "what it writes: {out}");
     assert_eq!(std::fs::read_to_string(&log).unwrap_or_default(), "old | new\n", "{out}");
     let state = states(&out).last().copied().unwrap_or_default();
     assert!(state.contains("Diff tool fake closed: a.txt. Wrote diff.tool = fake"), "{state}");
@@ -188,7 +196,7 @@ fn choose_external_tool_from_the_palette() {
         "press:ctrl-p;type:Choose External;key:enter;dump;press:tab;press:tab;press:tab;press:space;dump;key:enter;state;cmds",
     );
     assert!(out.contains("Nothing to change"), "{out}");
-    assert!(out.contains("mergetool.keepBackup = false"), "{out}");
+    assert!(dialog_text(&out).contains("mergetool.keepBackup = false"), "{out}");
     let local = std::fs::read_to_string(dir.path().join(".git/config")).unwrap();
     assert!(local.contains("keepBackup = false"), "{local}");
     let ran = cmds(&out).concat();
@@ -261,7 +269,7 @@ fn merge_tool_set_up_on_the_way() {
     let screens = out.split("focus=").next().unwrap_or_default();
     assert!(screens.contains(gitti_core::tool_setup::DIALOG_TITLE), "{out}");
     assert!(screens.contains("Choose a merge tool"), "OK waits for a tool: {out}");
-    assert!(screens.contains("merge.tool = fake"), "what it writes: {out}");
+    assert!(dialog_text(&out).contains("global.gitconfig: merge.tool = fake."), "what it writes: {out}");
     let state = states(&out).last().copied().unwrap_or_default();
     assert!(state.contains("fake resolved a.txt: git staged it"), "{state}");
     assert!(state.contains("Wrote merge.tool = fake"), "{state}");

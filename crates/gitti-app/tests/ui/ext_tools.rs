@@ -192,7 +192,8 @@ fn diff_tool(ui: &mut Ui) {
 fn live(ui: &mut Ui) -> (String, Option<String>, Vec<String>) {
     let ws = ui.ws.clone();
     let l = ui.cx.update(|cx| menus::modal_live(&ws, cx)).unwrap_or_default();
-    (l.0, l.2, l.3)
+    // `key = value` is glued with no-break spaces (it wraps as one word).
+    (l.0.replace('\u{a0}', " "), l.2, l.3)
 }
 
 /// Waits for the set-up dialog; fails without it.
