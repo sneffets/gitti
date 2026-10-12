@@ -77,7 +77,44 @@ impl App {
                 |app: &mut App| app.stash_selection(),
             ),
             PickItem::new("Rename Stash…", "", |app: &mut App| app.rename_stash_picker()),
+            PickItem::new("Drop Latest Stash…", "stash@{0}; asks first", |app: &mut App| {
+                match app.stashes.iter().find(|s| s.index == 0).map(|s| s.target()) {
+                    Some(stash) => app.drop_stash_confirm(stash),
+                    None => app.set_info("No stashes"),
+                }
+            }),
+            PickItem::new("Drop Stash…", "pick one; asks first", |app: &mut App| app.drop_stash_picker()),
         ]
+    }
+
+    /// "Drop stash@{n}? This cannot be undone." — as the stash's menu (Drop…), then
+    /// `git stash drop` of that stash (found by its commit when the list moved).
+    pub fn drop_stash_confirm(&mut self, stash: gitti_core::ops::StashRef) {
+        let n = stash.index;
+        self.modal = Some(Modal::confirm(
+            "Drop Stash",
+            format!("Drop stash@{{{n}}}? This cannot be undone."),
+            "Drop",
+            move |app| app.run_op("Drop stash", true, After::Nothing, move |r| r.stash_drop(stash)),
+        ));
+    }
+
+    /// "Drop Stash…": picks the stash, then [`Self::drop_stash_confirm`].
+    pub fn drop_stash_picker(&mut self) {
+        let items: Vec<PickItem> = self
+            .stashes
+            .iter()
+            .map(|s| {
+                let stash = s.target();
+                PickItem::new(s.message.clone(), s.name.clone(), move |app: &mut App| {
+                    app.drop_stash_confirm(stash)
+                })
+            })
+            .collect();
+        if items.is_empty() {
+            return self.set_info("No stashes");
+        }
+        self.modal = Some(Modal::picker("Drop Stash", items));
     }
 
     /// The stash dialog for `paths` (all changes when empty): message, the four check

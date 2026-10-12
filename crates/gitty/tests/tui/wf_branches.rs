@@ -271,3 +271,41 @@ fn br18_leaving_a_detached_commit_warns() {
     no_error(st[0], &out);
     wf::expect_left(&d, &s).unwrap();
 }
+
+/// BR-21: the sidebar (BRANCHES: behind, diverged, elsewhere, main, topic): diverged's
+/// menu greys "Fast-Forward diverged to origin/diverged" with why; behind's `f` moves it;
+/// then Fast-Forward All Branches from the palette moves nothing more and its report
+/// names each branch's reason.
+/// Workflow: BR-21
+#[gitti_test::test]
+fn br21_fast_forward_branches() {
+    use br::fast_forward as wf;
+    let (_tmp, d) = repo_dir();
+    let s = wf::fixture(&d);
+    let out = run(
+        &d,
+        "press:backtab;press:g;press:j;press:j;press:m;items;press:esc;press:k;press:m;key:f;state;\
+         press:ctrl-p;type:fast-forward all;key:enter;state;dump",
+    );
+    let greyed = format!("Fast-Forward diverged to origin/diverged ({})", wf::DIVERGED_MENU_WHY);
+    assert!(items(&out).contains(&greyed.as_str()), "{out}");
+    let st = states(&out);
+    no_error(st[0], &out);
+    assert!(
+        status_of(st[0]).starts_with(&format!("Fast-forwarded behind: moved {} → {}", &s.init[..7], &s.up[..7])),
+        "{out}"
+    );
+    no_error(st[1], &out);
+    assert!(status_of(st[1]).contains("No branch fast-forwarded"), "{out}");
+    let report = screens(&out)[0];
+    for want in [
+        format!("behind: not moved — {}", wf::BEHIND_WHY),
+        format!("diverged: not moved — {}", wf::DIVERGED_WHY),
+        format!("main: not moved — {}", wf::MAIN_WHY),
+        format!("topic: not moved — {}", wf::TOPIC_WHY),
+        "elsewhere: not moved — checked out in the worktree".to_string(),
+    ] {
+        assert!(report.contains(&want), "{want}: {out}");
+    }
+    wf::expect(&d, &s).unwrap();
+}

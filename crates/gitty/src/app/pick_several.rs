@@ -5,7 +5,9 @@
 //! Commits…; the palette has Cherry-pick / Revert Marked Commits…. The dialog says the
 //! order (oldest first / newest first), lists the commits and what to do on a stop; one
 //! git sequence runs them (`gitti_core::pick_several`), its stops go on with Continue /
-//! Skip / Abort as any cherry-pick / revert.
+//! Skip / Abort as any cherry-pick / revert. The palette also has the selected commit's
+//! Revert / Cherry-pick / Edit Commit Message… (as gitti's Commit menu; the commit menu
+//! has them too).
 
 use gitti_core::commit_marks::{self, CLEAR_LABEL, MARK_LABEL, UNMARK_LABEL};
 use gitti_core::pick_several::{self, RECORD_ORIGIN_LABEL, SeveralKind};
@@ -103,6 +105,41 @@ impl App {
         items
     }
 
+    /// "Revert Selected Commit" (palette): as the commit menu's Revert.
+    pub fn revert_selected(&mut self) {
+        let Some((sha, merge)) = self.selected_commit_rev() else {
+            return;
+        };
+        self.run_op("Revert", true, After::Nothing, move |r| r.revert(&sha, merge))
+    }
+
+    /// "Cherry-pick Selected Commit" (palette): as the commit menu's Cherry-pick; not HEAD.
+    pub fn cherry_pick_selected(&mut self) {
+        let head = self.head.id.map(|h| h.to_string());
+        let Some((sha, merge)) = self.selected_commit_rev() else {
+            return;
+        };
+        if head.as_deref() == Some(sha.as_str()) {
+            return self.set_info("The selected commit is HEAD — nothing to cherry-pick");
+        }
+        self.run_op("Cherry-pick", true, After::Nothing, move |r| r.cherry_pick(&sha, merge))
+    }
+
+    /// "Edit Commit Message…" (palette) of the selected commit.
+    pub fn edit_selected_message(&mut self) {
+        if let Some((sha, _)) = self.selected_commit_rev() {
+            self.edit_commit_message(&sha)
+        }
+    }
+
+    /// The selected commit's id and whether it is a merge — or why there is none
+    /// (status line).
+    fn selected_commit_rev(&mut self) -> Option<(String, bool)> {
+        let id = self.selected_commit_id()?;
+        let merge = self.history.commits.get(self.selected).is_some_and(|c| c.parents.len() > 1);
+        Some((id.to_string(), merge))
+    }
+
     /// Palette entries of this module (greyed by `mark_unavailable` with the reason).
     pub(super) fn pick_several_palette_items(&self) -> Vec<PickItem> {
         let detail = match self.commit_marks.len() {
@@ -116,6 +153,15 @@ impl App {
             }),
             PickItem::new(SeveralKind::Revert.menu_label(), format!("{detail}, newest first"), |app: &mut App| {
                 app.several_dialog(SeveralKind::Revert)
+            }),
+            PickItem::new("Revert Selected Commit", "a new commit undoing its changes", |app: &mut App| {
+                app.revert_selected()
+            }),
+            PickItem::new("Cherry-pick Selected Commit", "its changes as a new commit on HEAD", |app: &mut App| {
+                app.cherry_pick_selected()
+            }),
+            PickItem::new("Edit Commit Message…", "of the selected commit", |app: &mut App| {
+                app.edit_selected_message()
             }),
         ]
     }

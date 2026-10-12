@@ -1417,6 +1417,8 @@ actions!(
         EditRepoConfig,
         EditGlobalConfig,
         WriteCommitGraph,
+        FetchFullHistory,
+        FetchMoreHistory,
         RepositoryStatistics,
         CreateBranch,
         CreateTag,
@@ -1492,6 +1494,10 @@ actions!(gitti, [ToggleSignOff, RecentMessages, MessageHistoryPrev, MessageHisto
 // handlers in `app/from_commit.rs`.
 actions!(gitti, [ShowContaining, RestoreFromCommit]);
 
+// Commit ▸ Revert / Apply Selected Lines in / to Working Tree; handlers in
+// `app/commit_lines.rs`.
+actions!(gitti, [RevertLinesInWorkingTree, ApplyLinesToWorkingTree]);
+
 // Stash ▸ Stash Selected Lines or File… / Rename Stash…; handlers in `app/stash_ui.rs`.
 actions!(gitti, [StashSelection, RenameStash]);
 
@@ -1499,7 +1505,7 @@ actions!(gitti, [StashSelection, RenameStash]);
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
 // View ▸ Sort (Remote) Branches by …, Branch ▸ Delete Branches… / Clean Up Merged
-// Branches…; handlers in `app/branch_list.rs`.
+// Branches… / Fast-Forward All Branches; handlers in `app/branch_list.rs`.
 actions!(
     gitti,
     [
@@ -1510,6 +1516,7 @@ actions!(
         SortRemoteBranchesByDate,
         DeleteBranches,
         CleanUpMergedBranches,
+        FastForwardAllBranches,
     ]
 );
 // View ▸ Show Changes as Tree; handler in `app/file_marks.rs`.
@@ -1787,6 +1794,9 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Run Custom Command…", RunCustomCommand),
                 MenuItem::action("Custom Commands…", CustomCommands),
                 MenuItem::action("Write Commit-Graph", WriteCommitGraph),
+                MenuItem::separator(),
+                MenuItem::action(gitti_core::shallow::FULL_LABEL, FetchFullHistory),
+                MenuItem::action(gitti_core::shallow::MORE_LABEL, FetchMoreHistory),
             ],
         ),
         menu(
@@ -1802,6 +1812,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Delete Branch…", DeleteBranchMenu),
                 MenuItem::action("Delete Branches…", DeleteBranches),
                 MenuItem::action("Clean Up Merged Branches…", CleanUpMergedBranches),
+                MenuItem::action(gitti_core::branch_update::ALL_LABEL, FastForwardAllBranches),
             ],
         ),
         menu(
@@ -1832,6 +1843,8 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Open This Version in Editor (read-only)", OpenThisVersion),
                 MenuItem::action("Open Old Version in Editor (read-only)", OpenOldVersion),
                 MenuItem::action(gitti_core::restore::MENU_LABEL, RestoreFromCommit),
+                MenuItem::action(gitti_core::commit_lines::REVERT_SELECTION_LABEL, RevertLinesInWorkingTree),
+                MenuItem::action(gitti_core::commit_lines::APPLY_SELECTION_LABEL, ApplyLinesToWorkingTree),
                 MenuItem::action(gitti_core::containing::SELECTED_LABEL, ShowContaining),
                 MenuItem::separator(),
                 MenuItem::action("Mark for Comparison", MarkCompare),

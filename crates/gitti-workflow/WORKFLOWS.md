@@ -246,6 +246,7 @@ working tree or the index while the app shows an older state.
 | BR-18 | Leave a detached HEAD with work on it | detached at a commit no branch has; switch to `main` | switched; the status line names the commit left on no branch and how to keep it (reflog → Create Branch Here…); HEAD's reflog has it | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` |
 | BR-19 | Clean up branches | Clean Up Merged Branches…; Delete Branches… with Force | merged branch deleted, unmerged one only with its Force box | `wf_branches::br19_clean_up_merged_then_delete_with_force` | `branches::clean_up_and_delete` | `branches::clean_up_merged_deletes_the_merged_branch`, `branches::delete_branches_needs_force_for_an_unmerged_one` |
 | BR-20 | Delete the selected branch | sidebar cursor on a branch, its tip selected; delete it (merged), then an unmerged one (Force) | merged: its tip stays selected (only the badge goes); unmerged: the selection goes along the first parents to the nearest commit still there, its diff shown; the sidebar cursor on the next branch, else the previous | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` |
+| BR-21 | Fast-forward branches without checking them out | a branch's Fast-Forward … to its upstream; Fast-Forward All Branches | the branch only behind moves to its upstream, no file changes; diverged (named "N ahead, M behind — merge or rebase"), checked out here or in another worktree (named), no upstream: refused, untouched; the all-branches report says each one's reason | `wf_branches::br21_fast_forward_a_branch_and_the_refusals`, `wf_branches::br21_fast_forward_all_branches_reports_each` | `wf_branches::br21_fast_forward_branches` | `wf_branches::br21_fast_forward_branches` |
 
 ## MG — Merge
 
@@ -313,6 +314,7 @@ working tree or the index while the app shows an older state.
 | RV-05 | Revert the revert | revert `A`, then revert that | `A`'s change back | `wf_pick::rv05_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` |
 | RV-06 | Revert a change already undone | revert gives nothing | alone: nothing changed, said in plain words (git leaves no state); in a sequence: stops, Skip / Commit Empty / Abort offered — never stuck | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` |
 | RV-07 | Revert several selected commits | mark three commits; Revert Marked Commits… | the dialog says newest first; reverted newest first in one sequence | `wf_pick::rv07_revert_several_marked_commits_newest_first` | `wf_pick::rv07_revert_three_marked_commits` | `wf_pick::rv07_revert_three_marked_commits` |
+| RV-08 | Revert some lines of an older commit in the working tree | show the commit; select the `-` / `+` pair of one line of a replaced block; Revert These Lines in Working Tree | that line back in its place in the working tree only (unstaged, said so); HEAD and the index unchanged | `wf_pick::rv08_revert_lines_of_an_older_commit_in_the_working_tree` | `wf_pick::rv08_revert_lines_in_the_working_tree` | `wf_pick::rv08_revert_lines_in_the_working_tree` |
 
 ## RB — Rebase
 
@@ -377,6 +379,7 @@ working tree or the index while the app shows an older state.
 | RM-16 | Failed pull's warning | a pull fails; next operation | warning stays until the next user operation | n/a | `toolbar::error_mark`, `toolbar::warnings_go_with_every_remote_op`, `toolbar::a_fetch_waits_for_the_pull`, `keys::warnings_clear` | `remote::error_mark_until_the_next_operation` |
 | RM-17 | Clone from a local bare repository | Clone… | opened; branch of the source; refused into a non-empty folder | `repo_setup::clone_from_local_bare_repo` | `menus::clone_and_init` | `repo_cmds::clone_from_the_palette` |
 | RM-18 | Unpushed / gone upstream marks | commits not pushed; upstream deleted | marks say so | `tab_marks::commits_not_pushed_with_and_without_an_upstream`, `tab_marks::a_local_upstream_compares_with_that_branch` | `layout::repo_tab_marks_follow` | `views::repo_marks_after_the_name` |
+| RM-19 | Shallow / single-branch / partial clone; fetch more history | Clone… with "newest N commits", one branch, contents on demand; Fetch More History… N; Fetch Full History | N commits of one branch (a local path too), contents fetched when needed, the dialog says what follows; deeper by N; complete — the commands greyed again | `shallow::shallow_clone_then_more_and_full_history`, `shallow::single_branch_partial_clone` | `menus::shallow_clone_and_history` | `repo_cmds::clone_shallow_single_branch`, `repo_cmds::fetch_more_and_full_history` |
 
 ## WT — Worktrees
 
@@ -516,14 +519,14 @@ layer (partial `~` and `n/a` don't count as covered).
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
 | SH stash | 22 | 21 | 20 | 21 |
-| BR branches | 20 | 20 | 20 | 19 |
+| BR branches | 21 | 21 | 21 | 20 |
 | MG merge | 27 | 27 | 26 | 27 |
 | CP cherry-pick | 18 | 18 | 18 | 18 |
-| RV revert | 7 | 7 | 7 | 7 |
+| RV revert | 8 | 8 | 8 | 8 |
 | RB rebase | 9 | 9 | 9 | 9 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
-| RM remotes | 18 | 17 | 16 | 18 |
+| RM remotes | 19 | 18 | 17 | 19 |
 | WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
@@ -535,7 +538,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **274** | **264** | **254** | **255** |
+| **Total** | **277** | **267** | **257** | **258** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
