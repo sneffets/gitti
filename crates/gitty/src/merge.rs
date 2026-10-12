@@ -674,7 +674,8 @@ Merge editor — ours | theirs on top, the result below
   n / N         next / previous conflict
   ] / [         next / previous changed chunk
   1 / 2         take ours / theirs for the current chunk
-  3 / 4         take ours then theirs / theirs then ours
+  3 / 4         take both changes, ours / theirs first where both add lines at the
+                same place (both changed the same lines: one whole side, then the other)
   0             take the base (neither change)
   r             put back git's version (conflict markers)
   u / U ctrl-r  undo / redo
@@ -690,7 +691,7 @@ Merge editor — ours | theirs on top, the result below
 
 /// Background of a side's line in a chunk (as in gitti): taken teal, dropped red,
 /// unresolved yellow, edited by hand purple.
-fn side_bg(m: &MergeView, chunk: usize, ours: bool, p: &Palette) -> Option<Color> {
+fn side_bg(m: &MergeView, chunk: usize, ours: bool, i: usize, p: &Palette) -> Option<Color> {
     let c = &m.session.doc.chunks[chunk];
     let changed = match c.kind {
         ChunkKind::Stable => return None,
@@ -711,7 +712,10 @@ fn side_bg(m: &MergeView, chunk: usize, ours: bool, p: &Palette) -> Option<Color
         ChunkState::Taken(Resolution::Base) => false,
         ChunkState::Taken(Resolution::Ours) => ours,
         ChunkState::Taken(Resolution::Theirs) => !ours,
-        ChunkState::Taken(Resolution::OursThenTheirs | Resolution::TheirsThenOurs) => true,
+        // Both changes: a base line the other side changed is left out.
+        ChunkState::Taken(r @ (Resolution::OursThenTheirs | Resolution::TheirsThenOurs)) => {
+            m.session.side_line_kept(chunk, r, ours, i)
+        }
     };
     Some(if taken {
         p.bg_added
@@ -731,8 +735,9 @@ fn state_label(m: &MergeView, chunk: usize) -> String {
         }
         ChunkState::Taken(Resolution::Ours) => format!("ours ({ours})"),
         ChunkState::Taken(Resolution::Theirs) => format!("theirs ({theirs})"),
-        ChunkState::Taken(Resolution::OursThenTheirs) => "ours, then theirs".into(),
-        ChunkState::Taken(Resolution::TheirsThenOurs) => "theirs, then ours".into(),
+        ChunkState::Taken(r @ (Resolution::OursThenTheirs | Resolution::TheirsThenOurs)) => {
+            m.session.both_description(chunk, r).into()
+        }
         ChunkState::Taken(Resolution::Base) => "base (neither change)".into(),
     }
 }
@@ -978,7 +983,7 @@ fn draw_sides(buf: &mut Buffer, area: Rect, m: &mut MergeView, p: &Palette) {
                         buf.set_style(row, Style::new().bg(p.bg_gutter));
                         continue;
                     };
-                    let bg = side_bg(m, chunk, ours, p);
+                    let bg = side_bg(m, chunk, ours, i, p);
                     if let Some(bg) = bg {
                         buf.set_style(row, Style::new().bg(bg));
                     }

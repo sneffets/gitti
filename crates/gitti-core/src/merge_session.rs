@@ -9,6 +9,7 @@
 //! (another editor) are taken in like an edit of our own, never overwritten
 //! ([`MergeSession::disk_change`]).
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use anyhow::Result;
 use crate::Repo;
 use crate::diff::encoding::{decode_exact, encode_exact};
 use crate::merge::{
-    ChunkKind, MergeDoc, Resolution, has_conflict_markers_sized, is_marker_line_sized,
+    ChunkKind, Combined, MergeDoc, Resolution, has_conflict_markers_sized, is_marker_line_sized,
     marker_kind, remap_regions,
 };
 use crate::ops::ConflictSides;
@@ -73,6 +74,9 @@ pub struct MergeSession {
     /// endings when `crlf`).
     text: String,
     regions: Vec<Range<usize>>,
+    /// Per changed chunk both sides' changes taken together ([`crate::merge::Chunk::combine`]),
+    /// ours first and theirs first; `None` for a stable chunk.
+    both: Vec<Option<[Combined; 2]>>,
     states: Vec<ChunkState>,
     /// Runs of result lines (in changed chunks) by origin.
     runs: Vec<(Range<usize>, Origin)>,
@@ -211,6 +215,11 @@ impl MergeSession {
                 }
             }
         }
+        let both = doc
+            .chunks
+            .iter()
+            .map(|c| (c.kind != ChunkKind::Stable).then(|| [c.combine(true), c.combine(false)]))
+            .collect();
         let (generated, generated_regions) =
             doc.result_with_regions(&[], (&sides.ours, &sides.theirs));
         let disk_lf = disk_text.map(|t| if crlf { to_lf(&t) } else { t });
@@ -248,6 +257,7 @@ impl MergeSession {
             line_start,
             text,
             regions,
+            both,
             states: Vec::new(),
             runs: Vec::new(),
             on_disk,
@@ -274,6 +284,81 @@ impl MergeSession {
 
     pub fn state(&self, chunk: usize) -> ChunkState {
         self.states[chunk]
+    }
+
+    /// Both sides' changes to `chunk` for [`Resolution::OursThenTheirs`] /
+    /// [`Resolution::TheirsThenOurs`]; `None` for another resolution or a stable chunk.
+    pub fn combined(&self, chunk: usize, r: Resolution) -> Option<&Combined> {
+        let both = self.both.get(chunk)?.as_ref()?;
+        match r {
+            Resolution::OursThenTheirs => Some(&both[0]),
+            Resolution::TheirsThenOurs => Some(&both[1]),
+            _ => None,
+        }
+    }
+
+    /// `chunk`'s text in the result for resolution `r`.
+    pub fn resolution_text(&self, chunk: usize, r: Resolution) -> Cow<'_, str> {
+        match self.combined(chunk, r) {
+            Some(both) => Cow::Borrowed(both.text.as_str()),
+            None => {
+                let c = &self.doc.chunks[chunk];
+                // A stable chunk: both sides' (no) changes are the base.
+                Cow::Owned(c.text(if r.is_both() { Resolution::Base } else { r }))
+            }
+        }
+    }
+
+    /// Whether `chunk`'s text is what resolution `r` gives — also when its state names
+    /// another both-sides resolution with the same text (the two orders only differ
+    /// where both sides add lines at the same place).
+    pub fn is_taken(&self, chunk: usize, r: Resolution) -> bool {
+        match self.states[chunk] {
+            ChunkState::Taken(x) if x == r => true,
+            ChunkState::Taken(x) if x.is_both() && r.is_both() => {
+                self.resolution_text(chunk, x) == self.resolution_text(chunk, r)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether line `i` of ours (`ours`) or theirs of `chunk` is in the result of a
+    /// both-sides resolution `r` (a base line the other side changed is not); other
+    /// resolutions: whether `r` takes that side.
+    pub fn side_line_kept(&self, chunk: usize, r: Resolution, ours: bool, i: usize) -> bool {
+        match (self.combined(chunk, r), r) {
+            (Some(both), _) => {
+                let kept = if ours { &both.kept_ours } else { &both.kept_theirs };
+                kept.get(i).copied().unwrap_or(true)
+            }
+            (None, Resolution::Ours) => ours,
+            (None, Resolution::Theirs) => !ours,
+            (None, Resolution::Base) => false,
+            (None, _) => true,
+        }
+    }
+
+    /// What a both-sides resolution `r` of `chunk` did, in lower case: "both changes"
+    /// (each applied in place, the order doesn't matter), "both changes, ours first" (both
+    /// add lines at the same place), or "ours, then theirs" (both changed the same lines:
+    /// one whole side after the other).
+    pub fn both_description(&self, chunk: usize, r: Resolution) -> &'static str {
+        let ours_first = r == Resolution::OursThenTheirs;
+        match self.combined(chunk, r) {
+            Some(both) if both.merged => {
+                if self.resolution_text(chunk, Resolution::OursThenTheirs)
+                    == self.resolution_text(chunk, Resolution::TheirsThenOurs)
+                {
+                    "both changes"
+                } else if ours_first {
+                    "both changes, ours first"
+                } else {
+                    "both changes, theirs first"
+                }
+            }
+            _ if ours_first => "ours, then theirs",
+            _ => "theirs, then ours",
+        }
     }
 
     /// Runs of result lines of the changed chunks with equal origin.
@@ -346,7 +431,7 @@ impl MergeSession {
     pub fn choose(&mut self, chunk: usize, r: Option<Resolution>) -> TextEdit {
         let c = &self.doc.chunks[chunk];
         let new_text = match r.or(c.auto_resolution()) {
-            Some(r) => c.lines(r).concat(),
+            Some(r) => self.resolution_text(chunk, r).into_owned(),
             None => c.conflict_block(self.labels(), self.doc.marker_size),
         };
         self.replace_region(chunk, new_text)
@@ -385,10 +470,9 @@ impl MergeSession {
 
     fn compute_state(&self, chunk: usize, starts: &[usize]) -> ChunkState {
         let text = &self.text[byte_range(starts, &self.regions[chunk])];
-        let c = &self.doc.chunks[chunk];
         use Resolution::*;
         for r in [Ours, Theirs, OursThenTheirs, TheirsThenOurs, Base] {
-            if c.lines(r).concat() == text {
+            if self.resolution_text(chunk, r) == text {
                 return ChunkState::Taken(r);
             }
         }
@@ -673,6 +757,38 @@ mod tests {
         assert_eq!(s.step_conflict(None, 1), Some(1));
         assert_eq!(s.step_changed(Some(1), 1), Some(1));
         assert_eq!(s.step_conflict(Some(1), -1), Some(1));
+    }
+
+    /// Taking both sides where ours rewrote a line theirs kept and both added after it:
+    /// the rewritten line, then both additions; either order gives that text, so both
+    /// buttons count as taken, the state says "both changes", and theirs' copy of the
+    /// rewritten base line is shown as left out.
+    #[gitti_test::test]
+    fn both_changes_applied_in_place() {
+        let base = "a\nlast (open)\n";
+        let mut s = session(base, "a\nlast (fixed)\nours\n", "a\nlast (open)\ntheirs\n", None);
+        s.choose(1, Some(Resolution::TheirsThenOurs));
+        assert_eq!(s.text(), "a\nlast (fixed)\nours\ntheirs\n");
+        assert_eq!(s.state(1), ChunkState::Taken(Resolution::OursThenTheirs));
+        assert!(s.is_taken(1, Resolution::OursThenTheirs));
+        assert!(s.is_taken(1, Resolution::TheirsThenOurs));
+        assert!(!s.is_taken(1, Resolution::Ours));
+        assert_eq!(s.both_description(1, Resolution::TheirsThenOurs), "both changes");
+        assert!(!s.side_line_kept(1, Resolution::OursThenTheirs, false, 0));
+        assert!(s.side_line_kept(1, Resolution::OursThenTheirs, false, 1));
+        assert!(s.side_line_kept(1, Resolution::OursThenTheirs, true, 0));
+        assert_eq!(s.origin_of(1), Some(Origin::Ours));
+        assert_eq!(s.origin_of(3), Some(Origin::Theirs));
+        // Insertions at the same place: the orders differ.
+        let mut s = session("a\n", "a\nb\n", "a\nc\n", None);
+        s.choose(1, Some(Resolution::TheirsThenOurs));
+        assert_eq!(s.text(), "a\nc\nb\n");
+        assert_eq!(s.state(1), ChunkState::Taken(Resolution::TheirsThenOurs));
+        assert!(!s.is_taken(1, Resolution::OursThenTheirs));
+        assert_eq!(s.both_description(1, Resolution::TheirsThenOurs), "both changes, theirs first");
+        // The same line changed on both sides: one side after the other.
+        let s = session("x\n", "o\n", "t\n", None);
+        assert_eq!(s.both_description(0, Resolution::OursThenTheirs), "ours, then theirs");
     }
 
     /// Workflow: EX-24
