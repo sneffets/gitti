@@ -208,6 +208,11 @@ impl History {
         write!(self.stream, "reset {refname}\nfrom :{}\n\n", target.0).unwrap();
     }
 
+    /// Deletes `refname` (full name) again: its commits stay, reachable from no ref.
+    pub fn drop_ref(&mut self, refname: &str) {
+        write!(self.stream, "reset {refname}\n\n").unwrap();
+    }
+
     /// Writes the history into the repository at `dir` (one `git fast-import`).
     pub fn import(&self, dir: &Path) -> Ids {
         self.import_to(&dir.join(".git"))

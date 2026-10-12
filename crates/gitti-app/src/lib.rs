@@ -1536,8 +1536,9 @@ actions!(gitti, [FsPaths, HideFsPaths, ShowHiddenFsPaths]);
 actions!(gitti, [ResetRemoteBranch]);
 
 // Navigate ▸ Reflog (Recover Lost Commits)…: HEAD's reflog in place of the commit
-// list; handler in `app/reflog.rs`.
-actions!(gitti, [ShowReflog]);
+// list; Navigate ▸ Find Lost Commits (`git fsck`, below the reflog); handlers in
+// `app/reflog.rs`.
+actions!(gitti, [ShowReflog, FindLostCommits]);
 
 // Commit ▸ Open in External Diff / Merge Tool (the file at the diff cursor), Repository ▸
 // Choose External Diff / Merge Tool…; handlers in `app/ext_tools.rs`.
@@ -1888,6 +1889,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Go to Branch / Tag…", GoToRef),
                 MenuItem::action("Go to HEAD", GoToHead),
                 MenuItem::action("Reflog (Recover Lost Commits)…", ShowReflog),
+                MenuItem::action(gitti_core::reflog::FIND_LOST_LABEL, FindLostCommits),
                 MenuItem::action("Go to File…", FileList),
                 MenuItem::separator(),
                 MenuItem::action("Next Commit", SelectNext),

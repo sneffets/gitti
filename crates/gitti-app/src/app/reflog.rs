@@ -7,13 +7,22 @@
 //! Create Branch Here… — the way to keep a lost commit —, Reset … to Here…, Cherry-pick,
 //! Checkout and Copy SHA. Reading the reflog is in-process (no git); navigation runs
 //! none either once the commits are loaded. Esc or ✕ goes back to the history.
+//!
+//! Find Lost Commits (the bar's button, Navigate ▸, the palette) runs `git fsck
+//! --unreachable --no-reflogs` as a cancellable operation (busy mark, Esc) and lists what
+//! it found in a "Lost commits" section below the entries
+//! (`gitti_core::reflog::LostCommits`): each selectable with its commit shown, the same
+//! menu, a dropped stash marked "dropped stash?".
 
 use std::ops::Range;
 use std::sync::Arc;
 
 use gitti_core::ObjectId;
 use gitti_core::ops::ResetMode;
-use gitti_core::reflog::{EXPLANATION, Reflog, ReflogEntry};
+use gitti_core::reflog::{
+    EXPLANATION, FIND_LOST_LABEL, LOST_EXPLANATION, LOST_TITLE, LostCommit, LostCommits, Reflog,
+    ReflogEntry,
+};
 use gitti_core::switch::SwitchTarget;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu};
@@ -27,7 +36,7 @@ use super::picker::{self, PickerItem};
 use super::{CommitView, Detail, GittiApp, format_time, short};
 use crate::probe::ProbeExt as _;
 use crate::theme::{BADGE_RADIUS, PaletteExt as _, keys_hint};
-use crate::{EndCompare, SelectNext, SelectPrev, ShowReflog};
+use crate::{EndCompare, FindLostCommits, SelectNext, SelectPrev, ShowReflog};
 
 /// The palette's / menu bar's label.
 pub(super) const LABEL: &str = "Reflog (Recover Lost Commits)…";
@@ -39,12 +48,41 @@ pub(super) struct ReflogUi {
     name: String,
     log: Option<Arc<Reflog>>,
     error: Option<String>,
+    /// The selected item: an entry (`0..entries`), then the lost commits.
     selected: Option<usize>,
+    /// Find Lost Commits' result (`None`: not run since the view opened).
+    lost: Option<Arc<LostCommits>>,
+    /// Find Lost Commits runs.
+    finding: bool,
     /// Reads started (a newer one wins).
     read_gen: u64,
     /// The selected entry's commit is loading.
     loading: Option<ObjectId>,
     scroll: UniformListScrollHandle,
+}
+
+/// A selectable row of the view: a reflog entry or a lost commit.
+#[derive(Clone, Copy)]
+enum Item<'a> {
+    Entry(&'a ReflogEntry),
+    Lost(&'a LostCommit),
+}
+
+impl Item<'_> {
+    fn id(&self) -> ObjectId {
+        match self {
+            Item::Entry(e) => e.new,
+            Item::Lost(c) => c.id,
+        }
+    }
+
+    /// Its commit can be shown (a reflog entry's may be pruned).
+    fn exists(&self) -> bool {
+        match self {
+            Item::Entry(e) => e.exists(),
+            Item::Lost(_) => true,
+        }
+    }
 }
 
 impl ReflogUi {
@@ -57,8 +95,40 @@ impl ReflogUi {
         self.log.as_ref()?.entries.get(i)
     }
 
-    fn selected_entry(&self) -> Option<&ReflogEntry> {
-        self.entry(self.selected?)
+    fn entries(&self) -> usize {
+        self.log.as_ref().map_or(0, |l| l.entries.len())
+    }
+
+    fn lost_len(&self) -> usize {
+        self.lost.as_ref().map_or(0, |l| l.commits.len())
+    }
+
+    /// Entries and lost commits.
+    fn len(&self) -> usize {
+        self.entries() + self.lost_len()
+    }
+
+    /// Item `i`: entries first, then the lost commits.
+    fn item(&self, i: usize) -> Option<Item<'_>> {
+        let n = self.entries();
+        if i < n {
+            return self.entry(i).map(Item::Entry);
+        }
+        self.lost.as_ref()?.commits.get(i - n).map(Item::Lost)
+    }
+
+    fn selected_item(&self) -> Option<Item<'_>> {
+        self.item(self.selected?)
+    }
+
+    /// The "Lost commits" section shows (found, or being looked for).
+    fn has_lost_section(&self) -> bool {
+        self.finding || self.lost.is_some()
+    }
+
+    /// The list row of item `i` (the section's title row sits before the lost commits).
+    fn row_of(&self, i: usize) -> usize {
+        if i < self.entries() { i } else { i + 1 }
     }
 }
 
@@ -75,6 +145,12 @@ pub struct ReflogState {
     /// The commit the detail pane shows.
     pub shown: Option<String>,
     pub error: Option<String>,
+    /// Find Lost Commits runs.
+    pub finding: bool,
+    /// Its note ("2 commits found, …"), once it ran.
+    pub lost_note: Option<String>,
+    /// Per lost commit: `lost a1b2c3d subject`, and " [dropped stash?]" / " [in history]".
+    pub lost: Vec<String>,
 }
 
 /// What an entry's menu acts on.
@@ -100,6 +176,7 @@ impl GittiApp {
         root.on_action(cx.listener(|this, _: &ShowReflog, w, cx| {
             this.open_reflog("HEAD".into(), w, cx)
         }))
+        .on_action(cx.listener(|this, _: &FindLostCommits, w, cx| this.find_lost_commits(w, cx)))
     }
 
     /// Palette: HEAD's reflog, and the current branch's.
@@ -109,6 +186,12 @@ impl GittiApp {
                 t.open_reflog("HEAD".into(), w, cx)
             })
             .act(&ShowReflog),
+            picker::item(
+                FIND_LOST_LABEL,
+                "commits no branch or tag reaches (git fsck) — dropped stashes, resets",
+                |t, w, cx| t.find_lost_commits(w, cx),
+            )
+            .act(&FindLostCommits),
         ];
         if let Some(b) = self.head.branch.clone() {
             items.push(picker::item(
@@ -157,12 +240,18 @@ impl GittiApp {
                 }
                 match result {
                     Ok(log) => {
-                        let keep = r
-                            .selected_entry()
-                            .map(|e| (e.new, e.time, e.message.clone()));
-                        r.selected = keep.and_then(|k| {
-                            log.entries.iter().position(|e| (e.new, e.time, e.message.clone()) == k)
-                        });
+                        let n = log.entries.len();
+                        r.selected = match r.selected_item() {
+                            Some(Item::Entry(e)) => {
+                                let k = (e.new, e.time, e.message.clone());
+                                log.entries
+                                    .iter()
+                                    .position(|e| (e.new, e.time, e.message.clone()) == k)
+                            }
+                            // A lost commit stays selected below the new entries.
+                            Some(Item::Lost(_)) => r.selected.map(|i| i - r.entries() + n),
+                            None => None,
+                        };
                         r.log = Some(Arc::new(log));
                         r.error = None;
                     }
@@ -189,6 +278,10 @@ impl GittiApp {
         }
         self.reflog.open = false;
         self.reflog.loading = None;
+        self.reflog.lost = None;
+        if self.reflog.selected.is_some_and(|i| i >= self.reflog.entries()) {
+            self.reflog.selected = None;
+        }
         self.list_focus.focus(window, cx);
         let row = self.selected;
         self.select_row(row, window, cx);
@@ -198,11 +291,12 @@ impl GittiApp {
 
     /// Selects entry `i` and shows its commit.
     fn select_reflog_entry(&mut self, i: usize, cx: &mut Context<Self>) {
-        if self.reflog.entry(i).is_none() {
+        if self.reflog.item(i).is_none() {
             return;
         }
         self.reflog.selected = Some(i);
-        self.reflog.scroll.scroll_to_item(i, ScrollStrategy::Nearest);
+        let row = self.reflog.row_of(i);
+        self.reflog.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
         self.line_sel = None;
         self.diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.show_reflog_commit(cx);
@@ -210,7 +304,7 @@ impl GittiApp {
     }
 
     fn reflog_step(&mut self, down: bool, cx: &mut Context<Self>) {
-        let n = self.reflog.log.as_ref().map_or(0, |l| l.entries.len());
+        let n = self.reflog.len();
         if n == 0 {
             return;
         }
@@ -225,7 +319,7 @@ impl GittiApp {
     /// While the reflog view has an entry selected, the detail pane shows its commit
     /// (also after a reload for changed diff options): `true` when it took over.
     pub(super) fn reflog_shows_commit(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.reflog.open || self.reflog.selected_entry().is_none() {
+        if !self.reflog.open || self.reflog.selected_item().is_none() {
             return false;
         }
         self.show_reflog_commit(cx);
@@ -238,11 +332,13 @@ impl GittiApp {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let Some(e) = self.reflog.selected_entry() else {
+        let Some(item) = self.reflog.selected_item() else {
             return;
         };
-        let id = e.new;
-        if !e.exists() {
+        let id = item.id();
+        if let Item::Entry(e) = item
+            && !e.exists()
+        {
             let text = format!(
                 "{}'s commit {} is gone (pruned by git gc): nothing to show",
                 e.selector(&self.reflog.name),
@@ -279,7 +375,7 @@ impl GittiApp {
                 }
                 this.reflog.loading = None;
                 let still = this.reflog.open
-                    && this.reflog.selected_entry().is_some_and(|e| e.new == id);
+                    && this.reflog.selected_item().is_some_and(|e| e.id() == id);
                 match result {
                     Ok(data) if still => {
                         this.detail_generation += 1;
@@ -308,19 +404,17 @@ impl GittiApp {
     /// Loads the commits of the entries around the selection in the background (one
     /// `git show`), so arrowing through the reflog hits the cache.
     fn prefetch_reflog(&mut self, cx: &mut Context<Self>) {
-        let (Some(repo), Some(i), Some(log)) =
-            (self.repo.clone(), self.reflog.selected, self.reflog.log.clone())
-        else {
+        let (Some(repo), Some(i)) = (self.repo.clone(), self.reflog.selected) else {
             return;
         };
         let opts = self.settings.diff_options();
         let mut ids: Vec<ObjectId> = Vec::new();
         for j in [i + 1, i + 2, i + 3, i.wrapping_sub(1)] {
-            if let Some(e) = log.entries.get(j).filter(|e| e.exists())
-                && !ids.contains(&e.new)
-                && repo.cached_commit(e.new, &opts).is_none()
+            if let Some(e) = self.reflog.item(j).filter(|e| e.exists())
+                && !ids.contains(&e.id())
+                && repo.cached_commit(e.id(), &opts).is_none()
             {
-                ids.push(e.new);
+                ids.push(e.id());
             }
         }
         if ids.is_empty() {
@@ -355,7 +449,7 @@ impl GittiApp {
             (None, Some(l)) => l.note(),
             (None, None) => "Reading…".into(),
         };
-        let can_branch = r.selected_entry().is_some_and(|e| e.exists());
+        let can_branch = r.selected_item().is_some_and(|e| e.exists());
         v_flex()
             .id("reflog-bar")
             .probe("reflog-bar")
@@ -398,6 +492,19 @@ impl GittiApp {
                             })),
                     )
                     .child(
+                        Button::new("reflog-find-lost")
+                            .probe("reflog-find-lost")
+                            .label(if r.finding { "Finding Lost Commits…" } else { FIND_LOST_LABEL })
+                            .xsmall()
+                            .disabled(r.finding)
+                            .tooltip(
+                                "Looks for commits no branch, tag or other ref reaches (git \
+                                 fsck) — dropped stashes, commits a reset left behind. Can take \
+                                 a while in a big repository: Esc cancels.",
+                            )
+                            .on_click(cx.listener(|this, _, w, cx| this.find_lost_commits(w, cx))),
+                    )
+                    .child(
                         Button::new("reflog-close")
                             .probe("reflog-close")
                             .label("✕")
@@ -426,7 +533,8 @@ impl GittiApp {
 
     fn render_reflog_list(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette().clone();
-        let count = self.reflog.log.as_ref().map_or(0, |l| l.entries.len());
+        let r = &self.reflog;
+        let count = r.entries() + if r.has_lost_section() { 1 + r.lost_len() } else { 0 };
         let row_h = px((self.settings.ui_font_size * 3.2).round());
         v_flex()
             .size_full()
@@ -442,8 +550,15 @@ impl GittiApp {
                     "reflog-entries",
                     count,
                     cx.processor(move |this, range: Range<usize>, _window, cx| {
+                        let n = this.reflog.entries();
                         range
-                            .map(|i| this.render_reflog_row(i, row_h, cx))
+                            .map(|row| match row.cmp(&n) {
+                                std::cmp::Ordering::Less => this.render_reflog_row(row, row_h, cx),
+                                std::cmp::Ordering::Equal => this.render_lost_header(row_h, cx),
+                                std::cmp::Ordering::Greater => {
+                                    this.render_lost_row(row - n - 1, row_h, cx)
+                                }
+                            })
                             .collect::<Vec<_>>()
                     }),
                 )
@@ -470,7 +585,7 @@ impl GittiApp {
             .subject
             .clone()
             .unwrap_or_else(|| "(commit gone — pruned by git gc)".into());
-        let ctx = self.reflog_entry_ctx(e);
+        let ctx = self.reflog_entry_ctx(Item::Entry(e));
         let app = cx.entity().downgrade();
         h_flex()
             .id(("reflog-entry", i))
@@ -580,20 +695,220 @@ impl GittiApp {
             .into_any_element()
     }
 
-    fn reflog_entry_ctx(&self, e: &ReflogEntry) -> EntryCtx {
+    /// The "Lost commits" section's title row: what it is, how many (or that it runs).
+    fn render_lost_header(&self, row_h: Pixels, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette().clone();
+        let s = &self.settings;
+        let r = &self.reflog;
+        let note = match &r.lost {
+            _ if r.finding => "Looking with git fsck… (Esc cancels)".to_string(),
+            Some(l) => l.note(),
+            None => String::new(),
+        };
+        v_flex()
+            .id("reflog-lost-header")
+            .probe("reflog-lost-header")
+            .h(row_h)
+            .w_full()
+            .px_2()
+            .justify_center()
+            .bg(p.bg_toolbar)
+            .border_t_1()
+            .border_color(p.border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(p.text_strong)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(LOST_TITLE),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(s.ui_small())
+                            .text_color(p.text_muted)
+                            .child(note),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .truncate()
+                    .text_size(s.ui_small())
+                    .text_color(p.text_muted)
+                    .child(LOST_EXPLANATION),
+            )
+            .tooltip(|window, cx| Tooltip::new(LOST_EXPLANATION).build(window, cx))
+            .into_any_element()
+    }
+
+    /// Lost commit `k`: its id, subject, time; its author, "dropped stash?".
+    fn render_lost_row(&self, k: usize, row_h: Pixels, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette().clone();
+        let s = &self.settings;
+        let Some(c) = self.reflog.lost.as_ref().and_then(|l| l.commits.get(k)) else {
+            return div().into_any_element();
+        };
+        let i = self.reflog.entries() + k;
+        let selected = self.reflog.selected == Some(i);
+        let in_history = self.in_history(&c.id);
+        let ctx = self.reflog_entry_ctx(Item::Lost(c));
+        let app = cx.entity().downgrade();
+        let badge = |text: SharedString, tone: Hsla| {
+            div()
+                .flex_none()
+                .px(px(5.))
+                .rounded(BADGE_RADIUS)
+                .bg(tone.opacity(0.15))
+                .text_size(s.ui_small())
+                .text_color(tone)
+                .child(text)
+        };
+        h_flex()
+            .id(("reflog-lost-commit", k))
+            .probe(format!("reflog-lost-commit:{k}"))
+            .h(row_h)
+            .w_full()
+            .px_2()
+            .gap_2()
+            .items_center()
+            .bg(if selected { p.bg_list_selected } else { p.bg_list })
+            .when(!selected, |d| d.hover(|st| st.bg(p.bg_list_hover)))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_center()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(badge(c.label().into(), p.warning))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(p.text_strong)
+                                    .child(c.subject.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(s.ui_small())
+                                    .text_color(p.text_muted)
+                                    .child(format_time(c.time)),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .text_size(s.ui_small())
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(p.text_muted)
+                                    .child(c.author.clone()),
+                            )
+                            .when_some(c.kind(), |d, kind| {
+                                d.child(badge(kind.into(), p.accent).probe(format!("reflog-stash:{k}")))
+                            })
+                            .when(in_history, |d| d.child(badge("in history now".into(), p.text_muted))),
+                    ),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    this.list_focus.focus(window, cx);
+                    this.select_reflog_entry(i, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    this.list_focus.focus(window, cx);
+                    if this.reflog.selected != Some(i) {
+                        this.select_reflog_entry(i, cx);
+                    }
+                }),
+            )
+            .context_menu(move |menu, window, cx| entry_menu(menu, &app, &ctx, window, cx))
+            .into_any_element()
+    }
+
+    /// Find Lost Commits: `git fsck` as a cancellable operation (busy mark, Esc), its
+    /// result below the reflog's entries; opens HEAD's reflog first when it is closed.
+    pub(super) fn find_lost_commits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.repo.is_none() || self.reflog.finding {
+            return;
+        }
+        if self.busy.is_some() {
+            self.refuse_busy(cx);
+            return;
+        }
+        if !self.reflog.open {
+            self.open_reflog("HEAD".into(), window, cx);
+        }
+        let r = &mut self.reflog;
+        if r.selected.is_some_and(|i| i >= r.entries()) {
+            r.selected = None;
+        }
+        r.lost = None;
+        r.finding = true;
+        cx.notify();
+        self.run_op(
+            FIND_LOST_LABEL,
+            false,
+            window,
+            cx,
+            // Always Ok: the result (also a failure) ends the search below.
+            |repo| Ok(repo.unreachable_commits()),
+            |this, result, _, cx| {
+                this.reflog.finding = false;
+                match result {
+                    Ok(lost) => {
+                        if this.reflog.open {
+                            this.set_info(format!("{LOST_TITLE}: {}", lost.note()));
+                            this.reflog.lost = Some(Arc::new(lost));
+                        }
+                    }
+                    Err(_) if this.op_cancelled() => {
+                        this.set_info(format!("{FIND_LOST_LABEL} cancelled"))
+                    }
+                    Err(e) => this.set_error(format!("{FIND_LOST_LABEL} failed: {e:#}")),
+                }
+                cx.notify();
+            },
+        );
+    }
+
+    fn reflog_entry_ctx(&self, e: Item) -> EntryCtx {
         let busy = gitti_core::availability::in_progress(self.repo_state);
-        let is_head = self.head.id == Some(e.new);
+        let is_head = self.head.id == Some(e.id());
         let current = self.head.branch.clone();
         let name = &self.reflog.name;
         let other_branch = (name != "HEAD" && current.as_deref() != Some(name.as_str()))
             .then(|| name.clone());
+        let (subject, parents) = match e {
+            Item::Entry(e) => (e.subject.clone().unwrap_or_default(), e.parents),
+            Item::Lost(c) => (c.subject.clone(), c.parents),
+        };
         EntryCtx {
-            rev: e.new.to_string(),
-            short: short(&e.new),
-            subject: e.subject.clone().unwrap_or_default(),
-            is_merge: e.parents > 1,
+            rev: e.id().to_string(),
+            short: short(&e.id()),
+            subject,
+            is_merge: parents > 1,
             exists: e.exists(),
-            in_history: self.in_history(&e.new),
+            in_history: self.in_history(&e.id()),
             pick_off: is_head.then_some(gitti_core::availability::IS_HEAD).or(busy),
             other_branch,
             head_label: current.unwrap_or_else(|| "HEAD".into()),
@@ -602,10 +917,10 @@ impl GittiApp {
 
     /// "Create Branch Here…" of the bar: the selected entry's commit.
     fn reflog_create_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(e) = self.reflog.selected_entry().filter(|e| e.exists()) else {
+        let Some(e) = self.reflog.selected_item().filter(|e| e.exists()) else {
             return;
         };
-        let (rev, short) = (e.new.to_string(), short(&e.new));
+        let (rev, short) = (e.id().to_string(), short(&e.id()));
         self.create_branch_dialog(rev, short, window, cx);
     }
 
@@ -630,10 +945,11 @@ impl GittiApp {
     }
 
     /// Opens the reflog of `name` (`HEAD` or a branch) — script step `reflog:NAME`;
-    /// `reflog:close` closes it.
+    /// `reflog:close` closes it, `reflog:find-lost` runs Find Lost Commits.
     pub fn script_reflog(&mut self, arg: &str, window: &mut Window, cx: &mut Context<Self>) {
         match arg {
             "close" => self.close_reflog(window, cx),
+            "find-lost" => self.find_lost_commits(window, cx),
             "" => self.open_reflog("HEAD".into(), window, cx),
             name => self.open_reflog(name.to_string(), window, cx),
         }
@@ -676,6 +992,23 @@ impl GittiApp {
             selected: r.selected,
             shown,
             error: r.error.clone(),
+            finding: r.finding,
+            lost_note: r.lost.as_ref().map(|l| l.note()),
+            lost: r
+                .lost
+                .iter()
+                .flat_map(|l| &l.commits)
+                .map(|c| {
+                    let mut s = format!("{} {}", c.label(), c.subject);
+                    if let Some(k) = c.kind() {
+                        s.push_str(&format!(" [{k}]"));
+                    }
+                    if self.in_history(&c.id) {
+                        s.push_str(" [in history]");
+                    }
+                    s
+                })
+                .collect(),
         }
     }
 }

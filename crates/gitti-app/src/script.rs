@@ -47,8 +47,9 @@
 //! its menu item does). Pickers: `pick:TEXT` (type into the open picker — filters, or
 //! starts its search), `pickok` (run the selected entry, as Enter). Search in Changes:
 //! `changes:TEXT` (open the bar, type), `changehit:N` (select hit N), `changetoggle:strict
-//! |order|all`. Reflog: `reflog:NAME` (open HEAD's or a branch's; `reflog:close`),
-//! `reflogentry:N` (select entry N).
+//! |order|all`. Reflog: `reflog:NAME` (open HEAD's or a branch's; `reflog:close`,
+//! `reflog:find-lost` = Find Lost Commits), `reflogentry:N` (select item N: the entries,
+//! then the lost commits).
 //! Steps act on the active tab (the start page while no tab is open).
 //! Scripted runs record no start-up timings unless `GITTI_SCRIPT_STARTUP=1`.
 
