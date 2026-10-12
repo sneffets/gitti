@@ -54,6 +54,7 @@ pub fn main() {
         ("folder_rule_files", folder_rule_files),
         ("clone_and_init", clone_and_init),
         ("clone_from_clipboard", clone_from_clipboard),
+        ("shallow_clone_and_history", shallow_clone_and_history),
         ("init_object_format", init_object_format),
         ("go_to_commit", go_to_commit),
         ("search_in_changes", search_in_changes),
@@ -109,7 +110,7 @@ pub fn main() {
         }
         if name == "detached_head_greys_branch_commands" {
             // HEAD on the commit itself, written as git would (no git process).
-            std::fs::write(d.join(".git/HEAD"), format!("{}\n", ids[5])).unwrap();
+            detach_head(&d, &ids[5]);
         }
         if name == "merge_unrelated_histories" {
             // Branch `other`: a root commit of its own.
@@ -127,7 +128,7 @@ pub fn main() {
             std::fs::create_dir_all(origin.join("objects/info")).unwrap();
             std::fs::write(origin.join("objects/info/alternates"), format!("{}\n", d.join(".git/objects").display())).unwrap();
             for (name, id) in [("main", &ids[5]), ("older", &ids[3])] {
-                std::fs::write(origin.join(format!("refs/heads/{name}")), format!("{id}\n")).unwrap();
+                write_ref_at(&origin, &format!("refs/heads/{name}"), id);
                 write_ref(&d, &format!("refs/remotes/origin/{name}"), id);
             }
             append_config(
@@ -179,6 +180,7 @@ fn modal(ui: &mut Ui) -> Option<(String, Vec<String>)> {
 
 fn git_out(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
+        .args(bare_arg(dir))
         .args(args)
         .current_dir(dir)
         .output()
@@ -995,6 +997,82 @@ fn bare_source(name: &str) -> PathBuf {
     bare
 }
 
+/// The Clone dialog's history options — a depth that is no number blocks OK with the
+/// reason, the newest 2 commits of one branch say what follows — clone shallow into a new
+/// tab, where Repository ▸ Fetch More History… (1) and Fetch Full History are on (greyed
+/// in the complete source with the reason); the history reloads after each, and the
+/// commands are greyed again once it is complete.
+/// Workflow: RM-19
+fn shallow_clone_and_history(ui: &mut Ui) {
+    use gitti_core::availability::NOT_SHALLOW;
+    let ws = ui.ws.clone();
+    let live = |ui: &mut Ui| ui.cx.update(|cx| menus::modal_live(&ws, cx)).unwrap_or_default();
+    let parent = base().join("shallow-clones");
+    std::fs::create_dir_all(&parent).unwrap();
+    ui.quick("focuslist");
+    expect_menu(
+        ui,
+        &[("gitti::FetchFullHistory", Some(NOT_SHALLOW)), ("gitti::FetchMoreHistory", Some(NOT_SHALLOW))],
+    );
+    let source = ui.repo.clone();
+    ui.quick("action:gitti::CloneRepository");
+    ui.quick(&format!("field:0={}", source.display()));
+    ui.quick(&format!("field:1={}", parent.display()));
+    ui.quick("field:2=shallow");
+    ui.quick("field:3=x");
+    if !live(ui).2.is_some_and(|why| why.contains("no number of commits")) {
+        fail!(ui, "depth x: {:?}", live(ui));
+    }
+    ui.quick("field:3=2");
+    ui.quick("check:1");
+    let (text, _, blocked, _) = live(ui);
+    if blocked.is_some() || !text.contains("newest 2 commits") || !text.contains("One branch") {
+        fail!(ui, "depth 2, one branch: {text:?} {blocked:?}");
+    }
+    ui.step("modalok");
+    let clone = parent.join("shallow");
+    if !clone.join(".git/shallow").exists() || git_out(&clone, &["rev-list", "--count", "HEAD"]) != "2" {
+        fail!(ui, "no shallow clone at {}: {:?}", clone.display(), status(ui));
+        return;
+    }
+    if ui.tabs() != (2, 1) {
+        let t = ui.tabs();
+        fail!(ui, "clone not opened in a new tab: {t:?}");
+    }
+    ui.quick("focuslist");
+    expect_menu(ui, &[("gitti::FetchFullHistory", None), ("gitti::FetchMoreHistory", None)]);
+    let before = state(ui).commits;
+    ui.quick("action:gitti::FetchMoreHistory");
+    match modal(ui) {
+        Some((t, f)) if t == "Fetch More History" && f == ["100"] => {}
+        other => fail!(ui, "Fetch More History dialog: {other:?}"),
+    }
+    ui.quick("field:0=1");
+    if live(ui).1.as_deref() != Some("Fetch 1 More") {
+        fail!(ui, "OK label: {:?}", live(ui));
+    }
+    ui.step("modalok");
+    let n = git_out(&clone, &["rev-list", "--count", "HEAD"]);
+    if n != "3" || state(ui).commits != before + 1 {
+        let now = state(ui).commits;
+        fail!(ui, "after 1 more: {n} commits, list {before} → {now}, {:?}", status(ui));
+    }
+    ui.quick("action:gitti::FetchFullHistory");
+    let message = ui.cx.update(|cx| testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !message.contains("--unshallow") {
+        fail!(ui, "Fetch Full History question: {message}");
+    }
+    ui.step("modalok");
+    if clone.join(".git/shallow").exists() || !status(ui).is_some_and(|s| s.0.contains("no longer shallow")) {
+        fail!(ui, "after the full history: {:?}", status(ui));
+    }
+    expect_menu(
+        ui,
+        &[("gitti::FetchFullHistory", Some(NOT_SHALLOW)), ("gitti::FetchMoreHistory", Some(NOT_SHALLOW))],
+    );
+    ui.quick("key:secondary-w");
+}
+
 /// The Clone dialog takes a repository location from the clipboard as if it was pasted:
 /// a forge's page URL cut back to the repository, selected (typing replaces it), the folder
 /// name derived, "From the clipboard" under it until it is changed; a local repository's
@@ -1137,7 +1215,7 @@ fn clone_and_init(ui: &mut Ui) {
     ui.quick("action:gitti::CloneRepository");
     ui.quick(&format!("field:0={}", bare.display()));
     match modal(ui) {
-        Some((t, f)) if t == "Clone Repository" && f.len() == 3 && f[2] == "upstream" => {}
+        Some((t, f)) if t == "Clone Repository" && f.len() == 4 && f[2] == "upstream" => {}
         other => fail!(ui, "clone dialog after typing the URL: {other:?}"),
     }
     ui.quick("field:0=git@example.com:team/other.git");
@@ -1780,7 +1858,7 @@ fn diverged_repo(d: &Path) {
     std::fs::create_dir_all(origin.join("objects/info")).unwrap();
     let objects = d.join(".git/objects");
     std::fs::write(origin.join("objects/info/alternates"), format!("{}\n", objects.display())).unwrap();
-    std::fs::write(origin.join("refs/heads/main"), format!("{}\n", ids[theirs])).unwrap();
+    write_ref_at(&origin, "refs/heads/main", &ids[theirs]);
     append_config(
         d,
         &format!(

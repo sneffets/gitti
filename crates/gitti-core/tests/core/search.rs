@@ -251,3 +251,71 @@ fn early_results_cap_cancel_and_plain_search() {
     // Cancelled before it starts: no answer.
     assert!(history.search(&CommitQuery::parse("step"), 10, &cancelled).is_none());
 }
+
+/// `.mailmap` as `git log` applies it: the list's author, the header's author and
+/// committer (with what the commit records kept), the author search matching both; then
+/// `log.mailmap=false` (read again on refresh: the same history re-reads its rows),
+/// `mailmap.blob`, then `mailmap.file` on top (read last, as git does).
+#[gitti_test::test]
+fn mailmap_in_list_header_and_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("repo");
+    fx::init(&p);
+    let mut i = Import::new();
+    i.author("old name <old@example.com>");
+    i.commit("main", None, &[], "First by the old name", &[put("a.txt", "a\n")]);
+    i.commit("main", None, &[], "Second by the old name", &[put("a.txt", "b\n")]);
+    i.author("Other <other@example.com>");
+    i.commit("main", None, &[], "Third by someone else", &[
+        put("a.txt", "c\n"),
+        put("team.map", "Blob Name <other@example.com>\n"),
+    ]);
+    let ids = i.run(&p);
+    std::fs::write(p.join(".mailmap"), "Proper Name <proper@example.com> <old@example.com>\n").unwrap();
+    let r = Repo::open(&p).unwrap();
+    let h = r.history(LogOrder::Topo).unwrap();
+    let row = |id: &str| h.row_of(&ObjectId::from_hex(id.as_bytes()).unwrap()).unwrap();
+    let first = row(&ids[0]);
+    let m = h.meta(first);
+    assert_eq!((m.author.as_str(), m.email.as_str()), ("Proper Name", "proper@example.com"));
+    assert_eq!(m.raw_author.as_deref(), Some(&("old name".to_string(), "old@example.com".to_string())));
+    assert_eq!(h.meta(row(&ids[2])).author, "Other");
+    // As git log shows it.
+    let git_says = fx::git(&p, &["log", "-1", "--format=%aN <%aE>|%cN", &ids[0]]);
+    assert_eq!(git_says, "Proper Name <proper@example.com>|Proper Name");
+    let id = ObjectId::from_hex(ids[0].as_bytes()).unwrap();
+    let d = r.commit_details(id).unwrap();
+    assert_eq!((d.author.as_str(), d.committer.as_str()), ("Proper Name", "Proper Name"));
+    assert_eq!(d.raw_committer, Some(("old name".into(), "old@example.com".into())));
+    assert_eq!(d.recorded_committer_email(), "old@example.com");
+    // The search finds them by the mapped and by the recorded identity.
+    let found = |h: &History, q: &str| {
+        h.search(&CommitQuery::parse(q), 10, &AtomicBool::new(false)).unwrap().len()
+    };
+    for q in ["proper name", "proper@example", "old name", "old@example"] {
+        assert_eq!(found(&h, q), 2, "{q}");
+    }
+    let hits = h.search(&CommitQuery::parse("old name"), 10, &AtomicBool::new(false)).unwrap();
+    assert!(hits.iter().all(|c| c.author == "Proper Name"), "hits show the mapped name");
+
+    // log.mailmap=false: the commits' own names — in the same history, once refreshed.
+    fx::config(&p, "[log]\n\tmailmap = false\n");
+    assert!(r.reload_mailmap(), "a changed mailmap is reported");
+    assert!(!r.reload_mailmap());
+    assert_eq!(h.meta(first).author, "old name");
+    assert_eq!(r.commit_details(id).unwrap().raw_author, None);
+    assert_eq!(found(&h, "proper name"), 0);
+
+    // mailmap.blob (the in-tree file gone), then mailmap.file over it.
+    std::fs::remove_file(p.join(".mailmap")).unwrap();
+    fx::config(&p, "[log]\n\tmailmap = true\n[mailmap]\n\tblob = HEAD:team.map\n");
+    assert!(r.reload_mailmap());
+    assert_eq!(h.meta(row(&ids[2])).author, "Blob Name");
+    assert_eq!(h.meta(first).author, "old name");
+    let file = dir.path().join("people.map");
+    std::fs::write(&file, "From File <other@example.com>\n").unwrap();
+    fx::config(&p, &format!("[mailmap]\n\tfile = {}\n", file.display().to_string().replace('\\', "/")));
+    r.reload_mailmap();
+    assert_eq!(h.meta(row(&ids[2])).author, "From File");
+    assert_eq!(fx::git(&p, &["log", "-1", "--format=%aN", &ids[2]]), "From File", "git agrees");
+}

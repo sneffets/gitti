@@ -177,7 +177,7 @@ fn rs03_hard_reset_asks_naming_what_is_lost(ui: &mut Ui) {
         }
     }
     ui.step("cancel");
-    let main = std::fs::read_to_string(dir.join(".git/refs/heads/main")).unwrap_or_default();
+    let main = read_ref(&dir, "refs/heads/main");
     if main.trim() != s.head {
         fail!(ui, "Cancel moved main to {main:?}");
     }

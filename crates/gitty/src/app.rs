@@ -1726,6 +1726,10 @@ impl App {
         self.rebuild_sidebar();
         self.check_compare_base();
         self.refresh_worktree_compare();
+        // `.mailmap` changed: the shown header's names (the list re-reads its rows).
+        if s.mailmap_changed && matches!(&self.detail, Detail::Commit(cv) if cv.compare.is_none()) {
+            self.load_detail();
+        }
         if matches!(self.detail, Detail::Worktree) {
             self.rebuild_rows();
             self.apply_regroup(regroup);
@@ -2541,7 +2545,7 @@ impl App {
                 let stale = (result.as_ref().err())
                     .and_then(|e| gitti_core::lock::stale_lock(e, repo.workdir()));
                 let index = repo.index_stamp();
-                let read = (std::time::Instant::now(), std::time::SystemTime::now());
+                let read = gitti_core::watch::read_start();
                 let (working, scope) = match &paths {
                     Some(p) => match repo.working_state_reread(&opts, &prev, p) {
                         Ok((w, scope)) => (Ok(w), scope),

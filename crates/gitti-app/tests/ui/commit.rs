@@ -114,7 +114,9 @@ fn sha256_stage_a_line_and_commit(ui: &mut Ui) {
     if rows != 4 {
         ui.fail(format!("history rows after the commit: {rows}"));
     }
-    ui.step(&format!("select:{}", &head[..12]));
+    // `select:` takes a number as a row: a prefix of digits only grows to its first letter.
+    let len = head.find(|c: char| c.is_ascii_alphabetic()).map_or(head.len(), |i| (i + 1).max(12));
+    ui.step(&format!("select:{}", &head[..len]));
     let selected = ui.ui_state().selected_commit;
     if selected.as_deref() != Some(head.as_str()) {
         ui.fail(format!("select by a 12-digit prefix: {selected:?}, HEAD {head}"));

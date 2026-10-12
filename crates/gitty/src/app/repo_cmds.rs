@@ -13,9 +13,10 @@ use std::time::Duration;
 
 use gitti_core::create::{expand_home, name_from_url};
 use gitti_core::ignore::{IgnoreFile, suggestions_in};
+use gitti_core::shallow;
 
 use super::{After, App, Msg, spawn};
-use crate::modal::{MenuItem, Modal, PickItem};
+use crate::modal::{Live, MenuItem, Modal, PickItem};
 
 impl App {
     /// "Add to .gitignore" for working-directory file `path`: a menu of suggested patterns
@@ -180,6 +181,16 @@ impl App {
     }
 
     pub fn clone_dialog(&mut self) {
+        use gitti_core::create::{self, CloneOptions};
+        // The options from the depth field (3) and the checkboxes.
+        fn options(v: &[String], c: &[bool]) -> Result<CloneOptions, String> {
+            Ok(CloneOptions {
+                recurse_submodules: c[0],
+                depth: create::parse_depth(&v[3])?,
+                single_branch: c[1],
+                blobless: c[2],
+            })
+        }
         let parent = self.parent_dir();
         self.modal = Some(Modal::input_checks(
             CLONE_TITLE,
@@ -187,8 +198,13 @@ impl App {
                 ("Repository URL", ""),
                 ("Parent directory", parent.as_str()),
                 ("Folder name (empty: from the URL)", ""),
+                (create::DEPTH_FIELD, ""),
             ],
-            vec![("Also clone the submodules (--recurse-submodules)", true)],
+            vec![
+                (create::SUBMODULES_CHECK, true),
+                (create::SINGLE_BRANCH_CHECK, false),
+                (create::BLOBLESS_CHECK, false),
+            ],
             |app, v, c| {
                 let url = v[0].trim().to_string();
                 let name = match v[2].trim() {
@@ -200,13 +216,19 @@ impl App {
                     return;
                 }
                 let dest = expand_home(&v[1]).join(name);
+                let opts = match options(&v, &c) {
+                    Ok(o) => o,
+                    Err(why) => {
+                        app.set_error(format!("Clone: {why}"));
+                        return;
+                    }
+                };
                 let tx = app.tx.clone();
-                let recurse = c[0];
                 app.run_op("Clone", false, After::OfferOpen(dest.clone()), move |r| {
                     let progress = &mut |l: &str| {
                         let _ = tx.send(Msg::Progress(l.to_string()));
                     };
-                    let c = gitti_core::create::clone_repo_outcome(r.git(), &url, &dest, recurse, progress)?;
+                    let c = create::clone_with_options(r.git(), &url, &dest, &opts, progress)?;
                     let (path, note) = (c.dir, c.note);
                     // Submodules git refused from local paths: allow them once, then open?
                     if let Some(refused) = c.refused {
@@ -220,7 +242,20 @@ impl App {
                     })
                 });
             },
-        ));
+        )
+        // What the options mean for the clone; a depth that is no number blocks Enter.
+        .with_live(|v, c| match options(v, c) {
+            Ok(o) => Live {
+                text: o.explain(),
+                ok_label: "Clone".into(),
+                ..Default::default()
+            },
+            Err(why) => Live {
+                ok_label: "Clone".into(),
+                blocked: Some(why),
+                ..Default::default()
+            },
+        }));
         self.read_clipboard_for(CLONE_TITLE);
     }
 
@@ -328,6 +363,72 @@ impl App {
         ));
     }
 
+    /// Where a history fetch of a shallow clone goes (in-process); a failure is said.
+    fn shallow_plan(&mut self, what: &str) -> Option<shallow::ShallowFetch> {
+        match self.repo.shallow_fetch() {
+            Ok(p) => Some(p),
+            Err(e) => {
+                self.set_error(format!("{}: {e:#}", what.trim_end_matches('…')));
+                None
+            }
+        }
+    }
+
+    /// Fetch Full History (gitti's Repository menu): asks, then `git fetch --unshallow`;
+    /// the history reloads afterwards.
+    pub fn fetch_full_history_dialog(&mut self) {
+        let Some(plan) = self.shallow_plan(shallow::FULL_LABEL) else {
+            return;
+        };
+        let body = plan.full_message();
+        self.modal = Some(Modal::confirm(shallow::FULL_LABEL, body, "Fetch", move |app: &mut App| {
+            let remote = plan.remote;
+            app.run_op("Fetch full history", true, After::Nothing, move |r| {
+                r.fetch_full_history(&remote)
+            });
+        }));
+    }
+
+    /// Fetch More History…: how many commits (100), then `git fetch --deepen=N`.
+    pub fn fetch_more_history_dialog(&mut self) {
+        let Some(plan) = self.shallow_plan(shallow::MORE_LABEL) else {
+            return;
+        };
+        let note = plan.more_message();
+        let default = shallow::MORE_DEFAULT.to_string();
+        self.modal = Some(
+            Modal::input(
+                shallow::MORE_LABEL.trim_end_matches('…'),
+                vec![(shallow::MORE_FIELD, default.as_str())],
+                move |app, v| {
+                    let n = match shallow::parse_count(&v[0]) {
+                        Ok(n) => n,
+                        Err(why) => {
+                            app.set_error(format!("Fetch More History: {why}"));
+                            return;
+                        }
+                    };
+                    let remote = plan.remote;
+                    app.run_op("Fetch more history", true, After::Nothing, move |r| {
+                        r.fetch_more_history(&remote, n)
+                    });
+                },
+            )
+            .with_note(note)
+            .with_live(|v, _| match shallow::parse_count(&v[0]) {
+                Ok(n) => Live {
+                    ok_label: format!("Fetch {n} More"),
+                    ..Default::default()
+                },
+                Err(why) => Live {
+                    ok_label: "Fetch".into(),
+                    blocked: Some(why),
+                    ..Default::default()
+                },
+            }),
+        );
+    }
+
     /// Palette entries of these commands (gitti has them in its menu bar).
     pub(super) fn repo_palette_items(&self) -> Vec<PickItem> {
         let fm = gitti_core::desktop::file_manager_name();
@@ -356,6 +457,12 @@ impl App {
                 gitti_core::commit_encoding::change::PALETTE_DETAIL,
                 |app: &mut App| app.commit_encoding_dialog(),
             ),
+            PickItem::new(shallow::FULL_LABEL, shallow::FULL_DETAIL, |app: &mut App| {
+                app.fetch_full_history_dialog()
+            }),
+            PickItem::new(shallow::MORE_LABEL, shallow::MORE_DETAIL, |app: &mut App| {
+                app.fetch_more_history_dialog()
+            }),
             PickItem::new(format!("Open in {fm}"), "", |app: &mut App| {
                 app.open_folder()
             }),

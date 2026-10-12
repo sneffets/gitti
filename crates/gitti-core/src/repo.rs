@@ -80,6 +80,7 @@ pub struct RefInfo {
 pub struct CommitDetails {
     pub id: ObjectId,
     pub parents: Vec<ObjectId>,
+    /// Author and committer as `git log` shows them: `.mailmap` applied.
     pub author: String,
     pub author_email: String,
     pub author_time: i64,
@@ -87,6 +88,17 @@ pub struct CommitDetails {
     pub committer_email: String,
     pub commit_time: i64,
     pub message: String,
+    /// `(name, email)` of the author as the commit records it, when the mailmap changed it.
+    pub raw_author: Option<(String, String)>,
+    /// The same for the committer.
+    pub raw_committer: Option<(String, String)>,
+}
+
+impl CommitDetails {
+    /// The committer's e-mail as the commit records it (what signature checks match).
+    pub fn recorded_committer_email(&self) -> &str {
+        self.raw_committer.as_ref().map_or(&self.committer_email, |(_, e)| e)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,6 +179,9 @@ pub struct RepoSnapshot {
     pub identity: (Option<String>, Option<String>),
     /// Names of "ours" / "theirs" while there are conflicted files.
     pub conflict_sides: Option<crate::ops::ConflictSides>,
+    /// The mailmap changed since the last refresh ([`crate::mailmap`]): a shown commit
+    /// header is loaded again (the commit list re-reads its rows by itself).
+    pub mailmap_changed: bool,
     /// The message git left for the next commit (`MERGE_MSG` / `SQUASH_MSG`, see
     /// [`Repo::prepared_message`]): after a merge, a cherry-pick / revert (also with
     /// `--no-commit`) or `merge --squash`.
@@ -294,6 +309,8 @@ struct Statics {
     untracked_files: StampCache<UntrackedFiles>,
     /// Diffs between two commits (`compare.rs`; immutable, so never stale).
     compares: crate::compare::SharedCompareCache,
+    /// The mailmap of the last refresh (`mailmap.rs`), shared with the histories.
+    mailmap: std::sync::Arc<crate::mailmap::Shared>,
     /// The nested `.gitattributes` files of the index (`Repo::tracked_nested_attributes`).
     attribute_files: StampCache<Vec<String>>,
     /// The subtree scans of the last few HEADs (`Repo::subtrees`).
@@ -535,6 +552,17 @@ impl Repo {
         &self.commits
     }
 
+    /// Forgets every loaded commit (their headers show the names of an old mailmap).
+    pub(crate) fn clear_commit_cache(&self) {
+        if let Ok(mut cache) = self.commits.lock() {
+            *cache = Default::default();
+        }
+    }
+
+    pub(crate) fn mailmap_shared(&self) -> &std::sync::Arc<crate::mailmap::Shared> {
+        &self.statics.mailmap
+    }
+
     pub(crate) fn statics_worktrees(&self) -> &StampCache<Vec<crate::worktree::Worktree>> {
         &self.statics.worktrees
     }
@@ -688,7 +716,10 @@ impl Repo {
         limit: Option<usize>,
     ) -> Result<(gix::Repository, crate::history::LoadInput)> {
         let repo = self.gix()?;
+        // Read once if no refresh did yet (the refresh reads it, `Repo::snapshot`).
+        self.mailmap();
         let input = crate::history::LoadInput {
+            mailmap: self.mailmap_shared().clone(),
             refs: self.refs()?,
             head: repo.head_id().ok().map(|i| i.detach()),
             stashes: if limit.is_some() {
@@ -726,16 +757,21 @@ impl Repo {
         let c = d.committer().map_err(gx)?;
         let enc = d.encoding.map(|e| e.as_ref());
         let text = |b: &gix::bstr::BStr| crate::history::decode_text(b, enc);
+        let mailmap = self.mailmap();
+        let author = mailmap.map(&text(a.name), &text(a.email));
+        let committer = mailmap.map(&text(c.name), &text(c.email));
         Ok(CommitDetails {
             id,
             parents: d.parents().collect(),
-            author: text(a.name),
-            author_email: text(a.email),
+            author: author.name,
+            author_email: author.email,
             author_time: a.time().map(|t| t.seconds).unwrap_or(0),
-            committer: text(c.name),
-            committer_email: text(c.email),
+            committer: committer.name,
+            committer_email: committer.email,
             commit_time: c.time().map(|t| t.seconds).unwrap_or(0),
             message: text(d.message),
+            raw_author: author.raw,
+            raw_committer: committer.raw,
         })
     }
 
@@ -1346,6 +1382,8 @@ impl Repo {
                 (tracking, unpushed)
             });
             let identity = s.spawn(|| self.identity());
+            // In-process: `.mailmap` (or its blob) and the config.
+            let mailmap_changed = s.spawn(|| self.reload_mailmap());
             let worktrees = s.spawn(|| self.worktrees().unwrap_or_default());
             // In-process: index + the submodules' HEADs, only with `.gitmodules`.
             let submodules = self
@@ -1372,6 +1410,7 @@ impl Repo {
             Ok(RepoSnapshot {
                 working,
                 conflict_sides,
+                mailmap_changed: joined(mailmap_changed)?,
                 prepared_message,
                 commit_template,
                 commit_encoding,

@@ -26,7 +26,7 @@ fn set_head(work: &Path, to: &str) {
 fn commits_not_pushed_with_and_without_an_upstream() {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join("work");
-    fx::init(&work);
+    fx::init_files(&work); // `set_head` writes HEAD by hand.
     fx::remote(&work, "origin", &dir.path().join("origin.git"));
     fx::upstream(&work, "main", "origin");
     let mut i = Import::new();
@@ -116,7 +116,7 @@ fn commits_not_pushed_with_and_without_an_upstream() {
 fn a_local_upstream_compares_with_that_branch() {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join("work");
-    fx::init(&work);
+    fx::init_files(&work); // `set_head` writes HEAD by hand.
     let mut i = Import::new();
     let one = i.commit("main", None, &[], "one", &[put("a.txt", "one\n")]);
     i.commit("topic", Some(&one), &[], "two", &[put("a.txt", "two\n")]);

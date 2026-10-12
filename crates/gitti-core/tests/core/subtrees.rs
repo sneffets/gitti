@@ -139,7 +139,7 @@ fn subtrees_come_from_the_trailers_and_merges() {
     assert_eq!(y.commit, ids[fx.sq_merge2]);
 
     // A newer HEAD on top: only its commits are read (the plain merge of l3 counts).
-    fs::write(dir.join(".git/HEAD"), "ref: refs/heads/next\n").unwrap();
+    sh(&dir, &["symbolic-ref", "HEAD", "refs/heads/next"]);
     let next = repo.subtrees().unwrap();
     assert_eq!(next[0].update, Update::Merged);
     assert_eq!(next[0].split, Some(ids[fx.l3]));
@@ -147,7 +147,7 @@ fn subtrees_come_from_the_trailers_and_merges() {
     let fresh = Repo::open(&dir).unwrap().subtrees().unwrap();
     assert_eq!(next, fresh);
     // Back on main: from the cache.
-    fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    sh(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     assert_eq!(repo.subtrees().unwrap(), list);
     let _ = (fx.pull, fx.l2, fx.tip);
 }
@@ -287,8 +287,8 @@ fn a_plain_subtree_merge_counts_until_a_newer_trailer() {
     let (h, fx) = history();
     let (_tmp, dir, ids) = repo_with(&h);
     // HEAD at the plain pull: lib/ was last merged from l2 there.
-    fs::write(dir.join(".git/refs/heads/at-pull"), format!("{}\n", ids[fx.pull])).unwrap();
-    fs::write(dir.join(".git/HEAD"), "ref: refs/heads/at-pull\n").unwrap();
+    sh(&dir, &["update-ref", "refs/heads/at-pull", &ids[fx.pull].to_string()]);
+    sh(&dir, &["symbolic-ref", "HEAD", "refs/heads/at-pull"]);
     let list = Repo::open(&dir).unwrap().subtrees().unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].update, Update::Merged);
@@ -333,6 +333,18 @@ fn upstream_repo() -> (tempfile::TempDir, std::path::PathBuf, Repo) {
     (tmp, dir, repo)
 }
 
+/// `run_subtree`, or `None` (with a note) when this git has no `git subtree` — some
+/// Linux distributions and a git built from source ship it apart: nothing to check then.
+fn run_or_skip(repo: &Repo, req: &Request) -> Option<gitti_core::subtree::Outcome> {
+    match repo.run_subtree(req) {
+        Err(e) if e.is::<gitti_core::subtree::SubtreeMissing>() => {
+            println!("note: git subtree isn't installed — not run");
+            None
+        }
+        r => Some(r.unwrap()),
+    }
+}
+
 fn read(dir: &Path, path: &str) -> String {
     fs::read_to_string(dir.join(path)).unwrap()
 }
@@ -347,7 +359,7 @@ fn add_from_a_repository_is_found_and_remembered() {
         reference: "upstream-v1".into(),
         ..Default::default()
     };
-    let out = repo.run_subtree(&req).unwrap();
+    let Some(out) = run_or_skip(&repo, &req) else { return };
     assert!(!out.conflicts);
     assert!(out.message.contains("as subtree lib/ on main"), "{}", out.message);
     assert_eq!(read(&dir, "lib/x"), "1\n");
@@ -376,7 +388,7 @@ fn a_conflicting_merge_ends_in_the_merge_state() {
         reference: "upstream".into(),
         ..Default::default()
     };
-    let out = repo.run_subtree(&req).unwrap();
+    let Some(out) = run_or_skip(&repo, &req) else { return };
     assert!(out.conflicts, "{out:?}");
     assert!(out.message.contains("resolve them"), "{}", out.message);
     assert_eq!(repo.state(), gitti_core::ops::RepoState::Merging);
@@ -399,7 +411,7 @@ fn split_a_folder_into_a_branch() {
         branch: "lib-only".into(),
         ..Default::default()
     };
-    let out = repo.run_subtree(&req).unwrap();
+    let Some(out) = run_or_skip(&repo, &req) else { return };
     let id = out.split.expect("the split commit");
     assert_eq!(id, oid(&sh(&dir, &["rev-parse", "lib-only"])));
     // The folder's files at the top of the split history, both commits kept.

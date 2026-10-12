@@ -7,6 +7,7 @@ use std::fs;
 use std::sync::Arc;
 
 use gitti_core::compare::CompareSide::{Commit, Worktree};
+use gitti_core::compare::{CompareKind, MergeBase};
 use gitti_core::diff::{FileDiff, LineKind};
 use gitti_core::{DiffOptions, LogOrder, Repo};
 
@@ -168,7 +169,7 @@ fn batched_compare_diffs_match_git_diff() {
     let opts = DiffOptions::default();
     let n = r.command_log().snapshot().len();
     let all = r.compare_diffs(&pairs, &opts).unwrap();
-    let ran: Vec<String> = r.command_log().snapshot()[n..].iter().map(|e| e.args.join(" ")).collect();
+    let ran = crate::fx::ran_since(&r, n);
     assert_eq!(ran.len(), 1, "one process for all pairs: {ran:?}");
     for ((old, new), data) in pairs.iter().zip(&all) {
         assert_eq!((data.old, data.new), (*old, *new));
@@ -193,6 +194,111 @@ fn batched_compare_diffs_match_git_diff() {
     let gone = from_wt.files().iter().find(|f| f.path() == "new.txt").expect("untracked file");
     assert_eq!(gone.change, gitti_core::diff::FileChange::Deleted);
     assert!(gone.hunks[0].lines.iter().all(|l| l.kind == LineKind::Removed));
+}
+
+/// "Changes Since Common Ancestor": the diff is `git diff A...B` (merge base → B), found
+/// in-process (no `git merge-base`), cached under its own key next to the direct one; a
+/// working-tree side finds its ancestor through HEAD (`git diff HEAD...B`,
+/// `git diff --merge-base B`).
+#[gitti_test::test]
+fn compare_since_merge_base_is_git_three_dot_diff() {
+    let mut h = History::new();
+    let init = h.commit("main", &[], "init", &[("a.txt", f("1\n2\n3\n4\n5\n6\n7\n"))]);
+    let main = h.commit("main", &[init], "main work", &[("a.txt", f("ONE\n2\n3\n4\n5\n6\n7\n")), ("m.txt", f("m\n"))]);
+    let side = h.commit("side", &[init], "side work", &[("a.txt", f("1\n2\n3\n4\n5\n6\nSEVEN\n")), ("b.txt", f("b\n"))]);
+    let (_tmp, p, ids) = repo_with(&h);
+    let (init, main, side) = (ids[init], ids[main], ids[side]);
+    let r = Repo::open(&p).unwrap();
+    let opts = DiffOptions::default();
+    let kind = CompareKind::SinceMergeBase;
+    let three_dot = |a: &str, b: &str| {
+        gitti_core::diff::parse_unified(&sh(&p, &["diff", "--no-ext-diff", "-M", &format!("{a}...{b}")]))
+    };
+
+    let n = r.command_log().snapshot().len();
+    let d = r.compare_diff_as(kind, Commit(main), Commit(side), &opts).unwrap();
+    let ran: Vec<String> = r.command_log().snapshot()[n..].iter().map(|e| e.args.join(" ")).collect();
+    assert_eq!(ran.len(), 1, "one diff, the merge base in-process: {ran:?}");
+    assert_eq!(d.merge_base, Some(MergeBase::Found { id: init, summary: "init".into(), count: 1 }));
+    assert_eq!((d.old, d.new, d.compared), (Commit(init), Commit(side), (Commit(main), Commit(side))));
+    assert_eq!(d.files(), three_dot(&main.to_string(), &side.to_string()).as_slice());
+    let a = d.files().iter().find(|f| f.path() == "a.txt").unwrap();
+    assert_eq!(texts(a, LineKind::Added), ["SEVEN"], "main's ONE is not side's change");
+    assert!(d.files().iter().all(|f| f.path() != "m.txt"), "main's own file left out");
+    let line = gitti_core::compare::merge_base_line(&r.history(LogOrder::Topo).unwrap(), &d).unwrap();
+    assert!(line.contains("common ancestor") && line.contains("init"), "{line}");
+    // Its own cache entry: again no git; the direct comparison is another.
+    let n = r.command_log().snapshot().len();
+    let again = r.compare_diff_as(kind, Commit(main), Commit(side), &opts).unwrap();
+    assert!(Arc::ptr_eq(&d, &again));
+    assert_eq!(r.command_log().snapshot().len(), n);
+    assert!(r.cached_compare(Commit(main), Commit(side), &opts).is_none());
+    let direct = r.compare_diff(Commit(main), Commit(side), &opts).unwrap();
+    assert!(direct.files().iter().any(|f| f.path() == "m.txt"));
+    assert_eq!(direct.merge_base, None);
+    // The other way round: main's changes since the ancestor.
+    let back = r.compare_diff_as(kind, Commit(side), Commit(main), &opts).unwrap();
+    assert_eq!(back.files(), three_dot(&side.to_string(), &main.to_string()).as_slice());
+    // Ancestor of the other: nothing on its side.
+    let none = r.compare_diff_as(kind, Commit(main), Commit(init), &opts).unwrap();
+    assert!(none.files().is_empty());
+    assert!(gitti_core::compare::merge_base_line(&r.history(LogOrder::Topo).unwrap(), &none)
+        .unwrap()
+        .contains("already contained"));
+
+    // The working tree (HEAD = main) on either side.
+    let d = r.compare_diff_as(kind, Worktree, Commit(side), &opts).unwrap();
+    assert_eq!(d.old, Commit(init));
+    assert_eq!(d.files(), three_dot("HEAD", &side.to_string()).as_slice());
+    fs::write(p.join("m.txt"), "m\nmore\n").unwrap();
+    let d = r.compare_diff_as(kind, Commit(side), Worktree, &opts).unwrap();
+    assert_eq!((d.old, d.new), (Commit(init), Worktree));
+    let want = gitti_core::diff::parse_unified(&sh(&p, &["diff", "--no-ext-diff", "-M", "--merge-base", &side.to_string()]));
+    assert_eq!(d.files(), want.as_slice());
+}
+
+/// Since the common ancestor with several (criss-cross merges): git's pick (the first
+/// `git merge-base --all` names, which `git diff A...B` uses too) and how many there are;
+/// unrelated histories have none — the direct difference is shown.
+#[gitti_test::test]
+fn compare_since_merge_base_criss_cross_and_unrelated() {
+    let mut h = History::new();
+    let c0 = h.commit("main", &[], "c0", &[("a.txt", f("1\n2\n3\n")), ("b.txt", f("x\n"))]);
+    let a1 = h.commit("main", &[c0], "a1", &[("a.txt", f("A\n2\n3\n"))]);
+    let b1 = h.commit("side", &[c0], "b1", &[("b.txt", f("y\n"))]);
+    let a2 = h.commit("main", &[a1, b1], "a2", &[("b.txt", f("y\n"))]);
+    let b2 = h.commit("side", &[b1, a1], "b2", &[("a.txt", f("A\n2\n3\n"))]);
+    let a3 = h.commit("main", &[a2], "a3", &[("a.txt", f("A\n2\nAA\n"))]);
+    let b3 = h.commit("side", &[b2], "b3", &[("c.txt", f("c\n"))]);
+    let o1 = h.commit("other", &[], "other root", &[("o.txt", f("o\n"))]);
+    let (_tmp, p, ids) = repo_with(&h);
+    let (a3, b3, o1) = (ids[a3], ids[b3], ids[o1]);
+    let (a1, b1) = (ids[a1], ids[b1]);
+    let r = Repo::open(&p).unwrap();
+    let opts = DiffOptions::default();
+    let kind = CompareKind::SinceMergeBase;
+
+    let all = sh(&p, &["merge-base", "--all", &a3.to_string(), &b3.to_string()]);
+    let first = all.lines().next().unwrap();
+    let mb = r.merge_base_of(Commit(a3), Commit(b3)).unwrap();
+    let Some(MergeBase::Found { id, count, .. }) = Some(mb.clone()) else {
+        panic!("no merge base: {mb:?}");
+    };
+    assert_eq!(count, 2);
+    assert!([a1, b1].contains(&id));
+    assert_eq!(id.to_string(), first, "git's pick");
+    assert!(mb.describe().contains("one of 2 common ancestors"), "{}", mb.describe());
+    let d = r.compare_diff_as(kind, Commit(a3), Commit(b3), &opts).unwrap();
+    let want = gitti_core::diff::parse_unified(&sh(&p, &["diff", "--no-ext-diff", "-M", &format!("{a3}...{b3}")]));
+    assert_eq!(d.files(), want.as_slice());
+
+    // Unrelated: no ancestor, the direct difference.
+    let d = r.compare_diff_as(kind, Commit(a3), Commit(o1), &opts).unwrap();
+    assert_eq!(d.merge_base, Some(MergeBase::None));
+    assert_eq!(d.old, Commit(a3));
+    let direct = r.compare_diff(Commit(a3), Commit(o1), &opts).unwrap();
+    assert_eq!(d.files(), direct.files());
+    assert!(MergeBase::None.describe().contains("unrelated"));
 }
 
 /// One `git show` for several commits gives each exactly its own diff: root, rename,
@@ -337,9 +443,13 @@ fn remotes_and_stashes_cached_until_their_files_change() {
     let mut settle = |files: &[&str]| {
         age -= 10;
         let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
-        for f in files {
-            let file = fs::File::options().write(true).open(p.join(".git").join(f)).unwrap();
-            file.set_modified(t).unwrap();
+        // A reftable repository keeps the stash in its tables (no `refs/stash` or
+        // `logs/refs/stash` files): the table list counts.
+        for f in files.iter().copied().chain(["reftable/tables.list"]) {
+            let path = p.join(".git").join(f);
+            if f == "config" || path.exists() {
+                fs::File::options().write(true).open(path).unwrap().set_modified(t).unwrap();
+            }
         }
     };
     settle(&["config"]);

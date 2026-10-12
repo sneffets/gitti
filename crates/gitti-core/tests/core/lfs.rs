@@ -454,14 +454,12 @@ fn download_fetches_missing_objects_from_the_remote() {
 
 /// A global config for `Repo::set_env` (`filters`: git-lfs's filter section).
 fn global_config(dir: &Path, filters: bool) -> Vec<(String, String)> {
+    if filters {
+        // Also what a local remote needs (`safe.bareRepository`, `HOME`).
+        return gitti_workflow::lf::global_env(dir);
+    }
     let path = dir.join("global.gitconfig");
-    let text = if filters {
-        "[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\
-         \tprocess = git-lfs filter-process\n\trequired = true\n"
-    } else {
-        ""
-    };
-    fs::write(&path, text).unwrap();
+    fs::write(&path, "").unwrap();
     vec![
         ("GIT_CONFIG_GLOBAL".into(), path.display().to_string()),
         ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),

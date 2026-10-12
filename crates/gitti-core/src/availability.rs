@@ -100,6 +100,8 @@ pub struct RepoFacts {
     /// one of them.
     pub marked_commits: usize,
     pub head_marked: bool,
+    /// A shallow clone: the loaded history ends at a boundary ([`crate::shallow`]).
+    pub shallow: bool,
 }
 
 impl Default for RepoFacts {
@@ -136,6 +138,7 @@ impl Default for RepoFacts {
             fs_hidden: 0,
             marked_commits: 0,
             head_marked: false,
+            shallow: false,
         }
     }
 }
@@ -178,6 +181,7 @@ pub const NO_HIDDEN_PATHS: &str = "no paths hidden";
 pub const UNRESOLVED: &str = "conflicted files are not resolved yet";
 pub const NO_MARKED_COMMITS: &str = "no commits marked";
 pub const HEAD_MARKED: &str = "a marked commit is HEAD";
+pub const NOT_SHALLOW: &str = "the history is complete";
 
 /// "a merge is in progress" & co. (`None`: no operation half-done).
 pub fn in_progress(state: RepoState) -> Option<&'static str> {
@@ -242,7 +246,8 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             check(!f.diff_file, NO_FILE)
         }
         // Repository.
-        "WriteCommitGraph" | "GoToCommit" | "GoToHead" | "MarkCompare" | "ToggleAmend" => {
+        "WriteCommitGraph" | "GoToCommit" | "GoToHead" | "MarkCompare" | "ToggleCompareMergeBase"
+        | "ToggleAmend" => {
             check(f.unborn, UNBORN)
         }
         "AddWorktree" => check(f.unborn, UNBORN),
@@ -317,6 +322,9 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         }
         // Remote.
         "Fetch" | "FetchFrom" => check(f.remotes == 0, NO_REMOTES),
+        "FetchFullHistory" | "FetchMoreHistory" => {
+            check(!f.shallow, NOT_SHALLOW).or(check(f.remotes == 0, NO_REMOTES))
+        }
         "Pull" | "PullFrom" | "PullWith" => check(f.remotes == 0, NO_REMOTES)
             .or(check(f.detached, DETACHED))
             .or(busy_op),
@@ -468,10 +476,23 @@ mod tests {
             ("CleanUpMergedBranches", NO_OTHER_BRANCH),
             ("FastForwardAllBranches", NO_OTHER_BRANCH),
             ("ShowWholeFile", NO_FILE),
+            ("FetchFullHistory", NOT_SHALLOW),
+            ("FetchMoreHistory", NOT_SHALLOW),
             ("RevertLinesInWorkingTree", NO_COMMIT_DIFF),
             ("ApplyLinesToWorkingTree", NO_COMMIT_DIFF),
         ] {
             assert_eq!(why_not(a, &f), Some(why), "{a}");
+        }
+    }
+
+    /// A shallow clone fetches more of its history; without a remote it can't.
+    #[gitti_test::test]
+    fn a_shallow_clone_fetches_more_history() {
+        let f = RepoFacts { shallow: true, ..plain() };
+        for a in ["FetchFullHistory", "FetchMoreHistory"] {
+            assert_eq!(why_not(a, &f), None, "{a}");
+            let lone = RepoFacts { remotes: 0, ..f.clone() };
+            assert_eq!(why_not(a, &lone), Some(NO_REMOTES), "{a}");
         }
     }
 
@@ -502,6 +523,7 @@ mod tests {
             fs_hidable: 1,
             fs_hidden: 1,
             marked_commits: 2,
+            shallow: true,
             ..plain()
         };
         // (The merge tool needs a conflicted file at the cursor: `external_tools_…`.)

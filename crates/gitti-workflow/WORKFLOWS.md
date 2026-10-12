@@ -379,6 +379,7 @@ working tree or the index while the app shows an older state.
 | RM-16 | Failed pull's warning | a pull fails; next operation | warning stays until the next user operation | n/a | `toolbar::error_mark`, `toolbar::warnings_go_with_every_remote_op`, `toolbar::a_fetch_waits_for_the_pull`, `keys::warnings_clear` | `remote::error_mark_until_the_next_operation` |
 | RM-17 | Clone from a local bare repository | Clone… | opened; branch of the source; refused into a non-empty folder | `repo_setup::clone_from_local_bare_repo` | `menus::clone_and_init` | `repo_cmds::clone_from_the_palette` |
 | RM-18 | Unpushed / gone upstream marks | commits not pushed; upstream deleted | marks say so | `tab_marks::commits_not_pushed_with_and_without_an_upstream`, `tab_marks::a_local_upstream_compares_with_that_branch` | `layout::repo_tab_marks_follow` | `views::repo_marks_after_the_name` |
+| RM-19 | Shallow / single-branch / partial clone; fetch more history | Clone… with "newest N commits", one branch, contents on demand; Fetch More History… N; Fetch Full History | N commits of one branch (a local path too), contents fetched when needed, the dialog says what follows; deeper by N; complete — the commands greyed again | `shallow::shallow_clone_then_more_and_full_history`, `shallow::single_branch_partial_clone` | `menus::shallow_clone_and_history` | `repo_cmds::clone_shallow_single_branch`, `repo_cmds::fetch_more_and_full_history` |
 
 ## WT — Worktrees
 
@@ -526,7 +527,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | RB rebase | 9 | 9 | 9 | 9 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
-| RM remotes | 18 | 17 | 16 | 18 |
+| RM remotes | 19 | 18 | 17 | 19 |
 | WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
@@ -538,7 +539,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **276** | **266** | **256** | **257** |
+| **Total** | **278** | **268** | **258** | **259** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
@@ -554,4 +555,3 @@ at the step; once fixed, the assertion goes in and the entry goes.
 | RB-01, RB-03 (both apps) | Whether a rebase asks first differs: gitti's Rebase Current Branch onto… picker and the commit list's ref menu ask ("Rebase feat onto main? Rewrites the commits of the current branch."), gitti's sidebar branch menu and gitty (palette, branch menus) start it at once. A design choice: ask everywhere — and then say what follows (the commits get new ids; a branch pushed before needs a force push) — or nowhere. | gitti `wf_history::rb03_rebase_from_the_sidebar_stops_then_abort`, gitty `wf_history::rb01_rebase_onto_main_from_the_palette` |
 | FS-03 (gitty, Linux) | Fails on Linux (ext4, temp dirs on tmpfs; passes on macOS, and core / gitti pass on Linux): after staging both halves of a rename that only changes case, `README.md` is `A ` instead of `R ` from `Readme.md`. Cause not investigated yet. | — (the test fails) |
 | FS-04 (gitty, Linux) | Fails on Linux (same set-up; core / gitti pass): after staging the NFD name and discarding the NFC one, the index still has the NFD file's old content and the NFC file keeps its change while the NFD file lost it — staging and discarding seem to hit the other name. Cause not investigated yet. | — (the test fails) |
-| MG-25 (gitty, Linux) | Fails on Linux, a test problem: the set-up dialog's line "Writes to <config file>: diff.tool = fake" wraps between `=` and the value with Linux's shorter temp path, so `contains("diff.tool = fake")` misses it; `merge_tool_set_up_on_the_way` fails the same "what it writes" check. The check should not depend on where the line wraps (or the dialog should keep `key = value` together). | — (the tests fail) |

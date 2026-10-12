@@ -833,8 +833,16 @@ pub fn find<'a>(probes: &'a [Probe], name: &str) -> Option<&'a Probe> {
 
 // ------------------------------------------------------------------ test repository
 
+/// `--git-dir=<dir>` when `dir` is a bare repository (a remote): git 3.0 doesn't find one
+/// from its working directory (`safe.bareRepository = explicit`).
+pub fn bare_arg(dir: &Path) -> Vec<String> {
+    let bare = !dir.join(".git").exists() && dir.join("HEAD").is_file() && dir.join("objects").is_dir();
+    bare.then(|| format!("--git-dir={}", dir.display())).into_iter().collect()
+}
+
 pub fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
+        .args(bare_arg(dir))
         .args(args)
         .current_dir(dir)
         .output()
@@ -848,15 +856,26 @@ pub fn git(dir: &Path, args: &[&str]) {
 
 /// Output of `git args` in `dir` (trimmed stdout; empty when it fails).
 pub fn git_out(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+    let out = Command::new("git").args(bare_arg(dir)).args(args).current_dir(dir).output().unwrap();
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 /// `git init -b main` in `dir` (created) with identity and signing written straight into
 /// `.git/config` — one git process instead of four (fixtures are the cost).
 pub fn init_repo(dir: &Path) {
+    init_repo_with(dir, &[]);
+}
+
+/// [`init_repo`] with the refs in files whatever git's default (git 3.0: reftable), for
+/// fixtures that write ref or reflog files by hand. git before 2.45 has only files and
+/// ignores the keys.
+pub fn init_repo_files(dir: &Path) {
+    init_repo_with(dir, &["-c", "init.defaultRefFormat=files", "-c", "init.defaultRefStorageFormat=files"]);
+}
+
+fn init_repo_with(dir: &Path, config: &[&str]) {
     std::fs::create_dir_all(dir).unwrap();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &[config, &["init", "-q", "-b", "main"]].concat());
     append_config(
         dir,
         "[user]\n\tname = Layout Test\n\temail = layout@example.com\n\
@@ -1007,8 +1026,10 @@ impl Stream {
 
     /// Runs `git fast-import` in `dir`; returns the commit ids by mark (index 0 unused).
     pub fn import(self, dir: &Path) -> Vec<String> {
-        let marks = dir.join(".git/fixture-marks");
+        // In the git dir: `.git`, or a bare repository itself.
+        let marks = if bare_arg(dir).is_empty() { dir.join(".git") } else { dir.to_path_buf() }.join("fixture-marks");
         let mut child = Command::new("git")
+            .args(bare_arg(dir))
             .args(["fast-import", "--quiet"])
             .arg(format!("--export-marks={}", marks.display()))
             .current_dir(dir)
@@ -1067,9 +1088,69 @@ pub fn make_repo(dir: &Path) -> std::path::PathBuf {
     dir.to_path_buf()
 }
 
-/// Writes the ref `name` (`refs/heads/older`) pointing at `id`, as a file (no git).
+/// Whether the repository at `dir` keeps its refs in a reftable (git 3.0's default
+/// backend): no ref files — git reads and writes them there.
+pub fn reftable(dir: &Path) -> bool {
+    dir.join(".git").join("reftable").is_dir()
+}
+
+/// The id the ref `name` (`refs/heads/main`) points at in the repository at `dir`, from
+/// its loose file (no git; git in a [`reftable`] repository); empty when missing.
+pub fn read_ref(dir: &Path, name: &str) -> String {
+    ref_at(&dir.join(".git"), name)
+}
+
+/// [`read_ref`] in the git dir `git_dir` (a bare remote, or a `.git`).
+pub fn ref_at(git_dir: &Path, name: &str) -> String {
+    if git_dir.join("reftable").is_dir() {
+        return git_out(git_dir, &["rev-parse", "-q", "--verify", name]);
+    }
+    std::fs::read_to_string(git_dir.join(name)).unwrap_or_default().trim().to_string()
+}
+
+/// Deletes the ref `name` as another program would: its loose file (no git; `git
+/// update-ref -d` in a [`reftable`] repository).
+pub fn delete_ref(dir: &Path, name: &str) {
+    if reftable(dir) {
+        git(dir, &["update-ref", "-d", name]);
+    } else {
+        std::fs::remove_file(dir.join(".git").join(name)).unwrap();
+    }
+}
+
+/// What HEAD names: `ref: refs/heads/main`, or the commit when detached (the HEAD file,
+/// no git; git in a [`reftable`] repository).
+pub fn head_target(dir: &Path) -> String {
+    if reftable(dir) {
+        let branch = git_out(dir, &["symbolic-ref", "-q", "HEAD"]);
+        return if branch.is_empty() { git_out(dir, &["rev-parse", "HEAD"]) } else { format!("ref: {branch}") };
+    }
+    std::fs::read_to_string(dir.join(".git").join("HEAD")).unwrap_or_default().trim().to_string()
+}
+
+/// Detaches HEAD at commit `id`: the HEAD file (no git; `git update-ref` in a
+/// [`reftable`] repository).
+pub fn detach_head(dir: &Path, id: &str) {
+    if reftable(dir) {
+        git(dir, &["update-ref", "--no-deref", "HEAD", id]);
+    } else {
+        std::fs::write(dir.join(".git").join("HEAD"), format!("{id}\n")).unwrap();
+    }
+}
+
+/// Writes the ref `name` (`refs/heads/older`) pointing at `id`, as a file (no git; `git
+/// update-ref` in a [`reftable`] repository).
 pub fn write_ref(dir: &Path, name: &str, id: &str) {
-    let p = dir.join(".git").join(name);
+    write_ref_at(&dir.join(".git"), name, id);
+}
+
+/// [`write_ref`] in the git dir `git_dir` (a bare remote, or a `.git`).
+pub fn write_ref_at(git_dir: &Path, name: &str, id: &str) {
+    if git_dir.join("reftable").is_dir() {
+        git(git_dir, &["update-ref", name, id]);
+        return;
+    }
+    let p = git_dir.join(name);
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();
     std::fs::write(p, format!("{id}\n")).unwrap();
 }
