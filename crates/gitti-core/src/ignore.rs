@@ -329,12 +329,9 @@ impl Repo {
             IgnoreFile::Gitignore => self.workdir().join(".gitignore"),
             // A folder that is not UTF-8 by its bytes.
             IgnoreFile::Folder(dir) => self.fs_path(dir).join(".gitignore"),
-            IgnoreFile::InfoExclude => {
-                let repo = self.gix()?;
-                crate::paths::canonical(repo.common_dir())
-                    .join("info")
-                    .join("exclude")
-            }
+            // The repository's own common dir: a gix handle on a reftable repository
+            // names its ref snapshot there (`crate::reftable`).
+            IgnoreFile::InfoExclude => self.common_dir().join("info").join("exclude"),
         })
     }
 
