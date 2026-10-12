@@ -13,6 +13,7 @@ pub mod branch_update;
 pub mod caps;
 pub mod change_search;
 pub mod clone_source;
+pub mod co_author;
 pub mod commit_cache;
 pub mod commit_encoding;
 pub mod commit_files;

@@ -13,7 +13,12 @@
 //!   this repository's commits by the user, ↑ / ↓ cycle, typing ends it (in the template
 //!   ↑ moves the cursor); "Recent Commit Messages…" (menu, palette) lists them. Text the
 //!   user typed is replaced only after asking.
+//! - Add Co-Author… (Commit menu, palette): a picker over the repository's authors
+//!   (`gitti_core::co_author::co_authors`, in-process from the loaded history), the chosen
+//!   one goes into the message's trailer block as `Co-authored-by: Name <mail>`, never
+//!   twice.
 
+use gitti_core::co_author::{self, CoAuthor};
 use gitti_core::commit_message::{
     self as cm, CommitOptions, MessageRecall, RecallStep, RECENT_LABEL, RECENT_LIMIT,
 };
@@ -25,7 +30,7 @@ use super::GittiApp;
 use super::picker::{PickerItem, item};
 use crate::probe::ProbeExt as _;
 use crate::theme::PaletteExt as _;
-use crate::{MessageHistoryNext, MessageHistoryPrev, RecentMessages, ToggleSignOff};
+use crate::{AddCoAuthor, MessageHistoryNext, MessageHistoryPrev, RecentMessages, ToggleSignOff};
 
 /// The commit box's state beyond the message itself.
 #[derive(Default)]
@@ -330,11 +335,70 @@ impl GittiApp {
         cx.notify();
     }
 
+    // ------------------------------------------------------------------ co-authors
+
+    /// "Add Co-Author…": the repository's authors (read in the background, in-process),
+    /// then a picker; the chosen one's trailer goes into the message.
+    pub(super) fn open_co_author_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.repo.is_none() {
+            return;
+        }
+        let history = self.history.clone();
+        let own = self.identity.1.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { co_author::co_authors(&history, own.as_deref()) });
+        cx.spawn_in(window, async move |this, cx| {
+            let list = task.await;
+            this.update_in(cx, |this, w, cx| this.show_co_author_picker(list, w, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn show_co_author_picker(&mut self, list: Vec<CoAuthor>, window: &mut Window, cx: &mut Context<Self>) {
+        if list.is_empty() {
+            self.set_info(
+                "No co-authors to offer: no one but you wrote this repository's newest commits",
+            );
+            cx.notify();
+            return;
+        }
+        let items = list
+            .into_iter()
+            .map(|c| {
+                let ident = c.ident();
+                item(ident.clone(), c.detail(), move |this, w, cx| {
+                    this.add_co_author(&ident, w, cx)
+                })
+            })
+            .collect();
+        self.open_picker("Add co-author (Co-authored-by trailer)…", items, window, cx);
+    }
+
+    /// Adds `Co-authored-by: <ident>` to the message's trailers (not twice).
+    fn add_co_author(&mut self, ident: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.message.read(cx).value().to_string();
+        match co_author::add_co_author(&current, ident) {
+            None => self.set_info(format!("{ident} is a co-author already")),
+            Some(text) => {
+                self.message.update(cx, |m, cx| {
+                    m.set_value(text, window, cx);
+                    m.focus(window, cx);
+                });
+                self.draft_dirty = true;
+                self.save_draft_now(cx);
+                self.set_info(format!("Added \"{}: {ident}\"", co_author::TRAILER));
+            }
+        }
+        cx.notify();
+    }
+
     // ------------------------------------------------------------------ wiring
 
     pub(super) fn commit_box_actions(&self, root: Div, cx: &mut Context<Self>) -> Div {
         root.on_action(cx.listener(|this, _: &ToggleSignOff, _, cx| this.toggle_sign_off(cx)))
             .on_action(cx.listener(|this, _: &RecentMessages, w, cx| this.open_recent_messages(w, cx)))
+            .on_action(cx.listener(|this, _: &AddCoAuthor, w, cx| this.open_co_author_picker(w, cx)))
             .on_action(cx.listener(|this, _: &MessageHistoryPrev, w, cx| {
                 if !this.recall_key(true, w, cx) {
                     cx.propagate();
@@ -359,6 +423,8 @@ impl GittiApp {
                 t.open_recent_messages(w, cx)
             })
             .act(&RecentMessages),
+            item(co_author::LABEL, co_author::DETAIL, |t, w, cx| t.open_co_author_picker(w, cx))
+                .act(&AddCoAuthor),
         ]
     }
 

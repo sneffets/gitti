@@ -139,3 +139,40 @@ fn own_messages_are_the_users_newest() {
     assert_eq!(r.own_messages(Some("Other"), None, 10), ["Theirs"]);
     assert_eq!(r.own_messages(None, None, 10), Vec::<String>::new());
 }
+
+/// Add Co-Author…'s list: one per e-mail (`.mailmap` applied, the newest name), most
+/// commits first, then the most recent; the user left out. In-process: three git
+/// processes for the fixture, none for the list.
+#[gitti_test::test]
+fn co_authors_most_commits_first_without_the_user() {
+    use crate::fixture_kit::{History, f, repo_with};
+    let mut h = History::new();
+    h.author("Ann <ann@example.com>");
+    let a = h.commit("main", &[], "a", &[("a.txt", f("a\n"))]);
+    h.author("Bob <bob@example.com>");
+    let b = h.commit("main", &[a], "b", &[("a.txt", f("b\n"))]);
+    h.author("Robert <BOB@example.com>");
+    let c = h.commit("main", &[b], "c", &[("a.txt", f("c\n"))]);
+    h.author("Cy <cy@old.example>");
+    let d = h.commit("main", &[c], "d", &[("a.txt", f("d\n"))]);
+    h.author("Me <me@example.com>");
+    let e = h.commit("main", &[d], "e", &[("a.txt", f("e\n"))]);
+    h.author("Ann <ann@example.com>");
+    h.commit("main", &[e], "f", &[(".mailmap", f("Cy Young <cy@example.com> <cy@old.example>\n"))]);
+    let (_tmp, dir, _) = repo_with(&h);
+    let repo = Repo::open(&dir).unwrap();
+    let history = repo.history(gitti_core::LogOrder::Topo).unwrap();
+    let before = repo.command_log().snapshot().len();
+    let list = gitti_core::co_author::co_authors(&history, Some("ME@example.com"));
+    assert_eq!(repo.command_log().snapshot().len(), before, "no git for the list");
+    let got: Vec<_> = list.iter().map(|c| (c.ident(), c.commits)).collect();
+    assert_eq!(
+        got,
+        [
+            ("Ann <ann@example.com>".to_string(), 2),
+            ("Robert <BOB@example.com>".to_string(), 2),
+            ("Cy Young <cy@example.com>".to_string(), 1),
+        ]
+    );
+    assert_eq!(list[0].detail(), "2 commits");
+}

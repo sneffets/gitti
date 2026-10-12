@@ -1484,9 +1484,12 @@ actions!(
     ]
 );
 
-// Commit ▸ Sign Off Commits / Recent Commit Messages…, ↑ / ↓ in the message box (earlier
-// messages); handlers in `app/commit_box.rs`.
-actions!(gitti, [ToggleSignOff, RecentMessages, MessageHistoryPrev, MessageHistoryNext]);
+// Commit ▸ Sign Off Commits / Recent Commit Messages… / Add Co-Author…, ↑ / ↓ in the
+// message box (earlier messages); handlers in `app/commit_box.rs`.
+actions!(
+    gitti,
+    [ToggleSignOff, RecentMessages, AddCoAuthor, MessageHistoryPrev, MessageHistoryNext]
+);
 
 // Commit ▸ Branches and Tags Containing / Restore File or Folder from Selected Commit;
 // handlers in `app/from_commit.rs`.
@@ -1821,6 +1824,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Amend Previous Commit", ToggleAmend),
                 MenuItem::action("Sign Off Commits", ToggleSignOff),
                 MenuItem::action(gitti_core::commit_message::RECENT_LABEL, RecentMessages),
+                MenuItem::action(gitti_core::co_author::LABEL, AddCoAuthor),
                 MenuItem::action("Go to Working Directory", GoToWorkingDirectory),
                 MenuItem::separator(),
                 MenuItem::action("Stage All", StageAll),

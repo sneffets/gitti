@@ -14,7 +14,12 @@
 //!   this repository's commits by the user, ↑ / ↓ cycle, typing ends it (in the template
 //!   ↑ moves the cursor); "Recent Commit Messages…" (palette, menu) lists them. Text the
 //!   user typed is replaced only after asking.
+//! - Add Co-Author… (palette, the working directory's / message editor's menu): a picker
+//!   over the repository's authors (`gitti_core::co_author::co_authors`, in-process from
+//!   the loaded history), the chosen one goes into the message's trailer block as
+//!   `Co-authored-by: Name <mail>`, never twice.
 
+use gitti_core::co_author::{self, CoAuthor};
 use gitti_core::commit_message::{
     self as cm, CommitOptions, MessageRecall, RecallStep, RECENT_LABEL, RECENT_LIMIT,
 };
@@ -258,6 +263,53 @@ impl App {
         self.message_edited();
     }
 
+    /// "Add Co-Author…": the repository's authors (read in the background, in-process),
+    /// then a picker; the chosen one's trailer goes into the message.
+    pub fn open_co_author_picker(&mut self) {
+        let history = self.history.clone();
+        let own = self.identity.1.clone();
+        // `Msg::Apply` counts down `loads_in_flight`.
+        self.loads_in_flight += 1;
+        spawn(
+            &self.tx,
+            move || co_author::co_authors(&history, own.as_deref()),
+            |list| Msg::Apply(Box::new(move |app: &mut App| app.show_co_author_picker(list))),
+        );
+    }
+
+    fn show_co_author_picker(&mut self, list: Vec<CoAuthor>) {
+        if list.is_empty() {
+            self.set_info(
+                "No co-authors to offer: no one but you wrote this repository's newest commits",
+            );
+            return;
+        }
+        let items = list
+            .into_iter()
+            .map(|c| {
+                let ident = c.ident();
+                PickItem::new(ident.clone(), c.detail(), move |app: &mut App| {
+                    app.add_co_author(&ident)
+                })
+            })
+            .collect();
+        self.modal = Some(Modal::picker("Add co-author (Co-authored-by trailer)", items));
+    }
+
+    /// Adds `Co-authored-by: <ident>` to the message's trailers (not twice).
+    pub fn add_co_author(&mut self, ident: &str) {
+        let current = self.message.text();
+        match co_author::add_co_author(&current, ident) {
+            None => self.set_info(format!("{ident} is a co-author already")),
+            Some(text) => {
+                self.message.set_text(&text);
+                self.focus = super::Focus::Message;
+                self.message_edited();
+                self.set_info(format!("Added \"{}: {ident}\"", co_author::TRAILER));
+            }
+        }
+    }
+
     /// Palette entries (as gitti's).
     pub(super) fn commit_box_palette_items(&self) -> Vec<PickItem> {
         vec![
@@ -268,6 +320,9 @@ impl App {
             ),
             PickItem::new(RECENT_LABEL, "↑ in the empty message box", |app: &mut App| {
                 app.open_recent_messages()
+            }),
+            PickItem::new(co_author::LABEL, co_author::DETAIL, |app: &mut App| {
+                app.open_co_author_picker()
             }),
         ]
     }

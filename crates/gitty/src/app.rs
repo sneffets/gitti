@@ -4126,6 +4126,7 @@ impl App {
             MenuItem::new(gitti_core::commit_message::RECENT_LABEL, |app| {
                 app.open_recent_messages()
             }),
+            MenuItem::new(gitti_core::co_author::LABEL, |app| app.open_co_author_picker()),
         ]
     }
 
