@@ -95,6 +95,7 @@ pub mod stage_all;
 mod stamp_cache;
 pub mod startup;
 pub mod stash;
+pub mod stash_staged;
 pub mod stopped;
 pub mod status;
 pub mod store;

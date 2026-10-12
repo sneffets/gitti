@@ -1459,9 +1459,48 @@ fn merge_editor_keys(ui: &mut Ui) {
         ui.fail("no merge window".into());
         return;
     };
-    ui.cx.update(testing::merge_focus_top);
     ui.cx.run_until_parked();
     let merge = |ui: &mut Ui| ui.cx.update(testing::merge_state).expect("merge editor");
+    // The result has the focus from the start: a typed character lands at the first
+    // conflict, ⌘Z takes it back.
+    let opened = merge(ui);
+    if !opened.result_focused {
+        ui.fail("merge: the result editor is not focused after opening".into());
+    }
+    let type_key = |ui: &mut Ui, k: &str| {
+        let ks = Keystroke::parse(k).unwrap();
+        ui.cx.update_window(win, |_, window, cx| window.dispatch_keystroke(ks, cx)).unwrap();
+        ui.cx.run_until_parked();
+    };
+    type_key(ui, "x");
+    let typed = merge(ui).text;
+    if typed.len() != opened.text.len() + 1 || !typed.contains("x<<<<<<<") {
+        ui.fail("merge: typing after opening didn't edit the result at the conflict".into());
+    }
+    type_key(ui, "secondary-z");
+    if merge(ui).text != opened.text {
+        ui.fail("merge: ⌘Z didn't take the typed character back".into());
+    }
+    // A click into the result gives the focus back to the editor.
+    ui.cx.update(testing::merge_focus_top);
+    ui.cx.run_until_parked();
+    testing::clear_probes();
+    ui.cx.update_window(win, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    match find(&testing::probes(), "merge-result-pane").and_then(Probe::visible) {
+        Some(r) => {
+            ui.clicks_in(win, r.center(), 1, None);
+            if !merge(ui).result_focused {
+                ui.fail("merge: a click into the result didn't focus the editor".into());
+            }
+        }
+        None => ui.fail("merge: no visible result pane".into()),
+    }
+    ui.cx.update(testing::merge_focus_top);
+    ui.cx.run_until_parked();
     let key = |ui: &mut Ui, k: &str| -> testing::MergeState {
         let n = ui.n_git();
         ui.last_step = format!("merge key:{k}");

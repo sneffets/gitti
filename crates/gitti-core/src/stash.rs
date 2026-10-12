@@ -9,7 +9,9 @@
 //!   staged changes out of the working tree with `git apply -R` of a `-U1` diff — which
 //!   fails when a file's unstaged changes sit right next to its staged ones, leaving the
 //!   stash saved *and* the changes still there. [`Repo::stash_push`] runs the same check
-//!   before and refuses with what to do instead.
+//!   before; where it fails (and for chosen paths, where git also reverts other files'
+//!   staged changes in the working tree) the stash is made by hand
+//!   ([`crate::stash_staged`]), the unstaged changes staying exactly.
 //! - **Lines / hunks** ([`Repo::stash_lines`]): the same selection model as line staging
 //!   ([`crate::patch`]). git has no command for it; the stash is built like git builds
 //!   one — a commit of the working-tree state whose parents are HEAD and an "index on"
@@ -366,9 +368,40 @@ pub fn selected_lines(file: &FileDiff, sel: &Selection) -> usize {
         .sum()
 }
 
+/// What a new stash starts from: HEAD and the names its messages carry.
+pub(crate) struct StashBase {
+    pub head: ObjectId,
+    pub tree: ObjectId,
+    /// The branch's short name, "(no branch)" when HEAD is detached.
+    pub branch: String,
+    /// HEAD's abbreviated id and subject.
+    pub short: String,
+    pub subject: String,
+}
+
+impl StashBase {
+    pub(crate) fn of(repo: &gix::Repository) -> Result<StashBase> {
+        let head = repo
+            .head_commit()
+            .map_err(|_| anyhow!("There is no commit yet: a stash needs one to start from"))?;
+        Ok(StashBase {
+            head: head.id,
+            tree: head.tree_id().map_err(gx)?.detach(),
+            short: head.id().shorten_or_id().to_string(),
+            subject: head.message().map(|m| m.summary().to_string()).unwrap_or_default(),
+            branch: repo
+                .head_name()
+                .ok()
+                .flatten()
+                .map(|n| n.shorten().to_string())
+                .unwrap_or_else(|| "(no branch)".into()),
+        })
+    }
+}
+
 /// Temporary files (a temporary index, merge inputs) next to the repository's own,
 /// removed when dropped.
-struct Scratch {
+pub(crate) struct Scratch {
     dir: PathBuf,
     files: Vec<PathBuf>,
 }
@@ -376,7 +409,7 @@ struct Scratch {
 static SCRATCH: AtomicUsize = AtomicUsize::new(0);
 
 impl Scratch {
-    fn new(repo: &Repo) -> Scratch {
+    pub(crate) fn new(repo: &Repo) -> Scratch {
         // In the git dir when its path can go into an environment variable as UTF-8.
         let dir = repo
             .git_dir()
@@ -396,7 +429,7 @@ impl Scratch {
     }
 
     /// A git runner on a new, empty temporary index.
-    fn index(&mut self, git: &Git) -> Git {
+    pub(crate) fn index(&mut self, git: &Git) -> Git {
         let p = self.path("index");
         git.with_env(&[("GIT_INDEX_FILE", &p.to_string_lossy())])
     }
@@ -413,7 +446,7 @@ impl Drop for Scratch {
 
 /// `mode SP id TAB path NUL` for `git update-index -z --index-info` (`path`: its bytes,
 /// [`Repo::path_bytes`]).
-fn index_info(mode: &str, id: &str, path: &[u8]) -> Vec<u8> {
+pub(crate) fn index_info(mode: &str, id: &str, path: &[u8]) -> Vec<u8> {
     let mut v = format!("{mode} {id}\t").into_bytes();
     v.extend_from_slice(path);
     v.push(0);
@@ -440,8 +473,9 @@ fn apply_cached(git: &Git, patch: &[u8]) -> Result<()> {
 
 impl Repo {
     /// `git stash push` with `flags`, of `paths` only when not empty (literal pathspecs).
-    /// "Only staged changes" is checked first: refused when git could not take the staged
-    /// changes out of the working tree afterwards (see the module docs).
+    /// "Only staged changes" is checked first: made by hand when git could not take the
+    /// staged changes out of the working tree afterwards, or of chosen paths (see the
+    /// module docs).
     pub fn stash_push(&self, message: &str, flags: StashFlags, paths: &[String]) -> Result<String> {
         if let Some(why) = refusal_during(self.state()) {
             bail!(why);
@@ -449,8 +483,8 @@ impl Repo {
         if flags.staged_only && (flags.include_untracked || flags.include_ignored || flags.keep_index) {
             bail!("“Only staged changes” goes with neither untracked / ignored files nor “Keep staged changes”");
         }
-        if flags.staged_only {
-            self.check_staged_removal(paths)?;
+        if flags.staged_only && (!paths.is_empty() || !self.git_can_take_staged_out()?) {
+            return self.stash_staged_by_hand(message, paths);
         }
         // Stashes are written in UTF-8 (`CommitEncoding::stash_config`).
         let encoding = self.commit_encoding();
@@ -479,10 +513,11 @@ impl Repo {
         Ok(format!("{}{}", out.stdout_str(), out.stderr).trim().to_string())
     }
 
-    /// What `git stash push --staged` does after saving: `git apply -R` of the staged
-    /// changes (`-U1`) on the working tree — checked here first.
-    fn check_staged_removal(&self, paths: &[String]) -> Result<()> {
-        let mut args = vec![
+    /// Whether `git stash push --staged` could finish: after saving the stash it takes
+    /// the staged changes out of the working tree with `git apply -R` of a `-U1` diff of
+    /// them — checked here first (see [`crate::stash_staged`]).
+    fn git_can_take_staged_out(&self) -> Result<bool> {
+        let args = [
             "diff",
             "--cached",
             "-U1",
@@ -493,37 +528,11 @@ impl Repo {
             "--src-prefix=a/",
             "--dst-prefix=b/",
         ];
-        if !paths.is_empty() {
-            args.push("--");
-            args.extend(paths.iter().map(String::as_str));
-        }
-        let patch = self.git_literal().run(&args)?.stdout;
+        let patch = self.git().run(&args)?.stdout;
         if patch.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
-        let check = self
-            .git()
-            .run_raw(&["apply", "-R", "--check", "-"], Some(&patch))?;
-        if check.code == 0 {
-            return Ok(());
-        }
-        let mut failed: Vec<&str> = check
-            .stderr
-            .lines()
-            .filter_map(|l| l.strip_prefix("error: patch failed: "))
-            .filter_map(|l| l.rsplit_once(':').map(|(p, _)| p))
-            .collect();
-        failed.dedup();
-        let names = if failed.is_empty() { "some files".to_string() } else { failed.join(", ") };
-        bail!(
-            "Not stashed: {names} also {} unstaged changes right next to the staged ones. git \
-             would save the stash but could not take the staged lines out of the working \
-             tree, so they would be both stashed and still there. Stage the rest of {} \
-             first, or stash all changes (untick “Only staged changes”), or select the \
-             staged lines and use Stash Selected Lines.",
-            if failed.len() == 1 { "has" } else { "have" },
-            if failed.len() == 1 { "the file" } else { "these files" }
-        )
+        Ok(self.git().run_raw(&["apply", "-R", "--check", "-"], Some(&patch))?.code == 0)
     }
 
     /// Stashes the lines `sel` selects of `file` — a diff of [`Repo::working_state`],
@@ -560,25 +569,15 @@ impl Repo {
             bail!(why);
         }
         let repo = self.gix()?;
-        let head = repo
-            .head_commit()
-            .map_err(|_| anyhow!("There is no commit yet: a stash needs one to start from"))?;
-        let head_id = head.id;
-        let head_tree = head.tree_id().map_err(gx)?.detach();
-        let short = head.id().shorten_or_id().to_string();
-        let subject = head.message().map(|m| m.summary().to_string()).unwrap_or_default();
-        let branch = repo
-            .head_name()
-            .ok()
-            .flatten()
-            .map(|n| n.shorten().to_string())
-            .unwrap_or_else(|| "(no branch)".into());
+        let base = StashBase::of(&repo)?;
+        let head_id = base.head;
+        let head_tree = base.tree;
         let index = repo.index_or_empty().map_err(gx)?;
         let in_index = index
             .entry_by_path(raw.as_bstr())
             .map(|e| (format!("{:o}", e.mode.bits()), e.id));
         drop(index);
-        let in_head = self.tree_entry(&head.tree().map_err(gx)?, &path)?.map(|e| e.object_id());
+        let in_head = self.tree_entry(&repo.find_tree(head_tree).map_err(gx)?, &path)?.map(|e| e.object_id());
 
         if !staged && in_index.is_none() {
             // An untracked file: a stash holds it whole (`-u`); a part of it could not be
@@ -659,33 +658,7 @@ impl Repo {
             Removal::Unstaged(discard)
         };
 
-        let base = head_id.to_string();
-        // Stashes are written in UTF-8 (`CommitEncoding::stash_config`).
-        let utf8 = self.commit_encoding().stash_config();
-        let i_commit = self
-            .git()
-            .run_stdin(
-                &[utf8, &["commit-tree", &i_tree, "-p", &base, "-F", "-"]].concat(),
-                Some(format!("index on {branch}: {short} {subject}\n").as_bytes()),
-            )?
-            .stdout_str()
-            .trim()
-            .to_string();
-        let msg = if message.trim().is_empty() {
-            format!("WIP on {branch}: {short} {subject}")
-        } else {
-            format!("On {branch}: {}", message.trim())
-        };
-        let w_commit = self
-            .git()
-            .run_stdin(
-                &[utf8, &["commit-tree", &w_tree, "-p", &base, "-p", &i_commit, "-F", "-"]].concat(),
-                Some(format!("{msg}\n").as_bytes()),
-            )?
-            .stdout_str()
-            .trim()
-            .to_string();
-        self.git().run(&["stash", "store", "-m", &msg, &w_commit])?;
+        self.store_stash(&base, &i_tree, &w_tree, message)?;
 
         let taken_out = match removal {
             Removal::Unstaged(discard) => self.apply_patch(&discard, PatchMode::Discard),
@@ -706,6 +679,42 @@ impl Repo {
             bail!("Stashed {what} of {path} as stash@{{0}}, but could not take them out: {e:#}");
         }
         Ok(format!("Stashed {what} of {path} as stash@{{0}}"))
+    }
+
+    /// Stores a stash made of `i_tree` (its index) and `w_tree` (its working tree) on
+    /// [`StashBase`]'s HEAD, as `git stash` makes one: a commit of the working-tree state
+    /// whose parents are HEAD and an "index on" commit, then `git stash store`. Returns
+    /// the stash's message ("On branch: message", "WIP on branch: …" without one).
+    pub(crate) fn store_stash(&self, base: &StashBase, i_tree: &str, w_tree: &str, message: &str) -> Result<String> {
+        let StashBase { head, branch, short, subject, .. } = base;
+        let head = head.to_string();
+        // Stashes are written in UTF-8 (`CommitEncoding::stash_config`).
+        let utf8 = self.commit_encoding().stash_config();
+        let i_commit = self
+            .git()
+            .run_stdin(
+                &[utf8, &["commit-tree", i_tree, "-p", &head, "-F", "-"]].concat(),
+                Some(format!("index on {branch}: {short} {subject}\n").as_bytes()),
+            )?
+            .stdout_str()
+            .trim()
+            .to_string();
+        let msg = if message.trim().is_empty() {
+            format!("WIP on {branch}: {short} {subject}")
+        } else {
+            format!("On {branch}: {}", message.trim())
+        };
+        let w_commit = self
+            .git()
+            .run_stdin(
+                &[utf8, &["commit-tree", w_tree, "-p", &head, "-p", &i_commit, "-F", "-"]].concat(),
+                Some(format!("{msg}\n").as_bytes()),
+            )?
+            .stdout_str()
+            .trim()
+            .to_string();
+        self.git().run(&["stash", "store", "-m", &msg, &w_commit])?;
+        Ok(msg)
     }
 
     /// The working-tree version of `path` without the staged lines `reverse` takes out of

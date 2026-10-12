@@ -853,6 +853,17 @@ impl GittiApp {
                 h_flex()
                     .gap_2()
                     .flex_wrap()
+                    // A missing folder (a drive not connected): read it again once it is back.
+                    .when_some(self.path.clone().filter(|_| self.folder_missing()), |d, dir| {
+                        d.child(
+                            Button::new("start-retry")
+                                .label("Try Again")
+                                .small()
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(AppEvent::OpenRepository(dir.clone()))
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("start-open")
                             .label(format!("Open Repository…  ({}O)", crate::theme::MOD_KEY))
