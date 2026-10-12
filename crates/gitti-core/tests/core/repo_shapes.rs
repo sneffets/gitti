@@ -765,6 +765,21 @@ fn bare_repository_is_refused() {
     assert!(err.contains("bare"), "{err}");
 }
 
+/// A folder that is not there (a drive not connected) is not "not a repository": typed,
+/// so gitti keeps a saved tab on it, offers no "Initialize Repository Here" (it would
+/// create the folder where the drive mounts) and reads it once it is back. No git process.
+#[gitti_test::test]
+fn missing_folder_is_its_own_error() {
+    let t = tempfile::tempdir().unwrap();
+    let gone = t.path().join("drive").join("repo");
+    let err = Repo::open(&gone).unwrap_err();
+    let kind = err.downcast_ref::<gitti_core::OpenError>().cloned();
+    assert_eq!(kind, Some(gitti_core::OpenError::FolderMissing(gone.clone())));
+    assert_eq!(kind.unwrap().title(), "Folder not found");
+    let msg = err.to_string();
+    assert!(msg.contains("does not exist") && msg.contains("not connected"), "{msg}");
+}
+
 
 /// A repository kept apart from its work tree ("dotfiles": `core.worktree` names the
 /// folder, which has no `.git`): opening the git dir is refused with how to link them —

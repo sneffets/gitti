@@ -1177,14 +1177,16 @@ impl GittiApp {
     /// scrolling up at the list's top grows it back; only then the list scrolls. A
     /// capture-phase window listener, so it runs before the list (and the editor) take the
     /// event; not while the editor has the focus (the box stays whole then), nor over an
-    /// editor with more text than it shows (it scrolls its text).
+    /// editor with more text than it shows (it scrolls its text). Only where the panel is
+    /// what the wheel is over (its hitbox in the hit test): a dialog, the palette or the
+    /// settings page drawn over it takes the wheel itself (`occlude`).
     fn commit_box_wheel_handler(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let app = cx.entity().downgrade();
         canvas(
-            |bounds, _, _| bounds,
-            move |_, bounds, window, _| {
+            |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            move |_, hitbox, window, _| {
                 window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture || !bounds.contains(&ev.position) {
+                    if phase != DispatchPhase::Capture || !hitbox.should_handle_scroll(window) {
                         return;
                     }
                     let dy = ev.delta.pixel_delta(window.line_height()).y;

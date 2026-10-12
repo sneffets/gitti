@@ -119,18 +119,32 @@ fn sh05_stash_only_the_staged_changes() {
     wf::expect_stashed(d).unwrap();
 }
 
-/// SH-05: with t.txt's staged line next to an unstaged one, "Only staged changes" is
-/// refused with the reason; nothing is stashed.
+/// SH-05: with t.txt's staged line changed again in the working tree, "Only staged
+/// changes" is refused with the reason; nothing is stashed.
 /// Workflow: SH-05
 #[gitti_test::test]
-fn sh05_staged_only_refused_next_to_unstaged_lines() {
+fn sh05_staged_only_refused_on_a_staged_line_changed_again() {
     use sh::staged_only as wf;
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
-    wf::fixture_adjacent(d);
+    wf::fixture_overlap(d);
     let out = gitty(d, &format!("{}press:e;dump", stash_keys(Some(3))));
     assert!(dialog_text(screens(&out)[0]).contains(&wf::REFUSAL.replace("  ", " ")), "{out}");
     wf::expect_refused(d).unwrap();
+}
+
+/// SH-22: staged lines right next to unstaged ones (part of an inserted block, the line
+/// below a staged one): "Only staged changes" stashes them, the unstaged lines stay.
+/// Workflow: SH-22
+#[gitti_test::test]
+fn sh22_stash_only_staged_lines_next_to_unstaged_ones() {
+    use sh::staged_next_to_unstaged as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    wf::fixture(d);
+    let out = gitty(d, &stash_keys(Some(3)));
+    assert!(states(&out)[0].contains("unstaged=2 staged=0"), "{out}");
+    wf::expect_stashed(d).unwrap();
 }
 
 /// SH-08: the second hunk's two lines (the last line, no newline at the end) selected

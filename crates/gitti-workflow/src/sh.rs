@@ -1,6 +1,7 @@
 //! SH — stash: stash and pop with its variants (untracked, `--all`, keep the index, only
-//! staged), pop restoring the index, a pop an untracked file blocks, a branch from a stash
-//! that an untracked file or local changes block, dropping a stash
+//! staged — also next to unstaged lines), pop restoring the index, a pop an untracked
+//! file blocks, a branch from a stash that an untracked file or local changes block,
+//! dropping a stash
 //! (also after the list changed outside, and the one being looked at), an apply that
 //! conflicts, looking into a stash,
 //! stashing lines with odd bytes; and WT-08, a stash made in one worktree and popped in
@@ -152,19 +153,20 @@ pub mod stash_and_pop {
 /// Expected ([`expect_stashed`]): the stash holds `s.txt`'s change only (its `a.txt` is
 /// HEAD's); `s.txt` back at HEAD, `a.txt`'s edit stays unstaged.
 ///
-/// With [`fixture_adjacent`] `t.txt` also has a staged line right next to an unstaged
-/// one — git would save the stash and then fail to take the staged line out of the
-/// working tree. Expected ([`expect_refused`]): refused before anything happens, the app
-/// says why ([`REFUSAL`]); no stash, nothing changed.
+/// With [`fixture_overlap`] `t.txt` also has a staged line that was changed again in the
+/// working tree — the staged version can't be taken out without the unstaged one.
+/// Expected ([`expect_refused`]): refused before anything happens, the app says why and
+/// what to do ([`REFUSAL`]); no stash, nothing changed. (Unstaged lines right *next to*
+/// staged ones work: SH-22.)
 pub mod staged_only {
     use super::*;
 
     pub const S: &str = "s\n";
     pub const S_STAGED: &str = "s, staged\n";
     pub const T_STAGED: &str = "t 1\nt 2 staged\nt 3\nt 4\n";
-    pub const T_WORK: &str = "t 1\nt 2 staged\nt 3 unstaged\nt 4\n";
-    /// The start of the refusal (`gitti_core::stash`'s check of `--staged`).
-    pub const REFUSAL: &str = "Not stashed: t.txt also has unstaged changes right next to the staged ones";
+    pub const T_WORK: &str = "t 1\nt 2 staged again\nt 3\nt 4\n";
+    /// The start of the refusal (`gitti_core::stash_staged`).
+    pub const REFUSAL: &str = "Not stashed: t.txt has unstaged changes on the staged lines themselves";
 
     pub fn a() -> String {
         lines("a", 6, &[])
@@ -174,12 +176,12 @@ pub mod staged_only {
         lines("a", 6, &[(3, "a 3 edited")])
     }
 
-    fn base(adjacent: bool) -> Fixture {
+    fn base(overlap: bool) -> Fixture {
         let mut fx = Fixture::new();
         fx.commit("main", "init", &[put("a.txt", &a()), put("s.txt", S), put("t.txt", "t 1\nt 2\nt 3\nt 4\n")]);
         fx.stage(&[put("s.txt", S_STAGED)]);
         fx.write("a.txt", &a_edit());
-        if adjacent {
+        if overlap {
             fx.stage(&[put("t.txt", T_STAGED)]);
             fx.write("t.txt", T_WORK);
         }
@@ -191,8 +193,8 @@ pub mod staged_only {
         base(false).build(dir);
     }
 
-    /// With `t.txt`'s staged and unstaged lines next to each other. Three git processes.
-    pub fn fixture_adjacent(dir: &Path) {
+    /// With `t.txt`'s staged line changed again in the working tree. Three git processes.
+    pub fn fixture_overlap(dir: &Path) {
         base(true).build(dir);
     }
 
@@ -219,6 +221,57 @@ pub mod staged_only {
         k.eq("stashes", e.stashes(), 0);
         k.eq("status", e.status_lines(), status(&[" M a.txt", "M  s.txt", "MM t.txt"]));
         k.text("t.txt", e.file("t.txt").as_deref(), Some(T_WORK));
+        k.done()
+    }
+}
+
+/// **SH-22 — stash only the staged changes next to unstaged ones.** `main` has `b.txt`
+/// ([`B`]) and `t.txt` ([`T`]). Four lines were inserted into `b.txt` — two blank lines,
+/// `bla`, a blank line ([`B_WORK`]) — and only the upper two blank lines staged
+/// ([`B_STAGED`]); in `t.txt` line 2 is changed and staged, line 3 changed and not staged
+/// ([`T_STAGED`], [`T_WORK`]). The user stashes with "Only staged changes". git alone
+/// would save the stash and then stop ("Cannot remove worktree changes": its reverse
+/// patch needs the line next to the staged ones as it is in the index).
+///
+/// Expected ([`expect_stashed`]): one stash holding the staged versions (as its index
+/// and its working tree); nothing staged; each file HEAD's version plus exactly its
+/// unstaged lines, in their places ([`B_LEFT`], [`T_LEFT`]).
+pub mod staged_next_to_unstaged {
+    use super::*;
+
+    pub const B: &str = "a\nb\nc\nd\n";
+    pub const B_STAGED: &str = "a\nb\n\n\nc\nd\n";
+    pub const B_WORK: &str = "a\nb\n\n\nbla\n\nc\nd\n";
+    pub const B_LEFT: &str = "a\nb\nbla\n\nc\nd\n";
+    pub const T: &str = "t 1\nt 2\nt 3\nt 4\n";
+    pub const T_STAGED: &str = "t 1\nt 2 staged\nt 3\nt 4\n";
+    pub const T_WORK: &str = "t 1\nt 2 staged\nt 3 unstaged\nt 4\n";
+    pub const T_LEFT: &str = "t 1\nt 2\nt 3 unstaged\nt 4\n";
+
+    /// See the module docs. Three git processes.
+    pub fn fixture(dir: &Path) {
+        let mut fx = Fixture::new();
+        fx.commit("main", "init", &[put("b.txt", B), put("t.txt", T)]);
+        fx.stage(&[put("b.txt", B_STAGED), put("t.txt", T_STAGED)]);
+        fx.write("b.txt", B_WORK);
+        fx.write("t.txt", T_WORK);
+        fx.build(dir);
+    }
+
+    /// After the stash: the staged versions in it; the unstaged lines stay, unstaged.
+    /// Two git processes.
+    pub fn expect_stashed(dir: &Path) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("SH-22 after stashing the staged changes");
+        k.eq("stashes", e.stashes(), 1);
+        let b = e.blobs(&["stash@{0}:b.txt", "stash@{0}:t.txt", "stash@{0}^2:b.txt", "stash@{0}^2:t.txt"]);
+        k.text("b.txt in the stash", b[0].as_deref(), Some(B_STAGED));
+        k.text("t.txt in the stash", b[1].as_deref(), Some(T_STAGED));
+        k.text("b.txt in the stash's index", b[2].as_deref(), Some(B_STAGED));
+        k.text("t.txt in the stash's index", b[3].as_deref(), Some(T_STAGED));
+        k.eq("status", e.status_lines(), status(&[" M b.txt", " M t.txt"]));
+        k.text("b.txt", e.file("b.txt").as_deref(), Some(B_LEFT));
+        k.text("t.txt", e.file("t.txt").as_deref(), Some(T_LEFT));
         k.done()
     }
 }

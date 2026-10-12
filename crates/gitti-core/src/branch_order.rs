@@ -141,9 +141,13 @@ pub fn recent_checkouts(repo: &gix::Repository) -> Vec<String> {
     let Ok(Some(lines)) = platform.rev() else {
         return Vec::new();
     };
+    checkouts_of(lines.take(RECENT_SCAN).flatten().map(|l| l.message.to_string()))
+}
+
+/// [`recent_checkouts`] from reflog messages, newest first.
+fn checkouts_of(messages: impl Iterator<Item = String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for line in lines.take(RECENT_SCAN).flatten() {
-        let message = line.message.to_string();
+    for message in messages {
         let Some((from, to)) = parse_checkout(&message) else {
             continue;
         };
@@ -167,9 +171,23 @@ fn parse_checkout(message: &str) -> Option<(&str, &str)> {
 }
 
 impl Repo {
-    /// [`recent_checkouts`] of this worktree (in-process).
+    /// [`recent_checkouts`] of this worktree (in-process). A reftable repository keeps its
+    /// reflogs in its tables, which gix can't read: one `git log -g` there, kept until the
+    /// refs change ([`crate::reftable`]).
     pub fn recent_checkouts(&self) -> Vec<String> {
-        self.gix().map(|r| recent_checkouts(&r)).unwrap_or_default()
+        if !self.uses_reftable() {
+            return self.gix().map(|r| recent_checkouts(&r)).unwrap_or_default();
+        }
+        let tables = |d: &std::path::Path| d.join("reftable").join("tables.list");
+        let mut files = vec![tables(&self.common_dir())];
+        files.extend(self.git_dir().map(|d| tables(&d)));
+        let scan = format!("-{RECENT_SCAN}");
+        self.statics_recent_checkouts()
+            .get(&files, || {
+                let out = self.git().run(&["log", "-g", &scan, "--format=%gs", "HEAD", "--"])?;
+                Ok(checkouts_of(out.stdout_str().lines().map(str::to_string)))
+            })
+            .unwrap_or_default()
     }
 }
 

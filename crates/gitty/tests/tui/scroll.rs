@@ -42,6 +42,29 @@ fn commit_list_keys_and_wheel_scroll_without_running_git() {
     assert!(blocks[1].is_empty() && blocks[3].is_empty(), "the wheel ran git: {out}");
 }
 
+/// The wheel over the licences window (and anywhere while it is open) scrolls its text,
+/// never the commit list, diff or sidebar underneath.
+#[gitti_test::test]
+fn wheel_under_the_licences_window_scrolls_only_its_text() {
+    let dir = history_repo_fast(60);
+    let out = gitty(
+        dir.path(),
+        &format!(
+            "press:ctrl-p;{}press:enter;state;dump;wheel:40,10,1;wheel:40,10,1;wheel:100,20,1;\
+             wheel:2,28,1;state;dump",
+            presses("third-party")
+        ),
+    );
+    let st = states(&out);
+    let offsets = |s: &str| {
+        ["commit_offset", "diff_offset", "side_offset"].map(|k| num(s, k))
+    };
+    assert!(st[0].contains("modal="), "the licences window is open: {out}");
+    assert_eq!(offsets(st[1]), offsets(st[0]), "the wheel scrolled what is underneath: {out}");
+    let screens = dumps(&out, 30);
+    assert_ne!(screens[0], screens[1], "the wheel did not scroll the licences text: {out}");
+}
+
 /// big.txt: 300 changed lines (one hunk), plus an untracked a.txt (one line).
 fn big_diff_repo() -> tempfile::TempDir {
     let text = |s: &str| -> String { (1..=300).map(|i| format!("{s} {i}\n")).collect() };
