@@ -51,6 +51,7 @@ pub fn main() {
         ("commit_message_rows_exact", commit_message_rows_exact),
         ("merge_editor_ends_and_keys", merge_editor_ends_and_keys),
         ("settings_scroll", settings_scroll),
+        ("overlays_keep_the_wheel", overlays_keep_the_wheel),
         ("picker_keys_palette", picker_keys_palette),
         ("picker_keys_branches", picker_keys_branches),
         ("resize_while_scrolled", resize_while_scrolled),
@@ -1271,6 +1272,68 @@ fn settings_scroll(ui: &mut Ui) {
         ui.fail(format!("settings past the top: title at {t}, body top {b}"));
     }
     ui.step("key:escape");
+}
+
+/// A wheel over a dialog, the palette or the settings page scrolls that (the
+/// licences text) and nothing underneath — not the commit list, the diff, the sidebar,
+/// the commit box above the working directory's changes (its wheel listener runs before
+/// the dialog's) —, also not over the dimmed backdrop beside the dialog.
+fn overlays_keep_the_wheel(ui: &mut Ui) {
+    // The working directory: its commit box shrinks on a wheel down over the panel.
+    ui.step("select:0");
+    let under = |ui: &mut Ui| {
+        let s = ui.scroll();
+        let p = ui.frame();
+        let commit_box = find(&p, "commit-box").map(|b| f32::from(b.bounds.size.height));
+        (s.side_y, s.commit_y, s.diff_y, s.log_y, commit_box)
+    };
+    let overlays = [
+        ("licences", "action:gitti::ThirdPartyLicences", "modal-body"),
+        ("about", "action:gitti::About", "modal-body"),
+        ("palette", "key:secondary-p", "picker"),
+        ("settings", "settings:keyboard", "settings-body"),
+    ];
+    for (what, open, target) in overlays {
+        let before = under(ui);
+        if before.4.is_none() {
+            ui.fail(format!("{what}: no commit box shown before opening it"));
+        }
+        ui.step(open);
+        let text_before = ui.scroll().text_view;
+        let p = ui.frame();
+        // Over the overlay, and over the backdrop beside it (where the lists are below).
+        let mut spots = Vec::new();
+        if let Some(t) = find(&p, target).and_then(Probe::visible) {
+            spots.push((f32::from(t.center().x), f32::from(t.center().y)));
+            if let Some(d) = find(&p, "detail").and_then(Probe::visible)
+                && f32::from(d.right()) > f32::from(t.right()) + 8.
+            {
+                spots.push((f32::from(t.right()) + 4., f32::from(d.center().y)));
+            }
+        } else {
+            ui.fail(format!("{what}: no visible {target}"));
+        }
+        for (x, y) in spots {
+            for dy in [300., -120., 1e5] {
+                ui.step(&format!("wheel:{x},{y},{dy}"));
+                let now = under(ui);
+                if now != before {
+                    ui.fail(format!(
+                        "{what}: a wheel of {dy} at ({x}, {y}) scrolled what is underneath: \
+                         (sidebar, commits, diff, log, commit box) {before:?} → {now:?}"
+                    ));
+                }
+            }
+        }
+        if what == "licences" && ui.scroll().text_view.map(|t| t.0) <= text_before.map(|t| t.0) {
+            let now = ui.scroll().text_view;
+            ui.fail(format!("licences: the wheel did not scroll the text: {text_before:?} → {now:?}"));
+        }
+        ui.step("key:escape");
+        if ui.modal().is_some() {
+            ui.step("key:escape");
+        }
+    }
 }
 
 // ------------------------------------------------------------------ pickers
