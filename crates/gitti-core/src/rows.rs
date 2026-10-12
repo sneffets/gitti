@@ -945,6 +945,9 @@ fn push_file(
         push_gap(rows, h);
         rows.push(DiffRow::Hunk { src, file, hunk: h });
         for (l, line) in hunk.lines.iter().enumerate() {
+            if diff.is_hidden_line(h, l) {
+                continue;
+            }
             for part in 0..parts(&line.text, wrap) {
                 rows.push(DiffRow::Line {
                     src,

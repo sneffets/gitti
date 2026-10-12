@@ -180,6 +180,30 @@ impl FileDiff {
         }
         (a, r)
     }
+
+    /// Whether line `line` of hunk `hunk` is only the end of a UTF-16 LE file's last
+    /// newline, unchanged. git splits lines at the byte `0x0A`, so the newline's second
+    /// byte `0x00` becomes a line of its own after the file's last line, followed by
+    /// `\ No newline at end of file` — although the file ends with a newline. As context it
+    /// is never selected and every patch keeps it; the diff view leaves it and its marker
+    /// out ([`Self::is_hidden_line`]). A changed one (the file gained or lost its last
+    /// newline) stays: it is the change.
+    pub fn is_newline_tail(&self, hunk: usize, line: usize) -> bool {
+        if self.encoding != TextEncoding::Utf16Le {
+            return false;
+        }
+        let Some(lines) = self.hunks.get(hunk).map(|h| &h.lines) else {
+            return false;
+        };
+        lines.get(line).is_some_and(|l| l.kind == LineKind::Context && l.bytes() == [0])
+            && lines.get(line + 1).is_some_and(|l| l.kind == LineKind::NoNewline)
+    }
+
+    /// Whether the diff view leaves line `line` of hunk `hunk` out: a UTF-16 newline's
+    /// tail ([`Self::is_newline_tail`]) and its `\ No newline at end of file`.
+    pub fn is_hidden_line(&self, hunk: usize, line: usize) -> bool {
+        self.is_newline_tail(hunk, line) || (line > 0 && self.is_newline_tail(hunk, line - 1))
+    }
 }
 
 /// Parses the output of `git diff` (no color, default prefixes) into file diffs.

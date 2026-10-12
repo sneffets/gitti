@@ -159,6 +159,52 @@ fn utf16_lines_stage_unstage_discard_exactly() {
     assert_eq!(index_bytes(&p, "u.txt"), base);
 }
 
+/// A UTF-16 LE file that ends with a newline: git splits at the byte 0x0A, so the
+/// newline's second byte is a line of its own after the last one, with "No newline at end
+/// of file". The diff view leaves that tail and its marker out (the file ends normally);
+/// patches keep it, so staging a line still gives the exact bytes. A file that gains its
+/// last newline keeps the changed tail: that is the change.
+/// Workflow: NU-02
+#[gitti_test::test]
+fn utf16_last_newline_is_no_extra_line() {
+    use gitti_core::rows::{DiffRow, Expansion, build_commit_rows};
+    let base = utf16le("\u{FEFF}a\nb\nc\n");
+    let mut h = History::new();
+    let attrs = f("*.txt diff\n");
+    let files = [(".gitattributes", attrs), ("u.txt", E::File(&base)), ("v.txt", E::File(&base[..base.len() - 2]))];
+    h.commit("main", &[], "init", &files);
+    let (_tmp, p, _) = repo_with(&h);
+    let r = Repo::open(&p).unwrap();
+    fs::write(p.join("u.txt"), utf16le("\u{FEFF}a\nB\nc\n")).unwrap();
+    fs::write(p.join("v.txt"), &base).unwrap();
+
+    let ws = r.working_state().unwrap();
+    let shown = |d: &FileDiff| -> Vec<(LineKind, String)> {
+        let rows = build_commit_rows(std::slice::from_ref(d), None, &Expansion::default(), None);
+        (rows.iter())
+            .filter_map(|r| match *r {
+                DiffRow::Line { hunk, line, .. } => Some(&d.hunks[hunk].lines[line]),
+                _ => None,
+            })
+            .map(|l| (l.kind, l.text.clone()))
+            .collect()
+    };
+    let u = find(&ws.unstaged, "u.txt");
+    assert_eq!(u.encoding, TextEncoding::Utf16Le);
+    let (c, a, rm) = (LineKind::Context, LineKind::Added, LineKind::Removed);
+    let s = |t: &str| t.to_string();
+    assert_eq!(shown(u), [(c, s("a")), (rm, s("b")), (a, s("B")), (c, s("c"))]);
+    assert_eq!(u.added_removed(), (1, 1));
+    r.apply_selection(u, &line_sel(added(u, 0)), PatchMode::Stage).unwrap();
+    assert_eq!(index_bytes(&p, "u.txt"), utf16le("\u{FEFF}a\nb\nB\nc\n"));
+
+    // v.txt gains its last newline: the changed tail and the old side's marker stay.
+    let v = find(&ws.unstaged, "v.txt");
+    let nl = LineKind::NoNewline;
+    let kinds: Vec<LineKind> = shown(v).into_iter().map(|(k, _)| k).collect();
+    assert_eq!(kinds, [c, c, rm, nl, a, a, nl]);
+}
+
 /// `working-tree-encoding`: git converts the file to UTF-8 itself, so its diff is UTF-8
 /// and a discarded line leaves the file in its encoding; an untracked such file is diffed
 /// by git (asked via `check-attr`), so a staged line reaches the index as UTF-8, like
