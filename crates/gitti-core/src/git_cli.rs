@@ -264,6 +264,8 @@ pub fn is_read_only(args: &[&str]) -> bool {
         ) => true,
         Some("remote") => a.get(1) == Some(&"-v"),
         Some("stash") => matches!(a.get(1).copied(), Some("list" | "show")),
+        // Only tests whether a patch applies (a failure is an answer, not an error).
+        Some("apply") => a.contains(&"--check") && !a.contains(&"--apply"),
         Some("worktree") => a.get(1) == Some(&"list"),
         // Reading HEAD's target; with a second name (or -d) it writes.
         Some("symbolic-ref") => {
@@ -1196,6 +1198,9 @@ mod tests {
         assert!(is_read_only(&["config", "--local", "--get", "user.name"]));
         assert!(!is_read_only(&["config", "--local", "user.name", "x"]));
         assert!(!is_read_only(&["remote", "add", "o", "u"]));
+        assert!(is_read_only(&["apply", "-R", "--check", "-"]));
+        assert!(!is_read_only(&["apply", "--check", "--apply", "-"]));
+        assert!(!is_read_only(&["apply", "--cached", "-"]));
         assert!(is_read_only(&["stash", "list"]));
         assert!(is_read_only(&["-c", "core.bigFileThreshold=1m", "diff-tree", "--stdin"]));
         assert!(is_read_only(&["config", "--get-regexp", r"^user\.(name|email)$"]));
