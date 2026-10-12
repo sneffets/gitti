@@ -3,7 +3,10 @@
 //! top ("Pin to Top" in a branch's menu, per repository) — and deleting several branches at
 //! once (`gitti_core::branch_cleanup`): "Clean Up Merged Branches…" and "Delete
 //! Branches…" (BRANCHES section menu, Branch menu, palette), one checklist dialog that can
-//! switch its base ("Other Base…").
+//! switch its base ("Other Base…") — and fast-forwarding branches without checking them
+//! out (`gitti_core::branch_update`): "Fast-Forward {branch} to {upstream}" in a branch's
+//! menu, "Fast-Forward All Branches" (BRANCHES section menu, Branch menu, palette) with a
+//! report per branch.
 //!
 //! The order is computed when refs, the history or a choice change, never while
 //! navigating; the dialogs read the branches in the background first.
@@ -12,6 +15,7 @@ use std::rc::Rc;
 
 use gitti_core::branch_cleanup::{self, BranchSet, Mode};
 use gitti_core::branch_order::{self, BranchOrder, BranchSort, Sorting};
+use gitti_core::branch_update;
 use gitti_core::{RefInfo, RefKind};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
@@ -20,7 +24,7 @@ use super::GittiApp;
 use super::modal::{ModalLive, ModalSpec};
 use super::picker::PickerItem;
 use crate::{
-    CleanUpMergedBranches, DeleteBranches, SortBranchesByDate, SortBranchesByName,
+    CleanUpMergedBranches, DeleteBranches, FastForwardAllBranches, SortBranchesByDate, SortBranchesByName,
     SortBranchesByRecent, SortRemoteBranchesByDate, SortRemoteBranchesByName,
 };
 
@@ -85,6 +89,19 @@ pub(super) fn delete_items(menu: PopupMenu, app: &AppHandle) -> PopupMenu {
     menu.separator()
         .item(entry("Delete Branches…", "DeleteBranches", Mode::Delete))
         .item(entry("Clean Up Merged Branches…", "CleanUpMergedBranches", Mode::CleanUp))
+}
+
+/// The BRANCHES section's "Fast-Forward All Branches" (greyed with the reason when no
+/// other branch is only behind its upstream).
+pub(super) fn fast_forward_all_item(menu: PopupMenu, app: &AppHandle) -> PopupMenu {
+    let why = crate::why_not_now("FastForwardAllBranches");
+    let label = match why {
+        Some(why) => gitti_core::availability::with_reason(branch_update::ALL_LABEL, why),
+        None => branch_update::ALL_LABEL.to_string(),
+    };
+    menu.item(
+        item(label, app, |this, w, cx| this.fast_forward_all(w, cx)).disabled(why.is_some()),
+    )
 }
 
 /// "Pin to Top" for a branch's menu (checked while pinned; choosing it again unpins).
@@ -204,6 +221,30 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &CleanUpMergedBranches, w, cx| {
             this.open_branch_dialog(Mode::CleanUp, "HEAD".into(), w, cx)
         }))
+        .on_action(cx.listener(|this, _: &FastForwardAllBranches, w, cx| this.fast_forward_all(w, cx)))
+    }
+
+    /// "Fast-Forward {name} to {upstream}": the branch moves to its upstream as last
+    /// fetched, not checked out; refused in plain words when that isn't a fast-forward.
+    pub(super) fn fast_forward_branch(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.git_op("Fast-forward", window, cx, move |r| r.fast_forward_branch(&name))
+    }
+
+    /// "Fast-Forward All Branches": every branch only behind its upstream moves; one
+    /// dialog says per branch what moved and why the others didn't.
+    pub(super) fn fast_forward_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_op(
+            "Fast-forward branches",
+            true,
+            window,
+            cx,
+            |r| r.fast_forward_all(),
+            |this, outcomes, w, cx| {
+                let (summary, text) = branch_update::report(&outcomes);
+                this.set_info(summary);
+                this.show_text_modal(branch_update::ALL_LABEL, text, w, cx);
+            },
+        );
     }
 
     /// The palette's sort choices (the current ones marked) and the delete dialogs.
@@ -258,6 +299,12 @@ impl GittiApp {
             "delete the branches merged into the current one",
             Rc::new(|t, w, cx| t.open_branch_dialog(Mode::CleanUp, "HEAD".into(), w, cx)),
             &CleanUpMergedBranches,
+        ));
+        items.push(entry(
+            branch_update::ALL_LABEL.into(),
+            branch_update::ALL_DESCRIPTION,
+            Rc::new(|t, w, cx| t.fast_forward_all(w, cx)),
+            &FastForwardAllBranches,
         ));
         items
     }

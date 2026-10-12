@@ -246,6 +246,7 @@ working tree or the index while the app shows an older state.
 | BR-18 | Leave a detached HEAD with work on it | detached at a commit no branch has; switch to `main` | switched; the status line names the commit left on no branch and how to keep it (reflog → Create Branch Here…); HEAD's reflog has it | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` |
 | BR-19 | Clean up branches | Clean Up Merged Branches…; Delete Branches… with Force | merged branch deleted, unmerged one only with its Force box | `wf_branches::br19_clean_up_merged_then_delete_with_force` | `branches::clean_up_and_delete` | `branches::clean_up_merged_deletes_the_merged_branch`, `branches::delete_branches_needs_force_for_an_unmerged_one` |
 | BR-20 | Delete the selected branch | sidebar cursor on a branch, its tip selected; delete it (merged), then an unmerged one (Force) | merged: its tip stays selected (only the badge goes); unmerged: the selection goes along the first parents to the nearest commit still there, its diff shown; the sidebar cursor on the next branch, else the previous | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` |
+| BR-21 | Fast-forward branches without checking them out | a branch's Fast-Forward … to its upstream; Fast-Forward All Branches | the branch only behind moves to its upstream, no file changes; diverged (named "N ahead, M behind — merge or rebase"), checked out here or in another worktree (named), no upstream: refused, untouched; the all-branches report says each one's reason | `wf_branches::br21_fast_forward_a_branch_and_the_refusals`, `wf_branches::br21_fast_forward_all_branches_reports_each` | `wf_branches::br21_fast_forward_branches` | `wf_branches::br21_fast_forward_branches` |
 
 ## MG — Merge
 
@@ -516,7 +517,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
 | SH stash | 22 | 21 | 20 | 21 |
-| BR branches | 20 | 20 | 20 | 19 |
+| BR branches | 21 | 21 | 21 | 20 |
 | MG merge | 27 | 27 | 26 | 27 |
 | CP cherry-pick | 18 | 18 | 18 | 18 |
 | RV revert | 7 | 7 | 7 | 7 |
@@ -535,7 +536,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **274** | **264** | **254** | **255** |
+| **Total** | **275** | **265** | **255** | **256** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

@@ -162,6 +162,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("DeleteBranchMenu", "Delete Branch…"),
     both("DeleteBranches", "Delete Branches…"),
     both("CleanUpMergedBranches", "Clean Up Merged Branches…"),
+    both("FastForwardAllBranches", crate::branch_update::ALL_LABEL),
     // Commit
     both("Commit", "Commit"),
     both("StageAllAndCommit", "Stage All and Commit"),

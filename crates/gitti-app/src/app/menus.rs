@@ -620,6 +620,9 @@ pub(super) struct RefMenuCtx<'a> {
     pub elsewhere: Option<&'a gitti_core::worktree::Worktree>,
     pub remotes: &'a [String],
     pub upstream: Option<String>,
+    /// Why a local branch can't be fast-forwarded to its upstream now
+    /// (`branch_update::why_not`; `None`: it can).
+    pub ff_why: Option<String>,
     /// The checked-out branch (`None`: HEAD is detached).
     pub head: Option<String>,
 }
@@ -653,11 +656,21 @@ pub(super) fn ref_context_menu(
             a.head.branch.clone(),
         )
     };
+    let ff_why = {
+        use gitti_core::branch_update::{CheckedOut, why_not_in};
+        let at = match (&elsewhere, is_head) {
+            (_, true) => CheckedOut::Here,
+            (Some(wt), _) => CheckedOut::Elsewhere(wt.path.display().to_string()),
+            (None, _) => CheckedOut::No,
+        };
+        why_not_in(&this.read(cx).tracking, &r.short_name, &at)
+    };
     let ctx = RefMenuCtx {
         is_head,
         elsewhere: elsewhere.as_ref(),
         remotes: &remotes,
         upstream,
+        ff_why,
         head,
     };
     let menu = ref_menu(menu, app, r, &ctx, window, cx);
@@ -791,8 +804,20 @@ pub(super) fn ref_menu(
                 })
                 .item(merge(&name))
                 .item(merge_dialog(&name))
-                .item(rebase(&name))
-                .separator();
+                .item(rebase(&name));
+            if !is_head {
+                // Moves the branch to its upstream as last fetched, without checking it out.
+                let label = gitti_core::branch_update::label(&name, upstream.as_deref());
+                let why = c.ff_why.as_deref().map(gitti_core::branch_update::menu_reason);
+                let n = name.clone();
+                menu = menu.item(
+                    item(why_label(label, why), app, move |this, w, cx| {
+                        this.fast_forward_branch(n.clone(), w, cx)
+                    })
+                    .disabled(why.is_some()),
+                );
+            }
+            menu = menu.separator();
             if let Some(remote) = default_remote(remotes) {
                 let n = name.clone();
                 let rm = remote.clone();
@@ -1240,6 +1265,7 @@ pub(super) fn section_menu(
                     this.open_branch_switcher(w, cx)
                 }));
             let menu = super::branch_list::delete_items(menu, app);
+            let menu = super::branch_list::fast_forward_all_item(menu, app);
             super::branch_list::sort_items(menu, app, false, sorts.0)
         }
         "tags" => {

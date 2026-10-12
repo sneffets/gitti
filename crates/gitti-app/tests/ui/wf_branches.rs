@@ -34,6 +34,7 @@ enum Setup {
     Delete(br::delete::Setup),
     Remote(br::remote::Setup),
     Detached(br::detached::Setup),
+    FastForward(br::fast_forward::Setup),
 }
 
 thread_local! {
@@ -70,6 +71,7 @@ pub fn main() {
         ("br16_keep_the_detached_work_in_a_branch", br16_keep_the_detached_work_in_a_branch),
         ("br17_set_the_upstream", br17_set_the_upstream),
         ("br18_leaving_a_detached_commit_warns", br18_leaving_a_detached_commit_warns),
+        ("br21_fast_forward_branches", br21_fast_forward_branches),
     ];
     common::run(tests, |name| {
         let dir: PathBuf = base.join(name);
@@ -103,6 +105,7 @@ pub fn main() {
                 br::upstream::fixture(&dir);
                 Setup::None
             }
+            "br21_fast_forward_branches" => Setup::FastForward(br::fast_forward::fixture(&dir)),
             other => panic!("no fixture for {other}"),
         };
         SETUP.with(|c| *c.borrow_mut() = s);
@@ -525,4 +528,54 @@ fn br18_leaving_a_detached_commit_warns(ui: &mut Ui) {
         fail!(ui, "the status line: {line:?}");
     }
     expect(ui, wf::expect_left(&dir, &s));
+}
+
+/// BR-21: diverged's menu greys "Fast-Forward diverged to origin/diverged" with why;
+/// behind's moves it (the status line says from where to where); then Fast-Forward All
+/// Branches from the palette moves nothing more, and its report names each branch's
+/// reason.
+/// Workflow: BR-21
+fn br21_fast_forward_branches(ui: &mut Ui) {
+    use br::fast_forward as wf;
+    use gitti_core::branch_update::ALL_LABEL;
+    let Setup::FastForward(s) = setup() else { unreachable!() };
+    let dir = ui.workdir();
+    gitti_app::testing::menu_entries();
+    ui.click_on("side:ref-refs/heads/diverged", MouseButton::Right);
+    let greyed = format!("Fast-Forward diverged to origin/diverged ({})", wf::DIVERGED_MENU_WHY);
+    let entries = gitti_app::testing::menu_entries();
+    if !entries.iter().any(|(l, on)| *l == greyed && !on) {
+        fail!(ui, "diverged's menu lacks the greyed {greyed:?}: {entries:?}");
+    }
+    ui.quick("key:escape");
+    ui.click_on("side:ref-refs/heads/behind", MouseButton::Right);
+    ui.step("menu:Fast-Forward behind to origin/behind");
+    let line = info(ui, "after Fast-Forward");
+    if !line.starts_with(&format!("Fast-forwarded behind: moved {} → {}", &s.init[..7], &s.up[..7])) {
+        fail!(ui, "the status line: {line:?}");
+    }
+    expect(ui, wf::expect(&dir, &s));
+    ui.quick("action:gitti::CommandPalette");
+    ui.quick("pick:fast-forward all");
+    ui.step("pickok");
+    if dialog(ui).as_deref() != Some(ALL_LABEL) {
+        fail!(ui, "{ALL_LABEL}: dialog {:?}", dialog(ui));
+    }
+    let ws = ui.ws.clone();
+    let text = ui.cx.update(|cx| gitti_app::testing::modal_viewer_text(&ws, cx)).unwrap_or_default();
+    for want in [
+        format!("behind: not moved — {}", wf::BEHIND_WHY),
+        format!("diverged: not moved — {}", wf::DIVERGED_WHY),
+        format!("main: not moved — {}", wf::MAIN_WHY),
+        format!("topic: not moved — {}", wf::TOPIC_WHY),
+        "elsewhere: not moved — checked out in the worktree ".to_string(),
+    ] {
+        if !text.lines().any(|l| l.starts_with(&want)) {
+            fail!(ui, "the report lacks {want:?}:\n{text}");
+        }
+    }
+    if info(ui, "after Fast-Forward All Branches") != "No branch fast-forwarded" {
+        fail!(ui, "the status line after Fast-Forward All Branches: {:?}", ui.status());
+    }
+    expect(ui, wf::expect(&dir, &s));
 }

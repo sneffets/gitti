@@ -1493,7 +1493,7 @@ actions!(gitti, [StashSelection, RenameStash]);
 actions!(gitti, [CommitListAuto, CommitListOneLine, CommitListTwoLines]);
 
 // View ▸ Sort (Remote) Branches by …, Branch ▸ Delete Branches… / Clean Up Merged
-// Branches…; handlers in `app/branch_list.rs`.
+// Branches… / Fast-Forward All Branches; handlers in `app/branch_list.rs`.
 actions!(
     gitti,
     [
@@ -1504,6 +1504,7 @@ actions!(
         SortRemoteBranchesByDate,
         DeleteBranches,
         CleanUpMergedBranches,
+        FastForwardAllBranches,
     ]
 );
 // View ▸ Show Changes as Tree; handler in `app/file_marks.rs`.
@@ -1795,6 +1796,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Delete Branch…", DeleteBranchMenu),
                 MenuItem::action("Delete Branches…", DeleteBranches),
                 MenuItem::action("Clean Up Merged Branches…", CleanUpMergedBranches),
+                MenuItem::action(gitti_core::branch_update::ALL_LABEL, FastForwardAllBranches),
             ],
         ),
         menu(

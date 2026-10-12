@@ -65,6 +65,7 @@ impl GittiApp {
                 .iter()
                 .filter(|r| r.kind == RefKind::LocalBranch && Some(r.short_name.as_str()) != current)
                 .count(),
+            ff_branches: gitti_core::branch_update::movable(&self.tracking, current),
             staged: self.working.staged.len(),
             unstaged: self.working.unstaged.len(),
             tracked_unstaged: gitti_core::ops::UnstagedCounts::of(&self.working).tracked,

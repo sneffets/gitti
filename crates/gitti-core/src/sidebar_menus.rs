@@ -9,8 +9,9 @@
 //! ("(checked out here)", ": on") or a key hint after two spaces ("Mark for Comparison  ⇧C").
 //! Placeholders: `{name}` the row's own name (branch, `origin/main`, tag), `{head}` the
 //! current branch, `{remote}` the row's remote (a remote branch's, else the first remote),
-//! `{branch}` a remote branch's name without the remote, `{fm}` the platform's file
-//! manager name.
+//! `{branch}` a remote branch's name without the remote, `{upstream}` a local branch's
+//! upstream (`origin/x`; "Upstream" when it has none), `{fm}` the platform's file manager
+//! name.
 
 use crate::palette::normalize;
 
@@ -80,6 +81,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Checkout {name}",
             "Merge {name} into {head}",
             "Rebase {head} onto {name}",
+            "Fast-Forward {name} to {upstream}",
             "Push {name} to {remote}",
             "Force Push {name} to {remote}…",
             "Push Options…",
@@ -185,6 +187,7 @@ pub fn entries(menu: SideMenu) -> &'static [&'static str] {
             "Switch Branch…",
             "Delete Branches…",
             "Clean Up Merged Branches…",
+            crate::branch_update::ALL_LABEL,
             "Sort by Name",
             "Sort by Last Commit Date",
             "Sort by Recently Checked Out",
@@ -229,6 +232,8 @@ pub struct Vars {
     pub head: String,
     pub remote: String,
     pub branch: String,
+    /// A local branch's upstream; empty: none ("Upstream").
+    pub upstream: String,
     pub fm: String,
 }
 
@@ -239,6 +244,10 @@ impl Vars {
             .replace("{head}", &self.head)
             .replace("{remote}", &self.remote)
             .replace("{branch}", &self.branch)
+            .replace(
+                "{upstream}",
+                if self.upstream.is_empty() { "Upstream" } else { &self.upstream },
+            )
             .replace("{fm}", &self.fm)
     }
 }

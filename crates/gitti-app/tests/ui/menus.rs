@@ -1915,6 +1915,7 @@ fn sidebar_menus(ui: &mut Ui) {
         remote: "origin".into(),
         branch: name.rsplit('/').next().unwrap_or(name).into(),
         fm: fm.clone(),
+        ..Default::default()
     };
     let cases: &[(SideMenu, &str, &str)] = &[
         (SideMenu::CurrentBranch, "side:ref-refs/heads/main", "main"),

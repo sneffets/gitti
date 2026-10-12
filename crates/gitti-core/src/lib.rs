@@ -9,6 +9,7 @@ pub mod availability;
 pub mod blobs;
 pub mod branch_cleanup;
 pub mod branch_order;
+pub mod branch_update;
 pub mod caps;
 pub mod change_search;
 pub mod clone_source;

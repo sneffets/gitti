@@ -3,7 +3,10 @@
 //! pinned branches on top ("Pin to Top" in a branch's menu, per repository) — and deleting
 //! several branches at once (`gitti_core::branch_cleanup`): "Clean Up Merged Branches…"
 //! and "Delete Branches…" (BRANCHES section menu, palette), one checklist dialog whose
-//! base can change (ctrl-o "Other Base…").
+//! base can change (ctrl-o "Other Base…") — and fast-forwarding branches without
+//! checking them out (`gitti_core::branch_update`): "Fast-Forward {branch} to {upstream}"
+//! in a branch's menu, "Fast-Forward All Branches" (BRANCHES section menu, palette) with a
+//! report per branch in a text window.
 //!
 //! The order is computed when the sidebar is rebuilt (refresh, history, a choice), never
 //! while navigating; the dialogs read the branches in the background first.
@@ -11,6 +14,7 @@
 use gitti_core::RefKind;
 use gitti_core::branch_cleanup::{self, BranchSet, Mode};
 use gitti_core::branch_order::{self, BranchOrder, BranchSort, Sorting};
+use gitti_core::branch_update::{self, CheckedOut};
 use gitti_core::store::SharedSettings;
 
 use super::{After, App, Msg};
@@ -145,6 +149,50 @@ impl App {
         ]
     }
 
+    /// "Fast-Forward {name} to {upstream}" of a branch's menu (not the checked-out one),
+    /// greyed with the reason when it isn't only behind (from the last refresh, no git).
+    pub(super) fn fast_forward_item(&self, name: &str, upstream: Option<&str>) -> MenuItem {
+        let at = match gitti_core::worktree::branch_worktree(&self.worktrees, name) {
+            Some(wt) => CheckedOut::Elsewhere(wt.path.display().to_string()),
+            None if self.current_branch() == Some(name) => CheckedOut::Here,
+            None => CheckedOut::No,
+        };
+        let why = branch_update::why_not_in(&self.tracking, name, &at);
+        let n = name.to_string();
+        MenuItem::new(branch_update::label(name, upstream), move |app: &mut App| {
+            app.fast_forward_branch(n)
+        })
+        .key('f')
+        .unless(why.as_deref().map(branch_update::menu_reason))
+    }
+
+    /// The BRANCHES section's "Fast-Forward All Branches".
+    pub(super) fn fast_forward_all_item(&self) -> MenuItem {
+        MenuItem::new(branch_update::ALL_LABEL, |app: &mut App| app.fast_forward_all())
+            .key('f')
+            .unless(self.why_not("FastForwardAllBranches"))
+    }
+
+    /// Fast-forwards branch `name` to its upstream as last fetched, not checked out;
+    /// refused in plain words when that isn't a fast-forward.
+    pub fn fast_forward_branch(&mut self, name: String) {
+        self.run_op("Fast-forward", true, After::Summary, move |r| r.fast_forward_branch(&name))
+    }
+
+    /// "Fast-Forward All Branches": every branch only behind its upstream moves; a text
+    /// window says per branch what moved and why the others didn't.
+    pub fn fast_forward_all(&mut self) {
+        self.run_op(
+            "Fast-forward branches",
+            true,
+            After::ShowOutput(branch_update::ALL_LABEL.to_string()),
+            |r| {
+                let (summary, text) = branch_update::report(&r.fast_forward_all()?);
+                Ok(format!("{summary}\n\n{text}"))
+            },
+        )
+    }
+
     /// The palette's sort choices (the current ones marked) and the delete dialogs.
     pub(super) fn branch_palette_items(&self) -> Vec<PickItem> {
         let mut items = Vec::new();
@@ -184,6 +232,13 @@ impl App {
                 None => item,
             });
         }
+        let item = PickItem::new(branch_update::ALL_LABEL, branch_update::ALL_DESCRIPTION, |app: &mut App| {
+            app.fast_forward_all()
+        });
+        items.push(match self.why_not("FastForwardAllBranches") {
+            Some(why) => item.unavailable(why),
+            None => item,
+        });
         items
     }
 
