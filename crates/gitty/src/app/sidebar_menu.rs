@@ -59,6 +59,16 @@ impl App {
         .key('C')
     }
 
+    /// "Compare {name} with {head}": compare mode on the current branch and `name`'s
+    /// commit (`row`), since their common ancestor.
+    fn compare_head_item(&self, name: &str, row: Option<usize>) -> MenuItem {
+        let n = name.to_string();
+        MenuItem::new(format!("Compare {name} with {}", self.head_label()), move |app: &mut App| {
+            app.compare_with_head(&n, row)
+        })
+        .key('D')
+    }
+
     fn merge_item(&self, name: &str) -> MenuItem {
         let n = name.to_string();
         MenuItem::new(format!("Merge {name} into {}", self.head_label()), move |app| {
@@ -204,6 +214,9 @@ impl App {
         let n = name.to_string();
         v.push(MenuItem::new("Create Tag…", move |app| app.create_tag_dialog(n)).key('t'));
         v.push(self.compare_item(self.row_of_ref(RefKind::LocalBranch, name)));
+        if !current {
+            v.push(self.compare_head_item(name, self.row_of_ref(RefKind::LocalBranch, name)));
+        }
         let n = name.to_string();
         v.push(MenuItem::new("Show Reflog…", move |app: &mut App| app.open_reflog(n)));
         if !current {
@@ -287,6 +300,7 @@ impl App {
             })),
         }
         v.push(self.compare_item(self.row_of_ref(RefKind::RemoteBranch, full)));
+        v.push(self.compare_head_item(full, self.row_of_ref(RefKind::RemoteBranch, full)));
         // Moves the remote branch (push with lease); no local branch changes.
         let n = full.to_string();
         v.push(MenuItem::new(format!("Reset {full} to Selected Commit…"), move |app| {

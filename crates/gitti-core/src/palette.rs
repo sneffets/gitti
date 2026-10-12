@@ -196,6 +196,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("GetSigningKeys", "Get Signing Keys from GitHub…"),
     both("MarkCompare", "Mark Selected Commit for Comparison"),
     when("SwapCompare", STATE, Gitty::No(STATE)),
+    both("ToggleCompareMergeBase", "Changes Since Common Ancestor"),
     when("EndCompare", STATE, Gitty::No(STATE)),
     both("CreateTag", "Create Tag at HEAD…"),
     // Stash

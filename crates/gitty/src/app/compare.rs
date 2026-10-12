@@ -4,13 +4,17 @@
 //! job threads (`Msg::Detail`, like commit loads), commit pairs are cached by the core
 //! (`Repo::compare_diff`) and the neighbours of the selection prefetched, so arrowing
 //! through the history shows each pair at once. Read-only: s / u / d stage nothing.
+//! "Changes Since Common Ancestor" (kept for the session) shows `git diff A...B` instead.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use gitti_core::compare::{CompareData, CompareMode, CompareSide, describe, side_of_row};
+use gitti_core::compare::{
+    CompareData, CompareKind, CompareMode, CompareSide, MergeBase, SINCE_MERGE_BASE_LABEL, describe,
+    side_of_row,
+};
 
-use super::{App, CommitView, Detail, Msg, spawn};
+use super::{App, CommitView, Detail, Msg, on_off, spawn};
 use crate::modal::{MenuItem, PickItem};
 
 type Pair = (CompareSide, CompareSide);
@@ -22,7 +26,9 @@ pub struct CompareState {
     pub mode: Option<CompareMode>,
     /// Row shown before, for the prefetch direction.
     last_row: usize,
-    prefetching: Arc<Mutex<HashSet<Pair>>>,
+    /// "Changes Since Common Ancestor" is on: new comparisons start with it (this run).
+    pub since_merge_base: bool,
+    prefetching: Arc<Mutex<HashSet<(Pair, CompareKind)>>>,
 }
 
 impl CompareState {
@@ -79,7 +85,7 @@ impl App {
             self.end_compare();
             return;
         }
-        self.compare.mode = Some(CompareMode::new(side));
+        self.compare.mode = Some(CompareMode::new(side).with_kind(self.compare_kind_pref()));
         self.compare.last_row = row;
         let (short, _) = describe(&self.history, side);
         self.set_info(format!(
@@ -105,6 +111,53 @@ impl App {
         }
     }
 
+    fn compare_kind_pref(&self) -> CompareKind {
+        if self.compare.since_merge_base {
+            CompareKind::SinceMergeBase
+        } else {
+            CompareKind::Direct
+        }
+    }
+
+    /// Menu / palette: "Changes Since Common Ancestor" on or off — for the shown
+    /// comparison and the next ones.
+    pub fn toggle_compare_merge_base(&mut self) {
+        self.compare.since_merge_base = !self.compare.since_merge_base;
+        let kind = self.compare_kind_pref();
+        match &mut self.compare.mode {
+            Some(m) => {
+                m.kind = kind;
+                self.reshow();
+            }
+            None => self.set_info(if self.compare.since_merge_base {
+                "Comparisons show the changes since the common ancestor (git diff A...B)"
+            } else {
+                "Comparisons show the direct difference (git diff A B)"
+            }),
+        }
+    }
+
+    /// Sidebar "Compare {name} with {head}": marks HEAD's commit and selects `name`'s
+    /// (`row`), with "Changes Since Common Ancestor" on — what it changed since it split off.
+    pub fn compare_with_head(&mut self, name: &str, row: Option<usize>) {
+        let head = self.history.head().and_then(|h| self.history.row_of(&h));
+        let (Some(head), Some(row)) = (head, row) else {
+            self.set_info(format!("{name} or HEAD is not in the loaded history"));
+            return;
+        };
+        let Some(base) = side_of_row(&self.history, head) else {
+            return;
+        };
+        self.compare.since_merge_base = true;
+        self.compare.mode = Some(CompareMode::new(base).with_kind(CompareKind::SinceMergeBase));
+        self.compare.last_row = head;
+        self.set_info(format!(
+            "Showing what {name} changed since it split off from the current branch (esc ends)"
+        ));
+        self.selected = row;
+        self.reshow();
+    }
+
     fn reshow(&mut self) {
         self.line_sel = None;
         self.diff_cursor = 0;
@@ -125,10 +178,10 @@ impl App {
 
     /// The working tree changed: a comparison with it is read again.
     pub(crate) fn refresh_worktree_compare(&mut self) {
-        if self
-            .shown_compare()
-            .is_some_and(|c| c.old == CompareSide::Worktree || c.new == CompareSide::Worktree)
-        {
+        // Since the common ancestor, a working-tree side's ancestor is HEAD's (may move).
+        if self.shown_compare().is_some_and(|c| {
+            [c.old, c.new, c.compared.0, c.compared.1].contains(&CompareSide::Worktree)
+        }) {
             self.load_detail();
         }
     }
@@ -138,8 +191,9 @@ impl App {
         let Some((old, new)) = self.compare_pair() else {
             return false;
         };
+        let kind = self.compare.mode.map(|m| m.kind).unwrap_or_default();
         let opts = self.opts.diff_options();
-        if let Some(data) = self.repo.cached_compare(old, new, &opts) {
+        if let Some(data) = self.repo.cached_compare_as(kind, old, new, &opts) {
             self.detail_gen += 1;
             self.line_sel = None;
             self.show_commit(view(data));
@@ -162,7 +216,7 @@ impl App {
         let repo = self.repo.clone();
         spawn(
             &self.tx,
-            move || anyhow::Ok(view(repo.compare_diff(old, new, &opts)?)),
+            move || anyhow::Ok(view(repo.compare_diff_as(kind, old, new, &opts)?)),
             move |r| Msg::Detail(generation, r),
         );
         true
@@ -180,21 +234,22 @@ impl App {
         let step = |n: usize| if down { row.checked_add(n) } else { row.checked_sub(n) };
         let back = if down { row.checked_sub(1) } else { row.checked_add(1) };
         let opts = self.opts.diff_options();
+        let kind = mode.kind;
         for r in [step(1), step(2), step(3), back].into_iter().flatten() {
             let Some((old, new)) = side_of_row(&self.history, r).and_then(|s| mode.pair(s)) else {
                 continue;
             };
             if old == CompareSide::Worktree
                 || new == CompareSide::Worktree
-                || self.repo.cached_compare(old, new, &opts).is_some()
-                || !self.compare.prefetching.lock().expect("prefetching").insert((old, new))
+                || self.repo.cached_compare_as(kind, old, new, &opts).is_some()
+                || !self.compare.prefetching.lock().expect("prefetching").insert(((old, new), kind))
             {
                 continue;
             }
             let (repo, prefetching) = (self.repo.clone(), self.compare.prefetching.clone());
             std::thread::spawn(move || {
-                let _ = repo.compare_diff(old, new, &opts);
-                prefetching.lock().expect("prefetching").remove(&(old, new));
+                let _ = repo.compare_diff_as(kind, old, new, &opts);
+                prefetching.lock().expect("prefetching").remove(&((old, new), kind));
             });
         }
     }
@@ -222,6 +277,7 @@ impl App {
         );
         if comparing {
             items.push(MenuItem::new("Swap Comparison Sides", |app| app.swap_compare()));
+            items.push(self.merge_base_menu_item());
             items.push(MenuItem::new("End Comparison", |app| {
                 app.end_compare();
             }));
@@ -242,6 +298,11 @@ impl App {
                 app.swap_compare()
             }));
         }
+        items.push(PickItem::new(
+            format!("{SINCE_MERGE_BASE_LABEL}: {}", on_off(self.compare.since_merge_base)),
+            "",
+            |app: &mut App| app.toggle_compare_merge_base(),
+        ));
         if !self.is_compare_base(self.selected) {
             items.push(PickItem::cmd(
                 "Mark Selected Commit for Comparison",
@@ -252,7 +313,16 @@ impl App {
         items
     }
 
-    /// ` compare=base=<id>[,swapped][,shown=<old>..<new>]` for `state` in scripts.
+    /// "Changes Since Common Ancestor: on / off" in the compare menus.
+    fn merge_base_menu_item(&self) -> MenuItem {
+        MenuItem::new(
+            format!("{SINCE_MERGE_BASE_LABEL}: {}", on_off(self.compare.since_merge_base)),
+            |app| app.toggle_compare_merge_base(),
+        )
+    }
+
+    /// ` compare=base=<id>[,swapped][,shown=<old>..<new>][,since=<id>/<n>|none]` for
+    /// `state` in scripts.
     pub fn compare_debug(&self) -> String {
         let Some(mode) = self.compare.mode else {
             return String::new();
@@ -262,8 +332,13 @@ impl App {
             .shown_compare()
             .map(|c| format!(",shown={}..{}", id(c.old), id(c.new)))
             .unwrap_or_default();
+        let since = match self.shown_compare().and_then(|c| c.merge_base.as_ref()) {
+            Some(MergeBase::Found { id, count, .. }) => format!(",since={}/{count}", id.to_hex_with_len(7)),
+            Some(MergeBase::None) => ",since=none".into(),
+            None => String::new(),
+        };
         format!(
-            " compare=base={}{}{shown}",
+            " compare=base={}{}{shown}{since}",
             id(mode.base),
             if mode.swapped { ",swapped" } else { "" }
         )

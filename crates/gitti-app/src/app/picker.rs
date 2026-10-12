@@ -756,6 +756,18 @@ impl GittiApp {
             }));
             items.push(item("Swap Comparison Sides", k(&crate::SwapCompare), |t, _, cx| t.swap_compare(cx)));
         }
+        items.push(
+            item(
+                format!(
+                    "{}: {}",
+                    gitti_core::compare::SINCE_MERGE_BASE_LABEL,
+                    on_off(self.compare_since_merge_base())
+                ),
+                k(&crate::ToggleCompareMergeBase),
+                |t, _, cx| t.toggle_compare_merge_base(cx),
+            )
+            .act(&crate::ToggleCompareMergeBase),
+        );
         if !self.is_compare_base(self.selected) {
             items.push(
                 item("Mark Selected Commit for Comparison", k(&crate::MarkCompare), |t, _, cx| {

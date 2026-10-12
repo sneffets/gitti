@@ -732,6 +732,13 @@ pub(super) fn ref_menu(
         })
         .disabled(off.is_some())
     };
+    // What the branch changed since it split off from the current one, in compare mode.
+    let compare_head = |name: &str| {
+        let n = name.to_string();
+        item(format!("Compare {name} with {head}"), app, move |this, _, cx| {
+            this.compare_with_head(&n, target, cx)
+        })
+    };
     let create_branch = |name: &str| {
         let n = name.to_string();
         item("Create Branch From…", app, move |this, w, cx| {
@@ -882,8 +889,12 @@ pub(super) fn ref_menu(
                     })
                     .disabled(is_head || elsewhere.is_some())
                 })
-                .item(compare_item(app, target))
-                .item(super::reflog::reflog_item(app, &name));
+                .item(compare_item(app, target));
+            let menu = match is_head {
+                true => menu,
+                false => menu.item(compare_head(&name)),
+            }
+            .item(super::reflog::reflog_item(app, &name));
             let menu = match is_head {
                 // The checked-out branch can't be added into itself.
                 true => menu,
@@ -951,6 +962,7 @@ pub(super) fn ref_menu(
             .item(create_tag(&name))
             .item(upstream_of_head)
             .item(compare_item(app, target))
+            .item(compare_head(&name))
             .item({
                 // Moves the remote branch (push with lease); no local branch changes.
                 let name = name.clone();
