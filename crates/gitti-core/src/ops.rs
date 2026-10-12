@@ -1263,6 +1263,11 @@ impl Repo {
 
     /// The stash list's commits, newest (`stash@{0}`) first.
     pub(crate) fn stash_ids(&self) -> Result<Vec<ObjectId>> {
+        if self.uses_reftable() {
+            // The reflog is in the table: gix (reading `logs/`) would find none and take
+            // every stash as gone.
+            return Ok(self.reflog_cli("refs/stash")?.into_iter().map(|e| e.new).collect());
+        }
         let in_process = || -> Result<Vec<ObjectId>> {
             let repo = self.gix()?;
             let Some(r) = repo.try_find_reference("refs/stash").map_err(crate::repo::gx)? else {

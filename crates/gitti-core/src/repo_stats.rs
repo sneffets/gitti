@@ -305,7 +305,12 @@ impl Repo {
                 } else if name.starts_with("refs/tags/") {
                     o.tags += 1;
                 } else if name == "refs/stash" {
-                    o.stashes = stash_count(&repo);
+                    o.stashes = if self.uses_reftable() {
+                        // The stash reflog is in the table (gix reads `logs/` only).
+                        self.stash_ids().map_or(1, |ids| ids.len())
+                    } else {
+                        stash_count(&repo)
+                    };
                 } else {
                     o.other_refs += 1;
                 }

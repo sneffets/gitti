@@ -1194,7 +1194,7 @@ fn overlay_keys(ui: &mut Ui) {
         }
     }
     ks(ui, "enter", "switched to `older`", |s| s.branch.as_deref() == Some("older"));
-    if !std::fs::read_to_string(dir.join(".git/HEAD")).unwrap_or_default().contains("refs/heads/older") {
+    if !head_target(&dir).contains("refs/heads/older") {
         ui.fail("Enter in the branch switcher did not switch".into());
     }
     // Settings: ⌘, opens, Esc closes; ? opens the shortcuts.
@@ -1296,9 +1296,9 @@ fn message_keys(ui: &mut Ui) {
     k0(ui, "shift-a", "amend off", |s| !s.amend);
     ui.quick("msg:Commit by key");
     ui.quick("focusmsg");
-    let head = std::fs::read_to_string(dir.join(".git/refs/heads/main")).unwrap();
+    let head = read_ref(&dir, "refs/heads/main");
     ks(ui, "secondary-enter", "committed, message cleared", |s| s.message.is_empty() && s.staged.is_empty());
-    if std::fs::read_to_string(dir.join(".git/refs/heads/main")).unwrap() == head {
+    if read_ref(&dir, "refs/heads/main") == head {
         ui.fail("⌘↩ did not commit".into());
     }
 }
@@ -1390,8 +1390,8 @@ fn remote_keys(ui: &mut Ui) {
             ui.fail(format!("`{key}` ran no fetch: {ran:?}"));
         }
     }
-    let remote_main = std::fs::read_to_string(bare.join("refs/heads/main")).unwrap();
-    if std::fs::read_to_string(dir.join(".git/refs/remotes/origin/main")).unwrap_or_default() != remote_main {
+    let remote_main = ref_at(&bare, "refs/heads/main");
+    if read_ref(&dir, "refs/remotes/origin/main") != remote_main {
         ui.fail("fetch did not get the remote commit".into());
     }
     ks(ui, "p", "pulled", |s| !s.busy);
@@ -1403,13 +1403,13 @@ fn remote_keys(ui: &mut Ui) {
     if !ran.iter().any(|g| g.starts_with("pull")) {
         ui.fail(format!("⌘⌥↓ ran no pull: {ran:?}"));
     }
-    let local = |dir: &Path| std::fs::read_to_string(dir.join(".git/refs/heads/main")).unwrap();
+    let local = |dir: &Path| read_ref(dir, "refs/heads/main");
     ui.step("stagefile:new.txt");
     ui.step("msg:Local commit");
     ui.step("commit");
     ui.quick("focuslist");
     ks(ui, "shift-p", "pushed", |s| !s.busy);
-    let pushed = std::fs::read_to_string(bare.join("refs/heads/main")).unwrap_or_default();
+    let pushed = ref_at(&bare, "refs/heads/main");
     if pushed != local(&dir) || pushed.trim() == ids[5] {
         let st = ui.ui_state().status;
         ui.fail(format!("`P` did not push: {st:?}"));
@@ -1752,7 +1752,7 @@ fn compare_keys(ui: &mut Ui) {
     if ui.ui_state().detail != "compare" {
         ui.fail("S → D not compared".into());
     }
-    std::fs::remove_file(ui.repo.join(".git/refs/heads/side")).unwrap();
+    delete_ref(&ui.repo, "refs/heads/side");
     ui.quick("focuslist");
     ks(ui, "r", "compare mode ended with its base", |s| {
         s.compare.is_none() && s.detail == "commit" && s.status.as_ref().is_some_and(|(t, _)| t.contains("no longer in the history"))

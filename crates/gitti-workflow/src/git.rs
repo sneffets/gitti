@@ -20,9 +20,24 @@ const REPO_ENV: &[&str] = &[
     "GIT_PREFIX",
 ];
 
+/// Config to put before `init` / `clone` so the new repository keeps its refs in files
+/// (loose refs, `packed-refs`, reflogs in `logs/`) whatever git's default is — git 3.0
+/// makes new repositories with the reftable backend. For fixtures that write ref or
+/// reflog files by hand and checks that read them ([`crate::Expect`]). git before 2.45
+/// has only the files backend and ignores the keys (`init.defaultRefFormat` is the
+/// older spelling of `init.defaultRefStorageFormat`).
+pub const FILES_REF_FORMAT: [&str; 4] =
+    ["-c", "init.defaultRefFormat=files", "-c", "init.defaultRefStorageFormat=files"];
+
 /// A `git` command in `dir` with the isolation described in the module docs.
 pub fn command(dir: &Path, args: &[&str]) -> Command {
     let mut c = Command::new("git");
+    // A bare repository (a remote) by name: git 3.0 doesn't find one from its working
+    // directory (`safe.bareRepository = explicit`).
+    let bare = !dir.join(".git").exists() && dir.join("HEAD").is_file() && dir.join("objects").is_dir();
+    if bare {
+        c.arg(format!("--git-dir={}", dir.display()));
+    }
     c.current_dir(dir)
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")

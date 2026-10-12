@@ -1780,7 +1780,7 @@ fn commit_list_reload(ui: &mut Ui) {
     let before = ui.scroll();
     let y_before = find(&ui.frame(), "commit-row:40").map(|r| top(&r.bounds));
     let dir = repo_dir();
-    let head = std::fs::read_to_string(dir.join(".git/refs/heads/main")).unwrap();
+    let head = read_ref(&dir, "refs/heads/main");
     let mut s = Stream::new();
     s.commit_on("refs/heads/main", "Made outside gitti", head.trim(), &[]);
     s.import(&dir);

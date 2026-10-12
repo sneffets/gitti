@@ -830,7 +830,8 @@ mod tests {
         git(a.path(), &["init", "-q"]);
         git(b.path(), &["init", "-q"]);
         git(b.path(), &["commit", "-q", "--allow-empty", "-m", "the subject"]);
-        let id = gix::open(b.path()).unwrap().head_id().unwrap().detach();
+        // (Its refs through the snapshot in a reftable repository, git 3.0's default.)
+        let id = crate::reftable::open(b.path()).unwrap().head_id().unwrap().detach();
         let store = MetaStore::new(gix::open(a.path()).unwrap(), Default::default());
         assert_eq!(store.get(id).summary, "", "not in this repository yet");
         let hex = id.to_string();

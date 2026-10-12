@@ -109,14 +109,9 @@ fn sm07_commit_inside_a_submodule() {
 }
 
 /// The global config with git-lfs's filters, for `Repo::set_env` / `Git::set_env`
-/// (written into `dir`).
+/// (written into `dir`; [`lf::global_env`]).
 fn lfs_global_config(dir: &std::path::Path) -> Vec<(String, String)> {
-    let path = dir.join("global.gitconfig");
-    std::fs::write(&path, lf::LFS_FILTERS).unwrap();
-    vec![
-        ("GIT_CONFIG_GLOBAL".into(), path.display().to_string()),
-        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-    ]
+    lf::global_env(dir)
 }
 
 /// The workflow's pointer constants are what gitti-core computes.

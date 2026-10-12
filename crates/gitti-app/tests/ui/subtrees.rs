@@ -282,7 +282,21 @@ fn dialogs_say_what_happens(ui: &mut Ui) {
 /// Add from this repository's `upstream-v1` (repository `.`): `git subtree add` runs, the
 /// list shows it with its remembered source, a branch's menu merges into it directly; the
 /// Merge dialog warns about a typed commit from elsewhere.
+/// Whether this git has `git subtree` (some Linux distributions and a git built from
+/// source ship it apart): one probe per run. Without it Add / Pull have nothing to check.
+fn subtree_installed() -> bool {
+    static INSTALLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *INSTALLED.get_or_init(|| {
+        let out = std::process::Command::new("git").args(["subtree", "-h"]).output().unwrap();
+        !gitti_core::subtree::is_missing(&String::from_utf8_lossy(&out.stderr))
+    })
+}
+
 fn add(ui: &mut Ui) {
+    if !subtree_installed() {
+        println!("    note: git subtree isn't installed — not run");
+        return;
+    }
     if !subtrees(ui).is_empty() {
         fail!(ui, "subtrees before the add: {:?}", subtrees(ui));
     }
@@ -341,6 +355,10 @@ fn branch_menu(ui: &mut Ui, name: &str) -> Vec<String> {
 /// Pull from the row's menu: pre-filled from the remembered source; the newer branch is
 /// merged, the list says so and remembers the new branch.
 fn pull(ui: &mut Ui) {
+    if !subtree_installed() {
+        println!("    note: git subtree isn't installed — not run");
+        return;
+    }
     wait_for_subtrees(ui, 2);
     testing::menu_labels();
     ui.click_on("side:subtree-lib", MouseButton::Right);

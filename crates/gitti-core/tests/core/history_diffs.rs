@@ -169,7 +169,7 @@ fn batched_compare_diffs_match_git_diff() {
     let opts = DiffOptions::default();
     let n = r.command_log().snapshot().len();
     let all = r.compare_diffs(&pairs, &opts).unwrap();
-    let ran: Vec<String> = r.command_log().snapshot()[n..].iter().map(|e| e.args.join(" ")).collect();
+    let ran = crate::fx::ran_since(&r, n);
     assert_eq!(ran.len(), 1, "one process for all pairs: {ran:?}");
     for ((old, new), data) in pairs.iter().zip(&all) {
         assert_eq!((data.old, data.new), (*old, *new));
@@ -443,9 +443,13 @@ fn remotes_and_stashes_cached_until_their_files_change() {
     let mut settle = |files: &[&str]| {
         age -= 10;
         let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
-        for f in files {
-            let file = fs::File::options().write(true).open(p.join(".git").join(f)).unwrap();
-            file.set_modified(t).unwrap();
+        // A reftable repository keeps the stash in its tables (no `refs/stash` or
+        // `logs/refs/stash` files): the table list counts.
+        for f in files.iter().copied().chain(["reftable/tables.list"]) {
+            let path = p.join(".git").join(f);
+            if f == "config" || path.exists() {
+                fs::File::options().write(true).open(path).unwrap().set_modified(t).unwrap();
+            }
         }
     };
     settle(&["config"]);

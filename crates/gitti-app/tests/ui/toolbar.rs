@@ -140,8 +140,12 @@ fn bare(name: &str, remote: &str) -> PathBuf {
 }
 
 /// The commit `name` (`refs/heads/main`) points at in the git dir `git_dir`, read from its
-/// files (loose or packed) — no git process; empty when missing.
+/// files (loose or packed) — no git process; git with the reftable backend (git 3.0's
+/// default), which keeps no ref files. Empty when missing.
 fn ref_in(git_dir: &Path, name: &str) -> String {
+    if git_dir.join("reftable").is_dir() {
+        return git_out(git_dir, &["rev-parse", "-q", "--verify", name]);
+    }
     if let Ok(s) = std::fs::read_to_string(git_dir.join(name)) {
         return s.trim().to_string();
     }
@@ -341,7 +345,7 @@ fn pull_and_push_without_upstream(ui: &mut Ui) {
         other => ui.fail(format!("main push with the new upstream: status {other:?}")),
     }
     // Detached: a message, no git (the menu greys them; the action says why).
-    std::fs::write(work.join(".git/HEAD"), head_of(&work) + "\n").unwrap();
+    git(&work, &["update-ref", "--no-deref", "HEAD", &head_of(&work)]);
     ui.step("action:gitti::Refresh");
     for action in ["Pull", "Push"] {
         let n = ui.n_git();

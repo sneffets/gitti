@@ -692,7 +692,7 @@ fn header_follows_new_refs() {
         dir.path(),
         config.path(),
         "160x40",
-        &format!("key:j;dump;write:.git/refs/tags/fresh-tag={}\\n;focus;wait;dump;check", head.trim()),
+        &format!("key:j;dump;git:tag fresh-tag {};focus;wait;dump;check", head.trim()),
     );
     let s = screens(&out);
     assert!(!refs_block(s[0]).contains("fresh-tag"), "{out}");

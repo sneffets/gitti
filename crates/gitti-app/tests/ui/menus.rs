@@ -110,7 +110,7 @@ pub fn main() {
         }
         if name == "detached_head_greys_branch_commands" {
             // HEAD on the commit itself, written as git would (no git process).
-            std::fs::write(d.join(".git/HEAD"), format!("{}\n", ids[5])).unwrap();
+            detach_head(&d, &ids[5]);
         }
         if name == "merge_unrelated_histories" {
             // Branch `other`: a root commit of its own.
@@ -128,7 +128,7 @@ pub fn main() {
             std::fs::create_dir_all(origin.join("objects/info")).unwrap();
             std::fs::write(origin.join("objects/info/alternates"), format!("{}\n", d.join(".git/objects").display())).unwrap();
             for (name, id) in [("main", &ids[5]), ("older", &ids[3])] {
-                std::fs::write(origin.join(format!("refs/heads/{name}")), format!("{id}\n")).unwrap();
+                write_ref_at(&origin, &format!("refs/heads/{name}"), id);
                 write_ref(&d, &format!("refs/remotes/origin/{name}"), id);
             }
             append_config(
@@ -180,6 +180,7 @@ fn modal(ui: &mut Ui) -> Option<(String, Vec<String>)> {
 
 fn git_out(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
+        .args(bare_arg(dir))
         .args(args)
         .current_dir(dir)
         .output()
@@ -1857,7 +1858,7 @@ fn diverged_repo(d: &Path) {
     std::fs::create_dir_all(origin.join("objects/info")).unwrap();
     let objects = d.join(".git/objects");
     std::fs::write(origin.join("objects/info/alternates"), format!("{}\n", objects.display())).unwrap();
-    std::fs::write(origin.join("refs/heads/main"), format!("{}\n", ids[theirs])).unwrap();
+    write_ref_at(&origin, "refs/heads/main", &ids[theirs]);
     append_config(
         d,
         &format!(

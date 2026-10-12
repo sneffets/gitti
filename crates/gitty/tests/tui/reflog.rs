@@ -12,7 +12,7 @@ use support::*;
 /// `main`: "Initial", "Second"; "Lost work" (a child of "Second") only in HEAD's reflog
 /// (written as a file): commit, commit, commit, reset back.
 fn lost_repo() -> (tempfile::TempDir, String) {
-    let dir = import(&[
+    let dir = import_files(&[
         Commit { branch: "main", from: None, merge: None, msg: "Initial", files: &[("a.txt", "a\n")] },
         Commit { branch: "main", from: None, merge: None, msg: "Second", files: &[("a.txt", "b\n")] },
         Commit { branch: "lost", from: Some(2), merge: None, msg: "Lost work", files: &[("a.txt", "lost\n")] },

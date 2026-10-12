@@ -94,7 +94,8 @@ fn setup_with(lib_ahead: bool) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let base = gitti_core::paths::canonical(tmp.path());
     let (inner, lib, sup) = (base.join("inner"), base.join("lib"), base.join("super"));
-    crate::fixture_kit::init(&sup);
+    // Its git dir is written over by hand below.
+    crate::fixture_kit::init_files(&sup);
     let config = fs::read_to_string(sup.join(".git/config")).unwrap();
 
     let mut h = History::new();
