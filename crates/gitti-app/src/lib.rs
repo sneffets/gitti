@@ -1412,6 +1412,8 @@ actions!(
         EditRepoConfig,
         EditGlobalConfig,
         WriteCommitGraph,
+        FetchFullHistory,
+        FetchMoreHistory,
         RepositoryStatistics,
         CreateBranch,
         CreateTag,
@@ -1782,6 +1784,9 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Run Custom Command…", RunCustomCommand),
                 MenuItem::action("Custom Commands…", CustomCommands),
                 MenuItem::action("Write Commit-Graph", WriteCommitGraph),
+                MenuItem::separator(),
+                MenuItem::action(gitti_core::shallow::FULL_LABEL, FetchFullHistory),
+                MenuItem::action(gitti_core::shallow::MORE_LABEL, FetchMoreHistory),
             ],
         ),
         menu(

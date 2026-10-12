@@ -63,6 +63,9 @@ pub struct Overview {
     pub shallow: bool,
     /// The remotes that hand out missing objects on demand (a partial clone).
     pub promisors: Vec<String>,
+    /// Remotes that fetch only some branches (a `--single-branch` clone): `(remote,
+    /// branches)`.
+    pub narrow_fetch: Vec<(String, Vec<String>)>,
     pub branches: usize,
     pub remote_branches: usize,
     pub tags: usize,
@@ -265,6 +268,19 @@ impl Repo {
         let config = repo.config_snapshot();
         let names: Vec<String> = repo.remote_names().iter().map(|n| n.to_string()).collect();
         o.remotes = names.len();
+        o.narrow_fetch = names
+            .iter()
+            .filter_map(|n| {
+                let specs: Vec<String> = config
+                    .strings(format!("remote.{n}.fetch").as_str())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                let narrow = crate::shallow::narrow_branches(&specs);
+                (!narrow.is_empty()).then(|| (n.clone(), narrow))
+            })
+            .collect();
         o.promisors = names
             .into_iter()
             .filter(|n| config.boolean(format!("remote.{n}.promisor").as_str()).unwrap_or(false))
@@ -612,8 +628,19 @@ pub fn text(stats: &Stats, opts: &TextOptions) -> String {
         line(
             &mut s,
             "Shallow clone",
-            "only the newest part of the history was fetched (`git fetch --unshallow` \
-             gets the rest)",
+            "only the newest part of the history was fetched (Repository ▸ Fetch More \
+             History… / Fetch Full History get the rest)",
+        );
+    }
+    for (remote, branches) in &o.narrow_fetch {
+        line(
+            &mut s,
+            "Single branch",
+            &format!(
+                "{remote} fetches only {} — other branches aren't fetched until they are \
+                 added (git remote set-branches --add)",
+                branches.join(", ")
+            ),
         );
     }
     if !o.promisors.is_empty() {

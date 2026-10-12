@@ -2122,7 +2122,7 @@ fn clone_clipboard_note(ui: &mut Ui) {
 /// window with Copy as Text).
 fn modal_sizing_sweep(ui: &mut Ui) {
     let dialogs: [(&str, &str, &str); 4] = [
-        ("clone", "action:gitti::CloneRepository", "modal-check:0"),
+        ("clone", "action:gitti::CloneRepository", "modal-check:2"),
         ("add worktree", "action:gitti::AddWorktree", "modal-field:3"),
         ("edit message", "action:gitti::EditCommitMessage", "modal-text"),
         ("repository statistics", "action:gitti::RepositoryStatistics", "modal-text"),

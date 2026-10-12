@@ -46,6 +46,7 @@ mod renormalize;
 mod repo_actions;
 mod repo_stats;
 mod script_scroll;
+mod shallow_ui;
 mod settings_view;
 mod sidebar;
 mod signers;

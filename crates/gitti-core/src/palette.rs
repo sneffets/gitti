@@ -152,6 +152,9 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // The external diff / merge tool (`tool_setup`).
     both("ChooseExternalTool", crate::tool_setup::CHOOSE_LABEL),
     both("WriteCommitGraph", "Write Commit-Graph"),
+    // A shallow clone's history (`shallow`); greyed in a complete one.
+    both("FetchFullHistory", crate::shallow::FULL_LABEL),
+    both("FetchMoreHistory", crate::shallow::MORE_LABEL),
     both("RepositoryStatistics", crate::repo_stats::MENU_LABEL),
     // Branch
     both("SwitchBranch", "Switch Branch…"),

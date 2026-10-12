@@ -86,6 +86,7 @@ pub mod reword;
 pub mod rows;
 pub mod safe_directory;
 pub mod search_paths;
+pub mod shallow;
 pub mod sidebar_menus;
 pub mod signature;
 pub mod signing_keys;

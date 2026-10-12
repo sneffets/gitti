@@ -38,6 +38,7 @@ mod repo_shapes;
 mod restore;
 mod runner;
 mod search;
+mod shallow;
 mod sha256;
 mod sidebar_ops;
 mod signature_keys;
