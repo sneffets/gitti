@@ -207,6 +207,8 @@ The app is scriptable via `GITTI_SCRIPT` (`crates/gitti-app/src/script.rs` lists
   such as font size also change click coordinates.
 - `GITTI_SCRIPT_PLACEMENT=1` makes a scripted run open at the saved window placement (e.g.
   maximized, on screen) instead of off-screen — for the restore path; use a copy of the db.
+  The merge window then also opens on screen and focused, so real OS input (e.g. CGEvents
+  posted while a `sleep:` step runs, after making the app frontmost) reaches it.
 - `GITTI_MENU_BAR=1` forces the in-window (Windows/Linux) menu bar on macOS;
   `GITTI_WINDOW_FRAME=1` forces the self-drawn title bar controls (Linux client-side
   decorations).
