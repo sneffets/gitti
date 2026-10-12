@@ -18,6 +18,7 @@ mod faults;
 mod fixture_kit;
 mod fs_paths;
 mod fx;
+mod git_settings;
 mod history_diffs;
 mod hostile_config;
 mod lfs;

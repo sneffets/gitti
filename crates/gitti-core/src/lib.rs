@@ -39,6 +39,7 @@ pub mod fd_limit;
 pub mod folder_tree;
 pub mod fs_paths;
 pub mod git_cli;
+pub mod git_settings;
 pub mod keybar;
 pub mod keys;
 pub mod list_layout;

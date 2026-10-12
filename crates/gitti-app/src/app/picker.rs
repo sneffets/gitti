@@ -585,20 +585,16 @@ impl GittiApp {
                 t.open_file_list(w, cx)
             })
             .act(&crate::FileList),
-            item(
-                "Git Settings: This Repository…",
-                "user.name, email, pull, push…",
-                |t, w, cx| t.open_config_dialog(gitti_core::ops::ConfigScope::Local, w, cx),
-            ),
-            item("Git Settings: Global…", "~/.gitconfig", |t, w, cx| {
+            item(gitti_core::git_settings::REPO_LABEL, gitti_core::git_settings::REPO_DETAIL, |t, w, cx| {
+                t.open_config_dialog(gitti_core::ops::ConfigScope::Local, w, cx)
+            }),
+            item(gitti_core::git_settings::GLOBAL_LABEL, gitti_core::git_settings::GLOBAL_DETAIL, |t, w, cx| {
                 t.open_config_dialog(gitti_core::ops::ConfigScope::Global, w, cx)
             }),
-            item(
-                "Edit Repository Config File…",
-                ".git/config",
-                |t, w, cx| t.edit_config_file(gitti_core::ops::ConfigScope::Local, w, cx),
-            ),
-            item("Edit Global Config File…", "~/.gitconfig", |t, w, cx| {
+            item(gitti_core::git_settings::EDIT_REPO_LABEL, gitti_core::git_settings::EDIT_REPO_DETAIL, |t, w, cx| {
+                t.edit_config_file(gitti_core::ops::ConfigScope::Local, w, cx)
+            }),
+            item(gitti_core::git_settings::EDIT_GLOBAL_LABEL, gitti_core::git_settings::EDIT_GLOBAL_DETAIL, |t, w, cx| {
                 t.edit_config_file(gitti_core::ops::ConfigScope::Global, w, cx)
             }),
             item(

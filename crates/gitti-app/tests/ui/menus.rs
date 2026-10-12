@@ -73,6 +73,7 @@ pub fn main() {
         ("repository_statistics", repository_statistics),
         ("repository_statistics_count_all", repository_statistics_count_all),
         ("commit_encoding_dialog", commit_encoding_dialog),
+        ("git_settings_dialog", git_settings_dialog),
         ("unavailable_commands", unavailable_commands),
         ("detached_head_greys_branch_commands", detached_head_greys_branch_commands),
         ("fresh_repository_greys_what_needs_a_commit", fresh_repository_greys_what_needs_a_commit),
@@ -535,6 +536,44 @@ fn commit_encoding_dialog(ui: &mut Ui) {
         fail!(ui, "statistics lack `{part}`:\n{text}");
     }
     ui.quick("cancel");
+}
+
+/// Git Settings: This Repository…: one field per setting of the shared list
+/// (`gitti_core::git_settings::SETTINGS`, the external tool keys too); a tool typed in
+/// and an emptied value are written to .git/config, the status names the file.
+fn git_settings_dialog(ui: &mut Ui) {
+    use gitti_core::git_settings::SETTINGS;
+    let dir = ui.workdir();
+    let at = |key: &str| SETTINGS.iter().position(|s| s.key == key).unwrap();
+    ui.quick("focuslist");
+    ui.step("action:gitti::RepoGitSettings");
+    let Some((title, fields)) = modal(ui) else {
+        return fail!(ui, "no dialog");
+    };
+    if !title.starts_with("Git settings for this repository") || fields.len() != SETTINGS.len() {
+        fail!(ui, "dialog {title:?} with {} fields", fields.len());
+    }
+    ui.quick(&format!("field:{}=meld", at("diff.tool")));
+    ui.quick(&format!("field:{}=false", at("mergetool.keepBackup")));
+    ui.step("modalok");
+    let config = || std::fs::read_to_string(dir.join(".git/config")).unwrap_or_default();
+    if !ui.wait_real(1500, |ui| ui.is_idle() && config().contains("tool = meld") && config().contains("keepBackup = false")) {
+        fail!(ui, "not written: {}", config());
+    }
+    match status(ui) {
+        Some((s, false)) if s.contains("Saved 2 settings in .git/config") => {}
+        other => fail!(ui, "status {other:?}"),
+    }
+    ui.step("action:gitti::RepoGitSettings");
+    ui.quick(&format!("field:{}=", at("diff.tool")));
+    ui.step("modalok");
+    if !ui.wait_real(1500, |ui| ui.is_idle() && !config().contains("meld")) {
+        fail!(ui, "not removed: {}", config());
+    }
+    match status(ui) {
+        Some((s, false)) if s.contains("Removed diff.tool from .git/config") => {}
+        other => fail!(ui, "status {other:?}"),
+    }
 }
 
 // ------------------------------------------------------------------ lean scenarios

@@ -554,7 +554,7 @@ impl CommitEncoding {
 }
 
 /// `path` relative to `workdir` when inside it, `~/…` in the home directory.
-fn shown_path(path: &Path, workdir: &Path) -> String {
+pub(crate) fn shown_path(path: &Path, workdir: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(workdir) {
         return rel.display().to_string();
     }

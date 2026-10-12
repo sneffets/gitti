@@ -444,7 +444,7 @@ impl App {
             .as_ref()
             .map(|(p, _)| p.clone())
             .unwrap_or_default();
-        vec![
+        let mut items = vec![
             PickItem::new("Clone Repository…", "", |app: &mut App| {
                 app.clone_dialog()
             }),
@@ -495,7 +495,9 @@ impl App {
             }),
             PickItem::new("About gitty", "", |app: &mut App| app.show_about()),
             PickItem::new("Third-Party Licences…", "", |app: &mut App| app.show_licences()),
-        ]
+        ];
+        items.extend(self.git_settings_palette_items());
+        items
     }
 
     /// Help ▸ About: version and build commit first (`y` copies them), licence, the

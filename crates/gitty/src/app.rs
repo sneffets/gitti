@@ -49,6 +49,7 @@ mod file_list;
 mod file_marks;
 mod from_commit;
 mod fs_paths;
+mod git_settings;
 mod keybar;
 mod lfs;
 mod lfs_fetch;
@@ -4689,13 +4690,7 @@ impl App {
     /// started. A terminal editor runs with the terminal handed over (the main loop).
     pub fn open_file_in_editor(&mut self, full: &std::path::Path, line: u32, info: String) {
         let workdir = self.repo.workdir().to_path_buf();
-        let mut template = self.settings.editor_command.clone();
-        if template.trim().is_empty() {
-            // A set but empty `$VISUAL` counts as unset (`VISUAL= gitty` must not hide
-            // `$EDITOR` behind the system default application).
-            let var = |name| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-            template = var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_default();
-        }
+        let template = self.editor_template();
         match gitti_core::editor::editor_argv(&template, full, line) {
             // A file name that is not UTF-8 reaches the editor as its bytes.
             Ok(argv) if gitti_core::editor::is_terminal_editor(&argv) => {
@@ -4707,6 +4702,19 @@ impl App {
             },
             Err(e) => self.set_error(format!("{e:#}")),
         }
+    }
+
+    /// The editor command: the setting `editor_command`, else `$VISUAL` / `$EDITOR`;
+    /// empty: none set (the system default application opens files then).
+    pub fn editor_template(&self) -> String {
+        let template = self.settings.editor_command.clone();
+        if !template.trim().is_empty() {
+            return template;
+        }
+        // A set but empty `$VISUAL` counts as unset (`VISUAL= gitty` must not hide
+        // `$EDITOR` behind the system default application).
+        let var = |name| std::env::var(name).ok().filter(|v: &String| !v.trim().is_empty());
+        var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_default()
     }
 
     /// A terminal editor (`run_in_terminal`, run by the main loop — or the script runner)
