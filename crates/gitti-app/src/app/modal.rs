@@ -96,6 +96,8 @@ pub struct Modal {
     option: usize,
     /// Fields shown only for some options (`ModalSpec::only_for`).
     field_options: Vec<Option<Vec<usize>>>,
+    /// Check boxes shown only for some options (`ModalSpec::check_only_for`).
+    check_options: Vec<Option<Vec<usize>>>,
     /// Focus of the dialog itself while no field has it (text viewer, no fields): Esc
     /// reaches `ModalCancel` and the pane keys don't act behind the dialog.
     focus: FocusHandle,
@@ -164,6 +166,7 @@ pub struct ModalSpec {
     options: Vec<String>,
     option: usize,
     field_options: Vec<(usize, Vec<usize>)>,
+    check_options: Vec<(usize, Vec<usize>)>,
     spell: Vec<usize>,
     live: Option<LiveFn>,
     extra: Option<(String, ExtraFn)>,
@@ -189,6 +192,7 @@ impl ModalSpec {
             options: Vec::new(),
             option: 0,
             field_options: Vec::new(),
+            check_options: Vec::new(),
             spell: Vec::new(),
             live: None,
             extra: None,
@@ -245,6 +249,13 @@ impl ModalSpec {
     /// Field `field` is only shown (and meant) while one of `options` is chosen.
     pub fn only_for(mut self, field: usize, options: &[usize]) -> Self {
         self.field_options.push((field, options.to_vec()));
+        self
+    }
+
+    /// Check box `check` is only shown (and meant) while one of `options` is chosen; its
+    /// value stays as it is while hidden (the OK handler decides what a hidden box means).
+    pub fn check_only_for(mut self, check: usize, options: &[usize]) -> Self {
+        self.check_options.push((check, options.to_vec()));
         self
     }
 
@@ -500,6 +511,12 @@ impl GittiApp {
                 *slot = Some(opts);
             }
         }
+        let mut check_options = vec![None; spec.checks.len()];
+        for (c, opts) in spec.check_options {
+            if let Some(slot) = check_options.get_mut(c) {
+                *slot = Some(opts);
+            }
+        }
         // The previous dialog's spell states (their editors are gone).
         self.spell.retain(|t, _| *t == SpellTarget::Message);
         let spell = spec
@@ -544,6 +561,7 @@ impl GittiApp {
             options: spec.options,
             option: spec.option,
             field_options,
+            check_options,
             focus,
             return_focus: None,
             folders: None,
@@ -800,6 +818,26 @@ impl GittiApp {
     /// Script hook: the chosen option of the open dialog.
     pub fn script_modal_option(&self) -> Option<usize> {
         self.modal.as_ref().map(|m| m.option)
+    }
+
+    /// Script hook: the check boxes of the open dialog — label, value, shown for the
+    /// chosen option.
+    pub fn script_modal_checks(&self) -> Vec<(String, bool, bool)> {
+        let Some(m) = self.modal.as_ref() else {
+            return Vec::new();
+        };
+        m.checks
+            .iter()
+            .enumerate()
+            .map(|(i, (label, on))| {
+                let shown = m
+                    .check_options
+                    .get(i)
+                    .and_then(Option::as_ref)
+                    .is_none_or(|o| o.contains(&m.option));
+                (label.clone(), *on, shown)
+            })
+            .collect()
     }
 
     /// Script hook: flips checkbox `ix` of the open dialog.
@@ -1433,6 +1471,14 @@ impl GittiApp {
             );
         }
         for (i, (label, value)) in modal.checks.iter().enumerate() {
+            let hidden = modal
+                .check_options
+                .get(i)
+                .and_then(Option::as_ref)
+                .is_some_and(|o| !o.contains(&modal.option));
+            if hidden {
+                continue;
+            }
             let label = label.clone();
             let value = *value;
             middle = middle.child(

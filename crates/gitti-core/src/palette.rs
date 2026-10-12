@@ -138,6 +138,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("TrackWithLfs", "Track with Git LFS…"),
     both("EditGitattributes", "Edit .gitattributes…"),
     both("RenormalizeLineEndings", crate::renormalize::MENU_LABEL),
+    both("CleanUntrackedIgnored", crate::clean::MENU_LABEL),
     // Paths this file system can't hold (`fs_paths`): the note, hide (skip-worktree),
     // the undo.
     both("FsPaths", "Paths This File System Can't Hold…"),
@@ -197,6 +198,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("GetSigningKeys", "Get Signing Keys from GitHub…"),
     both("MarkCompare", "Mark Selected Commit for Comparison"),
     when("SwapCompare", STATE, Gitty::No(STATE)),
+    both("ToggleCompareMergeBase", "Changes Since Common Ancestor"),
     when("EndCompare", STATE, Gitty::No(STATE)),
     both("CreateTag", "Create Tag at HEAD…"),
     // Stash

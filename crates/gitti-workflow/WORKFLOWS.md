@@ -431,6 +431,7 @@ working tree or the index while the app shows an older state.
 | DC-07 | Discard a group | Untracked Files group; discard (asks) | only that group | `wf_staging::dc07_discard_a_group` | `wf_staging::dc07_discard_a_group` | `views::unstaged_groups_fold_stage_and_discard_with_totals` |
 | DC-08 | Discard a deleted file / an untracked file | file deleted; discard | file back; untracked file removed | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file`, ~`staging::working_state_after_whole_files_match_a_full_read` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` | `wf_staging::dc08_discard_a_deleted_and_an_untracked_file` |
 | DC-09 | Discard lines of a read-only file | 0444 file (unix) | rewritten, mode kept | `unix_fs::read_only_file_discard_lines` | `wf_discard::dc09_discard_lines_of_a_read_only_file` | `wf_discard::dc09_discard_lines_of_a_read_only_file` |
+| DC-10 | Clean untracked and ignored files | Clean Untracked / Ignored Files…; Untracked and Ignored; tick `target/` besides the ticked untracked entries; Delete | exactly the ticked files go (in-process); an ignored file in a ticked new folder, a worktree in the ticked build folder and a nested repository stay; each ignored entry names its rule | `clean::dc10_clean_untracked_and_ignored_files`, `clean::list_names_rules_files_and_nested_repositories` | `wf_discard::dc10_clean_untracked_and_ignored_files` | `wf_discard::dc10_clean_untracked_and_ignored_files` |
 
 ## RL — Undo and recovery
 
@@ -530,7 +531,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | WT worktrees | 8 | 8 | 8 | 8 |
 | SM submodules | 8 | 8 | 8 | 8 |
 | LF LFS | 6 | 6 | 6 | 6 |
-| DC discard | 9 | 9 | 9 | 9 |
+| DC discard | 10 | 10 | 10 | 10 |
 | RL recovery | 4 | 4 | 4 | 4 |
 | IG ignore | 6 | 6 | 6 | 6 |
 | RN renames | 5 | 5 | 5 | 5 |
@@ -538,7 +539,7 @@ layer (partial `~` and `n/a` don't count as covered).
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **277** | **267** | **257** | **258** |
+| **Total** | **278** | **268** | **258** | **259** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

@@ -38,6 +38,7 @@ use crate::theme::Palette;
 
 mod branch_cmds;
 mod change_search;
+mod clean;
 mod commit_box;
 mod commit_flow;
 mod commit_lines;
@@ -1726,6 +1727,10 @@ impl App {
         self.rebuild_sidebar();
         self.check_compare_base();
         self.refresh_worktree_compare();
+        // `.mailmap` changed: the shown header's names (the list re-reads its rows).
+        if s.mailmap_changed && matches!(&self.detail, Detail::Commit(cv) if cv.compare.is_none()) {
+            self.load_detail();
+        }
         if matches!(self.detail, Detail::Worktree) {
             self.rebuild_rows();
             self.apply_regroup(regroup);
@@ -4127,6 +4132,7 @@ impl App {
             MenuItem::new(gitti_core::commit_message::RECENT_LABEL, |app| {
                 app.open_recent_messages()
             }),
+            MenuItem::new(gitti_core::co_author::LABEL, |app| app.open_co_author_picker()),
         ]
     }
 

@@ -651,12 +651,19 @@ impl Repo {
         Lease { expect }
     }
 
-    /// Whether `id` was once the tip of local `branch` (its reflog, in-process).
+    /// Whether `id` was once the tip of local `branch` (its reflog, in-process; git for a
+    /// reftable repository, whose reflogs gix can't read).
     fn in_reflog(&self, branch: &str, id: &str) -> bool {
-        let Ok(repo) = self.gix() else { return false };
         let Ok(id) = crate::ObjectId::from_hex(id.as_bytes()) else {
             return false;
         };
+        if self.uses_reftable() {
+            let Ok(entries) = self.reflog_cli(&format!("refs/heads/{branch}")) else {
+                return false;
+            };
+            return entries.iter().any(|e| e.new == id || e.old == Some(id));
+        }
+        let Ok(repo) = self.gix() else { return false };
         let Ok(r) = repo.find_reference(format!("refs/heads/{branch}").as_str()) else {
             return false;
         };

@@ -715,12 +715,16 @@ fn untracked_preview_matches_git_diff_no_index() {
     let added = no_index(empty, ".");
     let deleted = no_index(".", empty);
     assert_eq!((added.len(), deleted.len()), (cases.len(), cases.len()));
+    // Outside a repository git hashes with its default object format: SHA-1, SHA-256
+    // from git 3.0 on. The empty blob's id says which.
+    let empty_blob = added.iter().find(|d| d.starts_with("diff --git a/empty.txt ")).unwrap();
+    let hash = if empty_blob.contains("..e69de29") { gix::hash::Kind::Sha1 } else { gix::hash::Kind::Sha256 };
     for (name, data) in cases {
         let exec = cfg!(unix) && *name == "run.sh";
         let header = format!("diff --git a/{name} b/{name}\n");
         let find = |all: &[String]| all.iter().find(|d| d.starts_with(&header)).cloned().unwrap_or_default();
-        assert_eq!(gitti_core::repo::new_file_diff_text(name, data, exec, gix::hash::Kind::Sha1), find(&added), "{name}");
-        assert_eq!(gitti_core::repo::file_diff_text(name, data, exec, true, gix::hash::Kind::Sha1), find(&deleted), "{name} deleted");
+        assert_eq!(gitti_core::repo::new_file_diff_text(name, data, exec, hash), find(&added), "{name}");
+        assert_eq!(gitti_core::repo::file_diff_text(name, data, exec, true, hash), find(&deleted), "{name} deleted");
     }
 }
 

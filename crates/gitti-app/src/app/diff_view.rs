@@ -540,7 +540,28 @@ impl GittiApp {
                     .into_iter()
                     .zip(["Author", "Date", "Committer"])
                     .enumerate()
-                    .map(|(i, (line, label))| meta(label, self.render_header_line(i, line, &p, cx))),
+                    .map(|(i, (line, label))| {
+                        // The identity the commit records when `.mailmap` changed it.
+                        let raw = match i {
+                            0 => d.raw_author.as_ref(),
+                            2 => d.raw_committer.as_ref(),
+                            _ => None,
+                        };
+                        let line = self.render_header_line(i, line, &p, cx);
+                        let line = match gitti_core::mailmap::recorded_tip(raw) {
+                            Some(tip) => div()
+                                .id(("header-recorded", i))
+                                .probe(format!("header-recorded:{i}"))
+                                .min_w_0()
+                                .tooltip(move |w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                                })
+                                .child(line)
+                                .into_any_element(),
+                            None => line,
+                        };
+                        meta(label, line)
+                    }),
             )
             .child(meta("Parents", parents.into_any_element()))
             .when_some(cv.stash, |el, n| {

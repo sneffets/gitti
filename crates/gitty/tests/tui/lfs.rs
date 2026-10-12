@@ -172,9 +172,16 @@ fn download_missing_objects_from_the_diff_menu() {
     let config = tempfile::tempdir().unwrap();
     let global = config.path().join("global.gitconfig");
     std::fs::write(&global, "").unwrap();
+    // git-lfs serves the local remote by running git inside it, without the `GIT_*`
+    // variables (`HOME`'s config counts there); git 3.0 refuses that bare repository
+    // unless `safe.bareRepository = all`.
+    let home = config.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join(".gitconfig"), "[safe]\n\tbareRepository = all\n").unwrap();
     let env = [
         ("GIT_CONFIG_GLOBAL", global.to_str().unwrap()),
         ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("HOME", home.to_str().unwrap()),
     ];
     let script = "key:down;dump;press:enter;press:m;dump;key:F;dump;state";
     let out = gitty_env(&work, config.path(), "240x30", &env, script);

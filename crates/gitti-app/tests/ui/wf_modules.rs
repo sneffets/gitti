@@ -42,12 +42,13 @@ pub fn main() {
     let tmp = common::setup();
     // git-lfs's filters as `git lfs install` writes them, nothing else of a developer's
     // global config (LF-06 clones with them; LF-01 switches them off in its repository).
-    let global = tmp.path().join("lfs-gitconfig");
-    std::fs::write(&global, lf::LFS_FILTERS).unwrap();
+    // (And what git-lfs needs to serve a local remote: `lf::global_env`.)
+    let env = lf::global_env(&tmp.path().join("lfs-config"));
     // SAFETY: still single-threaded (this suite runs in its own process).
     unsafe {
-        std::env::set_var("GIT_CONFIG_GLOBAL", &global);
-        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
     }
     let base = gitti_core::paths::canonical(tmp.path());
     let tests: &[(&str, Scenario)] = &[

@@ -5,8 +5,16 @@
 use std::path::Path;
 use std::process::Command;
 
+/// `--git-dir=<dir>` when `dir` is a bare repository (a remote): git 3.0 doesn't find one
+/// from its working directory (`safe.bareRepository = explicit`).
+pub fn bare_arg(dir: &Path) -> Vec<String> {
+    let bare = !dir.join(".git").exists() && dir.join("HEAD").is_file() && dir.join("objects").is_dir();
+    bare.then(|| format!("--git-dir={}", dir.display())).into_iter().collect()
+}
+
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
+        .args(bare_arg(dir))
         .args(args)
         .current_dir(dir)
         .output()

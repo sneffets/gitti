@@ -222,7 +222,7 @@ fn uninitialised_super() -> (tempfile::TempDir, tempfile::TempDir) {
     let lib = import(&[Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("l.txt", "1\n")] }]);
     let modules = format!("[submodule \"libs/lib\"]\n\tpath = libs/lib\n\turl = {}\n", lib.path().display());
     // The pointer commit in the same fast-import (no update-index + commit processes).
-    let tip = std::fs::read_to_string(lib.path().join(".git/refs/heads/main")).unwrap();
+    let tip = branch_tip(lib.path(), "main");
     let pointer = format!(
         "commit refs/heads/main\ncommitter Tester <t@example.com> 1700000600 +0000\ndata 8\nadd lib\n\
          M 160000 {} libs/lib\n\n",
