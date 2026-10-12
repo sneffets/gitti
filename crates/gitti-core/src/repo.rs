@@ -350,6 +350,9 @@ pub enum OpenError {
     /// Started with `GIT_DIR` (and maybe `GIT_WORK_TREE`) naming another repository than
     /// the folder opened ([`crate::open_check::LaunchEnv`]).
     GitDirEnv { git_dir: PathBuf, work_tree: Option<PathBuf>, path: PathBuf },
+    /// The folder does not exist (now): deleted, renamed — or on a drive or network share
+    /// that is not connected, so it may come back.
+    FolderMissing(PathBuf),
 }
 
 impl OpenError {
@@ -360,6 +363,7 @@ impl OpenError {
             OpenError::GitMissing => "git not found",
             OpenError::WorkTreeElsewhere { .. } => "Work tree without .git",
             OpenError::GitDirEnv { .. } => "GIT_DIR not followed",
+            OpenError::FolderMissing(_) => "Folder not found",
         }
     }
 }
@@ -376,6 +380,13 @@ impl std::fmt::Display for OpenError {
                 dir.display()
             ),
             OpenError::GitMissing => f.write_str(&crate::caps::GitCaps::missing_message()),
+            OpenError::FolderMissing(dir) => write!(
+                f,
+                "{} does not exist. If it is on a drive or network share that is not \
+                 connected now, connect it and try again; if it was moved or deleted, open \
+                 it where it is now.",
+                dir.display()
+            ),
             OpenError::WorkTreeElsewhere { git_dir, work_tree } => write!(
                 f,
                 "{} is a repository whose work tree is {} (core.worktree), but that folder \
@@ -434,6 +445,10 @@ impl Repo {
     }
 
     fn open_here(path: &Path) -> Result<Self> {
+        // Not "not a repository": a drive that is not connected comes back.
+        if std::fs::metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            return Err(OpenError::FolderMissing(path.to_path_buf()).into());
+        }
         if crate::caps::GitCaps::get().missing {
             return Err(OpenError::GitMissing.into());
         }

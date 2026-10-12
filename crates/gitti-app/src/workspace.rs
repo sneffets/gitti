@@ -60,24 +60,6 @@ fn index_after_move(ix: usize, from: usize, to: usize) -> usize {
     }
 }
 
-/// Open tabs (in their order), persisted in the settings database (`store`).
-#[derive(Default)]
-struct SavedTabs {
-    repos: Vec<PathBuf>,
-    active: usize,
-}
-
-impl SavedTabs {
-    fn load() -> Self {
-        let (repos, active) = crate::store::load_tabs();
-        Self { repos, active }
-    }
-
-    fn save(&self) {
-        crate::store::save_tabs(&self.repos, self.active);
-    }
-}
-
 pub struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -94,6 +76,9 @@ pub struct Workspace {
     /// Scripted runs don't load the saved tab list, and save it only with a config dir of
     /// their own (tests).
     scripted: bool,
+    /// The open tabs as the start found them saved; saves the session's tabs — none when
+    /// the saved ones could not be read, so they survive for the next start.
+    saved_tabs: crate::store::SavedTabs,
     /// The start page while no tab is open: a repository-less app that hosts the Clone /
     /// Init dialogs.
     start: Option<Entity<GittiApp>>,
@@ -179,6 +164,7 @@ impl Workspace {
             focus: cx.focus_handle(),
             drag_pending: false,
             scripted,
+            saved_tabs: Default::default(),
             start: None,
             load_queue: Default::default(),
             loading: None,
@@ -187,13 +173,12 @@ impl Workspace {
             quits_fired: 0,
         };
         // Scripted runs (tests) show exactly the given repository.
-        let saved = if scripted {
-            SavedTabs::default()
-        } else {
-            SavedTabs::load()
-        };
-        this.restore_tabs(&saved.repos, window, cx);
-        this.active = saved.active.min(this.tabs.len().saturating_sub(1));
+        if !scripted {
+            this.saved_tabs = crate::store::SavedTabs::load();
+        }
+        let repos = std::mem::take(&mut this.saved_tabs.repos);
+        this.restore_tabs(&repos, window, cx);
+        this.active = this.saved_tabs.active.min(this.tabs.len().saturating_sub(1));
         // Started with GIT_DIR / GIT_WORK_TREE: the folder they are meant for opens (and
         // says why not, if they name another repository) — never silently the saved tabs.
         let launch_env = gitti_core::open_check::LaunchEnv::current().is_some();
@@ -208,6 +193,15 @@ impl Workspace {
             this.activate(this.active, window, cx);
         }
         this.start_restored_loads(window, cx);
+        if let Some(why) = this.saved_tabs.unreadable.clone()
+            && let Some(app) = this.script_app()
+        {
+            let text = format!(
+                "The tabs open last time could not be read ({why}). They stay saved as they \
+                 are: this session's tabs are not saved."
+            );
+            app.update(cx, |a, cx| a.show_startup_notice(text, cx));
+        }
         this.listen_askpass(ask_rx, window, cx);
         if !scripted {
             crate::window_placement::track("main", window, cx);
@@ -474,13 +468,15 @@ impl Workspace {
     }
 
     /// The saved tabs, not reading their repositories yet ([`Self::start_restored_loads`]);
-    /// the settings are read once for all of them.
+    /// the settings are read once for all of them. A folder that isn't there (a drive not
+    /// connected) keeps its tab, which says so ([`gitti_core::OpenError::FolderMissing`])
+    /// and reads it once it is back: dropped, the tab was gone for good with the next save.
     fn restore_tabs(&mut self, repos: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
         if repos.is_empty() {
             return;
         }
         let settings = Settings::load();
-        for path in repos.iter().filter(|p| p.exists()) {
+        for path in repos {
             let (env, panes) = (self.askpass_env.clone(), self.panes.clone());
             let settings = settings.clone();
             let app = cx.new(|cx| {
@@ -662,6 +658,12 @@ impl Workspace {
             return;
         }
         self.active = ix.min(self.tabs.len() - 1);
+        // A tab whose folder was missing (a drive not connected) reads it once it is back.
+        let tab = &self.tabs[self.active];
+        if tab.app.read(cx).folder_missing() && tab.path.exists() {
+            let path = tab.path.clone();
+            self.tabs[self.active].app = self.new_app(path, window, cx);
+        }
         let app = self.tabs[self.active].app.clone();
         app.update(cx, |a, cx| {
             a.reload_settings(cx);
@@ -735,11 +737,8 @@ impl Workspace {
         if self.scripted && std::env::var_os("GITTI_CONFIG_DIR").is_none() {
             return;
         }
-        SavedTabs {
-            repos: self.tabs.iter().map(|t| t.path.clone()).collect(),
-            active: self.active,
-        }
-        .save();
+        let repos: Vec<PathBuf> = self.tabs.iter().map(|t| t.path.clone()).collect();
+        self.saved_tabs.save(&repos, self.active);
     }
 
     /// Opened repositories go to the recent list (File ▸ Open Recent) — in scripted runs

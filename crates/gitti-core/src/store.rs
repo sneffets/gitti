@@ -556,38 +556,85 @@ pub fn flush() {
 
 // ---------------------------------------------------------------------- tabs
 
-/// Open repository tabs and the active one.
+/// Open repository tabs and the active one, for a look at them (e.g. other repositories
+/// the user works in); empty when they can't be read. A start reads them with
+/// [`SavedTabs::load`], which knows that difference.
 pub fn load_tabs() -> (Vec<PathBuf>, usize) {
-    let Some(conn) = open() else {
-        return (Vec::new(), 0);
-    };
+    let tabs = SavedTabs::load();
+    (tabs.repos, tabs.active)
+}
+
+/// The open tabs as a start found them saved, and the session's way to save its own.
+#[derive(Debug, Default)]
+pub struct SavedTabs {
+    pub repos: Vec<PathBuf>,
+    pub active: usize,
+    /// Why the saved tabs could not be read. A list that could not be read is not an
+    /// empty one: [`Self::save`] then writes nothing all session, so the saved tabs are
+    /// still there for the next start instead of being replaced by what this session had
+    /// open.
+    pub unreadable: Option<String>,
+}
+
+impl SavedTabs {
+    /// Reads the saved tabs (after this process's queued writes).
+    pub fn load() -> Self {
+        let Some(path) = db_path() else {
+            return Self::unreadable("no configuration directory".into());
+        };
+        wait_for_writes(Duration::from_secs(2));
+        Self::load_from(&path)
+    }
+
+    fn load_from(path: &Path) -> Self {
+        match open_at(path).and_then(|conn| read_tabs(&conn)) {
+            Ok((repos, active)) => Self { repos, active, unreadable: None },
+            Err(e) => {
+                let why = format!("settings database {}: {e:#}", path.display());
+                eprintln!("gitti: reading the open tabs failed: {why}");
+                Self::unreadable(why)
+            }
+        }
+    }
+
+    fn unreadable(why: String) -> Self {
+        Self { unreadable: Some(why), ..Self::default() }
+    }
+
+    /// Saves `repos` (in their order) as the open tabs, `active` the shown one — unless
+    /// the saved tabs could not be read at the start ([`Self::unreadable`]).
+    pub fn save(&self, repos: &[PathBuf], active: usize) {
+        if let Some(path) = db_path() {
+            self.save_to(path, repos, active);
+        }
+    }
+
+    fn save_to(&self, path: PathBuf, repos: &[PathBuf], active: usize) {
+        if self.unreadable.is_some() {
+            return;
+        }
+        let repos = repos.to_vec();
+        write_at(path, "saving tabs", move |conn| write_tabs(conn, &repos, active));
+    }
+}
+
+/// The saved tabs; an error when they can't be read (never an empty list instead).
+fn read_tabs(conn: &Connection) -> Result<(Vec<PathBuf>, usize)> {
     let repos = conn
-        .prepare("SELECT path FROM open_tabs ORDER BY position")
-        .and_then(|mut st| {
-            st.query_map([], |r| r.get::<_, String>(0))?
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .map(PathBuf::from)
-        .collect();
+        .prepare("SELECT path FROM open_tabs ORDER BY position")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .map(|p| p.map(PathBuf::from))
+        .collect::<Result<Vec<_>, _>>()?;
     let active = conn
         .query_row(
             "SELECT value FROM workspace WHERE key = 'active_tab'",
             [],
             |r| r.get::<_, String>(0),
         )
-        .optional()
-        .ok()
-        .flatten()
+        .optional()?
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    (repos, active)
-}
-
-pub fn save_tabs(repos: &[PathBuf], active: usize) {
-    let repos = repos.to_vec();
-    write_later("saving tabs", move |conn| write_tabs(conn, &repos, active));
+    Ok((repos, active))
 }
 
 fn write_tabs(conn: &Connection, repos: &[PathBuf], active: usize) -> Result<()> {
@@ -1569,16 +1616,36 @@ mod tests {
     #[gitti_test::test]
     fn tabs_roundtrip() {
         let (_dir, conn) = db();
+        assert_eq!(read_tabs(&conn).unwrap(), (Vec::new(), 0));
         write_tabs(&conn, &[PathBuf::from("/x"), PathBuf::from("/y")], 1).unwrap();
-        write_tabs(&conn, &[PathBuf::from("/z")], 0).unwrap();
-        let paths: Vec<String> = conn
-            .prepare("SELECT path FROM open_tabs ORDER BY position")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(paths, vec!["/z"]);
+        write_tabs(&conn, &[PathBuf::from("/z"), PathBuf::from("/w")], 1).unwrap();
+        let want = vec![PathBuf::from("/z"), PathBuf::from("/w")];
+        assert_eq!(read_tabs(&conn).unwrap(), (want, 1));
+    }
+
+    /// A tab list that can't be read is not an empty one: the session saves no tabs, so
+    /// the saved ones survive (the first save used to replace them with what was open).
+    #[gitti_test::test]
+    fn unreadable_saved_tabs_are_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gitti.db");
+        let garbage = b"not a database, but maybe one we can't read today".repeat(100);
+        std::fs::write(&path, &garbage).unwrap();
+        let tabs = SavedTabs::load_from(&path);
+        assert!(tabs.unreadable.is_some(), "{tabs:?}");
+        assert!(tabs.repos.is_empty());
+        tabs.save_to(path.clone(), &[PathBuf::from("/x")], 0);
+        assert!(wait_for_writes(Duration::from_secs(2)));
+        assert_eq!(std::fs::read(&path).unwrap(), garbage);
+
+        // A readable db: what the session saves is what the next start reads.
+        let path = dir.path().join("ok.db");
+        let tabs = SavedTabs::load_from(&path);
+        assert_eq!((tabs.unreadable.as_deref(), tabs.repos.len()), (None, 0));
+        tabs.save_to(path.clone(), &[PathBuf::from("/x"), PathBuf::from("/y")], 1);
+        assert!(wait_for_writes(Duration::from_secs(2)));
+        let again = SavedTabs::load_from(&path);
+        assert_eq!((again.repos, again.active), (vec![PathBuf::from("/x"), PathBuf::from("/y")], 1));
     }
 
     #[gitti_test::test]
