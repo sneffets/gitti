@@ -172,9 +172,9 @@ fn the_key_bar_runs_no_git() {
 /// The RS-07 commit (row 1) shown, the diff focused; `]` steps to the next file header
 /// (file 0: `added.txt`, file 1: `old.txt → new.txt`).
 const RS07_COMMIT: &str = "key:j;key:enter;";
-/// `.` + `down` + ⏎ on a file header: Restore Version Before This Commit… (the dialog
+/// `.` + Restore Version Before… picked on a file header: Restore Version Before This Commit… (the dialog
 /// reads one path-limited status).
-const BEFORE: &str = "key:.;key:down;key:enter;";
+const BEFORE: &str = "key:.;pick:Restore Version Before This Commit;";
 
 /// A restore re-reads only the paths it wrote and deleted, in its own job: `git restore`
 /// plus status and two diffs of those paths — no whole-repository status, refs, remotes,

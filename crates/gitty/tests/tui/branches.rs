@@ -43,9 +43,9 @@ fn sort_choices_and_pins_run_no_git_and_are_remembered() {
     let config = tempfile::tempdir().unwrap();
     let script = format!(
         "cmds;press:backtab;press:g;dump;\
-         press:m;press:up;press:up;press:enter;dump;\
+         press:m;pick:Sort by Last Commit Date;dump;\
          press:ctrl-p;{}press:enter;dump;\
-         press:g;press:j;press:j;press:j;press:m;press:up;press:up;press:enter;dump;state;cmds",
+         press:g;press:j;press:j;press:j;press:m;pick:Pin to Top;dump;state;cmds",
         presses("recently checked out")
     );
     let out = gitty_with(dir.path(), config.path(), "120x30", &script);

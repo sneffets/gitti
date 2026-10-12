@@ -171,9 +171,9 @@ fn rs10_undo_a_hard_reset_from_the_reflog() {
 
 /// The commit of RS-07 (row 1) shown, the diff focused; `]` steps to the next file
 /// header (file 0: `added.txt`, file 1: `old.txt → new.txt`); `.` opens its menu,
-/// `down` + ⏎ chooses Restore Version Before This Commit… (the second entry).
+/// and Restore Version Before This Commit… is picked from it.
 const RS07_COMMIT: &str = "key:j;key:enter;";
-const BEFORE: &str = "key:.;key:down;key:enter;dump;";
+const BEFORE: &str = "key:.;pick:Restore Version Before This Commit;dump;";
 
 /// RS-07, first step: on the renamed file, Restore Version Before This Commit… lists both
 /// names; Restore to the Working Tree (r) writes `old.txt` back and deletes `new.txt`.

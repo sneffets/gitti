@@ -271,7 +271,7 @@ fn rm12_pull_from_another_remote() {
 }
 
 /// RM-12: the sidebar's `origin` (row 5: BRANCHES, main, WORKTREES, work, REMOTES,
-/// origin), m, its menu's Prune Stale Branches (the fourth entry) drops `origin/old`.
+/// origin), m, its menu's Prune Stale Branches drops `origin/old`.
 /// Workflow: RM-12
 #[gitti_test::test]
 fn rm12_prune_stale_branches() {
@@ -280,13 +280,13 @@ fn rm12_prune_stale_branches() {
     let d = work(&tmp);
     let s = wf::fixture(&d);
     let script = format!(
-        "press:backtab;press:g;{}state;press:m;items;press:j;press:j;press:j;key:enter;state;dump",
+        "press:backtab;press:g;{}state;press:m;items;pick:Prune Stale Branches;state;dump",
         "press:j;".repeat(5),
     );
     let out = run(&tmp, &d, &script);
     let st = states(&out);
     assert!(st[0].contains("focus=Sidebar") && st[0].contains("side_cursor=5"), "{out}");
-    assert_eq!(items(&out).get(3), Some(&"Prune Stale Branches of origin"), "j j j: {out}");
+    assert!(items(&out).contains(&"Prune Stale Branches of origin"), "{out}");
     assert!(!st[1].contains("ERROR"), "{out}");
     assert!(!screens(&out)[0].contains("old"), "origin/old gone from the sidebar: {out}");
     wf::expect_pruned(&d, &s).unwrap();

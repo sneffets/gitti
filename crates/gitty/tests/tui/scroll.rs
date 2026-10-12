@@ -398,7 +398,7 @@ fn small_terminal_lists_menus_and_help_scroll() {
     let dir = history_repo_fast(40);
     let mut script = String::from("press:j;press:j;press:j;press:j;press:j;press:j;press:j;");
     script.push_str("press:j;press:j;press:j;press:j;press:j;press:j;press:j;state;dump;press:G;state;dump;");
-    script.push_str("press:backtab;dump;press:tab;press:m;press:k;dump;press:k;press:enter;state;press:?");
+    script.push_str("press:backtab;dump;press:tab;press:m;press:k;dump;pick:Copy SHA;state;press:?");
     script.push_str(&";press:pagedown".repeat(12));
     script.push_str(";dump");
     let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "60x15", &script);

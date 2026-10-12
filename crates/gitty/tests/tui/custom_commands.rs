@@ -89,7 +89,7 @@ fn tag_menu_and_delete_from_the_edit_form() {
     git(d, &["tag", "v1.0"]);
     let script = format!(
         "press:ctrl-p;{}key:enter;key:enter;paste:Tag subject;press:tab;paste:log -1 --format=%s {{tag}};key:enter;\
-         press:backtab;press:G;press:k;press:enter;press:j;press:m;items;cmds;press:up;key:enter;key:y;cmds;press:esc;\
+         press:backtab;press:G;press:k;press:enter;press:j;press:m;items;cmds;pick:Tag subject;key:y;cmds;press:esc;\
          press:ctrl-p;{}key:enter;press:down;key:enter;press:e;dump;press:ctrl-d;state;dump;key:y;state;\
          press:ctrl-p;{}key:enter;items",
         presses("custom commands"),

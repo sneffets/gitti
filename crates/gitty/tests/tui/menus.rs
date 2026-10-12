@@ -101,16 +101,15 @@ fn commit_menu_rewords_an_older_commit() {
     assert_eq!(git(d, &["show", "HEAD:a.txt"]), "3\n", "{out}");
 }
 
-/// The diff menu on the section row: Collapse / Expand All Files (k wraps to the last
-/// items); on a file: Stage File, Copy Path.
+/// The diff menu on the section row: Collapse / Expand All Files; on a file: Stage File, Copy Path.
 #[gitti_test::test]
 fn diff_menu_folds_all_and_stages_a_file() {
     let dir = two_file_repo();
     let d = dir.path();
     let out = gitty(
         d,
-        "press:enter;press:m;dump;press:k;press:k;press:k;press:k;press:enter;dump;\
-         press:m;press:k;press:k;press:k;press:k;press:k;press:enter;dump;press:];press:m;dump;key:enter;state",
+        "press:enter;press:m;dump;pick:Collapse All Files;dump;\
+         press:m;pick:Expand All Files;dump;press:];press:m;dump;key:enter;state",
     );
     let s = screens(&out);
     assert!(s[0].contains("Diff ─") && s[0].contains("Collapse All Files"), "{out}");
@@ -661,8 +660,8 @@ fn header_ids_copy_from_their_menus_and_y() {
     // row 3, the Parents line on row 6.
     let out = gitty(
         d,
-        "press:j;wait;cmds;rclick:100,3;items;key:enter;state;rclick:100,6;items;press:down;press:down;\
-         key:enter;state;key:y;state;key:k;key:k;key:k;key:y;state;cmds",
+        "press:j;wait;cmds;rclick:100,3;items;key:enter;state;rclick:100,6;items;pick:Copy Parent 2 SHA;\
+         state;key:y;state;key:k;key:k;key:k;key:y;state;cmds",
     );
     let menus = item_lists(&out);
     assert_eq!(menus[0][..2], ["Copy SHA", "Copy Short SHA"], "{out}");
@@ -718,7 +717,7 @@ fn header_author_and_date_copy() {
     // The header's line N is screen row N + 2: Author on row 4, Date on row 5.
     let out = gitty(
         d,
-        "press:j;wait;cmds;rclick:100,4;items;press:down;press:down;key:enter;state;key:y;state;\
+        "press:j;wait;cmds;rclick:100,4;items;pick:Copy Author Email;state;key:y;state;\
          key:j;key:y;state;cmds",
     );
     let menus = item_lists(&out);
