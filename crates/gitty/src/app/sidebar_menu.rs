@@ -684,15 +684,7 @@ pub(super) fn stash_items(stash: gitti_core::ops::StashRef) -> Vec<MenuItem> {
         })
         .key('y'),
         MenuItem::separator(),
-        MenuItem::new("Drop…", move |app| {
-            app.modal = Some(Modal::confirm(
-                "Drop Stash",
-                format!("Drop stash@{{{n}}}? This cannot be undone."),
-                "Drop",
-                move |app| app.run_op("Drop stash", true, After::Nothing, move |r| r.stash_drop(stash)),
-            ));
-        })
-        .key('d'),
+        MenuItem::new("Drop…", move |app| app.drop_stash_confirm(stash)).key('d'),
     ]
 }
 

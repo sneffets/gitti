@@ -376,3 +376,25 @@ fn palette_greys_branch_commands_on_a_detached_head() {
     }
     assert!(!off.iter().any(|o| o.starts_with("Create Branch at HEAD…")), "{off:?}");
 }
+
+/// The selected commit's and the stashes' commands from the palette, as their menus (`m`)
+/// run them: Drop Latest Stash… asks, y drops stash@{0}; Revert Selected Commit on `two`
+/// reverts it.
+#[gitti_test::test]
+fn palette_drops_the_latest_stash_and_reverts_the_selected_commit() {
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "one\n")] },
+        Commit { branch: "main", from: None, merge: None, msg: "two", files: &[("b.txt", "two\n")] },
+    ]);
+    let d = dir.path();
+    std::fs::write(d.join("a.txt"), "stashed\n").unwrap();
+    git(d, &["stash", "-q"]);
+    let out = gitty(d, "press:ctrl-p;type:drop latest stash;key:enter;dump;key:y;state");
+    assert!(screens(&out)[0].contains("Drop stash@{0}? This cannot be undone."), "{out}");
+    assert_eq!(git(d, &["stash", "list"]), "", "{out}");
+    // Rows: the working directory, two, one.
+    let out = gitty(d, "press:j;press:ctrl-p;type:revert selected;key:enter;state");
+    assert!(!states(&out)[0].contains("status=\"ERROR"), "{out}");
+    assert_eq!(git(d, &["log", "-1", "--format=%s"]).trim(), "Revert \"two\"", "{out}");
+    assert!(!d.join("b.txt").exists(), "{out}");
+}
