@@ -1120,6 +1120,10 @@ impl GittiApp {
         }
         self.check_compare_base(cx);
         self.refresh_worktree_compare(cx);
+        // `.mailmap` changed: the shown header's names (the list re-reads its rows).
+        if s.mailmap_changed && matches!(&self.detail, Detail::Commit(cv) if cv.compare.is_none()) {
+            self.show_selected_commit(cx);
+        }
     }
 
     /// (Re)loads the history in the background, apart from the working state: `force` loads

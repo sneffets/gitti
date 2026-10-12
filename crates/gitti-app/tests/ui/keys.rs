@@ -64,6 +64,7 @@ pub fn main() {
         ("pane_keys", pane_keys),
         ("compare_keys", compare_keys),
         ("compare_since_ancestor", compare_since_ancestor),
+        ("mailmap_header", mailmap_header),
         ("git_log_keys", git_log_keys),
         ("git_log_link", git_log_link),
         ("list_keys", list_keys),
@@ -82,6 +83,11 @@ pub fn main() {
         let ids = match name {
             "commit_list_nav" | "commit_nav_anywhere" => make_nav_repo(&dir),
             "graph_chooser" | "compare_since_ancestor" => make_fork_repo(&dir),
+            "mailmap_header" => {
+                let ids = make_repo_ids(&dir);
+                std::fs::write(dir.join(".mailmap"), "Mapped Name <mapped@example.com> <layout@example.com>\n").unwrap();
+                ids
+            }
             "remote_keys" => make_remote_repo(&dir),
             "merge_editor_keys" => {
                 make_merge_repo(&dir);
@@ -1803,6 +1809,20 @@ fn compare_since_ancestor(ui: &mut Ui) {
     let now = ui.ui_state().compare;
     if now.as_deref() != Some(since.as_str()) {
         ui.fail(format!("next comparison: {now:?}, expected {since}"));
+    }
+}
+
+/// `.mailmap` maps the fixture's author: the commit header's author line carries the
+/// identity the commit records (its tooltip); selecting the commit runs no extra git for it.
+fn mailmap_header(ui: &mut Ui) {
+    ui.step("select:1");
+    ui.settle();
+    let p = ui.frame();
+    if !p.iter().any(|q| q.name == "commit-header") {
+        ui.fail("no commit header".into());
+    }
+    if !p.iter().any(|q| q.name == "header-recorded:0") {
+        ui.fail("the author line has no recorded-identity tooltip".into());
     }
 }
 

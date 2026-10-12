@@ -1724,6 +1724,10 @@ impl App {
         self.rebuild_sidebar();
         self.check_compare_base();
         self.refresh_worktree_compare();
+        // `.mailmap` changed: the shown header's names (the list re-reads its rows).
+        if s.mailmap_changed && matches!(&self.detail, Detail::Commit(cv) if cv.compare.is_none()) {
+            self.load_detail();
+        }
         if matches!(self.detail, Detail::Worktree) {
             self.rebuild_rows();
             self.apply_regroup(regroup);

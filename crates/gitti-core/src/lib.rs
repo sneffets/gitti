@@ -48,6 +48,7 @@ pub mod lfs_unused;
 pub mod links;
 pub mod local_changes;
 pub mod lock;
+pub mod mailmap;
 pub mod graph;
 pub mod header_ids;
 pub mod history;

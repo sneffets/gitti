@@ -238,6 +238,18 @@ fn unstaged_groups_fold_stage_and_discard_with_totals() {
     assert!(has(&after, "STAGED FILES (4)   -1   +4"), "{out}");
 }
 
+/// `.mailmap`: the list and the header show the mapped author, the header also what the
+/// commit records.
+#[gitti_test::test]
+fn mailmap_maps_the_list_and_the_header() {
+    let dir = import(&[Commit { branch: "main", from: None, merge: None, msg: "A", files: &[("f.txt", "1\n")] }]);
+    write_files(dir.path(), &[(".mailmap", "Mapped Tester <mapped@example.com> <t@example.com>\n")]);
+    let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "260x20", "press:j;wait;dump");
+    let sc = screens(&out)[0];
+    assert!(sc.contains("Mapped Tester <mapped@example.com>  (recorded as Tester <t@example.com>)"), "{out}");
+    assert!(sc.lines().any(|l| l.contains("main  A") && l.contains("Mapped Tes")), "list: {out}");
+}
+
 /// Compare mode's title: files and line totals.
 #[gitti_test::test]
 fn compare_title_shows_the_totals() {

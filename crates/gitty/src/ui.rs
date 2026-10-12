@@ -1681,10 +1681,15 @@ pub fn commit_header(app: &App, cv: &CommitView) -> Vec<Line<'static>> {
         val(d.id.to_string()),
     ]));
     debug_assert_eq!(out.len(), AUTHOR_LINE);
-    out.push(Line::from(vec![
-        label("Author"),
-        val(format!("{} <{}>", d.author, d.author_email)),
-    ]));
+    let mut author = vec![label("Author"), val(format!("{} <{}>", d.author, d.author_email))];
+    // `.mailmap` changed it: what the commit records (gitti: the tooltip).
+    if let Some((name, email)) = &d.raw_author {
+        author.push(Span::styled(
+            format!("  (recorded as {name} <{email}>)"),
+            Style::new().fg(p.text_muted),
+        ));
+    }
+    out.push(Line::from(author));
     debug_assert_eq!(out.len(), DATE_LINE);
     let mut date = format_time_full(d.author_time);
     if d.commit_time != d.author_time || d.committer != d.author {
