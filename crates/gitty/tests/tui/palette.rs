@@ -393,7 +393,7 @@ fn palette_drops_the_latest_stash_and_reverts_the_selected_commit() {
     assert!(screens(&out)[0].contains("Drop stash@{0}? This cannot be undone."), "{out}");
     assert_eq!(git(d, &["stash", "list"]), "", "{out}");
     // Rows: the working directory, two, one.
-    let out = gitty(d, "press:j;press:ctrl-p;type:revert selected;key:enter;state");
+    let out = gitty(d, "press:j;press:ctrl-p;type:revert selected commit;key:enter;state");
     assert!(!states(&out)[0].contains("status=\"ERROR"), "{out}");
     assert_eq!(git(d, &["log", "-1", "--format=%s"]).trim(), "Revert \"two\"", "{out}");
     assert!(!d.join("b.txt").exists(), "{out}");
