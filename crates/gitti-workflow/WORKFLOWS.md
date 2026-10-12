@@ -234,7 +234,7 @@ working tree or the index while the app shows an older state.
 | BR-06 | Stash & Switch whose re-apply conflicts | overlapping change | switched, file conflicted, stash kept, said so | `repo_ops::switch_moves_local_changes_aside`, `wf_branches::br05_stash_and_switch_carries_the_change_or_keeps_the_stash` | `wf_branches::br06_stash_and_switch_whose_reapply_conflicts` | `wf_branches::br06_stash_and_switch_whose_reapply_conflicts` |
 | BR-07 | Switch blocked by an untracked file | untracked `x` the target tracks | Stash & Switch keeps `x` in a stash; other untracked files stay | `repo_ops::switch_moves_blocking_untracked_files_aside` | `menus::switch_blocked_ways` | `repo_cmds::switch_blocked_by_an_untracked_file_stashes_it` |
 | BR-08 | Delete & Switch / Discard & Switch / Force | the other ways out | each drops only what it says | `switching::folder_with_untracked_files_where_the_target_has_a_file`, `switching::discard_and_force_switch_drop_local_changes`, `switching::untracked_file_where_the_target_has_a_folder_is_listed_once` | `menus::switch_blocked_ways` | `repo_cmds::switch_blocked_offers_delete_and_force` |
-| BR-09 | Many blocking files | ~200 blocking untracked files | all stashed in one go | `switching::many_blocking_untracked_files_are_stashed_in_one_go` | `wf_branches::br09_many_blocking_untracked_files_go_into_one_stash` | `wf_branches::br09_many_blocking_untracked_files_go_into_one_stash` |
+| BR-09 | Many blocking files | more blocking untracked files than the dialog lists (20; git's 4 KiB message cut: core, 300) | all stashed in one go | `switching::many_blocking_untracked_files_are_stashed_in_one_go` | `wf_branches::br09_many_blocking_untracked_files_go_into_one_stash` | `wf_branches::br09_many_blocking_untracked_files_go_into_one_stash` |
 | BR-10 | Switch to fewer ignore rules | target doesn't ignore `target/` | build output shows untracked; the app says why | `switching::switching_to_fewer_ignore_rules_shows_ignored_files_as_untracked` | `wf_branches::br10_switch_to_fewer_ignore_rules_says_why` | `repo_cmds::switch_to_fewer_ignore_rules_says_why_files_are_untracked` |
 | BR-11 | Rename the current branch | Rename… | renamed; upstream config follows | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br11_rename_the_current_branch_keeps_its_upstream` | `menus::branch_commit_stash_menus` | `menus::sidebar_menus_rename_a_branch_and_delete_a_tag` |
 | BR-12 | Delete a merged branch | Delete… | gone | ~`repo_ops::branch_tag_stash_remote_ops`, `wf_branches::br12_delete_merged_then_unmerged_and_recover_it` | ~`menus::branch_commit_stash_menus`, `wf_branches::br12_delete_a_merged_branch` | ~`keybar::the_keys_shown_run_their_entries`, `wf_branches::br12_delete_a_merged_branch` |
@@ -246,6 +246,7 @@ working tree or the index while the app shows an older state.
 | BR-18 | Leave a detached HEAD with work on it | detached at a commit no branch has; switch to `main` | switched; the status line names the commit left on no branch and how to keep it (reflog → Create Branch Here…); HEAD's reflog has it | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` | `wf_branches::br18_leaving_a_detached_commit_warns` |
 | BR-19 | Clean up branches | Clean Up Merged Branches…; Delete Branches… with Force | merged branch deleted, unmerged one only with its Force box | `wf_branches::br19_clean_up_merged_then_delete_with_force` | `branches::clean_up_and_delete` | `branches::clean_up_merged_deletes_the_merged_branch`, `branches::delete_branches_needs_force_for_an_unmerged_one` |
 | BR-20 | Delete the selected branch | sidebar cursor on a branch, its tip selected; delete it (merged), then an unmerged one (Force) | merged: its tip stays selected (only the badge goes); unmerged: the selection goes along the first parents to the nearest commit still there, its diff shown; the sidebar cursor on the next branch, else the previous | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` | `wf_branches::br20_delete_the_selected_branch` |
+| BR-21 | Fast-forward branches without checking them out | a branch's Fast-Forward … to its upstream; Fast-Forward All Branches | the branch only behind moves to its upstream, no file changes; diverged (named "N ahead, M behind — merge or rebase"), checked out here or in another worktree (named), no upstream: refused, untouched; the all-branches report says each one's reason | `wf_branches::br21_fast_forward_a_branch_and_the_refusals`, `wf_branches::br21_fast_forward_all_branches_reports_each` | `wf_branches::br21_fast_forward_branches` | `wf_branches::br21_fast_forward_branches` |
 
 ## MG — Merge
 
@@ -313,6 +314,7 @@ working tree or the index while the app shows an older state.
 | RV-05 | Revert the revert | revert `A`, then revert that | `A`'s change back | `wf_pick::rv05_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` | `wf_pick::rv01_revert_then_revert_the_revert` |
 | RV-06 | Revert a change already undone | revert gives nothing | alone: nothing changed, said in plain words (git leaves no state); in a sequence: stops, Skip / Commit Empty / Abort offered — never stuck | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` | `wf_pick::rv06_revert_a_change_already_undone` |
 | RV-07 | Revert several selected commits | mark three commits; Revert Marked Commits… | the dialog says newest first; reverted newest first in one sequence | `wf_pick::rv07_revert_several_marked_commits_newest_first` | `wf_pick::rv07_revert_three_marked_commits` | `wf_pick::rv07_revert_three_marked_commits` |
+| RV-08 | Revert some lines of an older commit in the working tree | show the commit; select the `-` / `+` pair of one line of a replaced block; Revert These Lines in Working Tree | that line back in its place in the working tree only (unstaged, said so); HEAD and the index unchanged | `wf_pick::rv08_revert_lines_of_an_older_commit_in_the_working_tree` | `wf_pick::rv08_revert_lines_in_the_working_tree` | `wf_pick::rv08_revert_lines_in_the_working_tree` |
 
 ## RB — Rebase
 
@@ -517,10 +519,10 @@ layer (partial `~` and `n/a` don't count as covered).
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
 | SH stash | 22 | 21 | 20 | 21 |
-| BR branches | 20 | 20 | 20 | 19 |
+| BR branches | 21 | 21 | 21 | 20 |
 | MG merge | 27 | 27 | 26 | 27 |
 | CP cherry-pick | 18 | 18 | 18 | 18 |
-| RV revert | 7 | 7 | 7 | 7 |
+| RV revert | 8 | 8 | 8 | 8 |
 | RB rebase | 9 | 9 | 9 | 9 |
 | RS reset / restore | 10 | 10 | 10 | 10 |
 | TG tags | 7 | 7 | 7 | 7 |
@@ -550,3 +552,6 @@ at the step; once fixed, the assertion goes in and the entry goes.
 |---|---|---|
 | RM-14, RM-15 (gitti) | Not testable headless: gpui's test executor runs an operation's job to its end on the test thread, so Esc can't reach a running fetch (as for CM-21), and a credential prompt from a real git can't be answered while its fetch blocks that thread. The prompt dialog itself is covered with the `ask:` step (`layout::askpass_key_icon`); the round trip in gitty. | — |
 | RB-01, RB-03 (both apps) | Whether a rebase asks first differs: gitti's Rebase Current Branch onto… picker and the commit list's ref menu ask ("Rebase feat onto main? Rewrites the commits of the current branch."), gitti's sidebar branch menu and gitty (palette, branch menus) start it at once. A design choice: ask everywhere — and then say what follows (the commits get new ids; a branch pushed before needs a force push) — or nowhere. | gitti `wf_history::rb03_rebase_from_the_sidebar_stops_then_abort`, gitty `wf_history::rb01_rebase_onto_main_from_the_palette` |
+| FS-03 (gitty, Linux) | Fails on Linux (ext4, temp dirs on tmpfs; passes on macOS, and core / gitti pass on Linux): after staging both halves of a rename that only changes case, `README.md` is `A ` instead of `R ` from `Readme.md`. Cause not investigated yet. | — (the test fails) |
+| FS-04 (gitty, Linux) | Fails on Linux (same set-up; core / gitti pass): after staging the NFD name and discarding the NFC one, the index still has the NFD file's old content and the NFC file keeps its change while the NFD file lost it — staging and discarding seem to hit the other name. Cause not investigated yet. | — (the test fails) |
+| MG-25 (gitty, Linux) | Fails on Linux, a test problem: the set-up dialog's line "Writes to <config file>: diff.tool = fake" wraps between `=` and the value with Linux's shorter temp path, so `contains("diff.tool = fake")` misses it; `merge_tool_set_up_on_the_way` fails the same "what it writes" check. The check should not depend on where the line wraps (or the dialog should keep `key = value` together). | — (the tests fail) |

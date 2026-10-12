@@ -514,6 +514,8 @@ impl App {
                     self.toggle_line()
                 }
             }
+            // A commit's / stash's line: selects it (Revert / Apply … in Working Tree).
+            KeyCode::Char(' ') if self.commit_origin().is_some() => self.toggle_line(),
             KeyCode::Enter if Some(self.diff_cursor) == self.signature_header_line() => {
                 self.show_signature()
             }
@@ -1135,7 +1137,9 @@ impl App {
                                 Some(gap),
                                 gitti_core::context::Reveal::More,
                             ),
-                            DiffRow::Line { .. } if matches!(self.detail, Detail::Worktree) => {
+                            DiffRow::Line { .. }
+                                if matches!(self.detail, Detail::Worktree) || self.commit_origin().is_some() =>
+                            {
                                 self.toggle_line()
                             }
                             _ => {}

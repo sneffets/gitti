@@ -6,6 +6,7 @@
 mod branch_list;
 mod change_search;
 mod commit_box;
+mod commit_lines;
 mod commit_list;
 mod commit_flow;
 mod compare;
@@ -3269,7 +3270,10 @@ impl GittiApp {
             .file_diff(src, file)
             .and_then(|f| f.hunks.get(hunk)?.lines.get(line))
             .is_some_and(|l| l.is_change());
-        if !is_change || matches!(src, Src::Commit | Src::Conflicted) {
+        // A commit's / stash's lines: for Revert / Apply … in Working Tree (not a
+        // comparison's).
+        let commit = src == Src::Commit && self.commit_origin().is_some();
+        if !is_change || src == Src::Conflicted || (src == Src::Commit && !commit) {
             return;
         }
         let same_file = self
@@ -3844,6 +3848,7 @@ impl Render for GittiApp {
         let root = self.menu_cmd_actions(root, cx);
         let root = self.ext_tool_actions(root, cx);
         let root = self.restore_contains_actions(root, cx);
+        let root = self.commit_lines_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
         let root = self.file_marks_actions(root, cx);
         let root = self.pick_several_actions(root, cx);

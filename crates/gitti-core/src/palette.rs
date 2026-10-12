@@ -166,6 +166,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("DeleteBranchMenu", "Delete Branch…"),
     both("DeleteBranches", "Delete Branches…"),
     both("CleanUpMergedBranches", "Clean Up Merged Branches…"),
+    both("FastForwardAllBranches", crate::branch_update::ALL_LABEL),
     // Commit
     both("Commit", "Commit"),
     both("StageAllAndCommit", "Stage All and Commit"),
@@ -178,19 +179,16 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("StageAll", "Stage All"),
     both("UnstageAll", "Unstage All"),
     both("DiscardAll", "Discard All Unstaged…"),
-    gitti("RevertCommit", "gitty gap: the commit's menu (m) has it"),
-    gitti(
-        "CherryPickCommit",
-        "gitty gap: the commit's menu (m) has it",
-    ),
+    both("RevertCommit", "Revert Selected Commit"),
+    both("CherryPickCommit", "Cherry-pick Selected Commit"),
     both("CherryPickMarked", "Cherry-pick Marked Commits…"),
     both("RevertMarked", "Revert Marked Commits…"),
-    gitti(
-        "EditCommitMessage",
-        "gitty gap: the commit's menu (m) has it",
-    ),
+    both("EditCommitMessage", "Edit Commit Message…"),
     both("ShowContaining", "Branches and Tags Containing Selected Commit…"),
     both("RestoreFromCommit", "Restore File or Folder from Selected Commit…"),
+    // The shown commit's / stash's selected lines (`commit_lines`).
+    both("RevertLinesInWorkingTree", crate::commit_lines::REVERT_SELECTION_LABEL),
+    both("ApplyLinesToWorkingTree", crate::commit_lines::APPLY_SELECTION_LABEL),
     both("OpenThisVersion", crate::version_file::THIS_LABEL),
     both("OpenOldVersion", crate::version_file::OLD_LABEL),
     // On the file at the diff cursor (`ext_tool`).
@@ -210,8 +208,8 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("PopStash", "Pop Latest Stash"),
     both("ApplyStashIndex", crate::stash::APPLY_LATEST_INDEX_LABEL),
     both("PopStashIndex", crate::stash::POP_LATEST_INDEX_LABEL),
-    gitti("DropLatestStash", "gitty gap: the stash's menu (m) has it"),
-    gitti("DropStash", "gitty gap: the stash's menu (m) has it"),
+    both("DropLatestStash", "Drop Latest Stash…"),
+    both("DropStash", "Drop Stash…"),
     both("RenameStash", "Rename Stash…"),
     // Remote
     both("Fetch", "Fetch"),

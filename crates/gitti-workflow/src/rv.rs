@@ -13,6 +13,7 @@
 //!   nothing (said in plain words); in a sequence it stops there with nothing to commit,
 //!   Skip goes on with the rest.
 //! - RV-07: revert several marked commits — newest first ([`expect_several_reverted`]).
+//! - RV-08: revert some lines of an older commit in the working tree only ([`lines`]).
 
 use std::path::Path;
 
@@ -146,4 +147,69 @@ pub fn expect_several_reverted(dir: &Path, s: &Setup) -> Result<(), String> {
     }
     k.eq("status", e.status_lines(), Vec::<String>::new());
     k.done()
+}
+
+/// **RV-08 — revert some lines of an older commit in the working tree.** `main`: `init`
+/// (`f.txt`: [`F_LINES`] lines `f N`, `notes.txt`) → [`TUNE_F`] (lines 3–5 replaced by
+/// `F 3`..`F 5`: a replaced block, and line 10 by `F 10`) → [`LATER`] (`notes.txt`). The
+/// user shows [`TUNE_F`], selects the `-f 4` / `+F 4` pair of its hunk and chooses
+/// "Revert These Lines in Working Tree".
+///
+/// Expected ([`expect_reverted`]): `f.txt` in the working tree is [`TUNE_F`]'s with line 4
+/// back to `f 4` — in its place, between `F 3` and `F 5`; nothing staged, no commit made
+/// (HEAD is [`LATER`]), the change shows as unstaged.
+pub mod lines {
+    use std::path::Path;
+
+    use crate::expect::{Checks, Expect, OpState};
+    use crate::fixture::{Fixture, put};
+
+    /// The commit whose lines are reverted.
+    pub const TUNE_F: &str = "Tune f";
+    /// The commit after it (HEAD).
+    pub const LATER: &str = "Later";
+    /// Lines of `f.txt`.
+    pub const F_LINES: usize = 12;
+    /// The selected lines: the old line 4 and its new version.
+    pub const OLD_4: &str = "f 4";
+    pub const NEW_4: &str = "F 4";
+
+    /// `f.txt` with the lines in `upper` as `F N`, the rest `f N`.
+    pub fn f(upper: &[usize]) -> String {
+        (1..=F_LINES)
+            .map(|i| if upper.contains(&i) { format!("F {i}\n") } else { format!("f {i}\n") })
+            .collect()
+    }
+
+    /// The commit ids the steps need.
+    pub struct Setup {
+        pub tune_f: String,
+        pub later: String,
+    }
+
+    /// The history (see the module docs); clean working tree on `main`. Three git
+    /// processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        fx.commit("main", "init", &[put("f.txt", &f(&[])), put("notes.txt", "notes\n")]);
+        let tune = fx.commit("main", TUNE_F, &[put("f.txt", &f(&[3, 4, 5, 10]))]);
+        let later = fx.commit("main", LATER, &[put("notes.txt", "notes\nmore\n")]);
+        let ids = fx.build(dir);
+        Setup { tune_f: ids[tune].to_string(), later: ids[later].to_string() }
+    }
+
+    /// After the revert: `f.txt` in the working tree is [`TUNE_F`]'s with line 4 as before
+    /// it; HEAD and the index unchanged ([`LATER`]); ` M f.txt` only. Two git processes.
+    pub fn expect_reverted(dir: &Path, s: &Setup) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("RV-08 after reverting line 4 in the working tree");
+        k.eq("HEAD", e.ref_id("HEAD"), Some(s.later.clone()));
+        k.eq("state", e.state(), OpState::Clean);
+        let want = f(&[3, 5, 10]);
+        k.text("f.txt", e.file("f.txt").as_deref(), Some(want.as_str()));
+        let index = e.blobs(&[":f.txt"]).pop().flatten();
+        k.text(":f.txt (index as HEAD)", index.as_deref(), Some(f(&[3, 4, 5, 10]).as_str()));
+        k.eq("status", e.status_lines(), vec![" M f.txt".to_string()]);
+        k.done()
+    }
 }

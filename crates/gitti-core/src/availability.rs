@@ -51,6 +51,10 @@ pub struct RepoFacts {
     pub stashes: usize,
     /// Local branches besides the checked-out one.
     pub other_branches: usize,
+    /// Local branches besides the checked-out one that are behind their upstream and not
+    /// ahead (`branch_update::why_not` from the last refresh's tracking, where they are
+    /// checked out aside): what "Fast-Forward All Branches" can move.
+    pub ff_branches: usize,
     pub staged: usize,
     /// Unstaged changes, untracked files included.
     pub unstaged: usize,
@@ -78,6 +82,9 @@ pub struct RepoFacts {
     pub old_version: bool,
     /// The file at the diff's cursor (the external tools act on it).
     pub cursor_file: CursorFile,
+    /// A commit's or a stash's diff is shown (not a comparison): its lines can be
+    /// reverted / applied in the working tree (`commit_lines`).
+    pub commit_diff: bool,
     /// A remote points to github.com.
     pub github_remote: bool,
     /// The shown commit's signature can't be checked for a missing key that GitHub may
@@ -107,6 +114,7 @@ impl Default for RepoFacts {
             remotes: 0,
             stashes: 0,
             other_branches: 0,
+            ff_branches: 0,
             staged: 0,
             unstaged: 0,
             tracked_unstaged: 0,
@@ -122,6 +130,7 @@ impl Default for RepoFacts {
             this_version: false,
             old_version: false,
             cursor_file: CursorFile::None,
+            commit_diff: false,
             github_remote: false,
             signing_keys: false,
             fs_paths: 0,
@@ -157,11 +166,13 @@ pub const STASH_SELECTED: &str = "a stash is selected";
 pub const IS_HEAD: &str = "the selected commit is HEAD";
 pub const NO_FILE: &str = "no file shown";
 pub const NO_COMMIT_FILE: &str = "no commit's file shown";
+pub const NO_COMMIT_DIFF: &str = "no commit's changes shown";
 pub const NO_OLD_VERSION: &str = "the commit has no parent";
 pub const CONFLICTED_FILE: &str = "the file at the diff cursor is conflicted";
 pub const NO_CONFLICTS: &str = "no conflicts";
 pub const NO_CONFLICTED_FILE: &str = "no conflicted file at the diff cursor";
 pub const NO_OTHER_BRANCH: &str = "no other local branch";
+pub const NO_FF_BRANCH: &str = "no other branch is only behind its upstream";
 pub const NO_GITHUB_REMOTE: &str = "no GitHub remote";
 pub const NO_KEY_MISSING: &str = "the shown commit has no signature whose key is missing";
 pub const NO_FS_PATHS: &str = "every path fits this file system";
@@ -265,6 +276,8 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
         "DeleteBranchMenu" | "DeleteBranches" | "CleanUpMergedBranches" => {
             check(f.other_branches == 0, NO_OTHER_BRANCH)
         }
+        "FastForwardAllBranches" => check(f.other_branches == 0, NO_OTHER_BRANCH)
+            .or(check(f.ff_branches == 0, NO_FF_BRANCH)),
         // Commit.
         "StageAllAndCommit" => check(changes == 0, NO_CHANGES),
         "StageTrackedAndCommit" => check(
@@ -284,6 +297,7 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             let kind = if action == "RevertMarked" { SeveralKind::Revert } else { SeveralKind::CherryPick };
             why_not(kind, f.marked_commits, f.head_marked, f.state)
         }
+        "RevertLinesInWorkingTree" | "ApplyLinesToWorkingTree" => check(!f.commit_diff, NO_COMMIT_DIFF),
         "OpenThisVersion" => check(!f.this_version, NO_COMMIT_FILE),
         "OpenOldVersion" => {
             check(!f.this_version && !f.old_version, NO_COMMIT_FILE).or(check(!f.old_version, NO_OLD_VERSION))
@@ -336,6 +350,7 @@ pub fn what_to_do(why: &str) -> Option<&'static str> {
         WORKING_DIR_SELECTED | NO_COMMIT_SELECTED => Some("select a commit first"),
         STASH_SELECTED => Some("the Stash menu acts on stashes"),
         NO_COMMIT_FILE => Some("the working directory's files open with Open in Editor"),
+        NO_COMMIT_DIFF => Some("select a commit or a stash first"),
         CONFLICTED_FILE => Some("Open in External Merge Tool resolves it"),
         NO_CONFLICTED_FILE => Some("go to a conflicted file in the working directory first"),
         MAIN_WORKTREE => Some("linked worktrees are moved or removed from the WORKTREES section"),
@@ -345,6 +360,7 @@ pub fn what_to_do(why: &str) -> Option<&'static str> {
         DETACHED => Some("switch to a branch first"),
         NO_KEY_MISSING => Some("select a signed commit git can't verify yet"),
         UNRESOLVED => Some("resolve them first"),
+        NO_FF_BRANCH => Some("Fetch brings their upstreams up to date first"),
         NO_MARKED_COMMITS => Some("mark them first: Mark for Cherry-pick / Revert in a commit's menu"),
         HEAD_MARKED => Some("unmark it: it is already the current commit"),
         _ if why.ends_with("in progress") => Some("continue or abort it first"),
@@ -457,9 +473,12 @@ mod tests {
             ("DeleteBranchMenu", NO_OTHER_BRANCH),
             ("DeleteBranches", NO_OTHER_BRANCH),
             ("CleanUpMergedBranches", NO_OTHER_BRANCH),
+            ("FastForwardAllBranches", NO_OTHER_BRANCH),
             ("ShowWholeFile", NO_FILE),
             ("FetchFullHistory", NOT_SHALLOW),
             ("FetchMoreHistory", NOT_SHALLOW),
+            ("RevertLinesInWorkingTree", NO_COMMIT_DIFF),
+            ("ApplyLinesToWorkingTree", NO_COMMIT_DIFF),
         ] {
             assert_eq!(why_not(a, &f), Some(why), "{a}");
         }
@@ -488,6 +507,7 @@ mod tests {
             linked_worktrees: 1,
             prunable_worktrees: 1,
             other_branches: 1,
+            ff_branches: 1,
             comparing: true,
             diff_file: true,
             tabs: 2,
@@ -495,6 +515,7 @@ mod tests {
             this_version: true,
             old_version: true,
             cursor_file: CursorFile::Changed,
+            commit_diff: true,
             github_remote: true,
             signing_keys: true,
             fs_paths: 2,
@@ -533,6 +554,10 @@ mod tests {
         let none = RepoFacts { marked_commits: 0, ..f.clone() };
         assert_eq!(off(&none), ["CherryPickMarked", "RevertMarked"]);
         assert_eq!(why_not("RevertMarked", &none), Some(NO_MARKED_COMMITS));
+        // Other branches, none only behind: nothing to fast-forward.
+        let none_behind = RepoFacts { ff_branches: 0, ..f.clone() };
+        assert_eq!(unavailable(&none_behind), [("FastForwardAllBranches", NO_FF_BRANCH)]);
+        assert!(refusal(crate::branch_update::ALL_LABEL, NO_FF_BRANCH).ends_with("— Fetch brings their upstreams up to date first"));
         let stash = RepoFacts { selection: Selection::Stash, ..f };
         assert_eq!(why_not("RevertCommit", &stash), Some(STASH_SELECTED));
     }

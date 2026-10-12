@@ -8,6 +8,7 @@ mod branches;
 mod change_search;
 mod commit_box;
 mod commit_encoding;
+mod commit_lines;
 mod config_safety;
 mod conflicts;
 mod custom_commands;
