@@ -107,7 +107,11 @@ after 10 s the process is killed. git processes are the cost (~35 ms each on Win
 checks both ways: every test named in a row exists and carries that row's ID in its
 `/// Workflow:` line, and every ID a test carries is in this catalog with that test in its
 row. Rename a test → change its row; add a test to a workflow → add it to the row and tag
-it.
+it. `wf_catalog::totals_match_the_catalog` recounts the [Totals](#totals) from the rows —
+every area's row and the Total row, per column — and names each number to fix: after
+adding a workflow or covering a layer, adjust the area's row and the Total row (after a
+merge of branches that each bumped them from the same base, the test says which numbers
+the merge got wrong).
 
 ---
 
@@ -511,7 +515,8 @@ working tree or the index while the app shows an older state.
 ## Totals
 
 Counted per workflow: covered = at least one test that covers the whole workflow on that
-layer (partial `~` and `n/a` don't count as covered).
+layer (partial `~` and `n/a` don't count as covered). `wf_catalog::totals_match_the_catalog`
+checks these numbers against the rows.
 
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
