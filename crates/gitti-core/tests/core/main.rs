@@ -6,6 +6,7 @@
 mod allowed_signers;
 mod branches;
 mod change_search;
+mod clean;
 mod commit_box;
 mod commit_encoding;
 mod commit_lines;
@@ -39,6 +40,7 @@ mod repo_shapes;
 mod restore;
 mod runner;
 mod search;
+mod shallow;
 mod sha256;
 mod sidebar_ops;
 mod signature_keys;

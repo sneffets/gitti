@@ -25,7 +25,7 @@ macro_rules! fail {
 /// which says: commit, commit, commit, reset back. Three git processes; the reflog is
 /// written as a file.
 fn repo(dir: &Path) -> PathBuf {
-    init_repo(dir);
+    init_repo_files(dir);
     let mut s = Stream::new();
     s.commit("refs/heads/main", "Initial", None, &[("a.txt", Some("a\n"))]);
     let b = s.commit("refs/heads/main", "Second", None, &[("a.txt", Some("b\n"))]);

@@ -71,11 +71,14 @@ fn oid(hex: &str) -> ObjectId {
     ObjectId::from_hex(hex.trim().as_bytes()).unwrap()
 }
 
-/// `git init` in `<tmp>/<name>` with a local identity and stable settings.
+/// `git init` in `<tmp>/<name>` with a local identity and stable settings. The refs in
+/// files whatever git's default (git 3.0: reftable): these shapes write loose refs,
+/// `packed-refs` and `HEAD` by hand.
 fn init_in(root: &Path, name: &str, extra: &[&str]) -> PathBuf {
     let p = root.join(name);
     fs::create_dir_all(&p).unwrap();
-    let mut args = vec!["init", "-q", "-b", "main"];
+    let mut args = crate::fixture_kit::FILES_REF_FORMAT.to_vec();
+    args.extend(["init", "-q", "-b", "main"]);
     args.extend_from_slice(extra);
     sh(&p, &args);
     // Config written directly: five `git config` processes cost ~0.6 s on Windows. Our
@@ -1457,11 +1460,12 @@ fn tags_on_tags_and_on_non_commits() {
     let bodies = [inner, outer, outermost, tag(tree, "tree", "annotated-tree", "a tree"), tag(blob, "blob", "annotated-blob", "a blob")];
     let names = ["inner", "outer", "outermost", "annotated-tree", "annotated-blob"];
     let tags = write_objects(&p, "tag", &bodies.map(String::into_bytes));
-    for (name, id) in names.iter().zip(&tags) {
-        write_ref(&p, &format!("refs/tags/{name}"), &id.to_string());
-    }
-    write_ref(&p, "refs/tags/light-tree", &tree.to_string());
-    write_ref(&p, "refs/tags/light-blob", &blob.to_string());
+    let mut refs: Vec<(String, String)> =
+        names.iter().zip(&tags).map(|(name, id)| (format!("refs/tags/{name}"), id.to_string())).collect();
+    refs.push(("refs/tags/light-tree".into(), tree.to_string()));
+    refs.push(("refs/tags/light-blob".into(), blob.to_string()));
+    let refs: Vec<(&str, String)> = refs.iter().map(|(n, id)| (n.as_str(), id.clone())).collect();
+    crate::fixture_kit::update_refs(&p, &refs);
     assert_eq!(rev(&p, "outermost^{commit}"), c, "git peels it too");
 
     let repo = Repo::open(&p).unwrap();
@@ -1567,7 +1571,8 @@ fn submodule_opens_as_its_own_repository() {
     use crate::fixture_kit::{E, History, f};
     let t = tempfile::tempdir().unwrap();
     let sup = gitti_core::paths::canonical(t.path()).join("super");
-    crate::fixture_kit::init(&sup);
+    // Files: a ref folder is removed and the submodule's git dir written by hand.
+    crate::fixture_kit::init_files(&sup);
     let mut hist = History::new();
     let lib = hist.commit("refs/gitti-test/lib", &[], "lib one", &[("lib.txt", f("lib\n"))]);
     let one = hist.commit("main", &[], "super one", &[("top.txt", f("top\n"))]);

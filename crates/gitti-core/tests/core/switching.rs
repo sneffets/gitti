@@ -93,8 +93,7 @@ fn same_ignore_rules_cost_no_extra_git() {
         panic!("not switched");
     };
     assert_eq!(done.note, None);
-    let cmds: Vec<String> = repo.command_log().snapshot().iter().map(|e| e.args.join(" ")).collect();
-    assert_eq!(cmds, ["switch other"]);
+    assert_eq!(crate::fx::ran_since(&repo, 0), ["switch other"]);
 }
 
 /// `main` with `a.txt`; `feat` changes `a.txt` and has `x.txt` and a file `d`.

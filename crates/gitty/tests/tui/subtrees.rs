@@ -57,6 +57,12 @@ fn subtrees_section_menu_and_pull_dialog() {
 #[gitti_test::test]
 fn add_a_subtree_from_the_palette() {
     let dir = fixture(&[("README", "app\n")], &[]);
+    // Some Linux distributions and a git built from source ship `git subtree` apart.
+    let probe = std::process::Command::new("git").args(["subtree", "-h"]).current_dir(dir.path()).output().unwrap();
+    if gitti_core::subtree::is_missing(&String::from_utf8_lossy(&probe.stderr)) {
+        println!("note: git subtree isn't installed — not run");
+        return;
+    }
     git(dir.path(), &["branch", "upstream"]);
     let script = format!(
         "press:ctrl-p;{}key:enter;{}press:tab;press:tab;{}key:enter;cmds;dump",

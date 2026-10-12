@@ -1,5 +1,6 @@
-//! Workflow tests of discarding many files, a file that can't be deleted and lines of a
-//! read-only file (catalog: `crates/gitti-workflow/WORKFLOWS.md`, DC-04, DC-06, DC-09),
+//! Workflow tests of discarding many files, a file that can't be deleted, lines of a
+//! read-only file and Clean Untracked / Ignored Files… (catalog:
+//! `crates/gitti-workflow/WORKFLOWS.md`, DC-04, DC-06, DC-09, DC-10),
 //! driven through gitty: the workflow's fixture (`gitti_workflow::dc`), one headless gitty
 //! run with the user's keys, `state` / `dump` / `cmds` checks of what gitty shows and runs,
 //! then the repository with the workflow's own `expect` — shared with
@@ -84,5 +85,43 @@ fn dc09_discard_lines_of_a_read_only_file() {
     assert_eq!(num(st[0], "sel_lines"), 1, "{out}");
     assert!(screens(&out)[0].contains("Discard Lines"), "{out}");
     assert!(st[1].contains("unstaged=1 staged=0") && !st[1].contains("status=\"ERROR"), "{out}");
+    wf::expect(d).unwrap();
+}
+
+/// DC-10: the palette's Clean Untracked / Ignored Files… asks which kind (counts), b
+/// lists both — untracked ticked, ignored and the repositories not, each ignored entry
+/// with its rule; `target/` ticked, Enter deletes: the status line says what went, the
+/// nested repository is still listed.
+/// Workflow: DC-10
+#[gitti_test::test]
+fn dc10_clean_untracked_and_ignored_files() {
+    use dc::clean as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    wf::fixture(d);
+    let downs = "press:down;".repeat(wf::TARGET);
+    let script = format!(
+        "press:ctrl-p;{}press:enter;wait;dump;press:b;dump;{downs}press:space;dump;press:enter;wait;state",
+        presses("clean untracked")
+    );
+    let out = gitty(d, &script);
+    let s = screens(&out);
+    for want in ["Untracked (3)…", "Ignored (5)…", "Untracked and Ignored (8)…", "go to the trash"] {
+        assert!(s[0].contains(want), "menu lacks {want:?}: {out}");
+    }
+    for want in [
+        "☑ new.txt",
+        "☑ notes/ (2 files)",
+        "☐ .env — ignored by .git/info/exclude:1: .env",
+        "☐ target/ (2 files) — ignored by .gitignore:1: target/",
+        "☐ target/wt/ — worktree (own .git)",
+        "☐ vendor/lib/ — separate repository (own .git)",
+    ] {
+        assert!(s[1].contains(want), "checklist lacks {want:?}: {out}");
+    }
+    assert!(s[2].contains("☑ target/") && s[2].contains("Delete 5 Files"), "{out}");
+    let st = states(&out)[0];
+    assert!(st.contains("Cleaned: deleted 5 files (new.txt)"), "{out}");
+    assert!(st.contains("unstaged=1 staged=0"), "{out}");
     wf::expect(d).unwrap();
 }

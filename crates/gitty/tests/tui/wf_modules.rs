@@ -146,15 +146,10 @@ fn lf06_clone_checks_out_the_content() {
     let base = gitti_core::paths::canonical(tmp.path());
     let work = base.join("work");
     let head = wf::fixture(&work);
-    // gitty runs in a repository: the user's own, any — a new one with a file (one git
-    // process).
-    let mut fx = gitti_workflow::Fixture::new();
-    fx.write("a.txt", "a\n");
-    fx.build(&work);
-    let global = base.join("lfs-gitconfig");
-    std::fs::write(&global, lf::LFS_FILTERS).unwrap();
-    let global = global.display().to_string();
-    let env = [("GIT_CONFIG_GLOBAL", global.as_str()), ("GIT_CONFIG_NOSYSTEM", "1")];
+    // gitty runs in a repository: the user's own, any — an empty one (`git init` only).
+    gitti_workflow::Fixture::new().build(&work);
+    let env = lf::global_env(&base.join("lfs-config"));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let parent = base.join("clones");
     std::fs::create_dir_all(&parent).unwrap();
     let config = base.join("gitty-config");

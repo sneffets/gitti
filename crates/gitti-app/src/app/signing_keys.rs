@@ -75,7 +75,7 @@ impl GittiApp {
             id: *id,
             info: info.clone(),
             gh,
-            email: cv.details.committer_email.clone(),
+            email: cv.details.recorded_committer_email().to_string(),
         })
     }
 

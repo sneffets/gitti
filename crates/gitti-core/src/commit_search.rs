@@ -329,19 +329,27 @@ struct CommitText {
     message_l: Option<String>,
 }
 
-fn read_text(repo: &gix::Repository, id: ObjectId) -> Option<CommitText> {
+/// The text of commit `id`; the author as the list shows it (`mailmap` applied), matched
+/// by that and by the identity the commit records.
+fn read_text(repo: &gix::Repository, mailmap: &crate::mailmap::Mailmap, id: ObjectId) -> Option<CommitText> {
     let commit = repo.find_commit(id).ok()?;
     let decoded = commit.decode().ok()?;
     let author = decoded.author().ok()?;
     let time = author.time().ok().map(|t| t.seconds).unwrap_or(0);
     let enc = decoded.encoding.map(|e| e.as_ref());
     let summary = crate::history::subject(decoded.message, enc);
-    let name = crate::history::decode_text(author.name, enc);
+    let raw_name = crate::history::decode_text(author.name, enc);
+    let raw_email = crate::history::decode_text(author.email, enc);
+    let who = mailmap.map(&raw_name, &raw_email);
+    let mut author_l = format!("{}\n{}", who.name, who.email);
+    if who.raw.is_some() {
+        author_l.push_str(&format!("\n{raw_name}\n{raw_email}"));
+    }
     Some(CommitText {
         summary_l: summary.to_lowercase(),
-        author_l: format!("{name}\n{}", author.email).to_lowercase(),
+        author_l: author_l.to_lowercase(),
         summary,
-        author: name,
+        author: who.name,
         time,
         message: crate::history::decode_text(decoded.message, enc),
         message_l: None,
@@ -493,6 +501,7 @@ impl History {
     ) -> Option<()> {
         let single = plans.len() == 1;
         let reader = self.meta_reader();
+        let mailmap = self.mailmap();
         for plan in plans.iter_mut() {
             let term = plan.term.clone();
             let Some(pp) = plan.path.as_mut() else {
@@ -538,7 +547,7 @@ impl History {
                 let hits = rows
                     .into_iter()
                     .filter_map(|(row, id)| {
-                        let t = read_text(reader.as_ref()?, id)?;
+                        let t = read_text(reader.as_ref()?, &mailmap, id)?;
                         let touch = &found[&id];
                         Some(CommitHit {
                             row,
@@ -605,6 +614,7 @@ impl History {
             });
         }
         let reader = self.meta_reader();
+        let mailmap = self.mailmap();
         let rows = || {
             self.commits
                 .iter()
@@ -628,7 +638,7 @@ impl History {
             if k % 256 == 0 && cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let Some(mut text) = reader.as_ref().and_then(|r| read_text(r, c.id)) else {
+            let Some(mut text) = reader.as_ref().and_then(|r| read_text(r, &mailmap, c.id)) else {
                 continue;
             };
             let mut reasons: Vec<MatchReason> = Vec::new();

@@ -17,14 +17,12 @@ const ATTRS: &str = "*.dat filter=lfs diff=lfs merge=lfs -text\n";
 
 /// The global config for `Repo::set_env` (`filters`: git-lfs's filter section).
 fn global_config(dir: &Path, filters: bool) -> Vec<(String, String)> {
+    if filters {
+        // Also what a local remote needs (`safe.bareRepository`, `HOME`).
+        return gitti_workflow::lf::global_env(dir);
+    }
     let path = dir.join("global.gitconfig");
-    let text = if filters {
-        "[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\
-         \tprocess = git-lfs filter-process\n\trequired = true\n"
-    } else {
-        ""
-    };
-    fs::write(&path, text).unwrap();
+    fs::write(&path, "").unwrap();
     vec![
         ("GIT_CONFIG_GLOBAL".into(), path.display().to_string()),
         ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
@@ -69,10 +67,7 @@ fn pointer_files_in_the_working_tree() {
     let before = r.command_log().snapshot().len();
     let files = r.lfs_pointer_files().unwrap();
     assert_eq!(files, ["a.dat", "big/b.dat"]);
-    let cmds: Vec<String> = r.command_log().snapshot()[before..]
-        .iter()
-        .map(|e| e.args.join(" "))
-        .collect();
+    let cmds = crate::fx::ran_since(&r, before);
     assert_eq!(cmds.len(), 1, "{cmds:?}");
     assert!(cmds[0].contains("check-attr"), "{cmds:?}");
 }
@@ -92,7 +87,7 @@ fn not_set_up_then_set_up() {
     r.set_env(global_config(tmp.path(), false));
     let before = r.command_log().snapshot().len();
     let h = r.lfs_health();
-    assert_eq!(r.command_log().snapshot().len() - before, 2, "git config + check-attr");
+    assert_eq!(crate::fx::ran_since(&r, before).len(), 2, "git config + check-attr");
     assert!(h.installed && !h.filters);
     assert_eq!(h.pointers, ["a.dat", "c.dat"]);
     assert_eq!(h.excluded, 1, "big/ is left out by .lfsconfig");
@@ -250,7 +245,7 @@ fn unused_hooks_found_and_removed() {
     let r = Repo::open(&p).unwrap();
     let before = r.command_log().snapshot().len();
     let health = r.lfs_check(false);
-    assert_eq!(r.command_log().snapshot().len(), before, "no git process");
+    assert_eq!(crate::fx::ran_since(&r, before), Vec::<String>::new(), "no git process");
     let u = health.unused_hooks.clone().expect("found");
     assert_eq!(u.place, HooksPlace::Repository);
     let names = |v: &[gitti_core::lfs_unused::LfsHookFile]| v.iter().map(|h| h.name).collect::<Vec<_>>();

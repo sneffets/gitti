@@ -138,6 +138,11 @@ impl ToolChoice {
     }
 }
 
+/// ` = ` with no-break spaces, between a key and its value in the dialog's live text: a
+/// wrapped line keeps `diff.tool = meld` together (gitti's and gitty's wrapping break at
+/// plain spaces only).
+const GLUED_EQ: &str = "\u{a0}=\u{a0}";
+
 /// The settings a choice writes into one config file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolWrites {
@@ -155,10 +160,15 @@ impl ToolWrites {
 
     /// "diff.tool = meld, mergetool.keepBackup = false; removes merge.tool".
     pub fn describe(&self) -> String {
+        self.describe_with(" = ")
+    }
+
+    /// [`Self::describe`] with `eq` between key and value.
+    fn describe_with(&self, eq: &str) -> String {
         let set: Vec<String> = self
             .set
             .iter()
-            .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k} = {v}")))
+            .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}{eq}{v}")))
             .collect();
         let removed: Vec<&str> = self
             .set
@@ -448,7 +458,7 @@ impl ToolChoices {
         let w = self.writes(c);
         let mut out: Vec<String> = Vec::new();
         if !w.is_empty() {
-            out.push(format!("Writes to {}: {}.", w.file, w.describe()));
+            out.push(format!("Writes to {}: {}.", w.file, w.describe_with(GLUED_EQ)));
         }
         let diff = self.after(&w, ToolKind::Diff.key());
         let merge = self.after(&w, ToolKind::Merge.key());
@@ -489,7 +499,7 @@ impl ToolChoices {
             for (key, _) in &w.set {
                 if let Some(v) = self.local.get(key) {
                     out.push(format!(
-                        "This repository's own {key} = {v} still wins here (choose This \
+                        "This repository's own {key}{GLUED_EQ}{v} still wins here (choose This \
                          Repository to change it)."
                     ));
                 }
@@ -623,7 +633,8 @@ mod tests {
         let w = c.writes(&ch);
         assert_eq!(w.set, [("merge.tool".to_string(), Some("meld".to_string()))]);
         let live = c.describe(&ch, false);
-        assert!(live.starts_with("Writes to /home/u/.gitconfig: merge.tool = meld."), "{live}");
+        // `key = value` glued with no-break spaces: a wrapped line keeps it together.
+        assert!(live.starts_with("Writes to /home/u/.gitconfig: merge.tool\u{a0}=\u{a0}meld."), "{live}");
         assert!(live.contains("git difftool takes the merge tool meld."), "{live}");
         // Backups off: written as git's own option.
         ch.keep_backup = false;
@@ -663,7 +674,7 @@ mod tests {
         ch.scope = ConfigScope::Global;
         ch.merge = "kdiff3".into();
         let live = c.describe(&ch, false);
-        assert!(live.contains("own merge.tool = vimdiff still wins"), "{live}");
+        assert!(live.contains("own merge.tool\u{a0}=\u{a0}vimdiff still wins"), "{live}");
         // Backups back on in the global file (it has them off).
         ch.keep_backup = true;
         assert!(c.writes(&ch).describe().contains("mergetool.keepBackup = true"));

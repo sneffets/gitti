@@ -17,17 +17,17 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::GittiApp;
-use super::modal::ModalSpec;
+use super::modal::{ModalLive, ModalResult, ModalSpec};
 use super::picker::PickerItem;
 use crate::probe::ProbeExt as _;
 use crate::rows::Src;
 use crate::theme::PaletteExt as _;
 use crate::{
-    About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, ChangeCommitEncoding, CreateBranch, CreateTag, EditGitattributes,
+    About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, ChangeCommitEncoding, CleanUntrackedIgnored, CreateBranch, CreateTag, EditGitattributes,
     EditGitignore, EditGlobalConfig, EditRepoConfig, GlobalGitSettings, GoToWorkingDirectory,
     MergeBranch, OpenInFileManager, OpenTerminal, PopStash, PopStashIndex, RenormalizeLineEndings,
     RepoGitSettings, RepositoryStatistics, StartupTimings,
-    ThirdPartyLicences, TrackWithLfs, WriteCommitGraph,
+    ThirdPartyLicences, TrackWithLfs, WriteCommitGraph, FetchFullHistory, FetchMoreHistory,
 };
 
 /// One target file of a rule dialog ("Add to .gitignore…", "Track with Git LFS…"): its
@@ -126,6 +126,7 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &RenormalizeLineEndings, w, cx| {
             this.renormalize_dialog(w, cx)
         }))
+        .on_action(cx.listener(|this, _: &CleanUntrackedIgnored, w, cx| this.clean_dialog(w, cx)))
         .on_action(cx.listener(|this, _: &AddToGitignore, w, cx| {
             let row = this.diff_cursor_row();
             this.ignore_dialog_for_row(row, w, cx)
@@ -150,6 +151,8 @@ impl GittiApp {
             this.edit_config_file(ConfigScope::Global, w, cx)
         }))
         .on_action(cx.listener(|this, _: &WriteCommitGraph, w, cx| this.write_commit_graph(w, cx)))
+        .on_action(cx.listener(|this, _: &FetchFullHistory, w, cx| this.fetch_full_history_dialog(w, cx)))
+        .on_action(cx.listener(|this, _: &FetchMoreHistory, w, cx| this.fetch_more_history_dialog(w, cx)))
         .on_action(cx.listener(|this, _: &CreateBranch, w, cx| {
             this.create_branch_dialog("HEAD".into(), "HEAD".into(), w, cx)
         }))
@@ -223,6 +226,18 @@ impl GittiApp {
             )
             .act(&RepositoryStatistics),
             entry(
+                gitti_core::shallow::FULL_LABEL,
+                gitti_core::shallow::FULL_DETAIL,
+                |t, w, cx| t.fetch_full_history_dialog(w, cx),
+            )
+            .act(&FetchFullHistory),
+            entry(
+                gitti_core::shallow::MORE_LABEL,
+                gitti_core::shallow::MORE_DETAIL,
+                |t, w, cx| t.fetch_more_history_dialog(w, cx),
+            )
+            .act(&FetchMoreHistory),
+            entry(
                 gitti_core::commit_encoding::change::MENU_LABEL,
                 gitti_core::commit_encoding::change::PALETTE_DETAIL,
                 |t, w, cx| t.commit_encoding_dialog(w, cx),
@@ -267,6 +282,10 @@ impl GittiApp {
                 |t, w, cx| t.renormalize_dialog(w, cx),
             )
             .act(&RenormalizeLineEndings),
+            entry(gitti_core::clean::MENU_LABEL, gitti_core::clean::PALETTE_DETAIL, |t, w, cx| {
+                t.clean_dialog(w, cx)
+            })
+            .act(&CleanUntrackedIgnored),
             keyed(
                 if self.amend {
                     "Amend: off"
@@ -383,14 +402,38 @@ impl GittiApp {
     pub fn clone_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let from_clipboard =
             clipboard_text(cx).and_then(|t| gitti_core::clone_source::from_clipboard(&t));
+        use gitti_core::create::{self, CloneOptions};
+        // The options from the dialog's depth field (3) and checkboxes.
+        fn options(res: &ModalResult) -> Result<CloneOptions, String> {
+            Ok(CloneOptions {
+                recurse_submodules: res.checks[0],
+                depth: create::parse_depth(&res.values[3])?,
+                single_branch: res.checks[1],
+                blobless: res.checks[2],
+            })
+        }
         let mut spec = ModalSpec::new("Clone Repository")
             .message("git clone runs in the background; the clone opens in a new tab.")
             .field("Repository URL", from_clipboard.clone().unwrap_or_default())
             .field("Parent directory", self.default_parent_dir())
             .field("Folder name", "")
+            .field(create::DEPTH_FIELD, "")
             .derive(0, 2, |url| name_from_url(url).unwrap_or_default())
             .browse("Choose Parent Directory…", 1)
-            .check("Also clone the submodules (--recurse-submodules)", true)
+            .check(create::SUBMODULES_CHECK, true)
+            .check(create::SINGLE_BRANCH_CHECK, false)
+            .check(create::BLOBLESS_CHECK, false)
+            // What the options mean for the clone; a depth that is no number blocks OK.
+            .live(|res| match options(res) {
+                Ok(o) => ModalLive {
+                    text: o.explain(),
+                    ..Default::default()
+                },
+                Err(why) => ModalLive {
+                    blocked: Some(why),
+                    ..Default::default()
+                },
+            })
             .ok("Clone");
         if from_clipboard.is_some() {
             spec = spec.prefilled(0, gitti_core::clone_source::CLIPBOARD_NOTE);
@@ -407,9 +450,16 @@ impl GittiApp {
                 return;
             }
             let dest = expand_home(&res.values[1]).join(name);
-            let recurse = res.checks[0];
+            let opts = match options(&res) {
+                Ok(o) => o,
+                Err(why) => {
+                    this.set_error(format!("Clone: {why}"));
+                    cx.notify();
+                    return;
+                }
+            };
             this.create_repo("Cloning", w, cx, move |git, progress| {
-                gitti_core::create::clone_repo_outcome(git, &url, &dest, recurse, progress)
+                create::clone_with_options(git, &url, &dest, &opts, progress)
             });
         });
     }

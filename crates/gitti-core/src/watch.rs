@@ -160,7 +160,7 @@ const MAX_PATH_READS: usize = 512;
 impl WatchFilter {
     /// A refresh starts now (`full`: with refs and history).
     pub fn read_started(&mut self, full: bool) {
-        let now = (Instant::now(), SystemTime::now());
+        let now = read_start();
         self.working_read = Some(now);
         if full {
             self.history_read = Some(now);
@@ -168,7 +168,8 @@ impl WatchFilter {
         self.path_reads.clear();
     }
 
-    /// The working state of `paths` was re-read, starting at `started` (wall clock).
+    /// The working state of `paths` was re-read, starting at `started` (the wall clock of
+    /// [`read_start`]).
     pub fn paths_read(&mut self, paths: &[String], started: SystemTime) {
         if self.path_reads.len() + paths.len() > MAX_PATH_READS {
             self.path_reads.clear();
@@ -177,7 +178,7 @@ impl WatchFilter {
             .extend(paths.iter().map(|p| (p.clone(), started)));
     }
 
-    /// The whole working state was read, starting at `started` (`Instant`, wall clock) — by
+    /// The whole working state was read, starting at `started` ([`read_start`]) — by
     /// an operation of ours or a path-limited read that fell back to all of it: what
     /// changed before is covered, as after [`Self::read_started`].
     pub fn working_read(&mut self, started: (Instant, SystemTime)) {
@@ -296,24 +297,94 @@ fn changed_stamp(m: &std::fs::Metadata) -> Option<SystemTime> {
     }
 }
 
-/// A file changed at `stamp` before a read that started at `start`. A stamp of whole
-/// seconds comes from a file system that keeps no finer time (FAT: 2 s, HFS+: 1 s, some
-/// network mounts) — a write just after `start` can carry an earlier stamp there, so it
-/// counts as before only when it is at least 2 s older.
-// TODO(Linux): the kernel stamps ctime from its coarse clock, which lags the `SystemTime`
-// taken just before: on Linux (HZ=1000) a file created right after `start` was seen with a
-// ctime up to 0.9 ms before it, every time. So a change in the first moments
-// of a read can count as already read (no refresh); `watch::tests::
-// an_old_modification_time_is_not_taken_as_read` fails there. Needs a margin on Linux too.
-fn changed_before(stamp: SystemTime, start: SystemTime) -> bool {
-    let coarse = stamp
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .is_ok_and(|d| d.subsec_nanos() == 0);
-    if coarse {
-        stamp + Duration::from_secs(2) <= start
-    } else {
-        stamp < start
+/// A read starts now: `Instant` and the wall clock that file stamps come from (see
+/// [`stamp_clock`]) — what [`WatchFilter`] compares a changed file's stamp with.
+pub fn read_start() -> (Instant, SystemTime) {
+    (Instant::now(), stamp_clock())
+}
+
+/// The wall clock as the OS stamps a file written now, never later than `SystemTime::now`.
+///
+/// Linux stamps mtime / ctime from its coarse clock (`CLOCK_REALTIME_COARSE`, advanced once
+/// per timer tick: up to 1 ms behind with HZ=1000, 4 ms with HZ=250, 10 ms with HZ=100,
+/// longer when a tickless CPU wakes up); Windows stamps from the system time that is
+/// advanced per timer interrupt (15.6 ms by default), not the precise one `SystemTime::now`
+/// reads. A file written just after a read started then carried a stamp before the
+/// `SystemTime::now` taken at the start, so its change counted as already read (no
+/// refresh). A fixed margin would have to guess the lag, and every write of ours just
+/// before a re-read (a commit's refs, a discard's files) would fall into it and refresh
+/// again; reading the stamping clock itself needs neither: a write after the read
+/// started gets a stamp at or after this time, whatever the tick. Kernels that hand out a
+/// finer stamp (Linux's multigrain timestamps) only stamp later, which costs at most a
+/// re-read. (A network mount stamped by another machine's clock is not covered by
+/// either.)
+fn stamp_clock() -> SystemTime {
+    let now = SystemTime::now();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // Zeroed, not a literal: some targets' timespec has private padding fields.
+        // SAFETY: all-zero is a valid timespec; `ts` is valid and writable for the call.
+        let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME_COARSE, &mut ts) } == 0
+            && let (Ok(secs), Ok(nanos)) = (u64::try_from(ts.tv_sec), u32::try_from(ts.tv_nsec))
+            && let Some(coarse) = SystemTime::UNIX_EPOCH.checked_add(Duration::new(secs, nanos))
+        {
+            return coarse.min(now);
+        }
     }
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct FileTime {
+            low: u32,
+            high: u32,
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetSystemTimeAsFileTime(time: *mut FileTime);
+        }
+        let mut ft = FileTime { low: 0, high: 0 };
+        // SAFETY: `ft` is a valid, writable FILETIME.
+        unsafe { GetSystemTimeAsFileTime(&mut ft) };
+        // 100 ns intervals since 1601-01-01.
+        const UNIX_EPOCH_INTERVALS: u64 = 116_444_736_000_000_000;
+        let intervals = (u64::from(ft.high) << 32) | u64::from(ft.low);
+        if let Some(since_epoch) = intervals.checked_sub(UNIX_EPOCH_INTERVALS)
+            && let Some(coarse) = SystemTime::UNIX_EPOCH
+                .checked_add(Duration::from_nanos(since_epoch.saturating_mul(100)))
+        {
+            return coarse.min(now);
+        }
+    }
+    now
+}
+
+/// A file changed at `stamp` (by [`changed_stamp`]) before a read that started at `start`
+/// (by [`stamp_clock`]).
+///
+/// A stamp is only as exact as the file system keeps it: it is cut down to that
+/// granularity, so a write just after `start` can carry a stamp below it. The granularity
+/// shows in the stamp's trailing decimal zeros (Linux requires a power of ten: 100 ns on
+/// NTFS / SMB mounts, 10 ms on exFAT), and the stamp counts as before only when it is
+/// earlier by at least that much. A stamp of whole seconds comes from a file system that
+/// keeps no finer time (FAT: 2 s, HFS+: 1 s, some network mounts): before only when it is
+/// at least 2 s older. A precise stamp that merely happens to end in zeros costs at most a
+/// re-read.
+fn changed_before(stamp: SystemTime, start: SystemTime) -> bool {
+    let Ok(since_epoch) = stamp.duration_since(SystemTime::UNIX_EPOCH) else {
+        return stamp < start;
+    };
+    let nanos = since_epoch.subsec_nanos();
+    let granularity = if nanos == 0 {
+        Duration::from_secs(2)
+    } else {
+        let mut step = 1u32;
+        while nanos % (step * 10) == 0 {
+            step *= 10;
+        }
+        Duration::from_nanos(u64::from(step))
+    };
+    stamp + granularity <= start
 }
 
 /// A batch is reported once no event came for `QUIET`, but at most `MAX_DELAY` after its
@@ -1289,7 +1360,7 @@ mod tests {
         let mut f = WatchFilter::default();
         f.read_started(false);
         std::thread::sleep(Duration::from_millis(20));
-        let since = SystemTime::now();
+        let (_, since) = read_start();
         let file = std::fs::File::create(d.join("old.txt")).unwrap();
         let old = SystemTime::now() - Duration::from_secs(3600);
         file.set_modified(old).unwrap();
@@ -1304,6 +1375,42 @@ mod tests {
         assert!(changed_before(t0 + Duration::from_millis(400), t0 + Duration::from_millis(500)));
         assert!(!changed_before(t0, t0 + Duration::from_millis(500)), "whole seconds: maybe later");
         assert!(changed_before(t0, t0 + Duration::from_secs(2)));
+    }
+
+    /// The OS stamps a file from a clock that can lag `SystemTime::now` (Linux: the coarse
+    /// clock, one timer tick; Windows: the per-interrupt system time) and keeps the stamp
+    /// only as fine as the file system does: a file written right after a read started is
+    /// still not taken as read.
+    #[gitti_test::test]
+    fn a_write_right_after_a_read_started_is_not_taken_as_read() {
+        let ns = |n: u64| Duration::from_nanos(n);
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        // The stamping clock stands at tick `t0 + 123_456_789 ns`; `SystemTime::now` is
+        // 0.9 ms ahead of it. A write in the same tick is stamped with the tick.
+        let tick = t0 + ns(123_456_789);
+        let precise = tick + Duration::from_micros(900);
+        assert!(changed_before(tick, precise), "a start by `SystemTime::now` misses it");
+        assert!(!changed_before(tick, tick), "a start by the stamping clock: not read");
+        // An earlier tick was read.
+        assert!(changed_before(tick - Duration::from_millis(1), tick));
+        assert!(changed_before(tick - ns(1), tick));
+        // Cut down to 100 ns (NTFS / SMB mounts) or 10 ms (exFAT): below the start, yet
+        // maybe written after it.
+        assert!(!changed_before(t0 + ns(123_456_700), tick));
+        assert!(changed_before(t0 + ns(123_456_600), tick));
+        assert!(!changed_before(t0 + ns(120_000_000), tick));
+        assert!(changed_before(t0 + ns(110_000_000), tick));
+        // The clock a read starts by is never ahead of the stamps of files written after
+        // it (on Linux it was by up to a tick with `SystemTime::now`).
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..20 {
+            let (_, start) = read_start();
+            assert!(start <= SystemTime::now());
+            let path = dir.path().join(format!("f{i}"));
+            std::fs::write(&path, "x").unwrap();
+            let stamp = changed_stamp(&std::fs::symlink_metadata(&path).unwrap()).unwrap();
+            assert!(!changed_before(stamp, start), "file {i}: {stamp:?} before {start:?}");
+        }
     }
 
     /// Workflow: EX-01

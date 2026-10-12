@@ -11,7 +11,7 @@ use crate::{
     FocusDiff, FocusSidebar, NextPane, PrevFile, PrevHunk, PrevPane, SelectFirst, SelectLast,
     ShowShortcuts, SideActivate, SideNext, SidePrev, StageAll, ToggleAmend, UnstageAll,
 };
-use crate::{EndCompare, MarkCompare, ShowMoreLines, ShowWholeFile, SwapCompare};
+use crate::{EndCompare, MarkCompare, ShowMoreLines, ShowWholeFile, SwapCompare, ToggleCompareMergeBase};
 use crate::FileList;
 
 impl GittiApp {
@@ -75,6 +75,7 @@ impl GittiApp {
             this.end_compare(cx);
         }))
         .on_action(cx.listener(|this, _: &SwapCompare, _, cx| this.swap_compare(cx)))
+        .on_action(cx.listener(|this, _: &ToggleCompareMergeBase, _, cx| this.toggle_compare_merge_base(cx)))
         .on_action(cx.listener(|this, _: &ShowMoreLines, _, cx| this.show_more_lines_key(false, cx)))
         .on_action(cx.listener(|this, _: &ShowWholeFile, _, cx| this.show_more_lines_key(true, cx)))
     }

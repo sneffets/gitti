@@ -139,6 +139,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("TrackWithLfs", "Track with Git LFS…"),
     both("EditGitattributes", "Edit .gitattributes…"),
     both("RenormalizeLineEndings", crate::renormalize::MENU_LABEL),
+    both("CleanUntrackedIgnored", crate::clean::MENU_LABEL),
     // Paths this file system can't hold (`fs_paths`): the note, hide (skip-worktree),
     // the undo.
     both("FsPaths", "Paths This File System Can't Hold…"),
@@ -152,6 +153,9 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     // The external diff / merge tool (`tool_setup`).
     both("ChooseExternalTool", crate::tool_setup::CHOOSE_LABEL),
     both("WriteCommitGraph", "Write Commit-Graph"),
+    // A shallow clone's history (`shallow`); greyed in a complete one.
+    both("FetchFullHistory", crate::shallow::FULL_LABEL),
+    both("FetchMoreHistory", crate::shallow::MORE_LABEL),
     both("RepositoryStatistics", crate::repo_stats::MENU_LABEL),
     // Branch
     both("SwitchBranch", "Switch Branch…"),
@@ -195,6 +199,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("GetSigningKeys", "Get Signing Keys from GitHub…"),
     both("MarkCompare", "Mark Selected Commit for Comparison"),
     when("SwapCompare", STATE, Gitty::No(STATE)),
+    both("ToggleCompareMergeBase", "Changes Since Common Ancestor"),
     when("EndCompare", STATE, Gitty::No(STATE)),
     both("CreateTag", "Create Tag at HEAD…"),
     // Stash

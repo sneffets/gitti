@@ -2,7 +2,13 @@
 //! and the working tree), for the "compare with marked commit" mode of both apps.
 //!
 //! Commit pairs are immutable, so their diffs are cached like [`Repo::load_commit`]'s (key:
-//! both sides + diff options); pairs with the working tree are read fresh every time.
+//! both sides + diff options + [`CompareKind`]); pairs with the working tree are read fresh
+//! every time.
+//!
+//! Two kinds of comparison: the direct difference (`git diff A B`) and the changes since
+//! the common ancestor (`git diff A...B`: merge base of A and B → B, what B's side changed
+//! since the two split). The merge base is git's choice — with several (criss-cross
+//! merges) the first `git merge-base --all` names — and is shown with the diff.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -31,12 +37,75 @@ impl CompareSide {
     }
 }
 
+/// What a comparison of `old` and `new` shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CompareKind {
+    /// `git diff old new`: everything that differs between the two.
+    #[default]
+    Direct,
+    /// `git diff old...new`: what `new` changed since the common ancestor (merge base) of
+    /// the two — changes made only on `old`'s side are left out. A working-tree side
+    /// counts as HEAD for finding the ancestor (`git diff --merge-base`).
+    SinceMergeBase,
+}
+
+/// The toggle's name in menus, the palette and the banner.
+pub const SINCE_MERGE_BASE_LABEL: &str = "Changes Since Common Ancestor";
+
+/// The common ancestor a [`CompareKind::SinceMergeBase`] comparison started from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeBase {
+    /// The two histories share no commit (unrelated histories, or cut off by a shallow
+    /// clone): the direct difference is shown instead.
+    None,
+    Found {
+        id: ObjectId,
+        /// Its subject line.
+        summary: String,
+        /// How many best common ancestors there are (more than one after criss-cross
+        /// merges; `id` is the one git picks).
+        count: usize,
+    },
+}
+
+impl MergeBase {
+    pub fn id(&self) -> Option<ObjectId> {
+        match self {
+            MergeBase::Found { id, .. } => Some(*id),
+            MergeBase::None => None,
+        }
+    }
+
+    /// Plain words for the banner: which ancestor, and that it is one of several.
+    pub fn describe(&self) -> String {
+        match self {
+            MergeBase::None => {
+                "No common ancestor: the two histories are unrelated — showing the direct difference".into()
+            }
+            MergeBase::Found { id, summary, count } => {
+                let short = id.to_hex_with_len(7);
+                let which = if *count > 1 {
+                    format!(" (one of {count} common ancestors, the one git picks)")
+                } else {
+                    String::new()
+                };
+                if summary.is_empty() {
+                    format!("common ancestor {short}{which}")
+                } else {
+                    format!("common ancestor {short} {summary}{which}")
+                }
+            }
+        }
+    }
+}
+
 /// Compare mode of a view: a marked base, compared with whatever row is selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompareMode {
     pub base: CompareSide,
     /// Selected → base instead of base → selected.
     pub swapped: bool,
+    pub kind: CompareKind,
 }
 
 impl CompareMode {
@@ -44,7 +113,12 @@ impl CompareMode {
         Self {
             base,
             swapped: false,
+            kind: CompareKind::Direct,
         }
+    }
+
+    pub fn with_kind(self, kind: CompareKind) -> Self {
+        Self { kind, ..self }
     }
 
     /// `(old, new)` for the selected side; `None` when it is the base itself (the views
@@ -94,11 +168,38 @@ pub fn describe(history: &crate::History, side: CompareSide) -> (String, String)
     }
 }
 
+/// The banner's line about the common ancestor of a comparison since it (`None` for a
+/// direct one): which commit, and in plain words what the diff shows and leaves out.
+pub fn merge_base_line(history: &crate::History, data: &CompareData) -> Option<String> {
+    let mb = data.merge_base.as_ref()?;
+    let name = |s: CompareSide| describe(history, s).0;
+    let (old, new) = (name(data.compared.0), name(data.compared.1));
+    Some(match mb {
+        MergeBase::None => mb.describe(),
+        MergeBase::Found { id, .. } if data.compared.1.commit() == Some(*id) => format!(
+            "{new} is already contained in {old}: nothing changed on its side since the {}",
+            mb.describe()
+        ),
+        MergeBase::Found { .. } => format!(
+            "Only what {new} changed since the {} — changes made only on {old}'s side are left out",
+            mb.describe()
+        ),
+    })
+}
+
 /// The diff from `old` to `new`.
 #[derive(Debug)]
 pub struct CompareData {
+    /// The old side of the diff: the compared old side, or — since the common ancestor —
+    /// the merge base (its file versions are what the diff's old lines come from).
     pub old: CompareSide,
     pub new: CompareSide,
+    /// The two sides the user compares (`old`, `new` of the request); the cache key.
+    pub compared: (CompareSide, CompareSide),
+    pub kind: CompareKind,
+    /// [`CompareKind::SinceMergeBase`]: the ancestor the diff starts from (or that there
+    /// is none); `None` for a direct comparison.
+    pub merge_base: Option<MergeBase>,
     /// The diff in the shape the views show commits in, so they reuse their commit view
     /// (rows, file tabs, expansion): `files` = old → new; `details` are empty (null id, no
     /// message — a comparison is no commit), no signature.
@@ -124,13 +225,18 @@ const MAX_ENTRIES: usize = 32;
 /// Upper bound for the diff lines kept in total.
 const MAX_LINES: usize = 200_000;
 
-type Key = (ObjectId, ObjectId, DiffOptions);
+type Key = (ObjectId, ObjectId, DiffOptions, CompareKind);
 
-/// Small LRU of commit-pair diffs (most recently used at the back).
+/// Merge bases kept (commit pairs are immutable; a full map is emptied).
+const MAX_BASES: usize = 1024;
+
+/// Small LRU of commit-pair diffs (most recently used at the back), and the merge bases
+/// of the commit pairs asked so far.
 #[derive(Debug, Default)]
 pub(crate) struct CompareCache {
     entries: VecDeque<(Key, Arc<CompareData>, usize)>,
     lines: usize,
+    bases: std::collections::HashMap<(ObjectId, ObjectId), MergeBase>,
 }
 
 impl CompareCache {
@@ -188,14 +294,16 @@ fn commit_like(files: Vec<FileDiff>) -> CommitData {
             committer_email: String::new(),
             commit_time: 0,
             message: String::new(),
+            raw_author: None,
+            raw_committer: None,
         },
         sig_kind: None,
         files,
     }
 }
 
-fn key(old: CompareSide, new: CompareSide, opts: &DiffOptions) -> Option<Key> {
-    Some((old.commit()?, new.commit()?, *opts))
+fn key(old: CompareSide, new: CompareSide, opts: &DiffOptions, kind: CompareKind) -> Option<Key> {
+    Some((old.commit()?, new.commit()?, *opts, kind))
 }
 
 impl Repo {
@@ -208,7 +316,18 @@ impl Repo {
         new: CompareSide,
         opts: &DiffOptions,
     ) -> Option<Arc<CompareData>> {
-        let key = key(old, new, opts)?;
+        self.cached_compare_as(CompareKind::Direct, old, new, opts)
+    }
+
+    /// [`Repo::cached_compare`] of a comparison of kind `kind`.
+    pub fn cached_compare_as(
+        &self,
+        kind: CompareKind,
+        old: CompareSide,
+        new: CompareSide,
+        opts: &DiffOptions,
+    ) -> Option<Arc<CompareData>> {
+        let key = key(old, new, opts, kind)?;
         let data = self.compare_cache().lock().ok()?.get(&key)?;
         if self.lfs_stale(data.files()) {
             if let Ok(mut cache) = self.compare_cache().lock() {
@@ -228,7 +347,20 @@ impl Repo {
         new: CompareSide,
         opts: &DiffOptions,
     ) -> Result<Arc<CompareData>> {
-        let mut all = self.compare_diffs(&[(old, new)], opts)?;
+        self.compare_diff_as(CompareKind::Direct, old, new, opts)
+    }
+
+    /// [`Repo::compare_diff`] of kind `kind`: [`CompareKind::SinceMergeBase`] diffs the
+    /// merge base of `old` and `new` against `new` (`git diff old...new`; a working-tree
+    /// side finds the ancestor through HEAD), or `old` against `new` when there is none.
+    pub fn compare_diff_as(
+        &self,
+        kind: CompareKind,
+        old: CompareSide,
+        new: CompareSide,
+        opts: &DiffOptions,
+    ) -> Result<Arc<CompareData>> {
+        let mut all = self.compare_diffs_as(kind, &[(old, new)], opts)?;
         all.pop().ok_or_else(|| anyhow::anyhow!("no comparison"))
     }
 
@@ -240,13 +372,48 @@ impl Repo {
         pairs: &[(CompareSide, CompareSide)],
         opts: &DiffOptions,
     ) -> Result<Vec<Arc<CompareData>>> {
+        self.compare_diffs_as(CompareKind::Direct, pairs, opts)
+    }
+
+    /// [`Repo::compare_diffs`] of kind `kind` (the merge bases found in-process, see
+    /// [`Repo::merge_base_of`]: still one `git diff-tree` for all commit pairs).
+    pub fn compare_diffs_as(
+        &self,
+        kind: CompareKind,
+        pairs: &[(CompareSide, CompareSide)],
+        opts: &DiffOptions,
+    ) -> Result<Vec<Arc<CompareData>>> {
         let mut out: Vec<Option<Arc<CompareData>>> =
-            pairs.iter().map(|&(a, b)| self.cached_compare(a, b, opts)).collect();
-        let missing: Vec<(usize, ObjectId, ObjectId)> = pairs
+            pairs.iter().map(|&(a, b)| self.cached_compare_as(kind, a, b, opts)).collect();
+        // What each missing pair diffs: its own sides, or the merge base → its new side.
+        let mut diffed: Vec<(CompareSide, CompareSide, Option<MergeBase>)> =
+            pairs.iter().map(|&(a, b)| (a, b, None)).collect();
+        if kind == CompareKind::SinceMergeBase {
+            for (i, &(a, b)) in pairs.iter().enumerate() {
+                if out[i].is_some() {
+                    continue;
+                }
+                let base = self.merge_base_of(a, b)?;
+                let from = base.id().map(CompareSide::Commit).unwrap_or(a);
+                diffed[i] = (from, b, Some(base));
+            }
+        }
+        let made = |i: usize, files: Vec<FileDiff>| {
+            let (old, new, merge_base) = diffed[i].clone();
+            Arc::new(CompareData {
+                old,
+                new,
+                compared: pairs[i],
+                kind,
+                merge_base,
+                data: Arc::new(commit_like(files)),
+            })
+        };
+        let missing: Vec<(usize, ObjectId, ObjectId)> = diffed
             .iter()
             .enumerate()
             .filter(|(i, _)| out[*i].is_none())
-            .filter_map(|(i, &(a, b))| Some((i, a.commit()?, b.commit()?)))
+            .filter_map(|(i, (a, b, _))| Some((i, a.commit()?, b.commit()?)))
             .collect();
         if !missing.is_empty() {
             use crate::commit_files::{changed_between, needs_guard, tree_of};
@@ -276,13 +443,9 @@ impl Repo {
                 self.learn_names(&files);
                 crate::submodule::fill_logs(self.workdir(), &mut files);
                 self.lfs_annotate(&mut files, opts.context_lines, false);
+                let data = made(*i, files);
                 let (old, new) = pairs[*i];
-                let data = Arc::new(CompareData {
-                    old,
-                    new,
-                    data: Arc::new(commit_like(files)),
-                });
-                if let Some(key) = key(old, new, opts)
+                if let Some(key) = key(old, new, opts, kind)
                     && let Ok(mut cache) = self.compare_cache().lock()
                 {
                     cache.insert(key, data.clone());
@@ -290,17 +453,88 @@ impl Repo {
                 out[*i] = Some(data);
             }
         }
-        pairs
-            .iter()
-            .zip(out)
-            .map(|(&(old, new), data)| match data {
+        out.into_iter()
+            .enumerate()
+            .map(|(i, data)| match data {
                 Some(d) => Ok(d),
-                None => Ok(Arc::new(CompareData {
-                    old,
-                    new,
-                    data: Arc::new(commit_like(self.worktree_compare(old, new, opts)?)),
-                })),
+                None => {
+                    let (old, new, _) = diffed[i];
+                    Ok(made(i, self.worktree_compare(old, new, opts)?))
+                }
             })
+            .collect()
+    }
+
+    /// The common ancestor of `a` and `b` that `git diff a...b` starts from (a working
+    /// tree side: HEAD's; unborn HEAD has none). In-process for the usual case of none or
+    /// one; with several (criss-cross merges) `git merge-base --all` says which one git
+    /// picks (its first) — gix finds the same set but may order it differently. Cached per
+    /// commit pair.
+    pub fn merge_base_of(&self, a: CompareSide, b: CompareSide) -> Result<MergeBase> {
+        let head = || -> Result<Option<ObjectId>> {
+            Ok(self.gix()?.head_id().ok().map(|i| i.detach()))
+        };
+        let commit = |s: CompareSide| match s {
+            CompareSide::Commit(id) => Ok(Some(id)),
+            CompareSide::Worktree => head(),
+        };
+        let (Some(a), Some(b)) = (commit(a)?, commit(b)?) else {
+            return Ok(MergeBase::None);
+        };
+        if let Some(hit) = self.compare_cache().lock().ok().and_then(|c| c.bases.get(&(a, b)).cloned()) {
+            return Ok(hit);
+        }
+        let repo = self.gix()?;
+        let found: Option<Vec<ObjectId>> = repo
+            .merge_bases_many(a, &[b])
+            .ok()
+            .map(|ids| ids.into_iter().map(|id| id.detach()).collect());
+        let ids = match found {
+            Some(ids) if ids.len() < 2 => ids,
+            // Several (or gix could not walk it, e.g. a shallow boundary): git decides.
+            _ => self.git_merge_bases(a, b)?,
+        };
+        let base = match ids.first() {
+            None => MergeBase::None,
+            Some(&id) => {
+                let summary = repo
+                    .find_commit(id)
+                    .ok()
+                    .and_then(|c| {
+                        let d = c.decode().ok()?;
+                        Some(crate::history::subject(d.message, d.encoding.map(|e| e.as_ref())))
+                    })
+                    .unwrap_or_default();
+                MergeBase::Found {
+                    id,
+                    summary,
+                    count: ids.len(),
+                }
+            }
+        };
+        if let Ok(mut cache) = self.compare_cache().lock() {
+            if cache.bases.len() >= MAX_BASES {
+                cache.bases.clear();
+            }
+            cache.bases.insert((a, b), base.clone());
+        }
+        Ok(base)
+    }
+
+    /// `git merge-base --all a b`, git's order (exit code 1 without output: none).
+    fn git_merge_bases(&self, a: ObjectId, b: ObjectId) -> Result<Vec<ObjectId>> {
+        let (a, b) = (a.to_string(), b.to_string());
+        let out = match self.git().run(&["merge-base", "--all", &a, &b]) {
+            Ok(out) => out.stdout,
+            Err(crate::git_cli::GitError::Failed { code: 1, ref stderr, .. }) if stderr.trim().is_empty() => {
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        String::from_utf8_lossy(&out)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| ObjectId::from_hex(l.trim().as_bytes()).map_err(|e| anyhow::anyhow!("git merge-base: {e}")))
             .collect()
     }
 
@@ -341,6 +575,7 @@ impl Repo {
         file: usize,
         opts: &DiffOptions,
     ) -> Result<Arc<CompareData>> {
+        // The diffed sides: since the common ancestor, `old` is the merge base.
         let (Some(a), Some(b)) = (data.old.commit(), data.new.commit()) else {
             anyhow::bail!("only a comparison of two commits leaves files out");
         };
@@ -373,9 +608,13 @@ impl Repo {
         let new = Arc::new(CompareData {
             old: data.old,
             new: data.new,
+            compared: data.compared,
+            kind: data.kind,
+            merge_base: data.merge_base.clone(),
             data: Arc::new(commit_like(files)),
         });
-        if let Some(key) = key(data.old, data.new, opts)
+        let (old, newer) = data.compared;
+        if let Some(key) = key(old, newer, opts, data.kind)
             && let Ok(mut cache) = self.compare_cache().lock()
         {
             cache.insert(key, new.clone());
@@ -484,13 +723,16 @@ mod tests {
         Arc::new(CompareData {
             old: CompareSide::Worktree,
             new: CompareSide::Worktree,
+            compared: (CompareSide::Worktree, CompareSide::Worktree),
+            kind: CompareKind::Direct,
+            merge_base: None,
             data: Arc::new(commit_like(parse_unified(&text))),
         })
     }
 
     fn k(n: u8) -> Key {
         let id = ObjectId::from_bytes_or_panic(&[n; 20]);
-        (id, id, DiffOptions::default())
+        (id, id, DiffOptions::default(), CompareKind::Direct)
     }
 
     #[gitti_test::test]
@@ -526,8 +768,14 @@ mod tests {
     fn worktree_pairs_have_no_cache_key() {
         let id = ObjectId::from_bytes_or_panic(&[1; 20]);
         let o = DiffOptions::default();
-        assert!(key(CompareSide::Commit(id), CompareSide::Worktree, &o).is_none());
-        assert!(key(CompareSide::Worktree, CompareSide::Commit(id), &o).is_none());
-        assert!(key(CompareSide::Commit(id), CompareSide::Commit(id), &o).is_some());
+        let d = CompareKind::Direct;
+        assert!(key(CompareSide::Commit(id), CompareSide::Worktree, &o, d).is_none());
+        assert!(key(CompareSide::Worktree, CompareSide::Commit(id), &o, d).is_none());
+        assert!(key(CompareSide::Commit(id), CompareSide::Commit(id), &o, d).is_some());
+        // The kind is part of the key: the two comparisons of a pair differ.
+        assert_ne!(
+            key(CompareSide::Commit(id), CompareSide::Commit(id), &o, d),
+            key(CompareSide::Commit(id), CompareSide::Commit(id), &o, CompareKind::SinceMergeBase)
+        );
     }
 }

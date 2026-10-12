@@ -107,6 +107,7 @@ actions!(
         MarkCompare,
         EndCompare,
         SwapCompare,
+        ToggleCompareMergeBase,
         LineUp,
         LineDown,
         HalfPageUp,
@@ -1363,6 +1364,14 @@ pub mod testing_menus {
         ws.read(cx).script_app()?.read(cx).script_modal_option()
     }
 
+    /// The check boxes of the open dialog: label, ticked, shown for the chosen option.
+    pub fn modal_checks(ws: &Entity<Workspace>, cx: &App) -> Vec<(String, bool, bool)> {
+        ws.read(cx)
+            .script_app()
+            .map(|a| a.read(cx).script_modal_checks())
+            .unwrap_or_default()
+    }
+
     /// Whether the active tab shows a repository (else the start / "not a repository" page).
     pub fn has_repo(ws: &Entity<Workspace>, cx: &App) -> bool {
         ws.read(cx)
@@ -1411,12 +1420,15 @@ actions!(
         TrackWithLfs,
         EditGitattributes,
         RenormalizeLineEndings,
+        CleanUntrackedIgnored,
         RepoGitSettings,
         GlobalGitSettings,
         ChangeCommitEncoding,
         EditRepoConfig,
         EditGlobalConfig,
         WriteCommitGraph,
+        FetchFullHistory,
+        FetchMoreHistory,
         RepositoryStatistics,
         CreateBranch,
         CreateTag,
@@ -1780,6 +1792,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Track with Git LFS…", TrackWithLfs),
                 MenuItem::action("Edit .gitattributes…", EditGitattributes),
                 MenuItem::action(gitti_core::renormalize::MENU_LABEL, RenormalizeLineEndings),
+                MenuItem::action(gitti_core::clean::MENU_LABEL, CleanUntrackedIgnored),
                 MenuItem::separator(),
                 MenuItem::action("Paths This File System Can't Hold…", FsPaths),
                 MenuItem::action("Hide Paths This File System Can't Hold", HideFsPaths),
@@ -1796,6 +1809,9 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Run Custom Command…", RunCustomCommand),
                 MenuItem::action("Custom Commands…", CustomCommands),
                 MenuItem::action("Write Commit-Graph", WriteCommitGraph),
+                MenuItem::separator(),
+                MenuItem::action(gitti_core::shallow::FULL_LABEL, FetchFullHistory),
+                MenuItem::action(gitti_core::shallow::MORE_LABEL, FetchMoreHistory),
             ],
         ),
         menu(
@@ -1849,6 +1865,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Mark for Comparison", MarkCompare),
                 MenuItem::action("Swap Comparison Sides", SwapCompare),
+                MenuItem::action(gitti_core::compare::SINCE_MERGE_BASE_LABEL, ToggleCompareMergeBase),
                 MenuItem::action("End Comparison", EndCompare),
                 MenuItem::separator(),
                 MenuItem::action("Create Tag at HEAD…", CreateTag),

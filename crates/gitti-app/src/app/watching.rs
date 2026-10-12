@@ -2,8 +2,6 @@
 //! files re-reads just those paths, the index or worktree metadata the working state, refs
 //! everything (`gitti_core::watch::WatchFilter::needs`).
 
-use std::time::{Instant, SystemTime};
-
 use gitti_core::watch::{Change, Refresh};
 use gpui_kit::*;
 
@@ -131,7 +129,7 @@ impl GittiApp {
             .then(|| self.hl_cache.clone());
         let prev_subs = self.submodules.clone();
         let task = cx.background_executor().spawn(async move {
-            let started = (Instant::now(), SystemTime::now());
+            let started = gitti_core::watch::read_start();
             let working = repo.working_state_reread(&opts, &prev, &paths);
             // A directory stands for the files below it: those are highlighted again.
             let touched = working

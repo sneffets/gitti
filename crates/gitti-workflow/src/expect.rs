@@ -1,5 +1,7 @@
 //! [`Expect`]: the repository after a workflow, read with as few git processes as the
-//! checks need — refs, HEAD and the operation state from the files (no git), one
+//! checks need — refs, HEAD and the operation state from the files (no git; one git
+//! process per read in a repository with the reftable backend — git 3.0's default for a
+//! clone or `init` made by the app itself — whose refs are no files), one
 //! `git log` ([`Expect::log`]), one `git cat-file --batch` for any number of index /
 //! commit contents ([`Expect::blobs`]), one `git status` ([`Expect::status`]); working-tree
 //! files from disk. [`Checks`] collects the mismatches, so a workflow's `expect` returns
@@ -90,6 +92,8 @@ pub struct Expect {
     /// The common git directory (refs, objects) — the git dir itself unless a linked
     /// worktree.
     common_dir: PathBuf,
+    /// The refs are in a reftable (`<common dir>/reftable`), not in files: git reads them.
+    reftable: bool,
 }
 
 impl Expect {
@@ -110,7 +114,8 @@ impl Expect {
             }
             Err(_) => git_dir.clone(),
         };
-        Self { dir: dir.to_path_buf(), git_dir, common_dir }
+        let reftable = common_dir.join("reftable").is_dir();
+        Self { dir: dir.to_path_buf(), git_dir, common_dir, reftable }
     }
 
     pub fn dir(&self) -> &Path {
@@ -125,6 +130,14 @@ impl Expect {
 
     /// Where HEAD points (no git).
     pub fn head(&self) -> Head {
+        if self.reftable {
+            let out = git::run(&self.dir, &["symbolic-ref", "-q", "HEAD"], None);
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return match name.strip_prefix("refs/heads/") {
+                Some(b) if out.status.success() => Head::Branch(b.to_string()),
+                _ => Head::Detached(git::git(&self.dir, &["rev-parse", "HEAD"])),
+            };
+        }
         let text = fs::read_to_string(self.git_dir.join("HEAD")).unwrap();
         match text.trim().strip_prefix("ref: ") {
             Some(r) => Head::Branch(r.trim_start_matches("refs/heads/").to_string()),
@@ -149,6 +162,12 @@ impl Expect {
         } else {
             format!("refs/heads/{refname}")
         };
+        // MERGE_HEAD and FETCH_HEAD stay files with the reftable backend too.
+        if self.reftable && !matches!(full.as_str(), "MERGE_HEAD" | "FETCH_HEAD") {
+            let out = git::run(&self.dir, &["rev-parse", "-q", "--verify", &full], None);
+            let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return (out.status.success() && !id.is_empty()).then_some(id);
+        }
         // Per-worktree refs (HEAD, MERGE_HEAD, …) in the git dir, the rest in the common one.
         for dir in [&self.git_dir, &self.common_dir] {
             if let Ok(text) = fs::read_to_string(dir.join(&full)) {
@@ -214,6 +233,9 @@ impl Expect {
 
     /// The number of stashes (lines of the stash reflog; no git).
     pub fn stashes(&self) -> usize {
+        if self.reftable {
+            return self.reflog("refs/stash").len();
+        }
         fs::read_to_string(self.common_dir.join("logs/refs/stash"))
             .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
             .unwrap_or(0)
@@ -255,6 +277,23 @@ impl Expect {
     /// The reflog of `refname` (`HEAD`, `refs/heads/main`) from its file (no git), newest
     /// first: (old id, new id, message). Empty when it has none.
     pub fn reflog(&self, refname: &str) -> Vec<(String, String, String)> {
+        if self.reftable {
+            // Each entry moved from where the next (older) one moved to; the oldest from
+            // nothing (as a ref's first entry does).
+            let out = git::run(&self.dir, &["reflog", "show", "--format=%H%x00%gs", refname, "--"], None);
+            let text = String::from_utf8_lossy(&out.stdout);
+            let new: Vec<(String, String)> = text
+                .lines()
+                .filter_map(|l| l.split_once('\0'))
+                .map(|(id, msg)| (id.to_string(), msg.to_string()))
+                .collect();
+            return (0..new.len())
+                .map(|i| {
+                    let old = new.get(i + 1).map_or_else(|| "0".repeat(new[i].0.len()), |n| n.0.clone());
+                    (old, new[i].0.clone(), new[i].1.clone())
+                })
+                .collect();
+        }
         let dir = if refname == "HEAD" { &self.git_dir } else { &self.common_dir };
         let text = fs::read_to_string(dir.join("logs").join(refname)).unwrap_or_default();
         let mut entries: Vec<(String, String, String)> = text
