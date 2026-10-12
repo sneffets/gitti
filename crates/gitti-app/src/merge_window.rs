@@ -193,7 +193,10 @@ pub fn open(
     scripted: bool,
     cx: &mut App,
 ) -> anyhow::Result<()> {
-    let (bounds, display_id) = if scripted {
+    // `GITTI_SCRIPT_PLACEMENT=1`: on screen and focused like a normal start (as the main
+    // window), so real input can be sent to a scripted run.
+    let placed = std::env::var_os("GITTI_SCRIPT_PLACEMENT").is_some();
+    let (bounds, display_id) = if scripted && !placed {
         let b = Bounds::new(point(px(-6000.), px(-6000.)), size(px(1400.), px(900.)));
         (WindowBounds::Windowed(b), None)
     } else {
@@ -202,7 +205,7 @@ pub fn open(
     let options = WindowOptions {
         window_bounds: Some(bounds),
         display_id,
-        focus: !scripted,
+        focus: !scripted || placed,
         titlebar: Some(TitlebarOptions {
             title: Some(format!("Merge {path}").into()),
             ..Default::default()
@@ -339,6 +342,9 @@ impl MergeEditor {
         if let Some(first) = first {
             this.go_to(first, window, cx);
         }
+        // The result is where the file is edited: it has the focus from the start (cursor at
+        // the first conflict), so typing works without a click first.
+        this.editor.update(cx, |e, cx| e.focus(window, cx));
         this
     }
 
@@ -469,7 +475,7 @@ impl MergeEditor {
     }
 
     /// For tests: see `testing::MergeState`.
-    pub fn script_state(&self, window: &Window) -> crate::testing::MergeState {
+    pub fn script_state(&self, window: &Window, cx: &App) -> crate::testing::MergeState {
         crate::testing::MergeState {
             current: self.current,
             chunks: (0..self.session.doc.chunks.len())
@@ -483,6 +489,7 @@ impl MergeEditor {
             single: self.single,
             status: self.status.clone(),
             top_focused: self.top_focus.is_focused(window),
+            result_focused: self.editor.read(cx).focus_handle(cx).is_focused(window),
             text: self.session.text().to_string(),
             selected: self.selected_text(),
         }
@@ -1080,8 +1087,8 @@ impl MergeEditor {
         }
     }
 
-    /// Background of a side's line in a chunk.
-    fn side_bg(&self, chunk: usize, ours: bool, p: &Palette) -> Option<Hsla> {
+    /// Background of a side's line `i` in a chunk.
+    fn side_bg(&self, chunk: usize, ours: bool, i: usize, p: &Palette) -> Option<Hsla> {
         let c = &self.session.doc.chunks[chunk];
         let changed = match c.kind {
             ChunkKind::Stable => return None,
@@ -1104,7 +1111,10 @@ impl MergeEditor {
             ChunkState::Taken(Resolution::Base) => false,
             ChunkState::Taken(Resolution::Ours) => ours,
             ChunkState::Taken(Resolution::Theirs) => !ours,
-            ChunkState::Taken(Resolution::OursThenTheirs | Resolution::TheirsThenOurs) => true,
+            // Both changes: a base line the other side changed is left out.
+            ChunkState::Taken(r @ (Resolution::OursThenTheirs | Resolution::TheirsThenOurs)) => {
+                self.session.side_line_kept(chunk, r, ours, i)
+            }
         };
         Some(if taken {
             p.bg_added
@@ -1134,7 +1144,7 @@ impl MergeEditor {
                     ChunkState::Unresolved => Some("unresolved"),
                     ChunkState::Taken(_) => None,
                 };
-                let taken = |r| state == ChunkState::Taken(r);
+                let taken = |r| self.session.is_taken(ci, r);
                 let same = c.kind == ChunkKind::Both;
                 let hints = Hints::get(cx);
                 let btn = |id: &'static str, label: &'static str, r: Resolution, active: bool| {
@@ -1142,7 +1152,8 @@ impl MergeEditor {
                         .probe(format!("merge-{id}:{ix}"))
                         .label(label)
                         .tooltip(format!(
-                            "{} in the ours / theirs panes (for the current chunk)",
+                            "{}{} in the ours / theirs panes (for the current chunk)",
+                            both_tip(r),
                             hints.take(r)
                         ))
                         .xsmall()
@@ -1244,7 +1255,7 @@ impl MergeEditor {
                         .h_full()
                         .overflow_hidden()
                         .items_center()
-                        .when_some(self.side_bg(chunk, ours, &p), |d, bg| d.bg(bg))
+                        .when_some(self.side_bg(chunk, ours, i, &p), |d, bg| d.bg(bg))
                         .child(gutter.child((start + i).to_string()))
                         .child(
                             div()
@@ -1330,6 +1341,18 @@ impl MergeEditor {
                     .relative()
                     .overflow_hidden()
                     .probe("merge-result-pane")
+                    // A press anywhere on the result (gutter, the layers over the text, a
+                    // chunk's bar) leaves the focus in the editor: what the user clicked into
+                    // is always editable, also when the editor itself didn't take the press.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                            let editor = this.editor.clone();
+                            if !editor.read(cx).focus_handle(cx).is_focused(window) {
+                                editor.update(cx, |e, cx| e.focus(window, cx));
+                            }
+                        }),
+                    )
                     .child(
                         canvas(
                             move |bounds, _, _| pane_bounds.set(Some(bounds)),
@@ -1478,8 +1501,9 @@ impl MergeEditor {
             ChunkState::Taken(Resolution::Theirs) => {
                 format!("Theirs ({})", self.session.sides.theirs)
             }
-            ChunkState::Taken(Resolution::OursThenTheirs) => "Ours, then theirs".into(),
-            ChunkState::Taken(Resolution::TheirsThenOurs) => "Theirs, then ours".into(),
+            ChunkState::Taken(r @ (Resolution::OursThenTheirs | Resolution::TheirsThenOurs)) => {
+                capitalized(self.session.both_description(ci, r))
+            }
             ChunkState::Taken(Resolution::Base) => "Base (neither change)".into(),
         };
         let auto = match c.auto_resolution() {
@@ -1487,7 +1511,7 @@ impl MergeEditor {
             None => state == ChunkState::Unresolved,
         };
         let btn = |id: &'static str, text: &'static str, r: Option<Resolution>| {
-            let active = r.is_some_and(|r| state == ChunkState::Taken(r));
+            let active = r.is_some_and(|r| self.session.is_taken(ci, r));
             Button::new((id, ci))
                 .label(text)
                 .xsmall()
@@ -1529,6 +1553,26 @@ impl MergeEditor {
             .when(!auto, |d| d.child(btn("r-reset", "Reset", None)))
             .into_any_element()
     }
+}
+
+/// What "Ours + Theirs" / "Theirs + Ours" do, for their tooltips ("" for the others).
+fn both_tip(r: Resolution) -> &'static str {
+    match r {
+        Resolution::OursThenTheirs => {
+            "Both changes — ours first where both add lines at the same place; where both \
+             changed the same lines, all of ours, then all of theirs. "
+        }
+        Resolution::TheirsThenOurs => {
+            "Both changes — theirs first where both add lines at the same place; where both \
+             changed the same lines, all of theirs, then all of ours. "
+        }
+        _ => "",
+    }
+}
+
+fn capitalized(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
 fn expand_tabs(s: &str) -> String {

@@ -178,6 +178,27 @@ fn merge_editor_saves_a_latin1_file_exactly() {
     assert_eq!(std::fs::read(d.join("a.txt")).unwrap(), b"one\nfe\xe4t\nthree\n");
 }
 
+/// A log at the end of a file: main rewrote its last line and added two entries, feat
+/// kept that line and added one — one conflict. 3 / 4 take both changes in place: the
+/// rewritten line, main's entries, feat's entry, without feat's copy of the old line in
+/// between; the header says "both changes".
+#[gitti_test::test]
+fn merge_editor_both_changes_leave_no_old_line_behind() {
+    let base = "# log\n- one\n  offset (open)\n";
+    let dir = import(&[
+        Commit { branch: "main", from: None, merge: None, msg: "init", files: &[("a.txt", base)] },
+        Commit { branch: "feat", from: Some(1), merge: None, msg: "feat", files: &[("a.txt", "# log\n- one\n  offset (open)\n- four\n")] },
+        Commit { branch: "main", from: Some(1), merge: None, msg: "main", files: &[("a.txt", "# log\n- one\n  offset (fixed)\n- two\n- three\n")] },
+    ]);
+    let d = dir.path();
+    merge_feat(d);
+    let out = gitty(d, &format!("{OPEN};press:4;dump;press:3;press:s;state"));
+    assert!(current_chunk(screens(&out)[0]).contains("Conflict · both changes"), "{out}");
+    assert!(states(&out)[0].contains("Saved a.txt"), "{out}");
+    let text = std::fs::read_to_string(d.join("a.txt")).unwrap();
+    assert_eq!(text, "# log\n- one\n  offset (fixed)\n- two\n- three\n- four\n");
+}
+
 /// ctrl-c + y quits without saving.
 #[gitti_test::test]
 fn merge_editor_quit_without_saving() {

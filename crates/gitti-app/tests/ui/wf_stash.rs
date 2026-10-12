@@ -68,7 +68,7 @@ pub fn main() {
         ("sh03_stash_including_ignored_files_and_pop", sh03_stash_including_ignored_files_and_pop),
         ("sh04_stash_keeping_the_index", sh04_stash_keeping_the_index),
         ("sh05_stash_only_the_staged_changes", sh05_stash_only_the_staged_changes),
-        ("sh05_staged_only_refused_next_to_unstaged_lines", sh05_staged_only_refused_next_to_unstaged_lines),
+        ("sh05_staged_only_refused_on_a_staged_line_changed_again", sh05_staged_only_refused_on_a_staged_line_changed_again),
         ("sh08_stash_lines_with_odd_bytes", sh08_stash_lines_with_odd_bytes),
         ("sh11_drop_one_stash_of_three", sh11_drop_one_stash_of_three),
         ("sh13_apply_conflicts_take_the_stash_side", sh13_apply_conflicts_take_the_stash_side),
@@ -79,6 +79,7 @@ pub fn main() {
         ("sh21_drop_the_stash_looked_at_from_its_menu", sh21_drop_the_stash_looked_at_from_its_menu),
         ("sh21_drop_the_stash_looked_at_in_a_terminal", sh21_drop_the_stash_looked_at_in_a_terminal),
         ("sh21_the_stash_below_stays_shown_renumbered", sh21_the_stash_below_stays_shown_renumbered),
+        ("sh22_stash_only_staged_lines_next_to_unstaged_ones", sh22_stash_only_staged_lines_next_to_unstaged_ones),
         ("sh19_pop_blocked_by_an_untracked_file", sh19_pop_blocked_by_an_untracked_file),
         ("sh20_branch_from_a_stash_blocked_by_an_untracked_file", sh20_branch_from_a_stash_blocked_by_an_untracked_file),
         ("wt08_pop_in_another_worktree", wt08_pop_in_another_worktree),
@@ -91,7 +92,11 @@ pub fn main() {
                 (Box::new(()), dir)
             }
             "sh05" if name.contains("refused") => {
-                sh::staged_only::fixture_adjacent(&dir);
+                sh::staged_only::fixture_overlap(&dir);
+                (Box::new(()), dir)
+            }
+            "sh22" => {
+                sh::staged_next_to_unstaged::fixture(&dir);
                 (Box::new(()), dir)
             }
             "sh05" => {
@@ -253,10 +258,10 @@ fn sh05_stash_only_the_staged_changes(ui: &mut Ui) {
     expect(ui, wf::expect_stashed(&dir));
 }
 
-/// SH-05: with t.txt's staged line next to an unstaged one, "Only staged changes" is
-/// refused with the reason; nothing is stashed.
+/// SH-05: with t.txt's staged line changed again in the working tree, "Only staged
+/// changes" is refused with the reason; nothing is stashed.
 /// Workflow: SH-05
-fn sh05_staged_only_refused_next_to_unstaged_lines(ui: &mut Ui) {
+fn sh05_staged_only_refused_on_a_staged_line_changed_again(ui: &mut Ui) {
     use sh::staged_only as wf;
     let dir = ui.workdir();
     if !stash_dialog(ui, Some(3)) {
@@ -267,6 +272,22 @@ fn sh05_staged_only_refused_next_to_unstaged_lines(ui: &mut Ui) {
         fail!(ui, "the refusal: status {:?}, stashes {}", st.status, st.stashes);
     }
     expect(ui, wf::expect_refused(&dir));
+}
+
+/// SH-22: staged lines right next to unstaged ones (part of an inserted block, the line
+/// below a staged one): "Only staged changes" stashes them, the unstaged lines stay.
+/// Workflow: SH-22
+fn sh22_stash_only_staged_lines_next_to_unstaged_ones(ui: &mut Ui) {
+    use sh::staged_next_to_unstaged as wf;
+    let dir = ui.workdir();
+    if !stash_dialog(ui, Some(3)) {
+        return;
+    }
+    let st = ui.ui_state();
+    if st.stashes != 1 || !st.staged.is_empty() || st.unstaged != ["b.txt", "t.txt"] {
+        fail!(ui, "after the stash: stashes {}, staged {:?}, unstaged {:?}, status {:?}", st.stashes, st.staged, st.unstaged, st.status);
+    }
+    expect(ui, wf::expect_stashed(&dir));
 }
 
 /// SH-08: the second hunk's two lines (the last line, no newline at the end) selected

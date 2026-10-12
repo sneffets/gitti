@@ -44,8 +44,84 @@ pub enum Resolution {
     Base,
     Ours,
     Theirs,
+    /// Both sides' changes ([`Chunk::combine`]), ours first where they meet.
     OursThenTheirs,
+    /// Both sides' changes, theirs first where they meet.
     TheirsThenOurs,
+}
+
+impl Resolution {
+    /// One of the two resolutions that take both sides' changes.
+    pub fn is_both(self) -> bool {
+        matches!(self, Resolution::OursThenTheirs | Resolution::TheirsThenOurs)
+    }
+}
+
+/// Both sides' changes to a chunk taken together ([`Chunk::combine`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Combined {
+    /// The resolved text (each line keeps its `\n`).
+    pub text: String,
+    /// The two sides changed different base lines, so each change was applied to the base
+    /// in place; `false`: they changed the same base lines and the result is one whole
+    /// side after the other.
+    pub merged: bool,
+    /// Per line of ours / theirs: whether it is in [`Self::text`]. Only a base line the
+    /// other side changed or deleted is left out (when merged).
+    pub kept_ours: Vec<bool>,
+    pub kept_theirs: Vec<bool>,
+}
+
+/// One side's change to a chunk's base: base lines `base` replaced by the side's lines
+/// `side` (an insertion has an empty `base` range).
+#[derive(Debug, Clone)]
+struct Edit {
+    base: Range<usize>,
+    side: Range<usize>,
+}
+
+/// A side's changes to `base`, adjacent diff operations joined into one edit.
+fn side_edits(base: &[String], side: &[String]) -> Vec<Edit> {
+    let mut out: Vec<Edit> = Vec::new();
+    for op in capture_diff_slices(Algorithm::Myers, base, side) {
+        if matches!(op, DiffOp::Equal { .. }) {
+            continue;
+        }
+        let (b, s) = (op.old_range(), op.new_range());
+        match out.last_mut() {
+            Some(e) if e.base.end == b.start && e.side.end == s.start => {
+                e.base.end = b.end;
+                e.side.end = s.end;
+            }
+            _ => out.push(Edit { base: b, side: s }),
+        }
+    }
+    out
+}
+
+/// Whether two edits of the base can't both be applied: they change a common base line, or
+/// one inserts between two base lines the other changes. Edits that only touch (one ends
+/// where the other starts) or insert at the same place don't overlap.
+fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
+    match (a.is_empty(), b.is_empty()) {
+        (true, true) => false,
+        (true, false) => b.start < a.start && a.start < b.end,
+        (false, true) => a.start < b.start && b.start < a.end,
+        (false, false) => a.start.max(b.start) < a.end.min(b.end),
+    }
+}
+
+/// The lines joined; a line without `\n` that isn't the last (a side's last line at the
+/// end of a file without a final newline) gets one, so it doesn't run into the next.
+fn join_lines<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
+    let mut out = String::new();
+    for l in lines {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(l);
+    }
+    out
 }
 
 impl Chunk {
@@ -59,16 +135,87 @@ impl Chunk {
         }
     }
 
-    pub fn lines(&self, r: Resolution) -> Vec<&str> {
-        fn s(v: &[String]) -> Vec<&str> {
-            v.iter().map(String::as_str).collect()
-        }
+    /// The chunk's text in the result for resolution `r`.
+    pub fn text(&self, r: Resolution) -> String {
         match r {
-            Resolution::Base => s(&self.base),
-            Resolution::Ours => s(&self.ours),
-            Resolution::Theirs => s(&self.theirs),
-            Resolution::OursThenTheirs => [s(&self.ours), s(&self.theirs)].concat(),
-            Resolution::TheirsThenOurs => [s(&self.theirs), s(&self.ours)].concat(),
+            Resolution::Base => join_lines(self.base.iter().map(String::as_str)),
+            Resolution::Ours => join_lines(self.ours.iter().map(String::as_str)),
+            Resolution::Theirs => join_lines(self.theirs.iter().map(String::as_str)),
+            Resolution::OursThenTheirs => self.combine(true).text,
+            Resolution::TheirsThenOurs => self.combine(false).text,
+        }
+    }
+
+    /// Both sides' changes taken together. Each side's change against the chunk's base is
+    /// a list of edits (a line diff); when no edit of one side overlaps one of the other
+    /// ([`overlaps`]), all are applied to the base in base order — ours first where both
+    /// insert at the same place if `ours_first`, theirs first otherwise; an edit both sides
+    /// made alike is applied once. A base line one side kept and the other changed is so
+    /// replaced, not kept as well. Only when both changed the same base lines is the result
+    /// one whole side, then the other.
+    pub fn combine(&self, ours_first: bool) -> Combined {
+        let one_after_other = || {
+            let (a, b) = if ours_first {
+                (&self.ours, &self.theirs)
+            } else {
+                (&self.theirs, &self.ours)
+            };
+            Combined {
+                text: join_lines(a.iter().chain(b).map(String::as_str)),
+                merged: false,
+                kept_ours: vec![true; self.ours.len()],
+                kept_theirs: vec![true; self.theirs.len()],
+            }
+        };
+        let ours = side_edits(&self.base, &self.ours);
+        let same = |t: &Edit| {
+            ours.iter().any(|o| {
+                o.base == t.base && self.ours[o.side.clone()] == self.theirs[t.side.clone()]
+            })
+        };
+        let theirs: Vec<Edit> = side_edits(&self.base, &self.theirs)
+            .into_iter()
+            .filter(|t| !same(t))
+            .collect();
+        if ours.iter().any(|o| theirs.iter().any(|t| overlaps(&o.base, &t.base))) {
+            return one_after_other();
+        }
+        // (base start, rank at equal starts, side lines, edit)
+        let mut all: Vec<(usize, bool, &[String], &Edit)> = Vec::new();
+        all.extend(ours.iter().map(|e| (e.base.start, !ours_first, &self.ours[..], e)));
+        all.extend(theirs.iter().map(|e| (e.base.start, ours_first, &self.theirs[..], e)));
+        all.sort_by_key(|(start, rank, _, _)| (*start, *rank));
+        let mut lines: Vec<&str> = Vec::new();
+        let mut at = 0;
+        for (start, _, side, e) in all {
+            // An insertion at the start of the other side's replacement, sorted after it,
+            // follows it (`start < at`); nothing else goes back.
+            if start > at {
+                lines.extend(self.base[at..start].iter().map(String::as_str));
+                at = start;
+            }
+            lines.extend(side[e.side.clone()].iter().map(String::as_str));
+            at = at.max(e.base.end);
+        }
+        lines.extend(self.base[at..].iter().map(String::as_str));
+        // A side's unchanged base line is left out where the other side changed it.
+        let kept = |side: &[String], other: &[Edit]| -> Vec<bool> {
+            let mut kept = vec![true; side.len()];
+            for op in capture_diff_slices(Algorithm::Myers, &self.base, side) {
+                if let DiffOp::Equal { old_index, new_index, len } = op {
+                    for k in 0..len {
+                        let b = old_index + k;
+                        kept[new_index + k] = !other.iter().any(|e| e.base.contains(&b));
+                    }
+                }
+            }
+            kept
+        };
+        Combined {
+            text: join_lines(lines),
+            merged: true,
+            kept_ours: kept(&self.ours, &theirs),
+            kept_theirs: kept(&self.theirs, &ours),
         }
     }
 }
@@ -117,7 +264,7 @@ impl MergeDoc {
         for (i, c) in self.chunks.iter().enumerate() {
             let start = out.len();
             match choices.get(i).copied().flatten().or(c.auto_resolution()) {
-                Some(r) => c.lines(r).iter().for_each(|l| out.push_str(l)),
+                Some(r) => out.push_str(&c.text(r)),
                 None => out.push_str(&self.chunks[i].conflict_block(labels, self.marker_size)),
             }
             let n = out[start..].split_inclusive('\n').count();
@@ -638,6 +785,99 @@ mod tests {
         // everything differs, empty base (add/add conflict)
         let c = merge_chunks("", "x\n", "y\n");
         assert_eq!(kinds(&c), vec![Conflict]);
+    }
+
+    fn conflict(base: &[&str], ours: &[&str], theirs: &[&str]) -> Chunk {
+        let v = |l: &[&str]| l.iter().map(|l| format!("{l}\n")).collect();
+        Chunk { kind: ChunkKind::Conflict, base: v(base), ours: v(ours), theirs: v(theirs) }
+    }
+
+    /// A log at the end of a file: ours rewrote its last line and added two entries, theirs
+    /// kept that line and added one. git makes one conflict of it (the changes touch);
+    /// taking both is the rewritten line, ours' entries and theirs' entry — the base line
+    /// theirs still has doesn't come back between them.
+    #[gitti_test::test]
+    fn both_sides_apply_changes_that_only_touch() {
+        let base = "# log\n- one: wip\n  offset (open)\n";
+        let ours = "# log\n- one: wip\n  offset (fixed, see\n  below)\n- two\n- three\n";
+        let theirs = "# log\n- one: wip\n  offset (open)\n- four\n";
+        let d = doc(base, ours, theirs);
+        assert_eq!(kinds(&d.chunks), vec![ChunkKind::Stable, ChunkKind::Conflict]);
+        let want = "# log\n- one: wip\n  offset (fixed, see\n  below)\n- two\n- three\n- four\n";
+        for r in [Resolution::OursThenTheirs, Resolution::TheirsThenOurs] {
+            assert_eq!(d.result_text(&[None, Some(r)], ("o", "t")), want, "{r:?}");
+        }
+        let both = d.chunks[1].combine(true);
+        assert!(both.merged);
+        assert_eq!(both.kept_ours, vec![true; 4]);
+        assert_eq!(both.kept_theirs, vec![false, true], "theirs' base line is replaced");
+    }
+
+    /// Both sides insert at the same place: both insertions, in the order asked for.
+    #[gitti_test::test]
+    fn both_sides_insert_at_the_same_place() {
+        let d = doc("1\n2\n", "1\nA\nA2\n2\n", "1\nB\n2\n");
+        use ChunkKind::*;
+        assert_eq!(kinds(&d.chunks), vec![Stable, Conflict, Stable]);
+        let pick = |r| d.result_text(&[None, Some(r), None], ("o", "t"));
+        assert_eq!(pick(Resolution::OursThenTheirs), "1\nA\nA2\nB\n2\n");
+        assert_eq!(pick(Resolution::TheirsThenOurs), "1\nB\nA\nA2\n2\n");
+        // Insertions around a line the other side changed, at its start and its end.
+        let c = conflict(&["x"], &["new", "x"], &["X", "after"]);
+        assert_eq!(c.text(Resolution::OursThenTheirs), "new\nX\nafter\n");
+        assert_eq!(c.text(Resolution::TheirsThenOurs), "X\nafter\nnew\n");
+    }
+
+    /// Both changed the same base line: no way to apply both in place, so one whole side
+    /// follows the other (as before); also an insertion inside lines the other side
+    /// replaced.
+    #[gitti_test::test]
+    fn both_sides_overlapping_changes_follow_each_other() {
+        let c = conflict(&["x"], &["ours", "o2"], &["theirs"]);
+        let both = c.combine(true);
+        assert!(!both.merged);
+        assert_eq!(both.text, "ours\no2\ntheirs\n");
+        assert_eq!(c.text(Resolution::TheirsThenOurs), "theirs\nours\no2\n");
+        assert_eq!((both.kept_ours, both.kept_theirs), (vec![true; 2], vec![true]));
+        let c = conflict(&["p", "q"], &["P", "Q"], &["p", "between", "q"]);
+        assert_eq!(c.text(Resolution::OursThenTheirs), "P\nQ\np\nbetween\nq\n");
+    }
+
+    /// One side deletes a line, the other adds one right after it (or before it): the line
+    /// goes, the addition stays. An edit both made alike is applied once.
+    #[gitti_test::test]
+    fn both_sides_deletion_next_to_insertion() {
+        let d = doc("a\nb\nc\n", "a\nc\n", "a\nb\nX\nc\n");
+        use ChunkKind::*;
+        assert_eq!(kinds(&d.chunks), vec![Stable, Conflict, Stable]);
+        for r in [Resolution::OursThenTheirs, Resolution::TheirsThenOurs] {
+            assert_eq!(d.result_text(&[None, Some(r), None], ("o", "t")), "a\nX\nc\n");
+        }
+        assert_eq!(d.chunks[1].combine(false).kept_theirs, vec![false, true]);
+        let c = conflict(&["b"], &[], &["X", "b"]);
+        assert_eq!(c.text(Resolution::OursThenTheirs), "X\n");
+        // Same rewrite of x on both sides, ours deletes y, theirs adds t after it.
+        let c = conflict(&["x", "m", "y"], &["X", "m"], &["X", "m", "y", "t"]);
+        assert_eq!(c.text(Resolution::OursThenTheirs), "X\nm\nt\n");
+        assert_eq!(c.combine(true).kept_theirs, vec![true, true, false, true]);
+    }
+
+    /// One-sided chunks: "both changes" is the one side's change, not base + change.
+    #[gitti_test::test]
+    fn both_sides_of_a_one_sided_chunk() {
+        let d = doc("a\nb\n", "a\nB\n", "a\nb\n");
+        assert_eq!(d.chunks[1].kind, ChunkKind::Ours);
+        assert_eq!(d.chunks[1].text(Resolution::TheirsThenOurs), "B\n");
+    }
+
+    /// Both sides add a last line without a final newline: taking both puts each on its own
+    /// line.
+    #[gitti_test::test]
+    fn both_sides_without_final_newline() {
+        let d = doc("a\n", "a\nb", "a\nc");
+        let pick = |r| d.result_text(&[None, Some(r)], ("o", "t"));
+        assert_eq!(pick(Resolution::OursThenTheirs), "a\nb\nc");
+        assert_eq!(pick(Resolution::TheirsThenOurs), "a\nc\nb");
     }
 
     #[gitti_test::test]
