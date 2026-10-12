@@ -89,19 +89,28 @@ fn br06_stash_and_switch_whose_reapply_conflicts() {
     wf::expect_conflicted(&d, &s).unwrap();
 }
 
-/// BR-09: 200 untracked files feat tracks: the dialog lists some and says how many more;
-/// Stash & Switch puts them all into one stash; keep.txt stays.
+/// BR-09: more untracked files feat tracks than the dialog lists: it lists some and says
+/// how many more; Stash & Switch puts them all into one stash; keep.txt stays. The
+/// question is answered as soon as it shows, as a quick user would — not after the
+/// refresh that follows the refused switch.
 /// Workflow: BR-09
 #[gitti_test::test]
 fn br09_many_blocking_untracked_files_go_into_one_stash() {
     use br::many_untracked as wf;
     let (_tmp, d) = repo_dir();
     wf::fixture(&d);
-    let out = run(&d, &format!("{}dump;key:s;state", switch(wf::TARGET)));
+    let script = format!(
+        "press:b;{}press:enter;until:Switch to {}?;dump;key:s;state",
+        presses(wf::TARGET),
+        wf::TARGET
+    );
+    let out = run(&d, &script);
     let screen = screens(&out)[0];
-    assert!(screen.contains("gen/out-000.txt") && screen.contains("… and 192 more"), "{out}");
+    // The dialog lists eight.
+    let more = format!("… and {} more", wf::COUNT - 8);
+    assert!(screen.contains(&wf::path(0)) && screen.contains(&more), "{out}");
     let st = states(&out);
-    assert!(status_of(st[0]).contains("200 untracked paths saved in stash"), "{out}");
+    assert!(status_of(st[0]).contains(&format!("{} untracked paths saved in stash", wf::COUNT)), "{out}");
     no_error(st[0], &out);
     wf::expect(&d).unwrap();
 }
