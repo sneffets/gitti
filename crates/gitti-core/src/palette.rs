@@ -139,6 +139,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("TrackWithLfs", "Track with Git LFS…"),
     both("EditGitattributes", "Edit .gitattributes…"),
     both("RenormalizeLineEndings", crate::renormalize::MENU_LABEL),
+    both("CleanUntrackedIgnored", crate::clean::MENU_LABEL),
     // Paths this file system can't hold (`fs_paths`): the note, hide (skip-worktree),
     // the undo.
     both("FsPaths", "Paths This File System Can't Hold…"),

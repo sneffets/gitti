@@ -38,6 +38,7 @@ use crate::theme::Palette;
 
 mod branch_cmds;
 mod change_search;
+mod clean;
 mod commit_box;
 mod commit_flow;
 mod commit_lines;

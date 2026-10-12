@@ -23,7 +23,7 @@ use crate::probe::ProbeExt as _;
 use crate::rows::Src;
 use crate::theme::PaletteExt as _;
 use crate::{
-    About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, ChangeCommitEncoding, CreateBranch, CreateTag, EditGitattributes,
+    About, AddRemote, AddToGitignore, ApplyStash, ApplyStashIndex, ChangeCommitEncoding, CleanUntrackedIgnored, CreateBranch, CreateTag, EditGitattributes,
     EditGitignore, EditGlobalConfig, EditRepoConfig, GlobalGitSettings, GoToWorkingDirectory,
     MergeBranch, OpenInFileManager, OpenTerminal, PopStash, PopStashIndex, RenormalizeLineEndings,
     RepoGitSettings, RepositoryStatistics, StartupTimings,
@@ -126,6 +126,7 @@ impl GittiApp {
         .on_action(cx.listener(|this, _: &RenormalizeLineEndings, w, cx| {
             this.renormalize_dialog(w, cx)
         }))
+        .on_action(cx.listener(|this, _: &CleanUntrackedIgnored, w, cx| this.clean_dialog(w, cx)))
         .on_action(cx.listener(|this, _: &AddToGitignore, w, cx| {
             let row = this.diff_cursor_row();
             this.ignore_dialog_for_row(row, w, cx)
@@ -267,6 +268,10 @@ impl GittiApp {
                 |t, w, cx| t.renormalize_dialog(w, cx),
             )
             .act(&RenormalizeLineEndings),
+            entry(gitti_core::clean::MENU_LABEL, gitti_core::clean::PALETTE_DETAIL, |t, w, cx| {
+                t.clean_dialog(w, cx)
+            })
+            .act(&CleanUntrackedIgnored),
             keyed(
                 if self.amend {
                     "Amend: off"

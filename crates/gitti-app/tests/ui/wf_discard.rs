@@ -1,5 +1,6 @@
-//! Workflow tests of discarding many files, a file that can't be deleted and lines of a
-//! read-only file (catalog: `crates/gitti-workflow/WORKFLOWS.md`, DC-04, DC-06, DC-09),
+//! Workflow tests of discarding many files, a file that can't be deleted, lines of a
+//! read-only file and Clean Untracked / Ignored Files… (catalog:
+//! `crates/gitti-workflow/WORKFLOWS.md`, DC-04, DC-06, DC-09, DC-10),
 //! driven through gitti's views: each scenario starts from the workflow's fixture
 //! (`gitti_workflow::dc`), takes the user's steps (Discard All, a line selection and
 //! Discard Selection, the questions they ask), checks what the app shows (lists, the
@@ -36,8 +37,10 @@ pub fn main() {
         std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
     }
     #[allow(unused_mut)]
-    let mut tests: Vec<(&str, Scenario)> =
-        vec![("dc04_discard_thousands_of_untracked_files", dc04_discard_thousands_of_untracked_files)];
+    let mut tests: Vec<(&str, Scenario)> = vec![
+        ("dc04_discard_thousands_of_untracked_files", dc04_discard_thousands_of_untracked_files),
+        ("dc10_clean_untracked_and_ignored_files", dc10_clean_untracked_and_ignored_files),
+    ];
     #[cfg(unix)]
     tests.extend([
         ("dc06_a_file_that_cannot_be_deleted", dc06_a_file_that_cannot_be_deleted as Scenario),
@@ -47,6 +50,7 @@ pub fn main() {
         let dir: PathBuf = base.join(name);
         match &name[..4] {
             "dc04" => dc::thousands_of_untracked::fixture(&dir),
+            "dc10" => dc::clean::fixture(&dir),
             #[cfg(unix)]
             "dc06" => dc::cannot_delete::fixture(&dir),
             #[cfg(unix)]
@@ -182,6 +186,67 @@ fn dc09_discard_lines_of_a_read_only_file(ui: &mut Ui) {
     let s = ui.ui_state();
     if s.unstaged != [wf::FILE] || s.status.as_ref().is_some_and(|s| s.1) {
         fail!(ui, "after discarding the line: unstaged {:?}, status {:?}", s.unstaged, s.status);
+    }
+    expect(ui, wf::expect(&dir));
+}
+
+/// DC-10: the palette's Clean Untracked / Ignored Files… opens on Untracked (only those
+/// boxes shown, ticked but the nested repository); Untracked and Ignored shows the ignored
+/// entries unticked with their rules; `target/` ticked, the live text and OK count the
+/// files; Delete: the status line says what went, the nested repository is still listed.
+/// Workflow: DC-10
+fn dc10_clean_untracked_and_ignored_files(ui: &mut Ui) {
+    use dc::clean as wf;
+    use gitti_core::clean::TITLE;
+    let dir = ui.workdir();
+    ui.step("palette:clean untracked");
+    match ui.modal() {
+        Some((t, _)) if t == TITLE => {}
+        other => return fail!(ui, "Clean…: {other:?}"),
+    }
+    let ws = ui.ws.clone();
+    let checks = ui.cx.update(|cx| gitti_app::testing_menus::modal_checks(&ws, cx));
+    let paths: Vec<&str> = checks.iter().map(|c| c.0.split(' ').next().unwrap_or_default()).collect();
+    if paths != wf::ENTRIES {
+        return fail!(ui, "Clean… lists {paths:?}, want {:?}", wf::ENTRIES);
+    }
+    let shown = |checks: &[(String, bool, bool)]| -> Vec<String> {
+        checks.iter().filter(|c| c.2).map(|c| format!("{}{}", if c.1 { "+" } else { "-" }, c.0)).collect()
+    };
+    let want = [
+        "+new.txt",
+        "+notes/ (2 files)",
+        "-vendor/lib/ — separate repository (own .git)",
+    ];
+    if shown(&checks) != want {
+        fail!(ui, "Untracked shows {:?}, want {want:?}", shown(&checks));
+    }
+    let text = ui.cx.update(|cx| testing::modal_message(&ws, cx)).unwrap_or_default();
+    if !text.contains("don't go to the trash") || !text.contains(".env") {
+        fail!(ui, "Clean…'s text: {text:?}");
+    }
+    ui.step("option:2");
+    let checks = ui.cx.update(|cx| gitti_app::testing_menus::modal_checks(&ws, cx));
+    let all = shown(&checks);
+    if all.len() != wf::ENTRIES.len() || !all.contains(&"-.env — ignored by .git/info/exclude:1: .env".to_string()) {
+        fail!(ui, "Untracked and Ignored shows {all:?}");
+    }
+    ui.step(&format!("check:{}", wf::TARGET));
+    match ui.cx.update(|cx| gitti_app::testing_menus::modal_live(&ws, cx)) {
+        Some((text, Some(ok), None, _))
+            if text == "Deletes 3 untracked files and 2 ignored files. This can't be undone."
+                && ok == "Delete 5 Files" => {}
+        other => fail!(ui, "live after ticking target/: {other:?}"),
+    }
+    ui.step("modalok");
+    ui.settle();
+    let s = ui.ui_state();
+    match &s.status {
+        Some((text, false)) if text == "Cleaned: deleted 5 files (new.txt)" => {}
+        other => fail!(ui, "after Delete: status {other:?}"),
+    }
+    if s.unstaged != ["vendor/lib/"] {
+        fail!(ui, "after Delete: unstaged {:?}", s.unstaged);
     }
     expect(ui, wf::expect(&dir));
 }

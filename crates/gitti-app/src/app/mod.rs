@@ -5,6 +5,7 @@
 
 mod branch_list;
 mod change_search;
+mod clean;
 mod commit_box;
 mod commit_lines;
 mod commit_list;

@@ -381,6 +381,9 @@ impl App {
                 "git add --renormalize — after .gitattributes or core.autocrlf changed",
                 |app: &mut App| app.renormalize_dialog(),
             ),
+            PickItem::new(gitti_core::clean::MENU_LABEL, gitti_core::clean::PALETTE_DETAIL, |app: &mut App| {
+                app.clean_dialog()
+            }),
             PickItem::new("Start-up Timings…", "", |app: &mut App| {
                 let records = gitti_core::startup::load();
                 let text = gitti_core::startup::format_all(&records, &crate::app::local_time);

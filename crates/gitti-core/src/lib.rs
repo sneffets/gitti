@@ -12,6 +12,7 @@ pub mod branch_order;
 pub mod branch_update;
 pub mod caps;
 pub mod change_search;
+pub mod clean;
 pub mod clone_source;
 pub mod commit_cache;
 pub mod commit_encoding;

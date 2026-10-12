@@ -1363,6 +1363,14 @@ pub mod testing_menus {
         ws.read(cx).script_app()?.read(cx).script_modal_option()
     }
 
+    /// The check boxes of the open dialog: label, ticked, shown for the chosen option.
+    pub fn modal_checks(ws: &Entity<Workspace>, cx: &App) -> Vec<(String, bool, bool)> {
+        ws.read(cx)
+            .script_app()
+            .map(|a| a.read(cx).script_modal_checks())
+            .unwrap_or_default()
+    }
+
     /// Whether the active tab shows a repository (else the start / "not a repository" page).
     pub fn has_repo(ws: &Entity<Workspace>, cx: &App) -> bool {
         ws.read(cx)
@@ -1411,6 +1419,7 @@ actions!(
         TrackWithLfs,
         EditGitattributes,
         RenormalizeLineEndings,
+        CleanUntrackedIgnored,
         RepoGitSettings,
         GlobalGitSettings,
         ChangeCommitEncoding,
@@ -1776,6 +1785,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action("Track with Git LFS…", TrackWithLfs),
                 MenuItem::action("Edit .gitattributes…", EditGitattributes),
                 MenuItem::action(gitti_core::renormalize::MENU_LABEL, RenormalizeLineEndings),
+                MenuItem::action(gitti_core::clean::MENU_LABEL, CleanUntrackedIgnored),
                 MenuItem::separator(),
                 MenuItem::action("Paths This File System Can't Hold…", FsPaths),
                 MenuItem::action("Hide Paths This File System Can't Hold", HideFsPaths),
