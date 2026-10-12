@@ -72,6 +72,7 @@ pub mod push;
 pub mod redact;
 pub mod renormalize;
 pub mod reflog;
+pub mod reftable;
 pub mod raw_names;
 pub mod reach;
 pub mod rebase_note;

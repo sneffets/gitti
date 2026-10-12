@@ -331,7 +331,7 @@ fn collect(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<Submodule>) {
     if modules.is_empty() {
         return;
     }
-    let Ok(repo) = gix::open(dir) else {
+    let Ok(repo) = crate::reftable::open(dir) else {
         return;
     };
     let Ok(index) = repo.index_or_empty() else {
@@ -357,7 +357,7 @@ fn collect(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<Submodule>) {
         let sub_repo = sub_dir
             .join(".git")
             .exists()
-            .then(|| gix::open(&sub_dir).ok())
+            .then(|| crate::reftable::open(&sub_dir).ok())
             .flatten();
         let checked_out = sub_repo
             .as_ref()
@@ -518,7 +518,7 @@ pub fn local_work(top: &Path, list: &[Submodule], path: &str) -> Vec<LocalWork> 
         .filter(|s| s.path == path || s.path.starts_with(&prefix))
         .filter(|s| s.checked_out.is_some())
         .filter_map(|s| {
-            let repo = gix::open(s.dir(top)).ok();
+            let repo = crate::reftable::open(&s.dir(top)).ok();
             let (unpushed, stash) = repo.as_ref().map(unpushed_and_stash).unwrap_or_default();
             let w = LocalWork {
                 path: s.path.clone(),
@@ -619,7 +619,7 @@ pub fn history(top: &Path, sm: &Submodule, limit: usize) -> Result<Vec<Submodule
     if sm.checked_out.is_none() || !dir.join(".git").exists() {
         anyhow::bail!("{} is not initialised — Update checks it out", sm.path);
     }
-    let repo = gix::open(&dir)?;
+    let repo = crate::reftable::open(&dir)?;
     let mut names: std::collections::HashMap<ObjectId, Vec<String>> = Default::default();
     let mut tips: Vec<ObjectId> = Vec::new();
     if let Ok(refs) = repo.references() {
@@ -698,7 +698,7 @@ pub fn checkout_risks(top: &Path, list: &[Submodule], path: &str, target: Object
                 .to_string(),
         );
     }
-    let Ok(repo) = gix::open(sm.dir(top)) else {
+    let Ok(repo) = crate::reftable::open(&sm.dir(top)) else {
         return out;
     };
     let detached = repo.head().is_ok_and(|h| h.is_detached());

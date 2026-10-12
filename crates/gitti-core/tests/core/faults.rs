@@ -207,3 +207,29 @@ fn a_short_file_read_is_an_error() {
     let texts = r.read_versions(&req).unwrap();
     assert_eq!(texts, [Some("one\n".to_string()), Some("two\n".to_string()), None]);
 }
+
+/// The ref snapshot of a reftable repository (`gitti_core::reftable`, rewritten when the
+/// refs changed): a `for-each-ref` that failed or came back short is an error — never a
+/// repository without branches or with an unborn HEAD — and the next read asks again.
+#[gitti_test::test]
+fn a_failed_ref_snapshot_is_not_kept() {
+    use gitti_core::caps::{GitCaps, REFTABLE};
+    if !GitCaps::get().at_least(REFTABLE) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let p = gitti_core::paths::canonical(tmp.path()).join("r");
+    std::fs::create_dir_all(&p).unwrap();
+    sh(&p, &["init", "-q", "-b", "main", "--ref-format=reftable"]);
+    let mut h = History::new();
+    let root = h.commit("main", &[], "init", &[("a.txt", f("1\n"))]);
+    h.commit("side", &[root], "side", &[("b.txt", f("b\n"))]);
+    h.import(&p);
+    let r = Repo::open(&p).unwrap();
+    for fault in failing().into_iter().chain([Fault::Truncate(30)]) {
+        let _f = inject(&p, "for-each-ref", fault, 1);
+        assert!(r.refs().is_err(), "{fault:?}");
+    }
+    assert_eq!(r.refs().unwrap().len(), 2);
+    assert_eq!(r.head().unwrap().branch.as_deref(), Some("main"));
+}
