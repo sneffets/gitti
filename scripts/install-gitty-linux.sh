@@ -6,17 +6,19 @@
 #                                           # (`cargo install --list`, `cargo uninstall gitty`)
 # --locked keeps the pins of Cargo.lock (cc 1.2.x for tree-sitter-sequel); `cargo install`
 # would otherwise resolve the newest versions.
+# Below 12 GB of RAM it builds without LTO (profile `release-lowmem`, scripts/build-profile.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/build-profile.sh
 case "${1:-}" in
   --cargo)
-    cargo install --locked --path crates/gitty
+    cargo install --locked --profile "$PROFILE" --path crates/gitty
     echo "installed gitty into ${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin (make sure it is on PATH)"
     ;;
   "")
-    cargo build --release --locked -p gitty
+    cargo build --profile "$PROFILE" --locked -p gitty
     mkdir -p "$HOME/.local/bin"
-    install -m755 target/release/gitty "$HOME/.local/bin/gitty"
+    install -m755 "target/$PROFILE/gitty" "$HOME/.local/bin/gitty"
     # Licences shipped with the binary (gitty --licenses prints its third-party part too).
     DOC="${XDG_DATA_HOME:-$HOME/.local/share}/doc/gitty"
     for f in COPYING LICENSE-MIT LICENSE-APACHE licenses/THIRD-PARTY-LICENSES.txt; do

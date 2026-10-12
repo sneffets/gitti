@@ -90,6 +90,7 @@ build -p gitty` — use those (or run `target/debug/gitti` / `gitty` after them)
 ```bash
 cargo run --release -p gitti-app -- /path/to/repo   # binary is `gitti`; default repo = cwd
 cargo run --release -p gitty -- /path/to/repo       # TUI; binary is `gitty`
+cargo build --profile release-lowmem -p gitti-app -p gitty  # release under 12 GB RAM (no LTO); install scripts pick it themselves
 cargo test --workspace --no-fail-fast               # the whole suite (~5 min; without the flag it stops at the first red binary)
 cargo test --workspace --test core -- staging::     # core integration tests of one module (temp repos)
 cargo test --workspace --lib -- <name>              # unit tests (highlight, store, …)
@@ -115,6 +116,13 @@ Don't pipe a build into `tail` and then run the binary — a failed build leaves
   `licenses/THIRD-PARTY-LICENSES.txt` (the third-party licence list both apps embed; it
   also fails on a dependency that isn't GPL-3.0-compatible). A test fails until it's done.
 - Dev profile builds dependencies with `opt-level = 3`, own crates with `opt-level = 1`.
+- Release is fat LTO + one codegen unit: its last step for gitti needs more than 6 GB in a
+  single rustc (OOM-killed on an 8 GB machine). `release-lowmem` (no LTO, peak under 2 GB,
+  target/release-lowmem/) is for such machines; `scripts/build-profile.sh` makes the
+  Linux install scripts take it below 12 GB RAM (`GITTI_BUILD_PROFILE` overrides).
+- Some test code is compiled on Linux only (`tests/core/linux_env.rs`, `cfg(target_os =
+  "linux")` blocks): a signature change made on macOS breaks it unnoticed — run the suite on
+  Linux now and then.
 
 ## Architecture
 
@@ -220,7 +228,11 @@ The app is scriptable via `GITTI_SCRIPT` (`crates/gitti-app/src/script.rs` lists
   added automatically). `shot:` does not work on Linux (`render_to_image` unimplemented).
   Linux screenshots instead: run under XWayland (`env -u WAYLAND_DISPLAY`, the window opens
   on screen with a mutter frame) and grab it with ImageMagick: `import -window $(xwininfo
-  -root -tree | grep '"io.github.sneffets.gitti"' | awk '{print $1}') out.png` (1:1 px).
+  -root -tree | grep '"io.github.sneffets.gitti' | head -1 | awk '{print $1}') out.png` (1:1 px).
+- Debug builds have the app id `io.github.sneffets.gitti.Devel` (release: without `.Devel`)
+  and write their own desktop entry "gitti (dev)" and icons into `~/.local/share` at start
+  (`app_icon::register_dev_build`; not in scripted runs): the GNOME dock shows our icon for
+  them, as an entry apart from an installed gitti.
 - Several heavy cargo commands at once (e.g. builds in parallel worktree slots) can exhaust
   memory: `scripts/heavy.sh` runs them one at a time (4 jobs; `--all` for the full suite).
 - Key bindings use `secondary-` (cmd on macOS, ctrl elsewhere), not `cmd-`.

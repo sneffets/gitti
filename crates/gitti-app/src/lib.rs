@@ -142,6 +142,11 @@ pub fn run() {
     // Started from Finder / Dock: PATH etc. as in the user's terminal.
     shell_env::import_login_env();
     gitti_core::startup::mark("login environment read");
+    // A debug build's dock entry "gitti (dev)" with our icon (Linux; before the window opens,
+    // so the shell finds it for the window's app_id).
+    if !scripted {
+        app_icon::register_dev_build();
+    }
     // The git version probe (one process start, slow under a virus scanner) runs while
     // the GPU and the window come up; the first tab's `Repo::open` would wait for it.
     std::thread::spawn(|| {
