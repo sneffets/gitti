@@ -346,6 +346,11 @@ pub fn forge_repo_of(name: &str, url: &str, known: &dyn Fn(&str) -> Option<HostE
     path_fits(repo.forge, &repo.path).then_some(repo)
 }
 
+/// A remote's URLs: fetch, then every push URL.
+fn urls(r: &RemoteInfo) -> impl Iterator<Item = &String> {
+    std::iter::once(&r.fetch_url).chain(&r.push_urls).chain(std::iter::once(&r.push_url))
+}
+
 /// The remotes in the order they are looked at: `origin`, `upstream`, the others.
 fn ranked(remotes: &[RemoteInfo]) -> Vec<&RemoteInfo> {
     let rank = |r: &RemoteInfo| match r.name.as_str() {
@@ -367,9 +372,9 @@ pub fn forge_repo(remotes: &[RemoteInfo]) -> Option<ForgeRepo> {
 
 /// [`forge_repo`] with `known` in place of the settings db (tests).
 pub fn forge_repo_with(remotes: &[RemoteInfo], known: &dyn Fn(&str) -> Option<HostEntry>) -> Option<ForgeRepo> {
-    ranked(remotes).into_iter().find_map(|r| {
-        forge_repo_of(&r.name, &r.fetch_url, known).or_else(|| forge_repo_of(&r.name, &r.push_url, known))
-    })
+    ranked(remotes)
+        .into_iter()
+        .find_map(|r| urls(r).find_map(|url| forge_repo_of(&r.name, url, known)))
 }
 
 /// The first remote on a server whose kind the user can set ("Server Kind of …"): not a
@@ -384,7 +389,7 @@ pub fn self_hosted_server_with(
     known: &dyn Fn(&str) -> Option<HostEntry>,
 ) -> Option<(ForgeRepo, Option<HostEntry>)> {
     ranked(remotes).into_iter().find_map(|r| {
-        [&r.fetch_url, &r.push_url].into_iter().find_map(|url| {
+        urls(r).find_map(|url| {
             let u = parse_remote_url(url)?;
             if well_known(&u.host).is_some() {
                 return None;
