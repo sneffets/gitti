@@ -298,6 +298,10 @@ impl App {
         if let Some(info) = info {
             self.set_info(info);
         }
+        // A remote: its URL in the status line (gitti: its tooltip).
+        if let Some(urls) = self.side_remote_urls() {
+            self.set_info(urls);
+        }
         if let Some(row) = self
             .sidebar
             .get(self.side_cursor)
@@ -306,6 +310,16 @@ impl App {
             self.select_row(row);
             self.commit_offset = row.saturating_sub(self.areas.commit_rows() / 3);
         }
+    }
+
+    /// The selected sidebar remote's URLs on one line (fetch / push when they differ),
+    /// credentials masked; `None` on other entries.
+    fn side_remote_urls(&self) -> Option<String> {
+        let Some(SideItem::Remote { name }) = self.sidebar.get(self.side_cursor) else {
+            return None;
+        };
+        let remote = self.remotes.iter().find(|r| &r.name == name)?;
+        Some(format!("{name}: {}", remote.url_lines().join(" · ")))
     }
 
     fn activate_side_item(&mut self) {

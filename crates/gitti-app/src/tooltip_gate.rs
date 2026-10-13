@@ -44,6 +44,8 @@ struct Gate {
     outside: HashSet<WindowId>,
     /// Tooltip views made visible (for tests).
     shown: usize,
+    /// The text of the last tooltip [`text`] built (for tests).
+    last_text: Option<String>,
 }
 
 impl Gate {
@@ -234,4 +236,20 @@ pub fn shown_tooltips(cx: &App) -> (usize, usize) {
         .filter(|(id, t, _)| t.upgrade().is_some() && !gate.hidden.contains(id))
         .count();
     (gate.shown, live)
+}
+
+/// A plain text tooltip for `.tooltip(…)`, remembering its text when it is built (on
+/// hover, after the delay) so tests can read what a hover showed ([`last_text`]).
+pub fn text(tip: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    move |window, cx| {
+        if cx.has_global::<Gate>() {
+            cx.global_mut::<Gate>().last_text = Some(tip.clone());
+        }
+        Tooltip::new(tip.clone()).build(window, cx)
+    }
+}
+
+/// The text of the last tooltip [`text`] built (tests).
+pub fn last_text(cx: &App) -> Option<String> {
+    cx.try_global::<Gate>().and_then(|g| g.last_text.clone())
 }

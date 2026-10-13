@@ -4,7 +4,7 @@
 //! as before once the menu is closed. Covers gpui's own tooltips (sidebar worktree rows,
 //! the commit list's worktree labels) and the "managed" button tooltips (split button). No
 //! tooltip after the pointer left the window or the window was deactivated while the delay
-//! ran, and a tooltip that is up goes away then.
+//! ran, and a tooltip that is up goes away then. A remote's sidebar row shows its URLs.
 //!
 //! Own `main` like `layout.rs`: `cargo test --workspace --test ui -- tooltips[::FILTER]`.
 // Some helpers are used only by the unix-only scenarios.
@@ -40,11 +40,16 @@ pub fn main() {
         ("split_button_dropdown", split_button_dropdown),
         ("context_menu", context_menu),
         ("left_window", left_window),
+        ("remote_url", remote_url),
     ];
     common::run_with(tests, |name| {
         let dir = base().join(name);
         let repo = if name == "split_button_dropdown" {
             make_merge_repo(&dir)
+        } else if name == "remote_url" {
+            let d = make_repo(&dir);
+            append_config(&d, REMOTES);
+            d
         } else {
             // In a subdir: the worktrees beside it stay this scenario's own.
             let d = make_repo(&dir.join("repo"));
@@ -55,6 +60,13 @@ pub fn main() {
         rooted_ui(&repo)
     });
 }
+
+/// `remote_url`'s remotes, written into `.git/config`: one URL; a separate push URL;
+/// credentials in the URL; two URLs (git fetches from the first, pushes to both).
+const REMOTES: &str = "[remote \"origin\"]\n\turl = https://example.com/team/app.git\n\
+    [remote \"fork\"]\n\turl = https://example.com/me/app.git\n\tpushurl = git@example.com:me/app.git\n\
+    [remote \"secret\"]\n\turl = https://jane:s3cret-pw@example.com/team/app.git\n\
+    [remote \"mirror\"]\n\turl = https://a.example/app.git\n\turl = https://b.example/app.git\n";
 
 /// [`Ui::new`], but the window's root is gpui-kit's `Root` as in the app
 /// (`gpui_kit::open_window`): it holds the overlay that shows the button tooltips.
@@ -444,4 +456,36 @@ fn left_window(ui: &mut Ui) {
             "no tooltip after moving in the window again: shown {shown3} → {shown4}, up {live}"
         );
     }
+}
+
+/// A remote's sidebar row shows its URL on hover — fetch and push URLs apart when they
+/// differ, every push URL, credentials masked — and the hover runs no git.
+fn remote_url(ui: &mut Ui) {
+    let cases = [
+        ("origin", "https://example.com/team/app.git"),
+        ("fork", "Fetch: https://example.com/me/app.git\nPush: git@example.com:me/app.git"),
+        ("secret", "https://jane:***@example.com/team/app.git"),
+        (
+            "mirror",
+            "Fetch: https://a.example/app.git\nPush: https://a.example/app.git\nPush: https://b.example/app.git",
+        ),
+    ];
+    let away = point(px(700.), px(400.));
+    let git = ui.n_git();
+    for (name, want) in cases {
+        let Some(at) = center(ui, &format!("side:remote:{name}")) else {
+            let names: Vec<String> = ui.frame().into_iter().map(|p| p.name).collect();
+            let side: Vec<&String> = names.iter().filter(|n| n.starts_with("side:")).collect();
+            fail!(ui, "no sidebar row of the remote {name}: {side:?}");
+            return;
+        };
+        hover_at(ui, away, 300);
+        hover_at(ui, at, 700);
+        let (_, live, _) = tooltips(ui);
+        let text = ui.cx.update(|cx| testing::last_tooltip_text(cx));
+        if live != 1 || text.as_deref() != Some(want) {
+            fail!(ui, "hover on {name}: up {live}, tooltip {text:?}, want {want:?}");
+        }
+    }
+    ui.no_git_since(git, "hovering the remotes");
 }

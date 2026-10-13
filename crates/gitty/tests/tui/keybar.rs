@@ -118,18 +118,21 @@ fn the_bar_lists_the_menu_of_the_sidebar_selection() {
 }
 
 /// `o` pages through what doesn't fit ("o more k/n" at the right) and wraps around;
-/// another selection starts at the first page again.
+/// another selection starts at the first page again. A remote's URL covers the bar when
+/// it is selected: the first `o` only uncovers it.
 #[gitti_test::test]
 fn o_pages_the_bar_and_a_new_selection_starts_over() {
     let dir = bar_repo();
-    // origin (row 6), six pages forward, then origin/main.
+    // origin (row 6), its URL uncovered, six pages forward, then origin/main.
     let script = format!(
-        "press:backtab;press:g;{}dump;{}press:o;press:j;dump",
+        "press:backtab;press:g;{}dump;press:o;dump;{}press:o;press:j;dump",
         "press:j;".repeat(6),
         "press:o;dump;".repeat(6)
     );
     let out = gitty_with(dir.path(), tempfile::tempdir().unwrap().path(), "80x30", &script);
-    let s = screens(&out);
+    let all = screens(&out);
+    assert!(status_line(all[0]).contains("origin: ") && status_line(all[0]).contains("origin.git"), "{out}");
+    let s = &all[1..];
     let pages: Vec<(usize, usize)> = s[..7]
         .iter()
         .map(|screen| {

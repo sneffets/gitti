@@ -484,6 +484,11 @@ pub mod testing {
         (shown, live, crate::tooltip_gate::menu_open(cx))
     }
 
+    /// The text of the last plain text tooltip built by a hover (`tooltip_gate::text`).
+    pub fn last_tooltip_text(cx: &App) -> Option<String> {
+        crate::tooltip_gate::last_text(cx)
+    }
+
     /// The labels of the context-menu entries built since the last call (the sidebar menus
     /// against `gitti_core::sidebar_menus`).
     pub fn menu_labels() -> Vec<String> {

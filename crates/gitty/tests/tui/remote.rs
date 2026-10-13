@@ -1,6 +1,7 @@
 //! Remote operations against local bare repositories: f / p / P, pull and the main push
 //! without an upstream run no git but offer the remotes, the Push… dialog to two remotes,
 //! the error mark of a failed pull until the next operation, and the askpass prompt.
+//! A remote selected in the sidebar shows its URLs in the status line.
 
 use crate::common;
 use crate::support;
@@ -430,4 +431,35 @@ fn reset_remote_branch_from_the_palette() {
     assert_eq!(rev(d, "main"), two, "the local branch stays");
     let push = format!("push --force-with-lease=refs/heads/main:{two} origin {base}:refs/heads/main");
     assert!(cmds(&out)[0].contains(&push), "{out}");
+}
+
+/// A remote selected in the sidebar shows its URLs in the status line (gitti: its
+/// tooltip) — fetch and push apart when they differ, every push URL, credentials masked —
+/// and selecting it runs no git. Rows: BRANCHES, main, WORKTREES, the repository,
+/// REMOTES, fork, mirror, origin, secret (written into `.git/config`).
+#[gitti_test::test]
+fn selected_remote_shows_its_url() {
+    let dir = fixture(&[("a.txt", "a\n")], &[]);
+    let d = dir.path();
+    add_config(
+        d,
+        "[remote \"origin\"]\n\turl = https://example.com/team/app.git\n\
+         [remote \"fork\"]\n\turl = https://example.com/me/app.git\n\tpushurl = git@example.com:me/app.git\n\
+         [remote \"secret\"]\n\turl = https://jane:s3cret-pw@example.com/team/app.git\n\
+         [remote \"mirror\"]\n\turl = https://a.example/app.git\n\turl = https://b.example/app.git\n",
+    );
+    let out = gitty(d, "press:backtab;press:g;press:j;press:j;press:j;press:j;wait;cmds;press:j;state;press:j;state;press:j;state;press:j;state;cmds");
+    let st = states(&out);
+    let want = [
+        "fork: Fetch: https://example.com/me/app.git · Push: git@example.com:me/app.git",
+        "mirror: Fetch: https://a.example/app.git · Push: https://a.example/app.git · Push: https://b.example/app.git",
+        "origin: https://example.com/team/app.git",
+        "secret: https://jane:***@example.com/team/app.git",
+    ];
+    for (s, w) in st.iter().zip(want) {
+        assert!(s.contains("focus=Sidebar") && s.contains(&format!("status=\"{w}\"")), "{w}: {out}");
+    }
+    assert_eq!(st.len(), 4, "{out}");
+    assert!(!out.contains("s3cret"), "{out}");
+    assert_eq!(cmds(&out)[1], Vec::<String>::new(), "selecting remotes ran git: {out}");
 }

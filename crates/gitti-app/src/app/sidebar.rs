@@ -655,6 +655,9 @@ impl GittiApp {
         let remote = remote.clone();
         let name = remote.name.clone();
         let head = self.head.branch.clone();
+        // Its URL (fetch / push when they differ), credentials masked; from the refresh,
+        // no git on hover.
+        let tip = remote.url_lines().join("\n");
         self.sidebar_row(key.clone(), 1, p)
             .cursor_pointer()
             .child(
@@ -664,6 +667,7 @@ impl GittiApp {
                     .child(if collapsed { "▸" } else { "▾" }),
             )
             .child(div().truncate().font_weight(FontWeight::MEDIUM).child(name))
+            .tooltip(crate::tooltip_gate::text(tip))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if !this.collapsed.remove(&key) {
                     this.collapsed.insert(key.clone());
