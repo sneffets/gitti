@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 use gitti_core::Repo;
-use gitti_core::tab_marks::{self, Mark, Marks, PushTarget, Unpushed};
+use gitti_core::tab_marks::{self, Mark, Marks, MarksStore, PushTarget, Unpushed};
 use gitti_core::worktree::AddMode;
 
 use crate::fx::{self, Import, put};
@@ -145,7 +145,8 @@ fn a_local_upstream_compares_with_that_branch() {
 
 /// The sidebar's worktree entries: the other worktrees' marks — one `git status` in each,
 /// unpushed commits counted in-process from the shared refs; the current one left out
-/// (its own come with the refresh).
+/// (its own come with the refresh). The repository's mark takes in those without a tab
+/// of their own, naming each.
 /// Workflow: WT-06
 #[gitti_test::test]
 fn other_worktrees_get_their_own_marks() {
@@ -200,6 +201,30 @@ fn other_worktrees_get_their_own_marks() {
     );
     assert_eq!(m.mark(), Some(Mark::Uncommitted));
     assert_eq!(m.describe(), "Uncommitted changes in 1 file: 1 untracked");
+
+    // The repository's mark (its tab's, gitty's top line) takes them in: clean and pushed
+    // itself, filled from `loose`, each line naming its worktree (uncommitted first).
+    let mut store = MarksStore::default();
+    let own = Marks::of(&snap.working.status, snap.unpushed.as_ref());
+    store.publish(repo.workdir(), 1, own.clone());
+    let common = repo.common_dir();
+    assert!(store.begin_read(&common));
+    store.finish_read(&common, marks.clone());
+    let shown = store.repo_marks(own.clone(), &snap.worktrees);
+    assert_eq!(shown.own.mark(), None);
+    assert_eq!(shown.mark(), Some(Mark::Uncommitted));
+    let sep = std::path::MAIN_SEPARATOR;
+    let short = &ids[0][..7];
+    assert_eq!(
+        shown.legend(),
+        format!(
+            "● Worktree ..{sep}loose (detached {short}): uncommitted changes in 1 file: 1 untracked\n\
+             ○ Worktree ..{sep}topic (branch feature): 1 commit on no remote (feature has no upstream branch)"
+        )
+    );
+    // `loose` opens in a tab of its own: its mark moves there, the hollow one stays.
+    store.publish(&gitti_core::paths::canonical(&loose), 2, of(&loose).unwrap());
+    assert_eq!(store.repo_marks(own, &snap.worktrees).mark(), Some(Mark::Unpushed));
 
     // Seen from the linked worktree, the main one is an "other" one (clean, pushed).
     let linked = Repo::open(&topic).unwrap();

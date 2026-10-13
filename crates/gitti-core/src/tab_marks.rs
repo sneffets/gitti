@@ -254,6 +254,160 @@ impl Marks {
     }
 }
 
+/// A worktree of the same repository whose marks a repository's mark carries (it has no
+/// tab of its own, see [`RepoMarks`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherWorktree {
+    /// Its folder.
+    pub path: PathBuf,
+    /// Where it is and what it has checked out, seen from the repository's own worktree:
+    /// "Worktree ../app-fix (branch fix)", "Worktree ../try (detached 1a2b3c4)".
+    pub label: String,
+    /// At least one mark.
+    pub marks: Marks,
+}
+
+/// What a repository's mark stands for — a repository tab's in gitti, the top line's in
+/// gitty: its own worktree's marks and those of the other worktrees of the repository that
+/// are not open in a tab of their own (so their changes don't go unseen with many
+/// repositories open). Filled beats hollow over all of them; the words say which
+/// worktree each mark comes from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepoMarks {
+    /// The open worktree's own.
+    pub own: Marks,
+    /// The other worktrees with a mark: those with uncommitted changes first, else in the
+    /// order `git worktree list` gives them.
+    pub others: Vec<OtherWorktree>,
+}
+
+impl RepoMarks {
+    /// Only the worktree's own marks.
+    pub fn own(own: Marks) -> RepoMarks {
+        RepoMarks { own, others: Vec::new() }
+    }
+
+    /// The one mark shown: uncommitted changes anywhere outrank unpushed commits.
+    pub fn mark(&self) -> Option<Mark> {
+        let all = || std::iter::once(&self.own).chain(self.others.iter().map(|o| &o.marks));
+        if all().any(|m| m.uncommitted.is_some()) {
+            Some(Mark::Uncommitted)
+        } else {
+            all().any(|m| m.unpushed.is_some()).then_some(Mark::Unpushed)
+        }
+    }
+
+    /// The other worktrees that make up the shown mark (none when the worktree's own
+    /// state gives it).
+    pub fn mark_from_others(&self) -> Vec<&OtherWorktree> {
+        let Some(mark) = self.mark() else {
+            return Vec::new();
+        };
+        if self.own.mark() == Some(mark) {
+            return Vec::new();
+        }
+        self.others.iter().filter(|o| o.marks.mark() == Some(mark)).collect()
+    }
+
+    /// What the shown mark means in a few words, and where it comes from when not from
+    /// the worktree itself: "uncommitted changes", "uncommitted changes in worktree
+    /// ../app-fix (branch fix)", "unpushed commits in 2 other worktrees" (the tab list
+    /// menu).
+    pub fn meaning(&self) -> Option<String> {
+        let mark = self.mark()?;
+        let from = self.mark_from_others();
+        Some(match from.as_slice() {
+            [] => mark.meaning().to_string(),
+            [one] => format!("{} in {}", mark.meaning(), lower_first(&one.label)),
+            more => format!("{} in {} other worktrees", mark.meaning(), more.len()),
+        })
+    }
+
+    /// What it means, one line each, without glyphs (a mark's tooltip): the worktree's
+    /// own lines as [`Marks::describe`] — behind "This worktree: " when other worktrees
+    /// add lines — then one line per fact of each other worktree, "Worktree ../app-fix
+    /// (branch fix): uncommitted changes in 1 file: 1 unstaged". Empty without a mark.
+    pub fn describe(&self) -> String {
+        self.lines(false).join("\n")
+    }
+
+    /// [`RepoMarks::describe`] with each line behind the glyph it explains (a repository
+    /// tab's tooltip under its path; gitty's status line).
+    pub fn legend(&self) -> String {
+        self.lines(true).join("\n")
+    }
+
+    fn lines(&self, glyphs: bool) -> Vec<String> {
+        let facts = |m: &Marks| {
+            let mut v: Vec<(Mark, String)> =
+                m.uncommitted.iter().map(|u| (Mark::Uncommitted, u.clone())).collect();
+            v.extend(m.unpushed.as_ref().map(|u| (Mark::Unpushed, u.describe())));
+            v
+        };
+        let line = |mark: Mark, text: String| {
+            if glyphs { format!("{} {text}", mark.glyph()) } else { text }
+        };
+        let mut out = Vec::new();
+        for (mark, text) in facts(&self.own) {
+            let text = if self.others.is_empty() {
+                text
+            } else {
+                format!("This worktree: {}", lower_first(&text))
+            };
+            out.push(line(mark, text));
+        }
+        for o in &self.others {
+            for (mark, text) in facts(&o.marks) {
+                out.push(line(mark, format!("{}: {}", o.label, lower_first(&text))));
+            }
+        }
+        out
+    }
+}
+
+/// "Worktree ../app-fix (branch fix)": `wt`'s folder relative to the worktree folder
+/// `from` (its full path when only the root is shared, e.g. another volume or drive) and
+/// what it has checked out.
+pub fn worktree_label(from: &Path, wt: &Worktree) -> String {
+    let what = match (&wt.branch, wt.bare) {
+        (Some(b), false) => format!("branch {b}"),
+        _ => wt.checkout_label(),
+    };
+    format!("Worktree {} ({what})", relative_path(from, &wt.path).display())
+}
+
+/// `to` relative to the folder `from` ("../app-fix", "wt/a"); `to` itself when they
+/// share no more than the root.
+fn relative_path(from: &Path, to: &Path) -> PathBuf {
+    use std::path::Component;
+    let (a, b): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let root = a
+        .iter()
+        .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+        .count();
+    if common <= root {
+        return to.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for _ in common..a.len() {
+        out.push("..");
+    }
+    for c in &b[common..] {
+        out.push(c);
+    }
+    if out.as_os_str().is_empty() { PathBuf::from(".") } else { out }
+}
+
+/// "Uncommitted changes …" → "uncommitted changes …" (behind a colon).
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_lowercase().chain(c).collect(),
+        None => String::new(),
+    }
+}
+
 /// The marks of the worktrees other than the one `repo` was opened in (its own come with
 /// every refresh), by folder: one `git status` in each — in parallel, with the
 /// worktree's own `status.showUntrackedFiles` — and its unpushed commits counted
@@ -331,6 +485,42 @@ impl MarksStore {
     /// The marks of the worktree at `worktree` (`None`: never read).
     pub fn get(&self, worktree: &Path) -> Option<&Marks> {
         self.entries.get(worktree).map(|(m, _)| m)
+    }
+
+    /// What the mark of the repository open in worktree `worktrees`' current one shows:
+    /// `own` (that worktree's marks) and — when its tab carries them — those of the
+    /// repository's other worktrees that no tab has open (as last read; bare ones and
+    /// ones whose folder is gone have none). A worktree open in a tab of its own shows
+    /// its marks on that tab only.
+    ///
+    /// Which tab carries them: the main worktree's when it is open in a tab (the
+    /// repository's own tab), else every tab of the repository — none is more the
+    /// repository's than another, and the mark shows wherever one looks. gitty (one
+    /// repository, its own worktree published as owner 0) always carries them.
+    pub fn repo_marks(&self, own: Marks, worktrees: &[Worktree]) -> RepoMarks {
+        let Some(current) = worktrees.iter().find(|w| w.is_current) else {
+            return RepoMarks::own(own);
+        };
+        let open = |w: &Worktree| self.entries.get(&w.path).is_some_and(|(_, o)| o.is_some());
+        let main_elsewhere = worktrees.iter().any(|w| w.is_main && !w.is_current && open(w));
+        if main_elsewhere {
+            return RepoMarks::own(own);
+        }
+        let mut others: Vec<OtherWorktree> = worktrees
+            .iter()
+            .filter(|w| !w.is_current && !w.bare && w.prunable.is_none() && !open(w))
+            .filter_map(|w| {
+                let marks = self.get(&w.path)?;
+                marks.mark()?;
+                Some(OtherWorktree {
+                    path: w.path.clone(),
+                    label: worktree_label(&current.path, w),
+                    marks: marks.clone(),
+                })
+            })
+            .collect();
+        others.sort_by_key(|o| o.marks.mark() != Some(Mark::Uncommitted));
+        RepoMarks { own, others }
     }
 
     /// Whether [`MarksStore::publish`] would change anything.
@@ -609,5 +799,139 @@ mod tests {
         let read = vec![(PathBuf::from("/r/a"), clean.clone()), (PathBuf::from("/r/b"), dirty.clone())];
         assert_eq!(s.finish_read(common, read), (true, false));
         assert_eq!(s.get(Path::new("/r/a")), Some(&clean));
+    }
+
+    fn worktree(name: &str, main: bool, current: bool) -> Worktree {
+        Worktree {
+            path: PathBuf::from(format!("/r/{name}")),
+            head: None,
+            branch: Some(name.into()),
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            is_main: main,
+            is_current: current,
+            sparse: None,
+        }
+    }
+
+    /// `text` with the platform's path separator in "../x".
+    fn sep(text: &str) -> String {
+        text.replace("../", &format!("..{}", std::path::MAIN_SEPARATOR))
+    }
+
+    fn dirty() -> Marks {
+        Marks { uncommitted: Some("Uncommitted changes in 1 file: 1 unstaged".into()), unpushed: None }
+    }
+
+    fn ahead() -> Marks {
+        Marks {
+            uncommitted: None,
+            unpushed: Some(Unpushed { count: 1, target: PushTarget::Upstream("origin/x".into()) }),
+        }
+    }
+
+    /// A repository's mark takes in the worktrees no tab has open: filled beats hollow,
+    /// the words say which worktree; one open in its own tab counts there only.
+    #[gitti_test::test]
+    fn a_repository_mark_takes_in_its_worktrees_without_a_tab() {
+        let list = [worktree("main", true, true), worktree("a", false, false), worktree("b", false, false)];
+        let mut s = MarksStore::default();
+        s.publish(Path::new("/r/main"), 1, Marks::default());
+        let common = Path::new("/r/.git");
+        let read = |s: &mut MarksStore, a: Marks, b: Marks| {
+            s.begin_read(common);
+            s.finish_read(common, vec![(PathBuf::from("/r/a"), a), (PathBuf::from("/r/b"), b)]);
+        };
+        // All clean: no mark, no other worktree named.
+        read(&mut s, Marks::default(), Marks::default());
+        let m = s.repo_marks(Marks::default(), &list);
+        assert_eq!((m.mark(), m.others.len(), m.describe()), (None, 0, String::new()));
+        // b has unpushed commits: hollow, from b.
+        read(&mut s, Marks::default(), ahead());
+        let m = s.repo_marks(Marks::default(), &list);
+        assert_eq!(m.mark(), Some(Mark::Unpushed));
+        assert_eq!(m.legend(), sep("○ Worktree ../b (branch b): 1 commit not pushed to origin/x"));
+        assert_eq!(m.meaning().unwrap(), sep("unpushed commits in worktree ../b (branch b)"));
+        // a has uncommitted changes: filled beats b's hollow and the own one.
+        read(&mut s, dirty(), ahead());
+        let m = s.repo_marks(ahead(), &list);
+        assert_eq!(m.mark(), Some(Mark::Uncommitted));
+        assert_eq!(m.own.mark(), Some(Mark::Unpushed), "the own state stays apart");
+        assert_eq!(
+            m.legend(),
+            sep("○ This worktree: 1 commit not pushed to origin/x\n\
+             ● Worktree ../a (branch a): uncommitted changes in 1 file: 1 unstaged\n\
+             ○ Worktree ../b (branch b): 1 commit not pushed to origin/x")
+        );
+        assert_eq!(
+            m.describe(),
+            sep("This worktree: 1 commit not pushed to origin/x\n\
+             Worktree ../a (branch a): uncommitted changes in 1 file: 1 unstaged\n\
+             Worktree ../b (branch b): 1 commit not pushed to origin/x")
+        );
+        assert_eq!(m.meaning().unwrap(), sep("uncommitted changes in worktree ../a (branch a)"));
+        // The own state gives the mark: the meaning names no other worktree.
+        let m = s.repo_marks(dirty(), &list);
+        assert_eq!(m.meaning().unwrap(), "uncommitted changes");
+        // Both others ●: counted.
+        read(&mut s, dirty(), dirty());
+        assert_eq!(
+            s.repo_marks(Marks::default(), &list).meaning().unwrap(),
+            "uncommitted changes in 2 other worktrees"
+        );
+        // a opens in a tab of its own: its mark moves there.
+        s.publish(Path::new("/r/a"), 2, dirty());
+        let m = s.repo_marks(Marks::default(), &list);
+        assert_eq!(m.others.iter().map(|o| o.path.clone()).collect::<Vec<_>>(), [PathBuf::from("/r/b")]);
+        // a's own tab: the main worktree is open in a tab, that one carries b.
+        let from_a = [worktree("main", true, false), worktree("a", false, true), worktree("b", false, false)];
+        assert_eq!(s.repo_marks(dirty(), &from_a), RepoMarks::own(dirty()));
+        // The main worktree's tab closes: a's tab carries b (and main, read again later).
+        s.release(1);
+        let m = s.repo_marks(dirty(), &from_a);
+        assert_eq!(m.others.len(), 1, "b; main is clean: {m:?}");
+        assert_eq!(m.others[0].label, sep("Worktree ../b (branch b)"));
+        // Its tab closes too: b's mark is back on the main worktree's tab (when it opens).
+        s.release(2);
+        assert_eq!(s.repo_marks(Marks::default(), &list).others.len(), 2);
+    }
+
+    /// Bare and gone worktrees carry nothing; one never read yet neither; without the
+    /// worktree list (not read yet) only the own marks.
+    #[gitti_test::test]
+    fn bare_gone_and_unread_worktrees_carry_nothing() {
+        let mut bare = worktree("bare", true, false);
+        bare.bare = true;
+        bare.branch = None;
+        let mut gone = worktree("gone", false, false);
+        gone.prunable = Some("gitdir file points to non-existent location".into());
+        let list = [bare, worktree("a", false, true), gone, worktree("new", false, false)];
+        let mut s = MarksStore::default();
+        let common = Path::new("/r/.git");
+        s.begin_read(common);
+        s.finish_read(common, vec![(PathBuf::from("/r/bare"), dirty()), (PathBuf::from("/r/gone"), dirty())]);
+        assert_eq!(s.repo_marks(Marks::default(), &list), RepoMarks::default());
+        assert_eq!(s.repo_marks(ahead(), &[]), RepoMarks::own(ahead()));
+    }
+
+    #[gitti_test::test]
+    fn worktree_labels_say_where_it_is_and_what_it_has_checked_out() {
+        let mut wt = worktree("x", false, false);
+        let from = Path::new("/home/me/src/app");
+        let at = |wt: &mut Worktree, p: &str| {
+            wt.path = PathBuf::from(p);
+            worktree_label(from, wt)
+        };
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(at(&mut wt, "/home/me/src/app-fix"), format!("Worktree ..{sep}app-fix (branch x)"));
+        assert_eq!(at(&mut wt, "/home/me/src/app/.wt/a"), format!("Worktree .wt{sep}a (branch x)"));
+        assert_eq!(at(&mut wt, "/home/me/src"), "Worktree .. (branch x)");
+        wt.branch = None;
+        wt.detached = true;
+        wt.head = Some(ObjectId::empty_tree(gix::hash::Kind::Sha1));
+        // Only the root shared: the full path.
+        assert_eq!(at(&mut wt, "/mnt/wt"), format!("Worktree {} (detached 4b825dc)", Path::new("/mnt/wt").display()));
     }
 }
