@@ -723,7 +723,7 @@ mod tests {
     #[gitti_test::test]
     fn default_remote_follows_the_upstream() {
         use crate::ops::{RemoteInfo, Tracking};
-        let r = |n: &str| RemoteInfo { name: n.into(), fetch_url: String::new(), push_url: String::new() };
+        let r = |n: &str| RemoteInfo { name: n.into(), fetch_url: String::new(), push_url: String::new(), push_urls: Vec::new() };
         let t = Tracking {
             branch: "main".into(),
             upstream: Some("gh/team/main".into()),

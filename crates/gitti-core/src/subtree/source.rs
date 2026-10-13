@@ -193,6 +193,7 @@ mod tests {
             name: name.into(),
             fetch_url: url.into(),
             push_url: url.into(),
+            push_urls: vec![url.into()],
         }
     }
 

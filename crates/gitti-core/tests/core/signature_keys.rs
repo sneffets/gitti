@@ -22,6 +22,7 @@ fn remote(name: &str, url: &str) -> RemoteInfo {
         name: name.into(),
         fetch_url: url.into(),
         push_url: url.into(),
+        push_urls: vec![url.into()],
     }
 }
 

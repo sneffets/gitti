@@ -15,11 +15,84 @@ pub enum ResetMode {
     Hard,
 }
 
+/// A remote as `git remote -v` lists it: its URLs as git uses them (after
+/// `url.<base>.insteadOf` / `pushInsteadOf`), credentials and all — mask them
+/// ([`RemoteInfo::url_lines`]) before showing one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteInfo {
     pub name: String,
+    /// The URL git fetches from (the first `remote.<name>.url`); empty without one.
     pub fetch_url: String,
+    /// The first URL git pushes to.
     pub push_url: String,
+    /// Every URL git pushes to, in order (a push goes to each): the
+    /// `remote.<name>.pushurl`s, else every `remote.<name>.url`.
+    pub push_urls: Vec<String>,
+}
+
+impl RemoteInfo {
+    /// The remote's URLs for a tooltip / status line, credentials masked
+    /// ([`crate::redact`]): the URL alone when git fetches from and pushes to the same
+    /// one, else `Fetch: …` and one `Push: …` per push URL.
+    pub fn url_lines(&self) -> Vec<String> {
+        let show = |url: &str| {
+            if url.is_empty() {
+                "(no URL)".to_string()
+            } else {
+                crate::redact::redact(url).into_owned()
+            }
+        };
+        if self.push_urls.is_empty() || self.push_urls == [self.fetch_url.as_str()] {
+            return vec![show(&self.fetch_url)];
+        }
+        std::iter::once(format!("Fetch: {}", show(&self.fetch_url)))
+            .chain(self.push_urls.iter().map(|u| format!("Push: {}", show(u))))
+            .collect()
+    }
+}
+
+/// Parses `git remote -v`: `NAME\tURL (fetch)[ [FILTER]]` (the first URL; a partial
+/// clone's filter after it), `NAME\tURL (push)` per push URL, `NAME\t` for a remote
+/// without a URL. A URL may hold spaces (a local path).
+pub fn parse_remotes(out: &str) -> Vec<RemoteInfo> {
+    let mut remotes: Vec<RemoteInfo> = Vec::new();
+    for line in out.lines() {
+        let Some((name, rest)) = line.split_once('\t') else {
+            continue;
+        };
+        let (url, fetch) = if let Some(url) = rest.strip_suffix(" (push)") {
+            (url, false)
+        } else if let Some(i) = rest.rfind(" (fetch)") {
+            (&rest[..i], true)
+        } else {
+            continue;
+        };
+        if name.is_empty() || url.is_empty() {
+            continue;
+        }
+        let idx = match remotes.iter().position(|r| r.name == name) {
+            Some(i) => i,
+            None => {
+                remotes.push(RemoteInfo {
+                    name: name.to_string(),
+                    fetch_url: String::new(),
+                    push_url: String::new(),
+                    push_urls: Vec::new(),
+                });
+                remotes.len() - 1
+            }
+        };
+        let r = &mut remotes[idx];
+        if fetch {
+            r.fetch_url = url.to_string();
+        } else {
+            if r.push_urls.is_empty() {
+                r.push_url = url.to_string();
+            }
+            r.push_urls.push(url.to_string());
+        }
+    }
+    remotes
 }
 
 /// `git config` scope.
@@ -1097,32 +1170,7 @@ impl Repo {
     }
 
     fn read_remotes(&self) -> Result<Vec<RemoteInfo>> {
-        let out = self.git().run(&["remote", "-v"])?.stdout_str();
-        let mut remotes: Vec<RemoteInfo> = Vec::new();
-        for line in out.lines() {
-            let mut parts = line.split_whitespace();
-            let (Some(name), Some(url), Some(kind)) = (parts.next(), parts.next(), parts.next())
-            else {
-                continue;
-            };
-            let idx = match remotes.iter().position(|r| r.name == name) {
-                Some(i) => i,
-                None => {
-                    remotes.push(RemoteInfo {
-                        name: name.to_string(),
-                        fetch_url: String::new(),
-                        push_url: String::new(),
-                    });
-                    remotes.len() - 1
-                }
-            };
-            if kind == "(fetch)" {
-                remotes[idx].fetch_url = url.to_string();
-            } else {
-                remotes[idx].push_url = url.to_string();
-            }
-        }
-        Ok(remotes)
+        Ok(parse_remotes(&self.git().run(&["remote", "-v"])?.stdout_str()))
     }
 
     pub fn add_remote(&self, name: &str, url: &str) -> Result<String> {
@@ -1870,7 +1918,36 @@ pub fn abort_conflicts_prompt<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{cleanup_message, split_command_line_for};
+    use super::{cleanup_message, parse_remotes, split_command_line_for};
+
+    #[gitti_test::test]
+    fn parses_remote_v() {
+        let out = "c\thttps://jane:s3cret@example.com/c.git (fetch)\n\
+                   c\thttps://jane:s3cret@example.com/c.git (push)\n\
+                   lazy\t/srv/my repos/l.git (fetch) [blob:none]\n\
+                   lazy\t/srv/my repos/l.git (push)\n\
+                   many\thttps://a.example/m.git (fetch)\n\
+                   many\thttps://a.example/m.git (push)\n\
+                   many\thttps://b.example/m.git (push)\n\
+                   nourl\t\n\
+                   pushonly\t\n\
+                   pushonly\tssh://git@example.com/p.git (push)\n";
+        let r = parse_remotes(out);
+        let names: Vec<&str> = r.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["c", "lazy", "many", "pushonly"]);
+        // A URL with a space, a partial clone's filter after `(fetch)`.
+        assert_eq!((r[1].fetch_url.as_str(), r[1].push_url.as_str()), ("/srv/my repos/l.git", "/srv/my repos/l.git"));
+        assert_eq!(r[1].url_lines(), ["/srv/my repos/l.git"]);
+        // Credentials masked, one line when fetch and push agree.
+        assert_eq!(r[0].url_lines(), ["https://jane:***@example.com/c.git"]);
+        // Several push URLs: the first is `push_url`, all are listed.
+        assert_eq!(r[2].push_url, "https://a.example/m.git");
+        assert_eq!(
+            r[2].url_lines(),
+            ["Fetch: https://a.example/m.git", "Push: https://a.example/m.git", "Push: https://b.example/m.git"]
+        );
+        assert_eq!(r[3].url_lines(), ["Fetch: (no URL)", "Push: ssh://git@example.com/p.git"]);
+    }
 
     #[gitti_test::test]
     fn cleans_up_like_git_strip() {
