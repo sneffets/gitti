@@ -599,14 +599,26 @@ impl Workspace {
 
     /// Repository tab `ix`'s tooltip: its folder, then what its mark means, the glyph
     /// first ("● Uncommitted changes in 2 files: …", "○ 1 commit not pushed to …"; both
-    /// lines when both hold). Built when the tooltip shows, so it names the current marks.
+    /// lines when both hold). Marks of the repository's worktrees without a tab follow,
+    /// each line naming its worktree ("● Worktree ../app-fix (branch fix): …"), and how
+    /// to open one. Built when the tooltip shows, so it names the current marks.
     pub fn tab_tooltip(&self, ix: usize, cx: &App) -> String {
         let Some(tab) = self.tabs.get(ix) else {
             return String::new();
         };
         let path = tab.path.display().to_string();
-        let legend = tab.app.read(cx).tab_marks(cx).legend();
-        if legend.is_empty() { path } else { format!("{path}\n{legend}") }
+        let marks = tab.app.read(cx).tab_marks(cx);
+        let legend = marks.legend();
+        let mut tip = if legend.is_empty() { path } else { format!("{path}\n{legend}") };
+        if !marks.others().is_empty() {
+            // The ▾ list is there from two tabs on.
+            tip.push_str(if self.tabs.len() > 1 {
+                "\nOpen a worktree from WORKTREES in the sidebar (double-click) or from the tab list (▾)."
+            } else {
+                "\nOpen a worktree from WORKTREES in the sidebar (double-click)."
+            });
+        }
+        tip
     }
 
     /// Per tab: its tooltip ([`Self::tab_tooltip`]), for tests.
@@ -1056,6 +1068,17 @@ impl Workspace {
                     }),
             );
         }
+        // The worktrees whose marks the tabs carry: one click opens them.
+        let worktrees = this.tab_list_worktrees(cx);
+        if !worktrees.is_empty() {
+            menu = menu.separator();
+        }
+        for (label, path) in worktrees {
+            let ws = ws.clone();
+            menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                ws.update(cx, |ws, cx| ws.open(path.clone(), window, cx)).ok();
+            }));
+        }
         menu
     }
 
@@ -1073,12 +1096,34 @@ impl Workspace {
                 } else {
                     titles[ix].clone()
                 };
-                if let Some(mark) = tab.app.read(cx).tab_marks(cx).mark() {
-                    label = format!("{label}  {} {}", mark.glyph(), mark.meaning());
+                let marks = tab.app.read(cx).tab_marks(cx);
+                if let (Some(mark), Some(meaning)) = (marks.mark(), marks.meaning()) {
+                    label = format!("{label}  {} {meaning}", mark.glyph());
                 }
                 label
             })
             .collect()
+    }
+
+    /// The ▾ list's entries after the tabs: the worktrees without a tab whose marks a tab
+    /// shows, each with what to open and its glyph — "Open Worktree ../app-fix (branch
+    /// fix) of app  ●" (the tab entries above say the glyphs' words; longer labels ran
+    /// past a narrow window's edge) — once each.
+    pub fn tab_list_worktrees(&self, cx: &App) -> Vec<(String, PathBuf)> {
+        let mut out: Vec<(String, PathBuf)> = Vec::new();
+        for tab in &self.tabs {
+            let app = tab.app.read(cx);
+            let title = app.title();
+            for o in app.tab_marks(cx).others() {
+                if out.iter().any(|(_, p)| *p == o.path) {
+                    continue;
+                }
+                let Some(mark) = o.marks.mark() else { continue };
+                let label = format!("Open {} of {title}  {}", o.label, mark.glyph());
+                out.push((label, o.path.clone()));
+            }
+        }
+        out
     }
 
     /// The menu bar's (and "+"'s, ▾'s) rem: the window's (UI font), but at most what lets the bar
@@ -1326,3 +1371,4 @@ mod tests {
         assert_eq!(index_after_move(0, 1, 3), 0);
     }
 }
+

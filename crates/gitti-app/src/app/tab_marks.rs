@@ -4,6 +4,12 @@
 //! tooltip says the same under the folder, each line behind the glyph it explains. The sidebar's
 //! worktree entries carry the same mark.
 //!
+//! A repository tab's mark also takes in the repository's other worktrees that no tab has
+//! open (`MarksStore::repo_marks`: the main worktree's tab when it is open, else every tab
+//! of the repository): with many repositories open their changes would go unseen. The
+//! tooltips name the worktree each mark comes from ("Worktree ../app-fix (branch fix):
+//! …"); a worktree open in a tab of its own shows its marks on that tab only.
+//!
 //! One source for all of them: the app-wide [`SharedMarks`] (a `MarksStore` keyed by the
 //! worktree's folder). Each tab publishes its own worktree's marks after every read of its
 //! working state (its file watcher runs also while the tab is in the background); the
@@ -13,7 +19,7 @@
 
 use std::path::Path;
 
-use gitti_core::tab_marks::{Mark, Marks, MarksStore};
+use gitti_core::tab_marks::{Mark, Marks, MarksStore, OtherWorktree, RepoMarks};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -37,18 +43,23 @@ pub(crate) fn shared_marks(path: &Path, cx: &App) -> Option<Marks> {
 /// What one tab's marks show.
 #[derive(Clone)]
 pub struct TabMarks {
-    marks: Marks,
+    marks: RepoMarks,
 }
 
 impl GittiApp {
-    /// This repository's marks for its tab: its worktree's entry in the store (nothing
-    /// before the first read).
+    /// This repository's marks for its tab: its worktree's entry in the store (its own
+    /// working state before the first publish), and the marks of the repository's
+    /// worktrees no tab has open when this tab carries them (`MarksStore::repo_marks`).
     pub fn tab_marks(&self, cx: &App) -> TabMarks {
-        let marks = self
+        let own = self
             .repo
             .as_ref()
             .and_then(|r| shared_marks(r.workdir(), cx))
             .unwrap_or_else(|| self.own_marks());
+        let marks = match cx.try_global::<SharedMarks>() {
+            Some(s) if self.repo.is_some() => s.0.repo_marks(own, &self.worktrees),
+            _ => RepoMarks::own(own),
+        };
         TabMarks { marks }
     }
 
@@ -75,9 +86,22 @@ impl GittiApp {
 }
 
 impl TabMarks {
-    /// The one mark shown: uncommitted outranks unpushed.
+    /// The one mark shown: uncommitted outranks unpushed (here or in a worktree without
+    /// a tab).
     pub fn mark(&self) -> Option<Mark> {
         self.marks.mark()
+    }
+
+    /// The shown mark in a few words, with the worktree it comes from when not from this
+    /// tab's own ("uncommitted changes in worktree ../app-fix (branch fix)"): the tab list
+    /// menu.
+    pub fn meaning(&self) -> Option<String> {
+        self.marks.meaning()
+    }
+
+    /// The worktrees without a tab whose marks this tab shows.
+    pub fn others(&self) -> &[OtherWorktree] {
+        &self.marks.others
     }
 
     /// The mark as text ("●", "○"; empty without one): the tab list menu, tests.
@@ -85,7 +109,8 @@ impl TabMarks {
         self.mark().map_or("", Mark::glyph)
     }
 
-    /// What they mean, one line each (the circle's tooltip).
+    /// What they mean, one line each, naming the worktree of each line that isn't this
+    /// tab's (the circle's tooltip).
     pub fn describe(&self) -> String {
         self.marks.describe()
     }

@@ -50,6 +50,7 @@ pub fn main() {
         ("live_plan", live_plan),
         ("sidebar_marks", sidebar_marks),
         ("tabs_and_sidebars_agree", tabs_and_sidebars_agree),
+        ("tab_carries_worktrees_without_a_tab", tab_carries_worktrees_without_a_tab),
         ("background_tabs_stay_current", background_tabs_stay_current),
         ("shown_file_changes_in_the_background", shown_file_changes_in_the_background),
         // Last: it switches the shared setting off (and on again).
@@ -1230,6 +1231,91 @@ fn tabs_and_sidebars_agree(ui: &mut Ui) {
     check(ui, "tab a's worktree clean again", ["●", "", "", "●"]);
     std::fs::write(dirs[1].join("new.txt"), "x\n").unwrap();
     check(ui, "a change in tab b's worktree", ["●", "", "●", "●"]);
+}
+
+/// A worktree with uncommitted changes that no tab has open marks its repository's tab
+/// (the main worktree's, clean itself): the tooltips name the worktree, the ▾ list offers
+/// to open it. Opened in a tab of its own, the mark moves there (not twice); that tab
+/// closed, it is back on the repository's tab.
+fn tab_carries_worktrees_without_a_tab(ui: &mut Ui) {
+    let repo = base().join("tab_carries_worktrees_without_a_tab");
+    let a = base().join("tab_carries_worktrees_without_a_tab-a");
+    let b = base().join("tab_carries_worktrees_without_a_tab-b");
+    git(&repo, &["reset", "-q", "--hard"]);
+    git(&repo, &["clean", "-fdq"]);
+    for d in [&a, &b] {
+        git(&repo, &["worktree", "add", "-q", "--detach", d.to_str().unwrap(), "HEAD"]);
+    }
+    std::fs::write(a.join("new.txt"), "n\n").unwrap();
+    ui.step("key:secondary-r");
+    let ws = ui.ws.clone();
+    let marks = |ui: &mut Ui| ui.cx.update(|cx| testing::tab_marks(&ws, cx));
+    let tips = |ui: &mut Ui| ui.cx.update(|cx| testing::tab_tooltips(&ws, cx));
+    let offered = |ui: &mut Ui| ui.cx.update(|cx| testing::tab_list_worktrees(&ws, cx));
+    let head = git_out(&repo, &["rev-parse", "--short=7", "HEAD"]);
+    let sep = std::path::MAIN_SEPARATOR;
+    let line = format!(
+        "Worktree ..{sep}tab_carries_worktrees_without_a_tab-a (detached {head}): \
+         uncommitted changes in 1 file: 1 untracked"
+    );
+    if !ui.wait_real(1500, |ui| ui.is_idle() && marks(ui)[0].0 == "●") {
+        fail!(ui, "a dirty worktree without a tab: marks {:?}", marks(ui));
+        return;
+    }
+    if marks(ui)[0].1 != line {
+        fail!(ui, "the circle's tooltip names the worktree: {:?}", marks(ui));
+    }
+    let want = format!(
+        "{}\n● {line}\nOpen a worktree from WORKTREES in the sidebar (double-click).",
+        repo.display()
+    );
+    if tips(ui) != [want.clone()] {
+        fail!(ui, "the tab's tooltip: {:?}, want {want:?}", tips(ui));
+    }
+    if !visible(&ui.check("the repository's tab marked"), "tab-dirty:0") {
+        ui.fail("no visible tab-dirty:0".into());
+    }
+    // A second worktree (clean) in a tab: the main worktree's tab still carries `a`, the
+    // ▾ list offers to open it.
+    ui.step(&format!("open:{}", b.display()));
+    if !ui.wait_real(1500, |ui| ui.is_idle() && marks(ui).len() == 2) {
+        fail!(ui, "b's tab: {:?}", marks(ui));
+    }
+    let m = marks(ui);
+    if m[0].0 != "●" || m[1] != (String::new(), String::new()) {
+        fail!(ui, "with b's tab open: {m:?}");
+    }
+    if !tips(ui)[0].ends_with("from the tab list (▾).") {
+        fail!(ui, "two tabs: the hint names the ▾ list: {:?}", tips(ui));
+    }
+    let want = format!(
+        "Open Worktree ..{sep}tab_carries_worktrees_without_a_tab-a (detached {head}) of \
+         tab_carries_worktrees_without_a_tab  ●"
+    );
+    if offered(ui) != [want.clone()] {
+        fail!(ui, "the ▾ list's worktrees: {:?}, want {want:?}", offered(ui));
+    }
+    // `a` in a tab of its own: the mark moves there.
+    ui.step(&format!("open:{}", a.display()));
+    let moved = ui.wait_real(1500, |ui| {
+        let m = marks(ui);
+        ui.is_idle() && m.len() == 3 && m[0].0.is_empty() && m[2].0 == "●"
+    });
+    if !moved {
+        fail!(ui, "a's own tab: {:?}", marks(ui));
+    }
+    let m = marks(ui);
+    if m[2].1 != "Uncommitted changes in 1 file: 1 untracked" {
+        fail!(ui, "a's own tab names its own changes: {m:?}");
+    }
+    if tips(ui)[0] != repo.display().to_string() || !offered(ui).is_empty() {
+        fail!(ui, "nothing carried any more: {:?} / {:?}", tips(ui), offered(ui));
+    }
+    // Its tab closes: back on the repository's tab.
+    ui.step("key:secondary-w");
+    if !ui.wait_real(1500, |ui| ui.is_idle() && marks(ui).len() == 2 && marks(ui)[0].0 == "●") {
+        fail!(ui, "a's tab closed: {:?}", marks(ui));
+    }
 }
 
 /// Worktree tabs in the background stay current (their file watchers): changes there —

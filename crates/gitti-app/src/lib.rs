@@ -1244,6 +1244,12 @@ pub mod testing {
         ws.read(cx).tab_list_labels(cx)
     }
 
+    /// The ▾ tab list menu's entries after the tabs: the worktrees without a tab whose
+    /// marks a tab shows ("Open Worktree ../x (branch y) of repo  ●").
+    pub fn tab_list_worktrees(ws: &Entity<Workspace>, cx: &App) -> Vec<String> {
+        ws.read(cx).tab_list_worktrees(cx).into_iter().map(|(label, _)| label).collect()
+    }
+
     /// Per repository tab: its WORKTREES section's marks (`folder glyph`, glyph "" for
     /// none), whether the section is drawn or not — what each tab's sidebar would show.
     pub fn sidebar_marks(ws: &Entity<Workspace>, cx: &App) -> Vec<Vec<String>> {
