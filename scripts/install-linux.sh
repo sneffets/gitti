@@ -3,13 +3,19 @@
 # hicolor theme and the desktop entry (its name = the windows' app_id, so the shell shows our
 # icon for running windows too).
 #   scripts/install-linux.sh
+# First it checks the build requirements; on Debian / Ubuntu a missing apt package stops it
+# with the `sudo apt install …` command to run (scripts/linux-deps.sh).
 # Below 12 GB of RAM it builds without LTO (profile `release-lowmem`, scripts/build-profile.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/steps.sh
 . scripts/build-profile.sh
+. scripts/linux-deps.sh
 ID=io.github.sneffets.gitti
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+step "checking the build requirements (Debian / Ubuntu: apt packages)"
+check_deps build-essential/cc pkg-config/pkg-config libfontconfig1-dev libfreetype-dev \
+  libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan1
 step "icons: checking assets/icon/*.svg against sources.hash (renders only if they changed)"
 cargo run -p xtask -- icons
 step "building gitti + gitty (cargo profile $PROFILE)"

@@ -174,9 +174,12 @@ recent Terminal.app).
 To build under Linux you need to install some dependencies:
 
 ```sh
-sudo apt install pkg-config libfontconfig1-dev libfreetype-dev \
+sudo apt install build-essential pkg-config libfontconfig1-dev libfreetype-dev \
   libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan1
 ```
+
+On Debian / Ubuntu the install scripts check these first and print the `sudo apt install`
+command for the missing ones (gitty alone needs only `build-essential`).
 
 ## Status
 

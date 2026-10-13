@@ -11,6 +11,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/steps.sh
 . scripts/build-profile.sh
+. scripts/linux-deps.sh
+# gitty needs no GPUI libraries, only a C compiler (the tree-sitter grammars).
+step "checking the build requirements"
+check_deps build-essential/cc
 case "${1:-}" in
   --cargo)
     step "cargo install gitty (cargo profile $PROFILE)"
