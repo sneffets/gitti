@@ -1897,7 +1897,7 @@ fn menu_bar() -> Vec<Menu> {
                 MenuItem::action(gitti_core::patch_files::COPY_LABEL, CopyAsPatch),
                 MenuItem::action(gitti_core::patch_files::SNAPSHOT_LABEL, ExportSnapshot),
                 MenuItem::action("Edit Commit Message…", EditCommitMessage),
-                MenuItem::action("Get Signing Keys from GitHub…", GetSigningKeys),
+                MenuItem::action(gitti_core::signing_keys::ACTION_LABEL, GetSigningKeys),
                 MenuItem::separator(),
                 MenuItem::action("Open in External Diff Tool", OpenExternalDiffTool),
                 MenuItem::action("Open in External Merge Tool", OpenExternalMergeTool),

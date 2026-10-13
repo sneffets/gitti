@@ -203,7 +203,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("OpenExternalDiffTool", "Open in External Diff Tool"),
     both("OpenExternalMergeTool", "Open in External Merge Tool"),
     // Also on the signature (gitti: right-click / details; gitty: `m`, `K`).
-    both("GetSigningKeys", "Get Signing Keys from GitHub…"),
+    both("GetSigningKeys", crate::signing_keys::ACTION_LABEL),
     both("MarkCompare", "Mark Selected Commit for Comparison"),
     when("SwapCompare", STATE, Gitty::No(STATE)),
     both("ToggleCompareMergeBase", "Changes Since Common Ancestor"),

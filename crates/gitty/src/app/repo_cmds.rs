@@ -516,7 +516,7 @@ impl App {
         let keys = vec![
             TextKey {
                 key: 'y',
-                label: "copy version",
+                label: "copy version".into(),
                 keep: true,
                 run: |app| {
                     let (version, build) = (env!("CARGO_PKG_VERSION"), env!("GITTI_BUILD"));
@@ -525,7 +525,7 @@ impl App {
             },
             TextKey {
                 key: 'l',
-                label: "third-party licences",
+                label: "third-party licences".into(),
                 keep: false,
                 run: App::show_licences,
             },

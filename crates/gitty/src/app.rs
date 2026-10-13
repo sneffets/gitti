@@ -551,7 +551,7 @@ pub struct App {
     pub signature: Option<(ObjectId, Option<SignatureInfo>)>,
     /// No allowed signers file set for the shown SSH signature: the files to offer.
     signers_offer: Option<signers::SignersOffer>,
-    /// A GitHub signing-key lookup or import is running (`app/signing_keys.rs`).
+    /// A signing-key lookup or import is running (`app/signing_keys.rs`).
     pub keys_job: bool,
     /// The shared setting `terminal_command` ("Open in Terminal"; `app/terminal.rs`).
     pub terminal_command: String,
@@ -2054,10 +2054,10 @@ impl App {
         } else {
             None
         };
-        let signers = label.map(|label| TextKey { key: 'a', label, keep: false, run: App::use_allowed_signers_file });
-        let github = self.signing_keys_offered().then_some(TextKey {
+        let signers = label.map(|label| TextKey { key: 'a', label: label.into(), keep: false, run: App::use_allowed_signers_file });
+        let github = self.signing_keys_offered().then(|| TextKey {
             key: 'K',
-            label: "Get Signing Keys from GitHub",
+            label: self.signing_keys_label().trim_end_matches('…').to_string().into(),
             keep: false,
             run: |app| app.get_signing_keys(None),
         });
@@ -4206,7 +4206,7 @@ impl App {
             }
             items.push(MenuItem::separator());
         }
-        // On the header's Signature line, its details, the GitHub keys and an allowed
+        // On the header's Signature line, its details, the forge's keys and an allowed
         // signers file.
         if Some(self.diff_cursor) == self.signature_header_line() {
             items.extend(self.signing_key_items(None));

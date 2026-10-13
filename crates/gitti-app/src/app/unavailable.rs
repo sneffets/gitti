@@ -82,7 +82,7 @@ impl GittiApp {
             old_version,
             cursor_file,
             commit_diff: self.commit_origin().is_some() && self.rows.iter().any(|r| r.file_ref().is_some()),
-            github_remote: gitti_core::signing_keys::github_repo(&self.remotes).is_some(),
+            forge_remote: gitti_core::signing_keys::forge_repo(&self.remotes).is_some(),
             signing_keys: self.signing_key_offer().is_some(),
             fs_paths: self.working.fs_paths.shown().count(),
             fs_hidable: self.fs_hidable().len(),

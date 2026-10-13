@@ -170,10 +170,10 @@ fn allowed_signers_plan_says_what_is_written_where() {
     assert_eq!(g.blocked, None);
     assert!(g.text.contains("is set to ~/gone (in ~/.gitconfig), but that file doesn't exist"), "{}", g.text);
 
-    let help = al::setup_help(&d, true, None);
+    let help = al::setup_help(&d, Some(gitti_core::signing_keys::ACTION_LABEL), None);
     assert!(help.contains("git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers"), "{help}");
     assert!(help.contains(gitti_core::signing_keys::ACTION_LABEL));
-    assert!(!al::setup_help(&d, false, None).contains(gitti_core::signing_keys::ACTION_LABEL));
+    assert!(!al::setup_help(&d, None, None).contains(gitti_core::signing_keys::ACTION_LABEL));
 }
 
 /// A relative global value names the file in this repository's work tree (git reads it

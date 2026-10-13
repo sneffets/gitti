@@ -4,7 +4,10 @@
 //! and the signature's details window offer "Get Signing Keys from GitHub…"; the dialog
 //! lists the key ticked and says where it goes; Import writes the allowed signers file and
 //! the commit verifies — after which the signature's menu greys the entry with the reason
-//! and the others leave it out. Without a GitHub remote the signature's menu says so (greyed).
+//! and the others leave it out. Without a forge remote the signature's menu says so (greyed).
+//! A self-hosted GitLab behind an ssh remote: the entry names the host, the server is
+//! probed (and remembered: "Server Kind of …" shows it), the user found by the commit's
+//! e-mail, the key imported and the commit verifies.
 //! With an allowed signers file at a usual place (but none set) they offer it — first —
 //! besides GitHub: "for This Repository" writes the repository's config and the commit
 //! verifies. With the user's own SSH signing key (the fixture's) they offer an allowed
@@ -18,8 +21,12 @@ use crate::common;
 use std::path::{Path, PathBuf};
 
 use common::*;
-use gitti_core::availability::{NO_GITHUB_REMOTE, NO_KEY_MISSING, with_reason};
+use gitti_core::availability::{NO_FORGE_REMOTE, NO_KEY_MISSING, with_reason};
+use gitti_core::forge::DirFetch;
 use gitti_core::signing_keys::ACTION_LABEL;
+
+/// The action's label for the GitHub remote.
+const GITHUB_LABEL: &str = "Get Signing Keys from GitHub…";
 
 macro_rules! fail {
     ($ui:expr, $($arg:tt)*) => {{
@@ -60,12 +67,14 @@ pub fn main() {
     let tests: &[(&str, Scenario)] = &[
         ("a_signers_file_is_offered", a_signers_file_is_offered),
         ("own_key_file", own_key_file),
-        ("no_github_remote", no_github_remote),
+        ("no_forge_remote", no_forge_remote),
         ("github_keys_verify_the_commit", github_keys_verify_the_commit),
+        ("self_hosted_gitlab", self_hosted_gitlab),
     ];
     common::run(tests, |name| {
         let url = match name {
-            "no_github_remote" => "https://gitlab.example.com/o/r.git",
+            "no_forge_remote" => "/srv/git/r.git",
+            "self_hosted_gitlab" => "git@git.example.com:group/sub/app.git",
             _ => "https://github.com/o/r.git",
         };
         repo(&base.join(name), &github, url)
@@ -107,6 +116,23 @@ fn repo(dir: &Path, github: &Path, url: &str) -> PathBuf {
         "https://api.github.com/users/tester/ssh_signing_keys",
         &format!(r#"[{{"key":"{old}","title":"old"}},{{"key":"{line}","title":"laptop"}}]"#),
     );
+    // A self-hosted GitLab at git.example.com: its 401 without login, the commit's e-mail,
+    // the user it belongs to, the user's keys.
+    let gl = DirFetch(github.to_path_buf());
+    let api = "https://git.example.com/api/v4";
+    gl.answer(&format!("{api}/version"), Some(401), r#"{"message":"401 Unauthorized"}"#);
+    gl.answer(
+        &format!("{api}/projects/group%2Fsub%2Fapp/repository/commits/{sha}"),
+        None,
+        r#"{"author_email":"layout@example.com","committer_email":"layout@example.com"}"#,
+    );
+    gl.answer(&format!("{api}/users?search=layout%40example.com"), None, r#"[{"id":5,"username":"tester"}]"#);
+    gl.answer(&format!("{api}/users/5/gpg_keys"), None, "[]");
+    gl.answer(
+        &format!("{api}/users/5/keys"),
+        None,
+        &format!(r#"[{{"key":"{line}","title":"laptop","usage_type":"auth_and_signing"}}]"#),
+    );
     dir.to_path_buf()
 }
 
@@ -137,11 +163,16 @@ fn menu_has_action(ui: &mut Ui) -> (bool, Vec<String>) {
 /// The context menu of probe `on`: whether "Get Signing Keys from GitHub…" is in it
 /// enabled, and its entries (label, enabled).
 fn menu_entries(ui: &mut Ui, on: &str) -> (bool, Vec<(String, bool)>) {
+    menu_entries_for(ui, on, GITHUB_LABEL)
+}
+
+/// [`menu_entries`] for the action labelled `label`.
+fn menu_entries_for(ui: &mut Ui, on: &str, label: &str) -> (bool, Vec<(String, bool)>) {
     gitti_app::testing::menu_entries();
     ui.click_on(on, MouseButton::Right);
     let entries = gitti_app::testing::menu_entries();
     ui.quick("key:escape");
-    (entries.iter().any(|(l, on)| l == ACTION_LABEL && *on), entries)
+    (entries.iter().any(|(l, on)| l == label && *on), entries)
 }
 
 /// The details window's further buttons, in order (probes `modal-extra`, `modal-extra:1`).
@@ -168,12 +199,12 @@ fn github_keys_verify_the_commit(ui: &mut Ui) {
     let (offered, labels) = menu_has_action(ui);
     // Only the signature's menu opens, not the diff's under it as well.
     if !offered || !labels.iter().any(|l| l == "Signature Details…") || labels.iter().any(|l| l == "Expand All Files") {
-        fail!(ui, "signature menu without {ACTION_LABEL:?}: {labels:?}");
+        fail!(ui, "signature menu without {GITHUB_LABEL:?}: {labels:?}");
     }
     // The commit's menu in the list too (it is the shown commit).
     let (offered, entries) = menu_entries(ui, "commit-row:1");
     if !offered {
-        fail!(ui, "commit menu without {ACTION_LABEL:?}: {entries:?}");
+        fail!(ui, "commit menu without {GITHUB_LABEL:?}: {entries:?}");
     }
     // The details window says why and has the button — first, before how to set up an
     // allowed signers file.
@@ -226,33 +257,33 @@ fn github_keys_verify_the_commit(ui: &mut Ui) {
     ui.quick("key:escape");
     // The signature's menu greys it with the reason; the commit's menu leaves it out.
     let (offered, entries) = menu_entries(ui, "commit-signature");
-    let greyed = with_reason(ACTION_LABEL, NO_KEY_MISSING);
+    let greyed = with_reason(GITHUB_LABEL, NO_KEY_MISSING);
     if offered || !entries.iter().any(|(l, on)| *l == greyed && !on) {
         fail!(ui, "a verified signature's menu: {entries:?}");
     }
     let (_, entries) = menu_entries(ui, "commit-row:1");
-    if entries.iter().any(|(l, _)| l.starts_with(ACTION_LABEL)) {
+    if entries.iter().any(|(l, _)| l.starts_with("Get Signing Keys")) {
         fail!(ui, "a verified commit's menu: {entries:?}");
     }
 }
 
-/// The key is unknown but no remote is on GitHub: the signature's menu has the entry
-/// greyed with "no GitHub remote", the commit's menu and the details window leave it out
+/// The key is unknown but no remote is on a forge (a local one): the signature's menu has
+/// the entry greyed with the reason, the commit's menu and the details window leave it out
 /// (the details window keeps the allowed signers file's button).
-fn no_github_remote(ui: &mut Ui) {
+fn no_forge_remote(ui: &mut Ui) {
     git(&ui.repo, &["config", "--unset", "gpg.format"]);
     ui.step("select:1");
     if !ui.wait_real(1500, signature_shown) {
         fail!(ui, "no signature in the commit header");
         return;
     }
-    let greyed = with_reason(ACTION_LABEL, NO_GITHUB_REMOTE);
+    let greyed = with_reason(ACTION_LABEL, NO_FORGE_REMOTE);
     let (_, entries) = menu_entries(ui, "commit-signature");
     if !entries.iter().any(|(l, on)| *l == greyed && !on) {
         fail!(ui, "signature menu without {greyed:?}: {entries:?}");
     }
     let (_, entries) = menu_entries(ui, "commit-row:1");
-    if entries.iter().any(|(l, _)| l.starts_with(ACTION_LABEL)) {
+    if entries.iter().any(|(l, _)| l.starts_with("Get Signing Keys")) {
         fail!(ui, "commit menu: {entries:?}");
     }
     ui.click_on("commit-signature", MouseButton::Left);
@@ -394,4 +425,72 @@ fn own_key_file(ui: &mut Ui) {
         fail!(ui, "a verified signature still offers {OWN_LABEL:?}: {labels:?}");
     }
     let _ = std::fs::remove_file(file);
+}
+
+/// A self-hosted GitLab behind an ssh remote (`git@git.example.com:group/sub/app.git`):
+/// the signature's menu names the host and offers "Server Kind of …"; the action probes
+/// the server (a GitLab: its 401), finds the user by the commit's e-mail, the dialog lists
+/// the key ticked; Import writes the allowed signers file and the commit verifies. The
+/// server is remembered: the menu names it a GitLab, and "Server Kind of …" opens the
+/// question with GitLab chosen.
+fn self_hosted_gitlab(ui: &mut Ui) {
+    let (home, github) = ENV.with(|e| {
+        let e = e.borrow();
+        let e = e.as_ref().unwrap();
+        (e.home.clone(), e.github.clone())
+    });
+    git(&ui.repo, &["config", "--unset", "gpg.format"]);
+    ui.step("select:1");
+    if !ui.wait_real(1500, signature_shown) {
+        fail!(ui, "no signature in the commit header");
+        return;
+    }
+    let label = "Get Signing Keys from git.example.com…";
+    let (offered, entries) = menu_entries_for(ui, "commit-signature", label);
+    if !offered || !entries.iter().any(|(l, on)| l == "Server Kind of git.example.com…" && *on) {
+        fail!(ui, "signature menu: {entries:?}");
+    }
+    ui.click_on("commit-signature", MouseButton::Left);
+    ui.click_on("modal-extra", MouseButton::Left);
+    let title = "Signing Keys from git.example.com (GitLab)";
+    if !ui.wait_real(1500, |ui| ui.modal().is_some_and(|(t, _)| t == title)) {
+        fail!(ui, "no keys dialog; status {:?}, modal {:?}", ui.status(), ui.modal());
+        return;
+    }
+    let message = modal_message(ui);
+    for want in ["git.example.com (GitLab) links the commit's e-mail address to tester", "it is among these keys"] {
+        if !message.contains(want) {
+            fail!(ui, "dialog lacks {want:?}: {message}");
+        }
+    }
+    let requests = std::fs::read_to_string(github.join("requests.log")).unwrap_or_default();
+    if !requests.contains("https://git.example.com/api/v4/version\n") {
+        fail!(ui, "no probe: {requests}");
+    }
+    ui.step("modalok");
+    let signers = home.join(".config/git/allowed_signers");
+    let verified = ui.wait_real(1500, |ui| {
+        signature_shown(ui) && ui.status().is_some_and(|(s, _)| s.contains("1 SSH key added"))
+    });
+    let written = std::fs::read_to_string(&signers).unwrap_or_default();
+    if !verified || !written.contains("# tester on git.example.com (GitLab) (laptop), added by gitti") {
+        fail!(ui, "after Import: status {:?}, file {written:?}", ui.status());
+        return;
+    }
+    // Remembered: named a GitLab now (greyed: verified); its kind can be changed.
+    let (_, entries) = menu_entries_for(ui, "commit-signature", "");
+    let greyed = with_reason("Get Signing Keys from git.example.com (GitLab)…", NO_KEY_MISSING);
+    if !entries.iter().any(|(l, on)| *l == greyed && !on) {
+        fail!(ui, "after Import, signature menu: {entries:?}");
+    }
+    ui.click_on("commit-signature", MouseButton::Right);
+    ui.step("menu:Server Kind of git.example.com…");
+    let ws = ui.ws.clone();
+    let option = ui.cx.update(|cx| gitti_app::testing_menus::modal_option(&ws, cx));
+    match ui.modal() {
+        Some((t, f)) if t == "What Is git.example.com?" && f.first().map(String::as_str) == Some("https://git.example.com") && option == Some(0) => {}
+        other => fail!(ui, "server kind dialog: {other:?}, option {option:?}"),
+    }
+    ui.check("server kind dialog");
+    ui.quick("key:escape");
 }

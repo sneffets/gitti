@@ -283,9 +283,9 @@ impl GittiApp {
         let Some((dirs, own)) = self.shown_signers_offer().map(|o| (o.dirs.clone(), o.own.clone())) else {
             return;
         };
-        let github = gitti_core::signing_keys::github_repo(&self.remotes).is_some();
+        let keys = gitti_core::signing_keys::forge_repo(&self.remotes).map(|r| gitti_core::signing_keys::action_label(&r));
         let spec = ModalSpec::new("Checking SSH Signatures").ok("Close").cancel(None);
-        let help = al::setup_help(&dirs, github, own.as_ref().map(|(k, _)| k));
+        let help = al::setup_help(&dirs, keys.as_deref(), own.as_ref().map(|(k, _)| k));
         self.show_text_modal_spec(spec, help, window, cx);
     }
 

@@ -39,6 +39,7 @@ pub mod ext_tool;
 pub mod fault;
 pub mod fd_limit;
 pub mod folder_tree;
+pub mod forge;
 pub mod fs_paths;
 pub mod git_cli;
 pub mod git_settings;

@@ -153,7 +153,7 @@ impl App {
         let text = self.repo_stats_text();
         let mut keys = vec![TextKey {
             key: 'y',
-            label: "copy as text",
+            label: "copy as text".into(),
             keep: true,
             run: |app| {
                 let text = app.repo_stats_text();
@@ -164,14 +164,14 @@ impl App {
         }];
         keys.push(TextKey {
             key: 'e',
-            label: "commit encoding",
+            label: "commit encoding".into(),
             keep: false,
             run: App::commit_encoding_dialog,
         });
         if self.repo_stats.stats.offers_count_all() {
             keys.push(TextKey {
                 key: 'a',
-                label: "count all commits",
+                label: "count all commits".into(),
                 keep: true,
                 run: App::count_all_authors,
             });

@@ -573,10 +573,10 @@ fn git_value(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// What to do when no allowed signers file is known (`github`: a remote is on GitHub, so
-/// "Get Signing Keys from GitHub…" can create one; `own`: the user signs with SSH, so
+/// What to do when no allowed signers file is known (`keys`: a remote is on a forge, so
+/// this "Get Signing Keys from …" entry can create one; `own`: the user signs with SSH, so
 /// [`OWN_LABEL`] can).
-pub fn setup_help(dirs: &UserDirs, github: bool, own: Option<&OwnKey>) -> String {
+pub fn setup_help(dirs: &UserDirs, keys: Option<&str>, own: Option<&OwnKey>) -> String {
     let file = dirs.show(&dirs.default_signers_file());
     let mut s = format!(
         "This repository's SSH signatures can't be checked: git needs an allowed signers file \
@@ -600,11 +600,10 @@ pub fn setup_help(dirs: &UserDirs, github: bool, own: Option<&OwnKey>) -> String
             own.from, own.principal
         ));
     }
-    if github {
+    if let Some(label) = keys {
         s.push_str(&format!(
-            "\n\nOr use {} on the signature: it fetches the signer's published keys, creates \
-             {file} with them and sets it in your global git config.",
-            crate::signing_keys::ACTION_LABEL
+            "\n\nOr use {label} on the signature: it fetches the signer's published keys, \
+             creates {file} with them and sets it in your global git config."
         ));
     }
     s

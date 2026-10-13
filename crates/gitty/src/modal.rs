@@ -49,10 +49,10 @@ pub struct Extra {
 
 /// A key of a text window ([`Modal::with_text_keys`]), named on its bottom border:
 /// `keep` runs it with the window staying open (Copy), else the window closes first.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TextKey {
     pub key: char,
-    pub label: &'static str,
+    pub label: std::borrow::Cow<'static, str>,
     pub keep: bool,
     pub run: fn(&mut App),
 }

@@ -4,7 +4,9 @@
 //! line's menu and its details window (key `K`) offer it, the dialog lists the key ticked
 //! and says where it goes, ⏎ writes the allowed signers file, sets it in the global config,
 //! and the commit verifies — the Signature line's menu then greys it with the reason.
-//! Without a GitHub remote that menu says so (greyed); the others leave it out. With an allowed signers file at
+//! Without a forge remote that menu says so (greyed); the others leave it out. A
+//! self-hosted server that doesn't say what it is: the user is asked (Gitea), the keys
+//! come from there, and the server's kind can be changed (a plain git server: no keys). With an allowed signers file at
 //! a usual place (but none set), it is offered instead and "for This Repository" makes the
 //! commit verify. Signed with the user's own key and no file anywhere: a file with that key
 //! is offered, created and set.
@@ -16,7 +18,8 @@ use crate::common;
 use crate::support;
 
 use common::*;
-use gitti_core::availability::{NO_GITHUB_REMOTE, NO_KEY_MISSING, with_reason};
+use gitti_core::availability::{NO_FORGE_REMOTE, NO_KEY_MISSING, with_reason};
+use gitti_core::forge::DirFetch;
 use gitti_core::signing_keys::ACTION_LABEL;
 use support::*;
 
@@ -151,7 +154,7 @@ fn signing_keys_from_github_verify_the_commit() {
     let menus: Vec<&str> = out.split("item: ").collect();
     let s = screens(&out);
     assert!(s[0].contains("? Signed, not verified") && s[0].contains("m: Get Signing Keys from GitHub"), "{out}");
-    assert!(out.contains(&format!("item: {ACTION_LABEL}\n")), "{out}");
+    assert!(out.contains("item: Get Signing Keys from GitHub…\n"), "{out}");
     // The Signature line's menu: its details and the action.
     assert!(out.contains("item: Signature Details\nitem: Get Signing Keys from GitHub…\n"), "{out}");
     assert!(s[1].contains("K Get Signing Keys from GitHub") && s[1].contains("Not verified"), "{out}");
@@ -169,27 +172,26 @@ fn signing_keys_from_github_verify_the_commit() {
     assert_eq!(requests.lines().count(), 3, "{requests}");
     // Verified: the Signature line's menu greys it with the reason.
     let last = menus.iter().rev().take_while(|m| !m.contains("=== dump")).collect::<Vec<_>>();
-    let greyed = with_reason(ACTION_LABEL, NO_KEY_MISSING);
+    let greyed = with_reason("Get Signing Keys from GitHub…", NO_KEY_MISSING);
     assert!(last.iter().any(|m| m.starts_with(&greyed)), "{greyed}: {out}");
 }
 
-/// The key is unknown but the only remote is not on GitHub: the Signature line's menu has
-/// the action greyed with "no GitHub remote"; the commit menu and the details window
-/// leave it out.
+/// The key is unknown but the only remote is a local one: the Signature line's menu has
+/// the action greyed with the reason; the commit menu and the details window leave it out.
 #[gitti_test::test]
-fn signing_keys_without_a_github_remote_say_why() {
+fn signing_keys_without_a_forge_remote_say_why() {
     let keys = tempfile::tempdir().unwrap();
     let (dir, _) = signed_repo(keys.path());
     let d = dir.path();
     git(d, &["config", "--unset", "gpg.format"]);
-    git(d, &["remote", "set-url", "origin", "https://gitlab.example.com/o/r.git"]);
+    git(d, &["remote", "set-url", "origin", "/srv/git/r.git"]);
     let home = tempfile::tempdir().unwrap();
     std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
     let github = tempfile::tempdir().unwrap();
     let out = run(d, home.path(), github.path(), "press:j;wait;key:m;items;press:esc;rclick:100,6;items;press:esc;click:100,6;dump");
     let (commit_menu, signature_menu) = out.split_once("item: Signature Details").expect("the Signature line's menu");
     assert!(!commit_menu.contains(ACTION_LABEL), "{out}");
-    let greyed = with_reason(ACTION_LABEL, NO_GITHUB_REMOTE);
+    let greyed = with_reason(ACTION_LABEL, NO_FORGE_REMOTE);
     assert!(signature_menu.contains(&format!("item: {greyed}\n")), "{out}");
     let s = screens(&out);
     assert!(s[0].contains("Not verified") && !s[0].contains("Get Signing Keys"), "{out}");
@@ -233,4 +235,70 @@ fn allowed_signers_file_with_the_users_own_key() {
     assert!(global.contains("allowedSignersFile"), "{global}");
     assert!(s[2].contains("✓ Signed · t@example.com"), "{out}");
     assert!(states(&out)[1].contains("now lists your key"), "{out}");
+}
+
+/// A self-hosted server behind an ssh remote (`ssh://git@git.example.com:2222/o/r.git`)
+/// that answers like no forge: `K` asks it, then the user — a menu of the kinds — picks
+/// Gitea, confirms the web address (the dialog says what it remembers); the keys come from
+/// Gitea's API, ⏎ imports and the commit verifies.
+#[gitti_test::test]
+fn signing_keys_from_a_server_the_user_names() {
+    let keys = tempfile::tempdir().unwrap();
+    let (dir, line) = signed_repo(keys.path());
+    let d = dir.path();
+    git(d, &["config", "--unset", "gpg.format"]);
+    git(d, &["remote", "set-url", "origin", "ssh://git@git.example.com:2222/o/r.git"]);
+    let sha = git(d, &["rev-parse", "HEAD"]).trim().to_string();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let answers = tempfile::tempdir().unwrap();
+    let f = DirFetch(answers.path().to_path_buf());
+    let api = "https://git.example.com/api/v1";
+    f.answer(&format!("{api}/repos/o/r/git/commits/{sha}"), None, r#"{"committer":{"login":"tester"},"author":{"login":"tester"}}"#);
+    f.answer(&format!("{api}/users/tester/keys"), None, &format!(r#"[{{"id":1,"key":"{line}","title":"laptop"}}]"#));
+    let out = run(
+        d,
+        home.path(),
+        answers.path(),
+        "press:j;wait;rclick:100,6;items;pick:Get Signing Keys;dump;pick:Gitea;dump;key:enter;dump;key:enter;dump",
+    );
+    let s = screens(&out);
+    // Unknown yet: named by its host, its kind settable.
+    assert!(out.contains("item: Get Signing Keys from git.example.com…\n"), "{out}");
+    assert!(out.contains("item: Server Kind of git.example.com…\n"), "{out}");
+    // The probe found nothing: the question, then the web address with what OK does.
+    let ask = s[0].replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(ask.contains("What Is git.example.com?") && ask.contains("doesn't answer like GitLab, Gitea"), "{out}");
+    let web = s[1].replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(web.contains("https://git.example.com") && web.contains("Remembers git.example.com as a Gitea server"), "{out}");
+    let requests = std::fs::read_to_string(answers.path().join("requests.log")).unwrap();
+    assert!(requests.starts_with("https://git.example.com/api/v4/version\n"), "{requests}");
+    // Gitea's keys: the dialog, the import, verified.
+    assert!(s[2].contains("Signing Keys from git.example.com (Gitea)"), "{out}");
+    assert!(s[2].contains("tester (laptop) — signed this"), "{out}");
+    let written = std::fs::read_to_string(home.path().join(".config/git/allowed_signers")).unwrap();
+    assert!(written.contains("# tester on git.example.com (Gitea) (laptop), added by gitti"), "{written}");
+    assert!(s[3].contains("✓ Signed · t@example.com"), "{out}");
+}
+
+/// "Server Kind of …" on the Signature line's menu: a menu of the kinds; a plain git
+/// server is remembered and the action greyed for having no forge remote — no request.
+#[gitti_test::test]
+fn server_kind_plain_git_server() {
+    let keys = tempfile::tempdir().unwrap();
+    let (dir, _) = signed_repo(keys.path());
+    let d = dir.path();
+    git(d, &["config", "--unset", "gpg.format"]);
+    git(d, &["remote", "set-url", "origin", "git.example.com:o/r.git"]);
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let answers = tempfile::tempdir().unwrap();
+    let out = run(d, home.path(), answers.path(), "press:j;wait;rclick:100,6;pick:Server Kind;dump;pick:Plain;state;rclick:100,6;items");
+    let s = screens(&out);
+    let ask = s[0].replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(ask.contains("What Is git.example.com?") && ask.contains("asked of it when keys are fetched"), "{out}");
+    assert!(out.contains("git.example.com is a plain git server now"), "{out}");
+    let greyed = with_reason(ACTION_LABEL, NO_FORGE_REMOTE);
+    assert!(out.contains(&format!("item: {greyed}\n")), "{out}");
+    assert!(!answers.path().join("requests.log").exists());
 }

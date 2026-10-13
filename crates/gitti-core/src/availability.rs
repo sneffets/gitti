@@ -85,8 +85,10 @@ pub struct RepoFacts {
     /// A commit's or a stash's diff is shown (not a comparison): its lines can be
     /// reverted / applied in the working tree (`commit_lines`).
     pub commit_diff: bool,
-    /// A remote points to github.com.
-    pub github_remote: bool,
+    /// A remote is on a forge whose signing keys can be fetched (GitHub, GitLab, Gitea,
+    /// Forgejo; a self-hosted server not known to be a plain git server:
+    /// `forge::forge_repo`).
+    pub forge_remote: bool,
     /// The shown commit's signature can't be checked for a missing key that GitHub may
     /// have (`signing_keys::offer`).
     pub signing_keys: bool,
@@ -131,7 +133,7 @@ impl Default for RepoFacts {
             old_version: false,
             cursor_file: CursorFile::None,
             commit_diff: false,
-            github_remote: false,
+            forge_remote: false,
             signing_keys: false,
             fs_paths: 0,
             fs_hidable: 0,
@@ -173,7 +175,7 @@ pub const NO_CONFLICTS: &str = "no conflicts";
 pub const NO_CONFLICTED_FILE: &str = "no conflicted file at the diff cursor";
 pub const NO_OTHER_BRANCH: &str = "no other local branch";
 pub const NO_FF_BRANCH: &str = "no other branch is only behind its upstream";
-pub const NO_GITHUB_REMOTE: &str = "no GitHub remote";
+pub const NO_FORGE_REMOTE: &str = "no remote on GitHub, GitLab, Gitea or Forgejo";
 pub const NO_KEY_MISSING: &str = "the shown commit has no signature whose key is missing";
 pub const NO_FS_PATHS: &str = "every path fits this file system";
 pub const NO_FS_PATH_CHANGED: &str = "none of them shows as changed";
@@ -313,7 +315,7 @@ pub fn why_not(action: &str, f: &RepoFacts) -> Option<&'static str> {
             .or(check(f.cursor_file != CursorFile::Conflicted, NO_CONFLICTED_FILE)),
         "SwapCompare" | "EndCompare" => check(!f.comparing, NOT_COMPARING),
         "GetSigningKeys" => {
-            check(!f.github_remote, NO_GITHUB_REMOTE).or(check(!f.signing_keys, NO_KEY_MISSING))
+            check(!f.forge_remote, NO_FORGE_REMOTE).or(check(!f.signing_keys, NO_KEY_MISSING))
         }
         // Stash.
         // `git stash` would end a merge / cherry-pick half-done (`stash::refusal_during`).
@@ -541,7 +543,7 @@ mod tests {
             old_version: true,
             cursor_file: CursorFile::Changed,
             commit_diff: true,
-            github_remote: true,
+            forge_remote: true,
             signing_keys: true,
             fs_paths: 2,
             fs_hidable: 1,
@@ -568,11 +570,11 @@ mod tests {
         // A root commit: no old version.
         let root = RepoFacts { old_version: false, ..f.clone() };
         assert_eq!(unavailable(&root), [("OpenOldVersion", NO_OLD_VERSION)]);
-        // Only for a GitHub repository's commit whose signing key is missing.
+        // Only for a forge repository's commit whose signing key is missing.
         let verified = RepoFacts { signing_keys: false, ..f.clone() };
         assert_eq!(unavailable(&verified), [("GetSigningKeys", NO_KEY_MISSING)]);
-        let elsewhere = RepoFacts { github_remote: false, signing_keys: false, ..f.clone() };
-        assert_eq!(why_not("GetSigningKeys", &elsewhere), Some(NO_GITHUB_REMOTE));
+        let elsewhere = RepoFacts { forge_remote: false, signing_keys: false, ..f.clone() };
+        assert_eq!(why_not("GetSigningKeys", &elsewhere), Some(NO_FORGE_REMOTE));
         // Marked commits: HEAD among them can't be picked (reverted it can); none marked.
         let head_marked = RepoFacts { head_marked: true, ..f.clone() };
         assert_eq!(unavailable(&head_marked), [("CherryPickMarked", HEAD_MARKED)]);
