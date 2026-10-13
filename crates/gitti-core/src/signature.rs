@@ -198,10 +198,19 @@ impl SignatureInfo {
         }
         let out = self.output.to_ascii_lowercase();
         out.trim().is_empty()
+            || self.verifier_missing()
             || out.contains("no public key")
             || out.contains("public key not found")
             || out.contains("allowedsignersfile")
             || out.contains("no principal")
+    }
+
+    /// git could not start the verifier (gpg / ssh-keygen / gpgsm not installed, or the
+    /// configured program missing): its `cannot run <program>: …` on stderr (Windows:
+    /// `cannot spawn`).
+    fn verifier_missing(&self) -> bool {
+        let out = self.output.to_ascii_lowercase();
+        self.status == SigStatus::CannotCheck && (out.contains("cannot run ") || out.contains("cannot spawn "))
     }
 
     /// A short explanation for `CannotCheck`, derived from the verifier's output.
@@ -220,6 +229,13 @@ impl SignatureInfo {
         }
         if self.status != SigStatus::CannotCheck {
             return None;
+        }
+        if self.verifier_missing() {
+            return Some(match self.kind {
+                SigKind::Gpg => "git could not run gpg: install GnuPG (or fix gpg.program) to check GPG signatures",
+                SigKind::Ssh => "git could not run ssh-keygen: install OpenSSH (or fix gpg.ssh.program) to check SSH signatures",
+                SigKind::X509 => "git could not run gpgsm: install it (or fix gpg.x509.program) to check X.509 signatures",
+            });
         }
         let out = self.output.to_ascii_lowercase();
         Some(if out.contains("allowedsignersfile") {
@@ -496,5 +512,21 @@ mod tests {
         i.output = "No principal matched.".into();
         assert_eq!(i.hint(), Some("signer not listed in the allowed signers file"));
         assert!(!crate::allowed_signers::missing_setting(&i));
+    }
+
+    /// git could not run gpg (not installed — e.g. a Mac without GnuPG, where a commit
+    /// GitHub signed shows): the hint says what to install, and the key counts as unknown
+    /// (the GitHub keys dialog then warns that gpg is missing).
+    #[gitti_test::test]
+    fn hint_when_the_verifier_is_not_installed() {
+        let mut i = info(SigStatus::CannotCheck, "");
+        i.output = "error: cannot run gpg: No such file or directory".into();
+        assert!(i.hint().is_some_and(|h| h.starts_with("git could not run gpg: install GnuPG")), "{:?}", i.hint());
+        assert!(i.key_unknown());
+        i.kind = SigKind::Ssh;
+        assert!(i.hint().is_some_and(|h| h.starts_with("git could not run ssh-keygen: install OpenSSH")), "{:?}", i.hint());
+        // A verdict with "cannot run" in a signer's text isn't a missing verifier.
+        i.status = SigStatus::Good;
+        assert!(!i.key_unknown());
     }
 }

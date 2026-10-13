@@ -456,3 +456,44 @@ fn signature_keys_ssh_import_verifies_the_commit() {
     let again = r.import_signing_keys(&chosen[..1], &target).unwrap();
     assert!(again.contains("1 SSH key already in"), "{again}");
 }
+
+/// A GPG-signed commit (as GitHub signs the commits made on its website) and no gpg to
+/// check it — a Mac without GnuPG: git says "cannot run …"; the hint says what to install
+/// and "Get Signing Keys from GitHub…" is offered (its dialog warns that gpg is missing).
+#[gitti_test::test]
+fn signature_keys_offered_when_gpg_is_missing() {
+    let mut h = History::new();
+    h.commit("main", &[], "init", &[("a.txt", f("1\n"))]);
+    let (_tmp, p, _) = repo_with(&h);
+    let tree = crate::fixture_kit::sh(&p, &["rev-parse", "HEAD^{tree}"]);
+    let body = format!(
+        "tree {}\nauthor A <a@example.com> 1700000000 +0000\ncommitter GitHub <noreply@github.com> 1700000000 +0000\n\
+         gpgsig -----BEGIN PGP SIGNATURE-----\n \n wsBcBAABCAAQBQJlU+wACRBK7hj4Ov3rIwAA\n =abcd\n -----END PGP SIGNATURE-----\n\nweb commit\n",
+        tree.trim()
+    );
+    let mut child = std::process::Command::new("git")
+        .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+        .current_dir(&p)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write as _;
+    child.stdin.take().unwrap().write_all(body.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let id = gitti_core::ObjectId::from_hex(String::from_utf8_lossy(&out.stdout).trim().as_bytes()).unwrap();
+
+    let home = tempfile::tempdir().unwrap();
+    let global = home.path().join("global.gitconfig");
+    fs::write(&global, "[gpg]\n\tprogram = /nonexistent/gpg\n").unwrap();
+    let mut r = Repo::open(&p).unwrap();
+    r.set_env(vec![
+        ("GIT_CONFIG_GLOBAL".into(), global.to_string_lossy().into_owned()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+    ]);
+    let info = r.verify_signature(id).unwrap().unwrap();
+    assert_eq!((info.kind, info.status), (SigKind::Gpg, SigStatus::CannotCheck), "{info:?}");
+    assert!(info.details().starts_with("Not verified: git could not run gpg: install GnuPG"), "{}", info.details());
+    assert!(info.key_unknown(), "{info:?}");
+    assert!(sk::offer(&info, &[remote("origin", "https://github.com/o/r")]).is_some());
+}
