@@ -9,7 +9,7 @@
 //! `click:X,Y` / `rclick:X,Y` / `dclick:X,Y` / `tclick:X,Y` (triple click) / `down:X,Y` / `move:X,Y` / `up:X,Y` (logical px
 //! relative to the window content, i.e. inside a client-drawn frame's shadow and border, so
 //! the same coordinates work on every platform), `wheel:X,Y,DY` (scroll DY px down at X,Y),
-//! `answer:TEXT` / `cancel` (current dialog), `fetch`, `zoom:DELTA`, `palette:QUERY` (run best match), `cmd:GIT ARGS` (command line), `config` (repo settings), `settings:SECTION`,
+//! `answer:TEXT` / `cancel` (current dialog; a question drawn in the window: the button labelled TEXT), `fetch`, `zoom:DELTA`, `palette:QUERY` (run best match), `cmd:GIT ARGS` (command line), `config` (repo settings), `settings:SECTION`,
 //! `key:KEYSTROKE` (e.g. `key:cmd-p`), `dump` (print diff rows), `open:PATH` (repository tab),
 //! `tab:N` (activate tab), `win:merge` / `win:main` (window for the following `shot`, mouse,
 //! `wheel`, `key` and `clipboard` steps; `merge` = the last opened merge editor),
@@ -459,7 +459,10 @@ fn step_in_window(cmd: &str, arg: &str, app: &Entity<GittiApp>, window: &mut Win
             );
             app.read(cx).script_dump()
         }
+        // An in-window question (`prompt.rs`) is answered by its button label.
+        "answer" if crate::prompt::answer(arg, cx) => {}
         "answer" => app.update(cx, |a, cx| a.script_answer_modal(arg, window, cx)),
+        "cancel" if crate::prompt::cancel(cx) => {}
         "cancel" => app.update(cx, |a, cx| a.script_cancel_modal(window, cx)),
         "zoom" => {
             let d: f32 = arg.parse().unwrap_or(1.);

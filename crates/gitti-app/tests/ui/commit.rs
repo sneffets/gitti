@@ -3,7 +3,8 @@
 //! on the same db) and a failed hook, and goes after a successful commit; typing runs no
 //! git. Commit with nothing staged asks (the button is on once a message is typed):
 //! "Stage All and Commit" (`add -A`, then the commit), "Stage Tracked Files and Commit"
-//! (`add -u`) or "Create Empty Commit" (`--allow-empty`). Quitting while git runs asks
+//! (`add -u`) or "Create Empty Commit" (`--allow-empty`); drawn in the window (Linux),
+//! the question takes Escape (Cancel), Tab and Enter. Quitting while git runs asks
 //! first (Quit When Done / Stop and Quit), so does closing the tab. A SHA-256 repository
 //! opens, stages a line and commits like a SHA-1 one. The message git prepared
 //! (`cherry-pick -n -x` on the command line) fills an empty box and commits; next to the
@@ -38,6 +39,7 @@ pub fn main() {
     let tests: &[(&str, Scenario)] = &[
         ("draft_survives_a_restart", draft_survives_a_restart),
         ("nothing_staged_choices", nothing_staged_choices),
+        ("question_drawn_in_the_window", question_drawn_in_the_window),
         ("quit_while_git_runs_asks", quit_while_git_runs_asks),
         ("sha256_stage_a_line_and_commit", sha256_stage_a_line_and_commit),
         ("close_tab_while_git_runs_asks", close_tab_while_git_runs_asks),
@@ -521,6 +523,64 @@ fn draft_survives_a_restart(ui: &mut Ui) {
     if !subjects(ui).starts_with("Draft one, more\n") || draft(ui).is_some() || !message(ui).is_empty() {
         let (s, d, m) = (subjects(ui), draft(ui), message(ui));
         ui.fail(format!("after the commit: log {s:?}, draft {d:?}, box {m:?}"));
+    }
+}
+
+/// The same question drawn in the window, as on Linux (gpui has no system dialog there):
+/// whole in the window, Cancel last; Escape cancels without git; Tab moves the mark right
+/// (round to Cancel), ← / → as drawn, and Enter presses the marked button.
+fn question_drawn_in_the_window(ui: &mut Ui) {
+    ui.cx.update(testing::window_prompts);
+    ui.step("action:gitti::UnstageAll");
+    ui.step("msg:Everything");
+    let n = ui.n_git();
+    ui.click_on("commit-button", MouseButton::Left);
+    ui.settle();
+    let open = ui.cx.update(|cx| testing::open_prompt(cx));
+    let Some((title, _, labels)) = open else {
+        ui.fail("Commit with nothing staged drew no question in the window".into());
+        return;
+    };
+    if ui.cx.has_pending_prompt() || labels.first().map(String::as_str) != Some("Stage All and Commit")
+        || labels.last().map(String::as_str) != Some("Cancel")
+    {
+        ui.fail(format!("question {title:?}: buttons {labels:?}"));
+    }
+    let probes = ui.check("question open");
+    for name in ["prompt", "prompt-title", "prompt-detail", "prompt-button:0"] {
+        if find(&probes, name).is_none() {
+            ui.fail(format!("question open: no {name}"));
+        }
+    }
+    ui.stroke("escape");
+    ui.settle();
+    if ui.cx.update(|cx| testing::open_prompt(cx)).is_some() {
+        ui.fail("Escape left the question open".into());
+    }
+    ui.no_git_since(n, "the cancelled question");
+    // The default stands on the right: Tab goes round to Cancel on the left.
+    ui.click_on("commit-button", MouseButton::Left);
+    ui.settle();
+    ui.stroke("tab");
+    ui.stroke("enter");
+    ui.settle();
+    if ui.cx.update(|cx| testing::open_prompt(cx)).is_some() {
+        ui.fail("Tab, Enter left the question open".into());
+    }
+    ui.no_git_since(n, "Tab, Enter (Cancel)");
+    ui.click_on("commit-button", MouseButton::Left);
+    ui.settle();
+    ui.stroke("left");
+    ui.stroke("right");
+    ui.stroke("enter");
+    ui.settle();
+    let ran = ui.git_since(n);
+    if !(ran.len() >= 2 && ran[0] == "add -A" && ran[1].starts_with("commit ")) {
+        ui.fail(format!("Enter on the question ran {ran:?}"));
+    }
+    if !subjects(ui).starts_with("Everything\n") {
+        let s = subjects(ui);
+        ui.fail(format!("after Enter: log {s:?}"));
     }
 }
 

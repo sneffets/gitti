@@ -10,6 +10,7 @@ mod highlight;
 mod menu_height;
 mod merge_window;
 mod message;
+mod prompt;
 mod rem_scope;
 pub mod layout_check;
 pub mod probe;
@@ -188,6 +189,10 @@ pub fn run() {
         .run(move |cx| {
             gitti_core::startup::mark("GPU / window system ready");
             init(cx);
+            // Linux has no system dialog for questions: gitti draws its own.
+            if prompt::wanted() {
+                prompt::install(cx);
+            }
             if !scripted {
                 note_system_keyboard(cx);
             }
@@ -354,6 +359,7 @@ pub fn init(cx: &mut App) {
     us.extend(nav_key_bindings());
     us.extend(graph_key_bindings());
     us.extend(merge_window::key_bindings());
+    us.extend(prompt::key_bindings());
     cx.set_global(AppKeys {
         kit,
         us,
@@ -458,6 +464,17 @@ pub mod testing {
         gitti_core::desktop::sandbox();
         let (_, ask_rx) = async_channel::unbounded();
         cx.new(|cx| Workspace::new(Some(repo), Vec::new(), ask_rx, true, window, cx))
+    }
+
+    /// Questions (`Window::prompt`) drawn in the window as on Linux, instead of the test
+    /// platform's (`simulate_prompt_answer`).
+    pub fn window_prompts(cx: &mut App) {
+        crate::prompt::install(cx);
+    }
+
+    /// The question drawn in the window now: title, text, button labels (default first).
+    pub fn open_prompt(cx: &App) -> Option<(String, Option<String>, Vec<String>)> {
+        crate::prompt::open_prompt(cx)
     }
 
     /// Tooltip views made visible so far and the visible ones up now; whether a context

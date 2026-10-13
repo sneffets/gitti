@@ -546,6 +546,24 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
             }
         }
     }
+
+    // 9b. A question drawn in the window (`prompt.rs`, Linux): whole in the window, its
+    //     title, text and buttons inside it, the buttons always shown whole.
+    if let Some(m) = get("prompt") {
+        if m.visible() != Some(m.bounds) {
+            out.push(format!("prompt {:?} is not whole in the window", m.bounds));
+        }
+        for part in probes.iter().filter(|q| {
+            q.kind() == "prompt-button" || matches!(q.name.as_str(), "prompt-title" | "prompt-detail")
+        }) {
+            if !contains(&m.bounds, &part.bounds) {
+                out.push(format!("{} reaches outside prompt", part.name));
+            }
+            if part.kind() == "prompt-button" && part.visible() != Some(part.bounds) {
+                out.push(format!("{} is not shown whole", part.name));
+            }
+        }
+    }
     out
 }
 
