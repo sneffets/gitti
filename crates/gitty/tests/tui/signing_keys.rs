@@ -6,13 +6,16 @@
 //! and the commit verifies — the Signature line's menu then greys it with the reason.
 //! Without a forge remote that menu says so (greyed); the others leave it out. A
 //! self-hosted server that doesn't say what it is: the user is asked (Gitea), the keys
-//! come from there, and the server's kind can be changed (a plain git server: no keys). With an allowed signers file at
-//! a usual place (but none set), it is offered instead and "for This Repository" makes the
-//! commit verify. Signed with the user's own key and no file anywhere: a file with that key
-//! is offered, created and set.
+//! come from there, and the server's kind can be changed (a plain git server: no keys).
+//! With an allowed signers file at a usual place (but none set), it is offered instead and
+//! "for This Repository" makes the commit verify. Signed with the user's own key and no
+//! file anywhere: a file with that key is offered, created and set.
+//!
+//! Cheap: the signed repository is built once per test binary ([`template`]) and copied.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use crate::common;
 use crate::support;
@@ -43,28 +46,88 @@ fn run(dir: &Path, home: &Path, github: &Path, script: &str) -> String {
     stdout
 }
 
-/// A repository whose HEAD is SSH-signed (origin on GitHub) and the key's public line.
-fn signed_repo(keys: &Path) -> (tempfile::TempDir, String) {
-    let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n")]);
-    let d = dir.path();
-    let key = keys.join("id");
-    let st = Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-C", "k", "-f"])
-        .arg(&key)
-        .status()
-        .unwrap();
-    assert!(st.success());
-    add_config(
-        d,
-        &format!(
-            "[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {}\n[remote \"origin\"]\n\turl = git@github.com:o/r.git\n",
-            config_path(&key)
-        ),
-    );
-    git(d, &["commit", "-q", "-S", "-am", "signed"]);
-    let pubkey = std::fs::read_to_string(key.with_extension("pub")).unwrap();
-    let line: String = pubkey.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
-    (dir, line)
+/// The signed repository all tests copy: built once per test binary (an SSH key, two
+/// commits, the second signed — six processes), under cargo's temp dir for tests.
+struct Template {
+    repo: PathBuf,
+    key: PathBuf,
+    /// The key's public line (`ssh-ed25519 AAAA…`).
+    line: String,
+    /// The signed commit.
+    sha: String,
+}
+
+fn template() -> &'static Template {
+    static T: OnceLock<Template> = OnceLock::new();
+    T.get_or_init(|| {
+        let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        // Earlier runs' templates (a test binary can't clean up after itself).
+        if let Ok(entries) = std::fs::read_dir(tmp) {
+            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+            for e in entries.flatten() {
+                let stale = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < old);
+                if e.file_name().to_string_lossy().starts_with("signing-keys-") && stale {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+        let base = tmp.join(format!("signing-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let key = base.join("id");
+        let st = Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-C", "k", "-f"])
+            .arg(&key)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        init(&repo);
+        write_files(&repo, &[("a.txt", "a\n")]);
+        commit_all(&repo, "init");
+        write_files(&repo, &[("a.txt", "b\n")]);
+        let signing = format!("user.signingkey={}", config_path(&key));
+        git(&repo, &["-c", "gpg.format=ssh", "-c", &signing, "commit", "-q", "-S", "-am", "signed"]);
+        let sha = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+        let pubkey = std::fs::read_to_string(key.with_extension("pub")).unwrap();
+        let line = pubkey.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+        Template { repo, key, line, sha }
+    })
+}
+
+/// Copies directory `from` into `to` (no git process).
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let (src, dst) = (e.path(), to.join(e.file_name()));
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&src, &dst);
+        } else {
+            std::fs::copy(&src, &dst).unwrap();
+        }
+    }
+}
+
+/// A copy of the [`template`] whose HEAD is SSH-signed, its origin at `origin`; with
+/// `own_key` the key is the user's own signing key (`gpg.format = ssh`,
+/// `user.signingKey`). The key's public line and the signed commit's id.
+fn signed_repo(origin: &str, own_key: bool) -> (tempfile::TempDir, String, String) {
+    let t = template();
+    let dir = tempfile::tempdir().unwrap();
+    copy_dir(&t.repo, dir.path());
+    let mut config = format!("[remote \"origin\"]\n\turl = {origin}\n");
+    if own_key {
+        config.push_str(&format!("[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {}\n", config_path(&t.key)));
+    }
+    add_config(dir.path(), &config);
+    (dir, t.line.clone(), t.sha.clone())
+}
+
+/// A private home with an empty global config.
+fn home() -> tempfile::TempDir {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    home
 }
 
 /// `~/.ssh/allowed_signers` lists the key but no file is set: the Signature line says
@@ -73,16 +136,14 @@ fn signed_repo(keys: &Path) -> (tempfile::TempDir, String) {
 /// ⏎ sets it in `.git/config` (not globally) and the commit verifies.
 #[gitti_test::test]
 fn allowed_signers_file_is_offered_and_used() {
-    let keys = tempfile::tempdir().unwrap();
-    let (dir, line) = signed_repo(keys.path());
+    let (dir, line, _) = signed_repo("git@github.com:o/r.git", true);
     let d = dir.path();
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let home = home();
     std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
     std::fs::write(home.path().join(".ssh/allowed_signers"), format!("t@example.com namespaces=\"git\" {line}\n")).unwrap();
     let github = tempfile::tempdir().unwrap();
     let script = format!(
-        "press:j;wait;dump;key:m;items;press:esc;press:ctrl-p;{}key:enter;dump;state;key:enter;wait;dump;state",
+        "press:j;wait;dump;key:m;items;press:esc;press:ctrl-p;{}key:enter;dump;state;key:enter;dump;state",
         presses("allowed signers file")
     );
     let out = run(d, home.path(), github.path(), &script);
@@ -103,34 +164,8 @@ fn allowed_signers_file_is_offered_and_used() {
     assert!(states(&out)[1].contains("This repository now checks SSH signatures"), "{out}");
 }
 
-#[gitti_test::test]
-fn signing_keys_from_github_verify_the_commit() {
-    let dir = fixture(&[("a.txt", "a\n")], &[("a.txt", "b\n")]);
-    let d = dir.path();
-    let keys = tempfile::tempdir().unwrap();
-    let key = keys.path().join("id");
-    let st = Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-C", "k", "-f"])
-        .arg(&key)
-        .status()
-        .unwrap();
-    assert!(st.success());
-    add_config(
-        d,
-        &format!(
-            "[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {}\n[remote \"origin\"]\n\turl = git@github.com:o/r.git\n",
-            config_path(&key)
-        ),
-    );
-    git(d, &["commit", "-q", "-S", "-am", "signed"]);
-    // Not the user's own key (no SSH signing configured): GitHub is the way here.
-    git(d, &["config", "--unset", "gpg.format"]);
-    let sha = git(d, &["rev-parse", "HEAD"]).trim().to_string();
-    let pubkey = std::fs::read_to_string(key.with_extension("pub")).unwrap();
-    let line: String = pubkey.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
-
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+/// GitHub's answers for the template's commit: the committer `tester` with its key.
+fn github_answers(sha: &str, line: &str) -> tempfile::TempDir {
     let github = tempfile::tempdir().unwrap();
     let put = |url: &str, body: &str| {
         let name = url.trim_start_matches("https://").replace('/', "_");
@@ -142,24 +177,50 @@ fn signing_keys_from_github_verify_the_commit() {
         "https://api.github.com/users/tester/ssh_signing_keys",
         &format!(r#"[{{"id":7,"key":"{line}","title":"laptop"}}]"#),
     );
+    github
+}
 
-    // Row 1 = the signed commit; m = its menu; the Signature line (row 6): its menu
-    // (right click), its details (click) with K = "Get Signing Keys from GitHub…".
+/// The key is unknown and origin is on GitHub: the Signature line says so (`m`), the
+/// commit menu (`m`) and the Signature line's menu (right click) offer the action, its
+/// details window (click) as `K`.
+#[gitti_test::test]
+fn signing_keys_offered_where_the_signature_is() {
+    // Not the user's own key (no SSH signing configured): GitHub is the way here.
+    let (dir, _, _) = signed_repo("git@github.com:o/r.git", false);
+    let home = home();
+    let github = tempfile::tempdir().unwrap();
+    // Row 1 = the signed commit; m = its menu; the Signature line (row 6).
     let out = run(
-        d,
+        dir.path(),
         home.path(),
         github.path(),
-        "press:j;wait;dump;key:m;items;press:esc;rclick:100,6;items;press:esc;click:100,6;dump;key:K;wait;dump;state;key:enter;wait;dump;state;rclick:100,6;items",
+        "press:j;wait;dump;key:m;items;press:esc;rclick:100,6;items;press:esc;click:100,6;dump",
     );
-    let menus: Vec<&str> = out.split("item: ").collect();
     let s = screens(&out);
     assert!(s[0].contains("? Signed, not verified") && s[0].contains("m: Get Signing Keys from GitHub"), "{out}");
     assert!(out.contains("item: Get Signing Keys from GitHub…\n"), "{out}");
     // The Signature line's menu: its details and the action.
     assert!(out.contains("item: Signature Details\nitem: Get Signing Keys from GitHub…\n"), "{out}");
     assert!(s[1].contains("K Get Signing Keys from GitHub") && s[1].contains("Not verified"), "{out}");
-    let s = &s[1..];
-    let dialog = s[1].split_whitespace().collect::<Vec<_>>().join(" ");
+}
+
+/// `K` in the signature's details window: GitHub's keys, the one that signed ticked; ⏎
+/// writes the allowed signers file, sets it in the global config, the commit verifies and
+/// the Signature line's menu greys the action with the reason.
+#[gitti_test::test]
+fn signing_keys_from_github_verify_the_commit() {
+    let (dir, line, sha) = signed_repo("git@github.com:o/r.git", false);
+    let home = home();
+    let github = github_answers(&sha, &line);
+    let out = run(
+        dir.path(),
+        home.path(),
+        github.path(),
+        "press:j;wait;click:100,6;key:K;dump;state;key:enter;dump;state;rclick:100,6;items",
+    );
+    let menus: Vec<&str> = out.split("item: ").collect();
+    let s = screens(&out);
+    let dialog = s[0].split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(out.contains("Input \"Signing Keys from GitHub\""), "{out}");
     assert!(dialog.contains("☑ SSH SHA256:") && dialog.contains("tester (laptop) — signed this"), "{out}");
     assert!(dialog.contains("~/.config/git/allowed_signers"), "{out}");
@@ -167,7 +228,7 @@ fn signing_keys_from_github_verify_the_commit() {
     assert!(written.ends_with(&format!("t@example.com namespaces=\"git\" {line}\n")), "{written}");
     let global = std::fs::read_to_string(home.path().join("global.gitconfig")).unwrap();
     assert!(global.contains("allowedSignersFile"), "{global}");
-    assert!(s[2].contains("✓ Signed · t@example.com"), "{out}");
+    assert!(s[1].contains("✓ Signed · t@example.com"), "{out}");
     let requests = std::fs::read_to_string(github.path().join("requests.log")).unwrap();
     assert_eq!(requests.lines().count(), 3, "{requests}");
     // Verified: the Signature line's menu greys it with the reason.
@@ -180,13 +241,9 @@ fn signing_keys_from_github_verify_the_commit() {
 /// the action greyed with the reason; the commit menu and the details window leave it out.
 #[gitti_test::test]
 fn signing_keys_without_a_forge_remote_say_why() {
-    let keys = tempfile::tempdir().unwrap();
-    let (dir, _) = signed_repo(keys.path());
+    let (dir, _, _) = signed_repo("/srv/git/r.git", false);
     let d = dir.path();
-    git(d, &["config", "--unset", "gpg.format"]);
-    git(d, &["remote", "set-url", "origin", "/srv/git/r.git"]);
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let home = home();
     let github = tempfile::tempdir().unwrap();
     let out = run(d, home.path(), github.path(), "press:j;wait;key:m;items;press:esc;rclick:100,6;items;press:esc;click:100,6;dump");
     let (commit_menu, signature_menu) = out.split_once("item: Signature Details").expect("the Signature line's menu");
@@ -205,14 +262,12 @@ fn signing_keys_without_a_forge_remote_say_why() {
 /// global config, and the commit verifies.
 #[gitti_test::test]
 fn allowed_signers_file_with_the_users_own_key() {
-    let keys = tempfile::tempdir().unwrap();
-    let (dir, line) = signed_repo(keys.path());
+    let (dir, line, _) = signed_repo("git@github.com:o/r.git", true);
     let d = dir.path();
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let home = home();
     let github = tempfile::tempdir().unwrap();
     let script = format!(
-        "press:j;wait;dump;key:m;items;press:esc;press:ctrl-p;{}key:enter;dump;state;key:enter;wait;dump;state",
+        "press:j;wait;dump;key:m;items;press:esc;press:ctrl-p;{}key:enter;dump;state;key:enter;dump;state",
         presses("allowed signers file")
     );
     let out = run(d, home.path(), github.path(), &script);
@@ -243,14 +298,9 @@ fn allowed_signers_file_with_the_users_own_key() {
 /// Gitea's API, ⏎ imports and the commit verifies.
 #[gitti_test::test]
 fn signing_keys_from_a_server_the_user_names() {
-    let keys = tempfile::tempdir().unwrap();
-    let (dir, line) = signed_repo(keys.path());
+    let (dir, line, sha) = signed_repo("ssh://git@git.example.com:2222/o/r.git", false);
     let d = dir.path();
-    git(d, &["config", "--unset", "gpg.format"]);
-    git(d, &["remote", "set-url", "origin", "ssh://git@git.example.com:2222/o/r.git"]);
-    let sha = git(d, &["rev-parse", "HEAD"]).trim().to_string();
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let home = home();
     let answers = tempfile::tempdir().unwrap();
     let f = DirFetch(answers.path().to_path_buf());
     let api = "https://git.example.com/api/v1";
@@ -285,13 +335,9 @@ fn signing_keys_from_a_server_the_user_names() {
 /// server is remembered and the action greyed for having no forge remote — no request.
 #[gitti_test::test]
 fn server_kind_plain_git_server() {
-    let keys = tempfile::tempdir().unwrap();
-    let (dir, _) = signed_repo(keys.path());
+    let (dir, _, _) = signed_repo("git.example.com:o/r.git", false);
     let d = dir.path();
-    git(d, &["config", "--unset", "gpg.format"]);
-    git(d, &["remote", "set-url", "origin", "git.example.com:o/r.git"]);
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let home = home();
     let answers = tempfile::tempdir().unwrap();
     let out = run(d, home.path(), answers.path(), "press:j;wait;rclick:100,6;pick:Server Kind;dump;pick:Plain;state;rclick:100,6;items");
     let s = screens(&out);

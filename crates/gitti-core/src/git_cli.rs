@@ -280,9 +280,12 @@ pub fn is_read_only(args: &[&str]) -> bool {
         Some("config") => a.iter().any(|x| {
             matches!(
                 *x,
-                "--get" | "--get-all" | "--get-regexp" | "--list" | "-l" | "--show-origin"
+                "--get" | "--get-all" | "--get-regexp" | "--get-urlmatch" | "--list" | "-l"
+                    | "--show-origin"
             )
         }),
+        // Asks the credential helpers (its password is not logged: a read's output isn't).
+        Some("credential") => a.get(1) == Some(&"fill"),
         _ => false,
     }
 }
@@ -1199,6 +1202,9 @@ mod tests {
         assert!(is_read_only(&["remote", "-v"]));
         assert!(is_read_only(&["config", "--local", "--get", "user.name"]));
         assert!(!is_read_only(&["config", "--local", "user.name", "x"]));
+        assert!(is_read_only(&["config", "--get-urlmatch", "http", "https://h/"]));
+        assert!(is_read_only(&["-c", "credential.interactive=false", "credential", "fill"]));
+        assert!(!is_read_only(&["credential", "approve"]));
         assert!(!is_read_only(&["remote", "add", "o", "u"]));
         assert!(is_read_only(&["apply", "-R", "--check", "-"]));
         assert!(!is_read_only(&["apply", "--check", "--apply", "-"]));
