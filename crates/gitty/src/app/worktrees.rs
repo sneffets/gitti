@@ -449,7 +449,7 @@ impl App {
 
     /// "Repair Worktrees…": `git worktree repair`, optionally with the new folder of a
     /// linked worktree moved by hand (`moved` = the one whose folder is gone); git's
-    /// report in a text window.
+    /// report as it is in the status and the Git Log, like a push.
     pub fn repair_worktrees_dialog(&mut self, moved: Option<Worktree>) {
         let title = match &moved {
             Some(wt) => format!("Repair worktree {}: where is its folder now?", wt.name()),
@@ -465,12 +465,14 @@ impl App {
                 } else {
                     vec![gitti_core::create::expand_home(&folder)]
                 };
-                app.run_op(
-                    "Repair worktrees",
-                    true,
-                    After::ShowOutput("Repair Worktrees — what was fixed".into()),
-                    move |r| r.repair_worktrees(&paths),
-                );
+                app.run_op("Repair worktrees", true, After::Nothing, move |r| {
+                    let out = r.repair_worktrees(&paths)?;
+                    Ok(if out.is_empty() {
+                        "Nothing to repair — git finds every worktree".to_string()
+                    } else {
+                        out
+                    })
+                });
             },
         ));
     }

@@ -828,9 +828,9 @@ impl GittiApp {
     /// "Repair Worktrees…" (`git worktree repair`): after folders were moved by hand (not
     /// with Move…) git lost the link between a worktree and the repository. Without a
     /// folder it repairs what it can find (e.g. after moving the main worktree); a linked
-    /// worktree moved by hand needs its new folder. What was fixed is shown in plain words
-    /// (git's report below). `moved` = the worktree whose folder is gone (its menu's
-    /// "Repair (Folder Moved)…").
+    /// worktree moved by hand needs its new folder. git's report (`repair: <what was
+    /// wrong>: <path>` per fix) goes to the status and the Git Log. `moved` = the worktree
+    /// whose folder is gone (its menu's "Repair (Folder Moved)…").
     pub(super) fn repair_worktrees_dialog(
         &mut self,
         moved: Option<&Worktree>,
@@ -873,12 +873,13 @@ impl GittiApp {
                 w,
                 cx,
                 move |r| r.repair_worktrees(&paths),
-                |this, out, w, cx| {
+                |this, out, _, _| {
+                    // git's report as it is, like a push: its last line in the status,
+                    // the whole of it in the Git Log.
                     if out.is_empty() {
                         this.set_info("Nothing to repair — git finds every worktree");
                     } else {
-                        this.set_info("Repaired worktrees");
-                        this.show_text_modal("Repair Worktrees — what was fixed", out, w, cx);
+                        this.set_info(format!("Repaired worktrees — {}", super::last_line(&out, "")));
                     }
                 },
             );

@@ -817,7 +817,7 @@ fn folder_picker(ui: &mut Ui) {
 /// More worktree commands: Move… (dialog with parent + folder name; refused for an
 /// existing target and for the main worktree; a tab on the worktree follows it, its own
 /// tab too), Repair (a worktree moved by hand is prunable until Repair gets its new
-/// folder; what was fixed is shown; nothing to repair says so), palette entries, and the
+/// folder; git's report in the status; nothing to repair says so), palette entries, and the
 /// Add Worktree key (⌘⌥W / Ctrl+Alt+W) with its hint.
 /// Workflow: WT-05
 fn move_and_repair(ui: &mut Ui) {
@@ -929,11 +929,14 @@ fn move_and_repair(ui: &mut Ui) {
     }
     ui.quick(&format!("field:0={}", by_hand.display()));
     ui.step("modalok");
-    match modal_title(ui) {
-        Some(t) if t.starts_with("Repair Worktrees — what was fixed") => {}
-        other => fail!(ui, "no repair report: {other:?}, status {:?}", status(ui)),
+    // git's report as it is, in the status (no window), like a push.
+    match status(ui) {
+        Some((s, false)) if s.starts_with("Repaired worktrees — repair: gitdir incorrect: ") => {}
+        other => fail!(ui, "no repair report: status {other:?}, modal {:?}", modal_title(ui)),
     }
-    ui.quick("cancel");
+    if let Some(t) = modal_title(ui) {
+        fail!(ui, "a window after the repair: {t}");
+    }
     if !worktrees(ui).iter().any(|w| w == "move_and_repair-byhand wt") {
         fail!(ui, "after the repair: {:?}", worktrees(ui));
     }
