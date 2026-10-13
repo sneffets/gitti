@@ -4,11 +4,13 @@ edition.workspace = true
 version = "0.1.0"
 license.workspace = true
 publish = false
-description = "Dev tasks: `cargo xtask worktree` (agent worktree slots), `cargo xtask licenses`"
+description = "Dev tasks: `cargo xtask worktree` (agent worktree slots), `cargo xtask licenses`, `cargo xtask icons`"
 
 [dependencies]
 # `cargo metadata` output (`licenses.rs`).
 serde_json = "1"
+# `icons.rs`: the app icon SVGs → icns / ico / png (same version as gpui uses).
+resvg = { version = "0.46", default-features = false }
 
 [dev-dependencies]
 gitti-test.workspace = true

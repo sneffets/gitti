@@ -5,14 +5,26 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
+$started = Get-Date
+# Each step says what it does before it starts, with the time since the script began.
+function Step($what) {
+    $t = (Get-Date) - $started
+    Write-Host ("`n==> [{0}m{1:00}s] {2}" -f [int][math]::Floor($t.TotalMinutes), $t.Seconds, $what)
+}
+
 function Invoke-Cargo {
     & cargo @args
     if ($LASTEXITCODE -ne 0) { throw "cargo $args failed" }
 }
 
-# Icon files from assets/icon/*.svg (rewrites only what changed, so usually no rebuild).
-Invoke-Cargo run --release -q -p gitti-app --example make_icons
+Step 'icons: checking assets/icon/*.svg against sources.hash (renders only if they changed)'
+Invoke-Cargo run -p xtask icons
+Step 'building gitti + gitty (cargo profile release)'
+Write-Host '    cargo lists what it compiles; its last step (fat LTO, one codegen unit) links'
+Write-Host '    the whole program in one go and prints nothing for several minutes.'
 Invoke-Cargo build --release -p gitti-app -p gitty
+
+Step "installing into $env:LOCALAPPDATA\Programs\gitti, Start menu entry, icon cache"
 
 $dest = Join-Path $env:LOCALAPPDATA 'Programs\gitti'
 New-Item -ItemType Directory -Force $dest | Out-Null
@@ -49,4 +61,5 @@ $link.Save()
 $ie4uinit = Join-Path $env:SystemRoot 'System32\ie4uinit.exe'
 if (Test-Path $ie4uinit) { & $ie4uinit -show }
 
+Step 'done'
 Write-Host "installed gitti + gitty into $dest, Start menu entry 'gitti'"

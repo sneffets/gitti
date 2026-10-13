@@ -104,7 +104,7 @@ cargo clippy --workspace                            # kept clean
 scripts/smoke.sh [outdir]                           # E2E UI test, drives the real app; run after UI changes
 scripts/check-windows.sh                            # cargo check for x86_64-pc-windows-msvc from macOS; run after platform-specific changes
 scripts\install-windows.cmd                         # on Windows: build + install gitti/gitty, Start menu entry, icon cache refresh
-cargo run -p gitti-app --example make_icons         # assets/icon/*.svg → icns/ico/PNGs + sources.hash (checked in; bundle/install scripts run it)
+cargo xtask icons                                   # assets/icon/*.svg → icns/ico/PNGs + sources.hash (checked in; skipped while the hash matches; bundle/install scripts run it)
 cargo run --release -p gitti-core --example bench -- /path/to/repo   # timings (BENCH_HISTORY_ONLY=1 skips working state)
 cargo run --release -p gitti-core --example stage_bench -- /scratch/clone  # every refresh query + a stage cycle (writes the index!)
 ```

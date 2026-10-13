@@ -1,6 +1,6 @@
 //! Embeds the app icon (`assets/icon/gitti.ico`) as icon resource 1 into the Windows
 //! executable: Explorer and the taskbar show it, and gpui loads resource 1 for its windows.
-//! On every platform it warns when the icon SVGs changed without rerunning `make_icons`,
+//! On every platform it warns when the icon SVGs changed without rerunning `cargo xtask icons`,
 //! and records the git commit the binary is built from (`build_info.rs`).
 
 use std::path::PathBuf;

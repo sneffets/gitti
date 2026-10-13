@@ -192,7 +192,7 @@ and ideas are welcome.
 
 Tests: `cargo test --workspace` (includes gitty's headless end-to-end tests) and
 `scripts/smoke.sh` (drives the real GUI). The app icon's sources are `assets/icon/*.svg`;
-`cargo run -p gitti-app --example make_icons` regenerates the icon files from them.
+`cargo xtask icons` regenerates the icon files from them.
 
 ## License
 

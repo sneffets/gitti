@@ -2,16 +2,23 @@
 # Builds gitti in release mode and wraps it into target/release/gitti.app (icon, bundle id),
 # so it can be started from Finder / Dock / Spotlight. Copy the .app to /Applications.
 #   scripts/bundle-macos.sh
+# GITTI_BUILD_PROFILE=release-lowmem builds without LTO: much faster, a bit slower binary
+# (the bundle then lands in target/release-lowmem/gitti.app).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Icon files from assets/icon/*.svg (rewrites only what changed, so usually no rebuild).
-cargo run --release -q -p gitti-app --example make_icons
-cargo build --release -p gitti-app
+. scripts/steps.sh
+. scripts/build-profile.sh
+step "icons: checking assets/icon/*.svg against sources.hash (renders only if they changed)"
+cargo run -p xtask -- icons
+step "building gitti (cargo profile $PROFILE)"
+build_note
+cargo build --profile "$PROFILE" -p gitti-app
+step "bundling target/$PROFILE/gitti.app"
 VERSION=$(cargo pkgid -p gitti-app | sed 's/.*[#@]//')
-APP=target/release/gitti.app
+APP=target/$PROFILE/gitti.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/gitti "$APP/Contents/MacOS/gitti"
+cp "target/$PROFILE/gitti" "$APP/Contents/MacOS/gitti"
 cp assets/icon/gitti.icns "$APP/Contents/Resources/gitti.icns"
 # Licences shipped with the binary: our own, and every third-party component's
 # (`cargo xtask licenses` keeps the list current; the app also shows it).
@@ -37,6 +44,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# Ad-hoc signature, so Gatekeeper accepts the locally built bundle.
+step "signing ad hoc (so Gatekeeper accepts the locally built bundle)"
 codesign --force --sign - "$APP" >/dev/null 2>&1
-echo "$APP"
+done_steps "$APP"

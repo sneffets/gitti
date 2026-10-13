@@ -1,6 +1,6 @@
-// Shared by `examples/make_icons.rs` and the build scripts of gitti-app and gitty (via
-// `include!`): a hash over the icon SVG sources. `make_icons` stores it in
-// `assets/icon/sources.hash`; the build scripts warn when the SVGs no longer match, i.e. the
+// Shared by `crates/xtask/src/icons.rs` and the build scripts of gitti-app and gitty (via
+// `include!`): a hash over the icon SVG sources. `cargo xtask icons` stores it in
+// `assets/icon/sources.hash` (and skips rendering while it matches); the build scripts warn when the SVGs no longer match, i.e. the
 // checked-in icns/ico/png files are stale. Content-based, because git checkouts make mtimes
 // meaningless; `\r` is dropped so a CRLF checkout on Windows hashes the same.
 
@@ -36,7 +36,7 @@ fn warn_if_icons_stale(dir: &std::path::Path) {
     if icon_sources_hash(dir).ok().as_deref() != Some(stored.trim()) {
         println!(
             "cargo:warning=assets/icon/*.svg changed, the icon files are stale: \
-             cargo run -p gitti-app --example make_icons"
+             cargo xtask icons"
         );
     }
 }

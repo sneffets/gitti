@@ -1,5 +1,5 @@
 //! App identity and icon (sources and derived files in `assets/icon/`, regenerated with
-//! `cargo run -p gitti-app --example make_icons`).
+//! `cargo xtask icons`).
 //!
 //! - Windows: `build.rs` embeds `gitti.ico` as icon resource 1, which gpui uses for its
 //!   windows — nothing to do at runtime.
@@ -60,7 +60,7 @@ mod dev_entry {
 
     use super::APP_ID;
 
-    /// One checked-in hicolor size (`make_icons`): (size, PNG).
+    /// One checked-in hicolor size (`cargo xtask icons`): (size, PNG).
     macro_rules! icon {
         ($size:literal) => {
             (

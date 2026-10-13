@@ -7,20 +7,28 @@
 //! - `hicolor/<n>x<n>/apps/<APP_ID>.png` — Linux icon theme sizes
 //! - `sources.hash` — hash of the SVGs; the build scripts warn when it no longer matches
 //!
-//! Unchanged files are not rewritten, so running it again triggers no rebuild.
+//! When `sources.hash` already matches the SVGs and every file is there, nothing is
+//! rendered (`--force` renders anyway). Unchanged files are not rewritten, so running it
+//! again triggers no rebuild.
 //!
 //! Small sizes get their own artwork, chosen by the edge length of the drawn square:
 //! up to 24 px `gitti-small.svg`, up to 64 px `gitti-medium.svg` (pixel-aligned 3 px
 //! lines — the scaled-down big artwork has ~2 px lines between pixels, whose straight and
 //! curved parts blur to visibly different widths), above that `gitti.svg`.
 //!
-//!   cargo run -p gitti-app --example make_icons
+//! Lives in xtask (a small debug build) rather than as an example of gitti-app: an example
+//! links the whole app library, which under the release profile meant a second fat-LTO link
+//! of the gpui stack before every bundle / install build.
+//!
+//!   cargo xtask icons [--force]
 
 use std::path::{Path, PathBuf};
 
 use resvg::{tiny_skia, usvg};
 
-include!("../icon_hash.rs");
+use crate::{Failure, Result};
+
+include!("../../gitti-app/icon_hash.rs");
 
 /// Same id as `main::APP_ID` (Linux app_id, desktop file, icon name, macOS bundle id).
 const APP_ID: &str = "io.github.sneffets.gitti";
@@ -31,8 +39,40 @@ const BLEED: (f32, f32, f32) = (100.0, 100.0, 824.0);
 const SMALL_MAX: f32 = 24.0;
 const MEDIUM_MAX: f32 = 64.0;
 
-fn main() -> anyhow::Result<()> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icon");
+/// Linux hicolor theme sizes.
+const HICOLOR_SIZES: [u32; 8] = [16, 24, 32, 48, 64, 128, 256, 512];
+
+pub fn run(args: &[String]) -> Result {
+    let force = match args {
+        [] => false,
+        [f] if f == "--force" => true,
+        _ => return Err(Failure::usage("usage: cargo xtask icons [--force]")),
+    };
+    let dir = crate::workspace_root().join("assets/icon");
+    let hash = icon_sources_hash(&dir)?;
+    let stored = std::fs::read_to_string(dir.join(ICON_HASH_FILE)).unwrap_or_default();
+    if !force && stored.trim() == hash && outputs(&dir).iter().all(|p| p.is_file()) {
+        println!("icons: up to date (assets/icon/*.svg unchanged, hash {hash})");
+        return Ok(());
+    }
+    println!("icons: rendering assets/icon/*.svg into icns / ico / png …");
+    render_all(&dir)?;
+    println!("icons: done");
+    Ok(())
+}
+
+/// Every file `render_all` writes.
+fn outputs(dir: &Path) -> Vec<PathBuf> {
+    let mut v = vec![dir.join("gitti.icns"), dir.join("gitti-dock.png"), dir.join("gitti.ico")];
+    v.extend(HICOLOR_SIZES.iter().map(|s| hicolor_png(dir, *s)));
+    v
+}
+
+fn hicolor_png(dir: &Path, size: u32) -> PathBuf {
+    dir.join("hicolor").join(format!("{size}x{size}/apps/{APP_ID}.png"))
+}
+
+fn render_all(dir: &Path) -> Result {
     let big = load(&dir.join("gitti.svg"))?;
     let medium = load(&dir.join("gitti-medium.svg"))?;
     let small = load(&dir.join("gitti-small.svg"))?;
@@ -69,7 +109,7 @@ fn main() -> anyhow::Result<()> {
     let pngs = ico_sizes
         .iter()
         .map(|&s| art.full_bleed(s))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?;
     let mut ico = Vec::new();
     ico.extend_from_slice(&[0, 0, 1, 0]);
     ico.extend_from_slice(&(ico_sizes.len() as u16).to_le_bytes());
@@ -89,15 +129,13 @@ fn main() -> anyhow::Result<()> {
     write(&dir.join("gitti.ico"), &ico)?;
 
     // Linux: hicolor theme sizes, full-bleed like most desktop icons.
-    for size in [16u32, 24, 32, 48, 64, 128, 256, 512] {
-        let path: PathBuf = dir
-            .join("hicolor")
-            .join(format!("{size}x{size}/apps/{APP_ID}.png"));
+    for size in HICOLOR_SIZES {
+        let path = hicolor_png(dir, size);
         std::fs::create_dir_all(path.parent().unwrap())?;
         write(&path, &art.full_bleed(size)?)?;
     }
     // Compared trimmed: a CRLF checkout on Windows must not count as a change.
-    let hash = icon_sources_hash(&dir)?;
+    let hash = icon_sources_hash(dir)?;
     let hash_file = dir.join(ICON_HASH_FILE);
     if std::fs::read_to_string(&hash_file).unwrap_or_default().trim() != hash {
         write(&hash_file, format!("{hash}\n").as_bytes())?;
@@ -124,13 +162,13 @@ impl Art {
     }
 
     /// Full-bleed square (Windows, Linux).
-    fn full_bleed(&self, size: u32) -> anyhow::Result<Vec<u8>> {
+    fn full_bleed(&self, size: u32) -> Result<Vec<u8>> {
         let (tree, src) = self.pick(size as f32);
         render(tree, src, (0.0, size as f32), size)
     }
 
     /// macOS: the rounded square at 100/1024 inset, transparent around it.
-    fn macos(&self, size: u32) -> anyhow::Result<Vec<u8>> {
+    fn macos(&self, size: u32) -> Result<Vec<u8>> {
         let s = size as f32;
         let dst = (s * BLEED.0 / 1024.0, s * BLEED.2 / 1024.0);
         let (tree, src) = self.pick(dst.1);
@@ -145,7 +183,7 @@ fn render(
     src: (f32, f32, f32),
     dst: (f32, f32),
     size: u32,
-) -> anyhow::Result<Vec<u8>> {
+) -> Result<Vec<u8>> {
     let mut pixmap = tiny_skia::Pixmap::new(size, size).expect("non-zero size");
     let scale = dst.1 / src.2;
     let transform = tiny_skia::Transform::from_row(
@@ -157,19 +195,20 @@ fn render(
         dst.0 - src.1 * scale,
     );
     resvg::render(tree, transform, &mut pixmap.as_mut());
-    Ok(pixmap.encode_png()?)
+    pixmap.encode_png().map_err(|e| Failure::new(format!("PNG: {e}")))
 }
 
-fn load(path: &Path) -> anyhow::Result<usvg::Tree> {
+fn load(path: &Path) -> Result<usvg::Tree> {
     let data = std::fs::read(path)?;
-    Ok(usvg::Tree::from_data(&data, &usvg::Options::default())?)
+    usvg::Tree::from_data(&data, &usvg::Options::default())
+        .map_err(|e| Failure::new(format!("{}: {e}", path.display())))
 }
 
-fn write(path: &Path, data: &[u8]) -> anyhow::Result<()> {
+fn write(path: &Path, data: &[u8]) -> Result {
     if std::fs::read(path).is_ok_and(|old| old == data) {
         return Ok(());
     }
     std::fs::write(path, data)?;
-    println!("{} ({} bytes)", path.display(), data.len());
+    println!("  {} ({} bytes)", path.display(), data.len());
     Ok(())
 }

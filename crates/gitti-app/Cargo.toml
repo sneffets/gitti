@@ -52,8 +52,6 @@ gitti-test.workspace = true
 gitti-workflow.workspace = true
 # Headless UI tests (`tests/ui`): TestAppContext + element observation.
 gpui-kit = { version = "0.7", features = ["test-support"] }
-# `examples/make_icons.rs` (same version as gpui uses).
-resvg = { version = "0.46", default-features = false }
 
 # RELEASE TESTS — slow / randomized; run only before a release, never in daily work or
 # per merge. Uncomment to compile; see release-tests/README.md.

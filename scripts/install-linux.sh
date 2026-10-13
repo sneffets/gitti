@@ -6,12 +6,16 @@
 # Below 12 GB of RAM it builds without LTO (profile `release-lowmem`, scripts/build-profile.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/steps.sh
 . scripts/build-profile.sh
 ID=io.github.sneffets.gitti
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
-# Icon files from assets/icon/*.svg (rewrites only what changed, so usually no rebuild).
-cargo run --profile "$PROFILE" -q -p gitti-app --example make_icons
+step "icons: checking assets/icon/*.svg against sources.hash (renders only if they changed)"
+cargo run -p xtask -- icons
+step "building gitti + gitty (cargo profile $PROFILE)"
+build_note
 cargo build --profile "$PROFILE" -p gitti-app -p gitty
+step "installing into ~/.local/bin, icons, desktop entry, licences"
 install -Dm755 "target/$PROFILE/gitti" "$HOME/.local/bin/gitti"
 install -Dm755 "target/$PROFILE/gitty" "$HOME/.local/bin/gitty"
 for png in assets/icon/hicolor/*/apps/$ID.png; do
@@ -25,4 +29,4 @@ for f in COPYING LICENSE-MIT LICENSE-APACHE licenses/THIRD-PARTY-LICENSES.txt li
 done
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$DATA/icons/hicolor" || true
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$DATA/applications" || true
-echo "installed gitti + gitty into ~/.local/bin (make sure it is on PATH), licences into $DATA/doc/gitti"
+done_steps "installed gitti + gitty into ~/.local/bin (make sure it is on PATH), licences into $DATA/doc/gitti"

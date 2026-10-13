@@ -2,6 +2,7 @@
 //! bash needed on Windows). `cargo xtask` is an alias in `.cargo/config.toml`.
 
 mod config;
+mod icons;
 mod licenses;
 mod worktree;
 
@@ -24,6 +25,8 @@ cargo xtask <task>
   licenses [--check]      regenerate licenses/THIRD-PARTY-LICENSES.txt (the third-party
                           licence list the apps embed) after Cargo.lock changed; --check
                           only compares
+  icons [--force]         render assets/icon/*.svg into the checked-in icns / ico / png
+                          files; skips the rendering while sources.hash matches the SVGs
 
 Machine-local settings (never in the repo): see `cargo xtask config`.";
 
@@ -32,6 +35,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("worktree") => worktree::run(&args[1..]),
         Some("licenses") => licenses::run(&args[1..]),
+        Some("icons") => icons::run(&args[1..]),
         Some("config") => {
             println!("{}", config::describe());
             Ok(())
