@@ -80,6 +80,7 @@ pub const MENU_COMMANDS: &[MenuCommand] = &[
     both("CustomCommands", "Custom Commands…"),
     both("ToggleWrap", "Wrap Lines"),
     both("ToggleChangesTree", "Changes as Tree"),
+    both("ToggleTreeStyle", crate::rows::TREE_STYLE_LABEL),
     both("ToggleWhitespace", "Ignore Whitespace"),
     both("MoreContext", "More Context Lines"),
     both("LessContext", "Fewer Context Lines"),

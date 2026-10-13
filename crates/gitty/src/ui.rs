@@ -4272,7 +4272,7 @@ Diff / working directory
                   on a conflicted file: resolve menu (e = merge editor, ? there)
   s               stage the selected lines, the marked files — or the hunk / file / folder /
                   section under the cursor
-  ctrl-p          Changes as Tree: the working directory as folders (shared with gitti)
+  ctrl-p          Changes as Tree: every diff as folders (shared with gitti)
   u               unstage (same rules, staged side)
   d               discard (asks first)
   y               copy the selected lines / the line under the cursor (commit header:
