@@ -506,7 +506,7 @@ fn core_bool(file: &Path, key: &str) -> Option<bool> {
 
 /// The git dir of the worktree in `folder`: `.git` itself, or the one its `.git` file
 /// points to (`gitdir: …`, relative to the folder).
-fn worktree_git_dir(folder: &Path) -> Option<PathBuf> {
+pub(crate) fn worktree_git_dir(folder: &Path) -> Option<PathBuf> {
     let dot = folder.join(".git");
     if dot.is_dir() {
         return Some(dot);

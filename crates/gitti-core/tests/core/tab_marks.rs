@@ -283,3 +283,61 @@ fn a_worktrees_own_marks_equal_what_the_others_read() {
     let m = compare("untracked hidden by the config");
     assert_eq!(m.mark(), Some(Mark::Unpushed), "only untracked files left, hidden: {m:?}");
 }
+
+/// The file watcher names another worktree by its git dir when its index changes (`git
+/// add` there): the main worktree's is the common dir, a linked one's
+/// `<common>/worktrees/<name>`. Reading those worktrees' marks never writes their index
+/// (`GIT_OPTIONAL_LOCKS=0`, also when its stat data is stale): no change of ours that
+/// the watchers would report again — no loop.
+#[gitti_test::test]
+fn index_changes_name_their_worktree_and_our_reads_write_no_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    fx::init(&work);
+    let mut i = Import::new();
+    i.commit("main", None, &[], "one", &[put("a.txt", "one\n")]);
+    i.run(&work);
+    fx::checkout(&work);
+    let repo = Repo::open(&work).unwrap();
+    let topic = dir.path().join("topic");
+    repo.add_worktree(&topic, &AddMode::Detached("main".into())).unwrap();
+    let topic = gitti_core::paths::canonical(&topic);
+    let common = repo.common_dir();
+    let topic_git = common.join("worktrees").join("topic");
+    let names = |v: Vec<gitti_core::worktree::Worktree>| v.into_iter().map(|w| w.path).collect::<Vec<_>>();
+
+    let from_main = repo.worktrees().unwrap();
+    let got = names(tab_marks::with_git_dirs(from_main.clone(), &common, std::slice::from_ref(&topic_git)));
+    assert_eq!(got, vec![topic.clone()]);
+    assert!(tab_marks::with_git_dirs(from_main.clone(), &common, &[]).is_empty());
+    let linked = Repo::open(&topic).unwrap();
+    let from_linked = linked.worktrees().unwrap();
+    let main = gitti_core::paths::canonical(&work);
+    assert_eq!(names(tab_marks::with_git_dirs(from_linked, &common, std::slice::from_ref(&common))), vec![main]);
+
+    // Read again only when its index was written after the last read started (by the
+    // file's stamp: a late event of an earlier write doesn't count).
+    let mut store = MarksStore::default();
+    let changed = |store: &MarksStore| names(store.index_changed(from_main.clone(), &common, std::slice::from_ref(&topic_git)));
+    assert_eq!(changed(&store), vec![topic.clone()], "never read");
+    let topic_wt: Vec<_> = from_main.iter().filter(|w| w.path == topic).cloned().collect();
+    store.read_starts(&topic_wt, gitti_core::watch::read_start().1);
+    assert!(changed(&store).is_empty(), "written before the read started");
+    fs::write(topic.join("b.txt"), "b\n").unwrap();
+    fx::git(&topic, &["add", "b.txt"]);
+    assert_eq!(changed(&store), vec![topic.clone()], "git add after it");
+    fx::git(&topic, &["reset", "-q"]);
+    fs::remove_file(topic.join("b.txt")).unwrap();
+
+    // Stale stat data in topic's index (same content, new mtime): git status would refresh
+    // and write it — ours doesn't.
+    let file = fs::File::options().write(true).open(topic.join("a.txt")).unwrap();
+    file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+    drop(file);
+    let index = topic_git.join("index");
+    let stamp = || fs::metadata(&index).map(|m| (m.len(), m.modified().unwrap())).unwrap();
+    let before = stamp();
+    let marks = tab_marks::other_worktrees(&repo, &from_main, &[]);
+    assert_eq!(marks, vec![(topic.clone(), Marks::default())], "clean");
+    assert_eq!(stamp(), before, "our read wrote topic's index");
+}

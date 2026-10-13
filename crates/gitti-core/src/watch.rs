@@ -1,7 +1,11 @@
 //! Filesystem watcher: reports what changed in the repository — work-tree paths (so only
 //! those are re-read), the index, refs — debounced and filtered (ignored files and git's
 //! own object / log churn do not count). [`WatchFilter::needs`] turns a [`Change`] into
-//! the [`Refresh`] it still needs.
+//! the [`Refresh`] it still needs. The index of another worktree of the repository (in the
+//! common git dir, watched anyway) is reported too ([`PathKind::OtherIndex`]): it needs no
+//! refresh of this one, only a new read of that worktree's marks (`crate::tab_marks`). Its
+//! files are not watched — [`FocusRefresh`]: the refresh when the app gains the focus
+//! catches their edits.
 //!
 //! Set up on its own thread (the first frame does not wait for it). On Linux every
 //! directory gets its own inotify watch and git-ignored trees (`target/`,
@@ -77,6 +81,11 @@ pub enum PathKind {
     /// Metadata of the repository's worktrees (`<common>/worktrees/*`, the main
     /// worktree's `HEAD` seen from a linked one).
     Worktrees,
+    /// Another worktree's index (`<common>/worktrees/<name>/index`, the main worktree's
+    /// `index` seen from a linked one): `git add`, reset, stash there. Nothing of this
+    /// worktree changed — only that worktree's marks (`crate::tab_marks`) may have; the
+    /// path is that worktree's git dir ([`Change::other_indexes`]).
+    OtherIndex(PathBuf),
     /// Ignore rules outside the work tree (`.git/info/exclude`): the whole working state.
     Rules,
     /// The message git left for the next commit (`MERGE_MSG`, `SQUASH_MSG` in this
@@ -118,6 +127,22 @@ impl Change {
             notice: None,
             armed: false,
         }
+    }
+
+    /// The git dirs of the other worktrees whose index changed ([`PathKind::OtherIndex`]),
+    /// each once: their marks are read again, nothing else.
+    pub fn other_indexes(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = self
+            .paths
+            .iter()
+            .filter_map(|(_, kind)| match kind {
+                PathKind::OtherIndex(git_dir) => Some(git_dir.clone()),
+                _ => None,
+            })
+            .collect();
+        dirs.sort();
+        dirs.dedup();
+        dirs
     }
 
     /// Both batches in one (e.g. seen while an operation ran).
@@ -248,6 +273,8 @@ impl WatchFilter {
             match kind {
                 PathKind::Refs if !covered(path, self.history_read) => return Some(Refresh::Full),
                 PathKind::Refs => {}
+                // Another worktree's: its marks only ([`Change::other_indexes`]).
+                PathKind::OtherIndex(_) => {}
                 PathKind::Index if covered(path, self.working_read) || own_index(path) => {}
                 PathKind::Index | PathKind::Worktrees | PathKind::Rules | PathKind::Message => {
                     whole |= !covered(path, self.working_read);
@@ -271,6 +298,69 @@ impl WatchFilter {
             Some(Refresh::Paths(paths))
         }
     }
+}
+
+/// At most one refresh per [`FOCUS_GAP`] when the window (gitti) or the terminal (gitty)
+/// gains the focus. That refresh catches what the file watcher doesn't report: edits in
+/// the repository's worktrees that no tab has open (their marks, `crate::tab_marks`),
+/// changes above the OS watch limit. Switching back and forth quickly would run it again
+/// each time; a focus gain within the gap queues one refresh for its end instead (never
+/// dropped: the change made while away is still read).
+#[derive(Debug, Default, Clone)]
+pub struct FocusRefresh {
+    /// When the last one ran.
+    last: Option<Instant>,
+    /// One is queued for the gap's end.
+    queued: bool,
+}
+
+/// The shortest time between two refreshes on focus.
+pub const FOCUS_GAP: Duration = Duration::from_secs(2);
+
+/// What a focus gain does ([`FocusRefresh::gained`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnFocus {
+    /// Refresh now.
+    Now,
+    /// Refresh after this long ([`FocusRefresh::due`] then).
+    Later(Duration),
+    /// One is queued already.
+    Queued,
+}
+
+impl FocusRefresh {
+    /// The window or terminal gained the focus at `now` (the app's clock).
+    pub fn gained(&mut self, now: Instant) -> OnFocus {
+        match self.last {
+            Some(last) if now < last + FOCUS_GAP => {
+                if std::mem::replace(&mut self.queued, true) {
+                    OnFocus::Queued
+                } else {
+                    OnFocus::Later(last + FOCUS_GAP - now)
+                }
+            }
+            _ => {
+                self.last = Some(now);
+                OnFocus::Now
+            }
+        }
+    }
+
+    /// The queued refresh runs now (`now`).
+    pub fn due(&mut self, now: Instant) {
+        self.queued = false;
+        self.last = Some(now);
+    }
+}
+
+/// `path` was last written before a read that started at `start` (the wall clock of
+/// [`read_start`]), by its stamp as [`WatchFilter`] judges a changed path: a late event of
+/// a write before the read doesn't count. Gone or unreadable: not before.
+pub fn written_before(path: &Path, start: SystemTime) -> bool {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .and_then(|m| changed_stamp(&m))
+        .is_some_and(|stamp| changed_before(stamp, start))
 }
 
 /// When a file last changed as far as its metadata tells: the later of its modification
@@ -878,6 +968,11 @@ impl Tree {
                     GitPath::Refs => out.push((p, PathKind::Refs)),
                     GitPath::Index => out.push((p, PathKind::Index)),
                     GitPath::Worktrees => out.push((p, PathKind::Worktrees)),
+                    GitPath::OtherIndex => {
+                        if let Some(git_dir) = p.parent().map(Path::to_path_buf) {
+                            out.push((p, PathKind::OtherIndex(git_dir)));
+                        }
+                    }
                     GitPath::Message => out.push((p, PathKind::Message)),
                     GitPath::Rules => {
                         rules = true;
@@ -1155,6 +1250,8 @@ enum GitPath {
     Refs,
     Index,
     Worktrees,
+    /// Another worktree's index (in its git dir).
+    OtherIndex,
     Rules,
     Message,
     Ignore,
@@ -1187,9 +1284,10 @@ fn classify_git_path(rel: &Path) -> GitPath {
 }
 
 /// A path below the common dir that isn't this worktree's own: shared refs (loose,
-/// packed, reftable), `info/exclude`, and the metadata of the other worktrees
+/// packed, reftable), `info/exclude`, the metadata of the other worktrees
 /// (`worktrees/<name>/{HEAD,locked,gitdir}`, entries added / removed; the main
-/// worktree's `HEAD` when seen from a linked one).
+/// worktree's `HEAD` when seen from a linked one) and their indexes
+/// (`worktrees/<name>/index`; the main worktree's `index` seen from a linked one).
 fn classify_common_path(rel: &Path, is_main: bool) -> GitPath {
     let s = rel.to_string_lossy().replace('\\', "/");
     if s.ends_with(".lock") {
@@ -1209,6 +1307,9 @@ fn classify_common_path(rel: &Path, is_main: bool) -> GitPath {
     if s == "HEAD" && !is_main {
         return GitPath::Worktrees;
     }
+    if s == "index" && !is_main {
+        return GitPath::OtherIndex;
+    }
     let mut parts = s.split('/');
     if parts.next() != Some("worktrees") {
         return GitPath::Ignore;
@@ -1216,6 +1317,7 @@ fn classify_common_path(rel: &Path, is_main: bool) -> GitPath {
     match (parts.next(), parts.next(), parts.next()) {
         (None, ..) | (Some(_), None, _) => GitPath::Worktrees,
         (Some(_), Some("HEAD" | "locked" | "gitdir"), None) => GitPath::Worktrees,
+        (Some(_), Some("index"), None) => GitPath::OtherIndex,
         _ => GitPath::Ignore,
     }
 }
@@ -1451,6 +1553,19 @@ mod tests {
         assert_eq!(f.needs(&empty, || None), None);
         empty.rescan = Some(Rescan::Working);
         assert_eq!(f.needs(&empty, || None), Some(Snapshot));
+        // Other worktrees' indexes (`git add` there): nothing of this worktree to read —
+        // their git dirs, each once, for their marks; with a file, just its path.
+        let others = [
+            ("wt/b/index", OtherIndex(d.join("wt/b"))),
+            ("wt/a/index", OtherIndex(d.join("wt/a"))),
+            ("wt/b/index", OtherIndex(d.join("wt/b"))),
+        ];
+        assert_eq!(f.needs(&change(d, &others, at), || None), None);
+        assert_eq!(change(d, &others, at).other_indexes(), [d.join("wt/a"), d.join("wt/b")]);
+        let mut with_file = others.to_vec();
+        with_file.push(("src/a.rs", wt("src/a.rs")));
+        assert_eq!(f.needs(&change(d, &with_file, at), || None), paths(&["src/a.rs"]));
+        assert!(change(d, &files, at).other_indexes().is_empty());
         // Merged batches keep the larger rescan and the first notice.
         let mut a = change(d, &[("src/a.rs", wt("src/a.rs"))], at);
         a.notice = Some("limit".into());
@@ -1531,6 +1646,23 @@ mod tests {
         // A whole read forgets them (it covers more).
         f.read_started(false);
         assert!(f.path_reads.is_empty());
+    }
+
+    /// A focus gain refreshes at once, another one within the gap queues one refresh
+    /// for its end (a third one adds nothing); after the gap, at once again.
+    #[gitti_test::test]
+    fn focus_refreshes_at_most_once_per_gap() {
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut f = FocusRefresh::default();
+        assert_eq!(f.gained(t0), OnFocus::Now);
+        assert_eq!(f.gained(ms(500)), OnFocus::Later(FOCUS_GAP - Duration::from_millis(500)));
+        assert_eq!(f.gained(ms(900)), OnFocus::Queued);
+        f.due(ms(2000));
+        assert_eq!(f.gained(ms(2500)), OnFocus::Later(Duration::from_millis(1500)));
+        f.due(ms(4000));
+        assert_eq!(f.gained(ms(6000)), OnFocus::Now);
+        assert_eq!(f.gained(ms(9000)), OnFocus::Now);
     }
 
     #[gitti_test::test]
@@ -1640,6 +1772,7 @@ mod tests {
         assert_eq!(module_worktree(&inner), None);
     }
 
+    /// Another worktree's index is named by its git dir (`git add` there: its marks).
     #[gitti_test::test]
     fn classifies_paths_of_main_and_linked_worktrees() {
         let main = GitDirs {
@@ -1667,7 +1800,8 @@ mod tests {
         assert_eq!(c(&main, "/r/.git/worktrees/w1/HEAD"), Some(Worktrees));
         assert_eq!(c(&main, "/r/.git/worktrees/w1/locked"), Some(Worktrees));
         assert_eq!(c(&main, "/r/.git/worktrees/w1"), Some(Worktrees));
-        assert_eq!(c(&main, "/r/.git/worktrees/w1/index"), Some(Ignore));
+        assert_eq!(c(&main, "/r/.git/worktrees/w1/index"), Some(OtherIndex));
+        assert_eq!(c(&main, "/r/.git/worktrees/w1/index.lock"), Some(Ignore));
         assert_eq!(c(&main, "/r/.git/worktrees/w1/logs/HEAD"), Some(Ignore));
         assert_eq!(c(&main, "/r/.git/objects/ab/cd"), Some(Ignore));
         assert_eq!(c(&main, "/r/src/a.rs"), None);
@@ -1682,8 +1816,11 @@ mod tests {
         assert_eq!(c(&linked, "/r/.git/reftable/tables.list"), Some(Refs));
         assert_eq!(c(&linked, "/r/.git/info/exclude"), Some(Rules));
         assert_eq!(c(&linked, "/r/.git/HEAD"), Some(Worktrees));
-        assert_eq!(c(&linked, "/r/.git/index"), Some(Ignore));
+        assert_eq!(c(&linked, "/r/.git/index"), Some(OtherIndex));
+        assert_eq!(c(&linked, "/r/.git/index.lock"), Some(Ignore));
         assert_eq!(c(&linked, "/r/.git/worktrees/w2/HEAD"), Some(Worktrees));
+        assert_eq!(c(&linked, "/r/.git/worktrees/w2/index"), Some(OtherIndex));
+        assert_eq!(c(&linked, "/r/.git/worktrees/w2/sharedindex.abc"), Some(Ignore));
         assert_eq!(c(&linked, "/r/.git/refs/heads/x.lock"), Some(Ignore));
     }
 }

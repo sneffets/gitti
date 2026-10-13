@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use gix::ObjectId;
 
@@ -448,6 +449,30 @@ pub fn other_worktrees(
     })
 }
 
+/// Of `worktrees`, those whose git dir is one of `git_dirs` — the watcher's
+/// [`crate::watch::Change::other_indexes`]: their index changed (`git add`, reset, stash
+/// there). Read from files, no git.
+pub fn with_git_dirs(worktrees: Vec<Worktree>, common: &Path, git_dirs: &[PathBuf]) -> Vec<Worktree> {
+    if git_dirs.is_empty() {
+        return Vec::new();
+    }
+    let wanted: Vec<PathBuf> = git_dirs.iter().map(|d| crate::paths::canonical(d)).collect();
+    worktrees
+        .into_iter()
+        .filter(|wt| git_dir_of(wt, common).is_some_and(|d| wanted.contains(&d)))
+        .collect()
+}
+
+/// The git dir of worktree `wt` (canonical): the common dir `common` for the main one, for
+/// a linked one the folder its `.git` file names (`<common>/worktrees/<name>`).
+fn git_dir_of(wt: &Worktree, common: &Path) -> Option<PathBuf> {
+    if wt.is_main {
+        Some(crate::paths::canonical(common))
+    } else {
+        crate::worktree::worktree_git_dir(&wt.path).map(|d| crate::paths::canonical(&d))
+    }
+}
+
 /// `git status` in worktree `wt`, listing untracked files as its configuration says
 /// (unset: every file, as [`Repo::untracked_files`]).
 fn worktree_status(repo: &Repo, wt: &Worktree) -> Option<Status> {
@@ -479,6 +504,9 @@ pub struct MarksStore {
     /// Repositories (common git dirs) whose worktrees are being read; `true`: asked for
     /// again meanwhile.
     reading: HashMap<PathBuf, bool>,
+    /// When the last read of each worktree (by folder) started (wall clock of
+    /// [`crate::watch::read_start`]).
+    read_at: HashMap<PathBuf, SystemTime>,
 }
 
 impl MarksStore {
@@ -568,6 +596,31 @@ impl MarksStore {
                 true
             }
         }
+    }
+
+    /// A read of `worktrees` starts at `at` (once [`MarksStore::begin_read`] let it; the
+    /// wall clock of [`crate::watch::read_start`]): what was written before is in it
+    /// ([`MarksStore::index_changed`]).
+    pub fn read_starts(&mut self, worktrees: &[Worktree], at: SystemTime) {
+        for wt in worktrees {
+            self.read_at.insert(wt.path.clone(), at);
+        }
+    }
+
+    /// Of `worktrees`, those whose git dir is one of `git_dirs` (the watcher saw their
+    /// index change: [`crate::watch::Change::other_indexes`]) and whose index was written
+    /// after the last read of them started — judged by the index file's stamp, not by when
+    /// the event came (late events are common; and every tab of the repository sees the
+    /// same change: one read is enough). Reads file stamps, no git.
+    pub fn index_changed(&self, worktrees: Vec<Worktree>, common: &Path, git_dirs: &[PathBuf]) -> Vec<Worktree> {
+        with_git_dirs(worktrees, common, git_dirs)
+            .into_iter()
+            .filter(|wt| {
+                let read = self.read_at.get(&wt.path);
+                let index = git_dir_of(wt, common).map(|d| d.join("index"));
+                !matches!((read, index), (Some(at), Some(index)) if crate::watch::written_before(&index, *at))
+            })
+            .collect()
     }
 
     /// The read's marks (a worktree a tab opened meanwhile keeps the tab's); returns
