@@ -14,10 +14,14 @@
 //! worktree's folder). Each tab publishes its own worktree's marks after every read of its
 //! working state (its file watcher runs also while the tab is in the background); the
 //! worktrees no tab has open are read in the background when a tab of that repository
-//! refreshes ([`GittiApp::refresh_worktree_marks`]). The tab strip and every tab's
-//! WORKTREES section read the store, so they agree; drawing costs no git process.
+//! refreshes ([`GittiApp::refresh_worktree_marks`]; the refresh when the window is
+//! activated is one), and one of them on its own when its index changes (`git add`,
+//! reset, stash there — every tab of the repository watches the common git dir:
+//! [`GittiApp::worktree_index_changed`]). Plain edits of files there, with the window
+//! active all along, show at the next of these. The tab strip and every tab's WORKTREES
+//! section read the store, so they agree; drawing costs no git process.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gitti_core::tab_marks::{Mark, Marks, MarksStore, OtherWorktree, RepoMarks};
 use gpui_kit::component::h_flex;
@@ -203,24 +207,42 @@ impl GittiApp {
 
     /// Reads the marks of this repository's worktrees no tab has open, in the background
     /// (one `git status` each, `gitti_core::tab_marks::other_worktrees`) — after a refresh
-    /// of any tab of the repository, and when the WORKTREES section unfolds. Never on
-    /// navigation. One read per repository at a time (whichever tab asks); asked for
-    /// meanwhile, it runs once more afterwards.
+    /// of any tab of the repository (also the one when the window is activated), and when
+    /// the WORKTREES section unfolds. Never on navigation. One read per repository at a
+    /// time (whichever tab asks); asked for meanwhile, it runs once more afterwards.
     pub(super) fn refresh_worktree_marks(&mut self, cx: &mut Context<Self>) {
+        self.read_worktree_marks(None, cx);
+    }
+
+    /// The file watcher saw the index of the worktrees with git dirs `git_dirs` change
+    /// (`git add`, reset, stash there): their marks are read again — those no tab has open
+    /// and that changed since their last read started (every tab of the repository sees
+    /// the change). No refresh of this tab.
+    pub(super) fn worktree_index_changed(&mut self, git_dirs: &[PathBuf], cx: &mut Context<Self>) {
+        self.read_worktree_marks(Some(git_dirs), cx);
+    }
+
+    /// [`Self::refresh_worktree_marks`]; with `changed`, only the worktrees whose index
+    /// changed (by their git dirs).
+    fn read_worktree_marks(&mut self, changed: Option<&[PathBuf]>, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let to_read = match cx.try_global::<SharedMarks>() {
-            Some(s) => s.0.to_read(&self.worktrees),
-            None => MarksStore::default().to_read(&self.worktrees),
-        };
+        let common = repo.common_dir();
+        let empty = MarksStore::default();
+        let store = cx.try_global::<SharedMarks>().map_or(&empty, |s| &s.0);
+        let mut to_read = store.to_read(&self.worktrees);
+        if let Some(git_dirs) = changed {
+            to_read = store.index_changed(to_read, &common, git_dirs);
+        }
         if to_read.is_empty() {
             return;
         }
-        let common = repo.common_dir();
-        if !cx.default_global::<SharedMarks>().0.begin_read(&common) {
+        let store = &mut cx.default_global::<SharedMarks>().0;
+        if !store.begin_read(&common) {
             return;
         }
+        store.read_starts(&to_read, gitti_core::watch::read_start().1);
         self.worktree_marks_loading = true;
         let tracking = self.tracking.clone();
         let task = cx.background_executor().spawn(async move {

@@ -53,6 +53,7 @@ pub fn main() {
         ("tab_carries_worktrees_without_a_tab", tab_carries_worktrees_without_a_tab),
         ("background_tabs_stay_current", background_tabs_stay_current),
         ("shown_file_changes_in_the_background", shown_file_changes_in_the_background),
+        ("other_index_and_activation", other_index_and_activation),
         // Last: it switches the shared setting off (and on again).
         ("main_worktree_alone", main_worktree_alone),
     ];
@@ -1403,5 +1404,105 @@ fn shown_file_changes_in_the_background(ui: &mut Ui) {
     let now = shown(ui);
     if !now.contains(&"+third".to_string()) || now.contains(&"+second".to_string()) {
         fail!(ui, "in front again: diff {now:?}");
+    }
+}
+
+/// Lets real time pass without moving the (simulated) clock — timers stay where they are
+/// — until `done` holds, at most `max_ms`; returns whether it did.
+fn wait_parked(ui: &mut Ui, max_ms: u64, mut done: impl FnMut(&mut Ui) -> bool) -> bool {
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(max_ms);
+    loop {
+        ui.cx.run_until_parked();
+        if done(ui) {
+            return true;
+        }
+        if std::time::Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// The window is activated again (as after a switch to another program).
+fn reactivate(ui: &mut Ui) {
+    VisualTestContext::from_window(ui.window, &ui.cx).deactivate_window();
+    ui.cx
+        .update_window(ui.window, |_, window, _| window.activate_window())
+        .unwrap();
+}
+
+/// The `git status` runs of worktrees without a tab among `ran` (the tab's own has
+/// `--branch`).
+fn other_statuses(ran: &[String]) -> usize {
+    ran.iter().filter(|c| c.starts_with("status ") && !c.contains("--branch")).count()
+}
+
+/// Worktrees no tab has open: `git add` in one (its index is in the common git dir, which
+/// every tab of the repository watches) shows on the repository's tab at once — one `git
+/// status` in that worktree alone, no refresh of the tab. A plain edit there (its files
+/// aren't watched) shows when the window is activated: its refresh reads each worktree
+/// without a tab once; activated again within 2 s, nothing runs until the gap is over, then
+/// one refresh.
+fn other_index_and_activation(ui: &mut Ui) {
+    let name = "other_index_and_activation";
+    let repo = base().join(name);
+    let (a, b) = (base().join(format!("{name}-a")), base().join(format!("{name}-b")));
+    for d in [&a, &b] {
+        git(&repo, &["worktree", "add", "-q", "--detach", d.to_str().unwrap(), "HEAD"]);
+    }
+    let ws = ui.ws.clone();
+    let tip = |ui: &mut Ui| ui.cx.update(|cx| testing::tab_marks(&ws, cx))[0].1.clone();
+    // The watcher's reports of the new worktrees settle: idle, 200 ms without git.
+    let mut last = (ui.n_git(), std::time::Instant::now());
+    ui.wait_real(1500, |ui| {
+        let n = ui.n_git();
+        if n != last.0 {
+            last = (n, std::time::Instant::now());
+        }
+        ui.is_idle() && last.1.elapsed() > std::time::Duration::from_millis(200)
+    });
+    if tip(ui).contains("Worktree") {
+        fail!(ui, "both worktrees clean: {:?}", tip(ui));
+    }
+    // A change staged in a.
+    std::fs::write(a.join("f0.txt"), "staged\n").unwrap();
+    let n = ui.n_git();
+    git(&a, &["add", "f0.txt"]);
+    let a_staged = format!("{name}-a (detached ");
+    let seen = ui.wait_real(1500, |ui| {
+        ui.is_idle() && tip(ui).lines().any(|l| l.contains(&a_staged) && l.ends_with("1 staged"))
+    });
+    if !seen {
+        fail!(ui, "git add in a worktree without a tab: tooltip {:?}", tip(ui));
+        return;
+    }
+    let ran = ui.git_since(n);
+    if ran.len() != 1 || other_statuses(&ran) != 1 {
+        fail!(ui, "git add in a: only a's status, no refresh of the tab: {ran:?}");
+    }
+    // A new file in b: no watcher sees it; the window activated, the refresh reads both
+    // worktrees without a tab (once each).
+    std::fs::write(b.join("new-in-b.txt"), "n\n").unwrap();
+    let b_line = format!("{name}-b (detached ");
+    let n = ui.n_git();
+    reactivate(ui);
+    let read = wait_parked(ui, 1500, |ui| ui.is_idle() && tip(ui).contains(&b_line));
+    if !read {
+        fail!(ui, "b's new file after the window was activated: tooltip {:?}", tip(ui));
+        return;
+    }
+    let ran = ui.git_since(n);
+    if other_statuses(&ran) != 2 {
+        fail!(ui, "activated: one status per worktree without a tab: {ran:?}");
+    }
+    // Activated again right away: nothing now; once the 2 s are over, one refresh.
+    let n = ui.n_git();
+    reactivate(ui);
+    wait_parked(ui, 100, |_| false);
+    ui.no_git_since(n, "activated again within 2 s");
+    ui.cx.executor().advance_clock(gitti_core::watch::FOCUS_GAP);
+    let again = wait_parked(ui, 1500, |ui| ui.is_idle() && other_statuses(&ui.git_since(n)) == 2);
+    if !again {
+        fail!(ui, "the queued refresh at the gap's end: {:?}", ui.git_since(n));
     }
 }

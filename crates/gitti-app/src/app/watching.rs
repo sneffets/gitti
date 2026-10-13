@@ -1,8 +1,10 @@
 //! The file watcher's changes: the refresh each one needs — an outside edit of work-tree
 //! files re-reads just those paths, the index or worktree metadata the working state, refs
-//! everything (`gitti_core::watch::WatchFilter::needs`).
+//! everything (`gitti_core::watch::WatchFilter::needs`); another worktree's index (`git
+//! add` there) only that worktree's marks. And the refresh when the window is activated
+//! (what no watcher reports: edits in worktrees no tab has open), at most one per 2 s.
 
-use gitti_core::watch::{Change, Refresh};
+use gitti_core::watch::{Change, OnFocus, Refresh};
 use gpui_kit::*;
 
 use super::{GittiApp, highlighting};
@@ -96,6 +98,34 @@ impl GittiApp {
             Some(Refresh::Snapshot) => self.refresh(false, window, cx),
             Some(Refresh::Paths(paths)) => self.refresh_paths(paths, window, cx),
             None => {}
+        }
+        // Another worktree's index: its marks (when no tab has it open), nothing else.
+        let others = change.other_indexes();
+        if !others.is_empty() {
+            self.worktree_index_changed(&others, cx);
+        }
+    }
+
+    /// The window was activated: the working state and refs are read again (and with
+    /// them the marks of the worktrees no tab has open, `tab_marks.rs`) — what the file
+    /// watcher can't report (those worktrees' files, a tree above the OS watch limit). At
+    /// most one per [`gitti_core::watch::FOCUS_GAP`]: activated again sooner, it runs
+    /// once at the gap's end.
+    pub(super) fn refresh_on_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.focus_refresh.gained(cx.background_executor().now()) {
+            OnFocus::Now => self.refresh(false, window, cx),
+            OnFocus::Later(wait) => {
+                cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    this.update_in(cx, |this, window, cx| {
+                        this.focus_refresh.due(cx.background_executor().now());
+                        this.refresh(false, window, cx);
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            OnFocus::Queued => {}
         }
     }
 

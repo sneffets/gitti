@@ -361,6 +361,9 @@ pub struct GittiApp {
     watch_pending: Option<gitti_core::watch::Change>,
     /// Which watcher changes are already covered by what we read (see `WatchFilter`).
     watch_filter: gitti_core::watch::WatchFilter,
+    /// The refresh when the window is activated: at most one per 2 s
+    /// (`watching.rs::refresh_on_focus`).
+    focus_refresh: gitti_core::watch::FocusRefresh,
     /// Tests (probes on): the paths the file watcher reported (bounded).
     watch_seen: Vec<std::path::PathBuf>,
     deferred: std::collections::VecDeque<Deferred>,
@@ -664,7 +667,7 @@ impl GittiApp {
             this.sync_secure_input(window);
             cx.notify();
             if window.is_window_active() && this.loaded_once {
-                this.refresh(false, window, cx);
+                this.refresh_on_focus(window, cx);
             }
         })
         .detach();
@@ -747,6 +750,7 @@ impl GittiApp {
             working_generation: 0,
             watch_pending: None,
             watch_filter: Default::default(),
+            focus_refresh: Default::default(),
             watch_seen: Vec::new(),
             deferred: Default::default(),
             op_cancel: None,
