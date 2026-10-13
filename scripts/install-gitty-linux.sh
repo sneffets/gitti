@@ -9,6 +9,10 @@
 # Below 12 GB of RAM it builds without LTO (profile `release-lowmem`, scripts/build-profile.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+case "${1:-}" in
+  --cargo | "") ;;
+  *) echo "usage: $0 [--cargo]" >&2; exit 2 ;;
+esac
 . scripts/steps.sh
 . scripts/build-profile.sh
 . scripts/linux-deps.sh
@@ -35,9 +39,5 @@ case "${1:-}" in
       install -Dm644 "$f" "$DOC/$(basename "$f")"
     done
     done_steps "installed gitty into ~/.local/bin (make sure it is on PATH), licences into $DOC"
-    ;;
-  *)
-    echo "usage: $0 [--cargo]" >&2
-    exit 2
     ;;
 esac
