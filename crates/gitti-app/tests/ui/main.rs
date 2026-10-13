@@ -18,6 +18,7 @@ mod custom_commands;
 mod ext_tools;
 mod faults;
 mod fs_paths;
+mod hunk_stays;
 mod keys;
 mod layout;
 mod lfs;
@@ -56,6 +57,7 @@ use std::time::Instant;
 const SUITES: &[(&str, fn())] = &[
     ("layout", layout::main),
     ("scroll", scroll::main),
+    ("hunk_stays", hunk_stays::main),
     ("keys", keys::main),
     ("commit", commit::main),
     ("menus", menus::main),

@@ -27,9 +27,12 @@ fn stage_a_hunk_and_unstage_a_file_with_path_limited_git() {
     let blocks = cmds(&out);
     assert!(st[0].contains("cursor=3 Hunk { src: Unstaged, file: 0, hunk: 0 }"), "{out}");
     assert!(blocks[1].is_empty(), "moving ran git: {out}");
-    // The staged hunk leaves the next file's header under the cursor.
+    // The staged hunk took its file out of the section: the cursor on the next file's
+    // first hunk, on the row it was on.
     assert!(st[1].contains("unstaged=1 staged=1"), "{out}");
-    assert!(st[1].contains("File { src: Unstaged, file: 0 }"), "{out}");
+    assert!(st[1].contains("Hunk { src: Unstaged, file: 0, hunk: 0 }"), "{out}");
+    let screen_row = |s: &str| num(s, "cursor") - num(s, "diff_offset");
+    assert_eq!(screen_row(st[1]), screen_row(st[0]), "{out}");
     assert!(blocks[2][0].starts_with("apply ") && blocks[2][0].contains("--cached"), "{out}");
     assert_cheap("stage hunk", &blocks[2], &out);
     assert!(blocks[2].iter().all(|c| !c.contains("d.txt")), "only b.txt: {out}");

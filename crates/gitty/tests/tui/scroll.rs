@@ -332,8 +332,9 @@ fn three_files_repo() -> tempfile::TempDir {
     )
 }
 
-/// Scrolled into a file's diff, staging the whole file shows the next
-/// file (else the previous one) — cursor on its header, at the top.
+/// Scrolled into a file's diff, staging its only hunk (the whole file) puts the next
+/// file's first hunk (else the previous file's last) on the cursor's screen row, the
+/// cursor on its header (`app/op_anchor.rs`).
 /// Workflow: ST-17
 #[gitti_test::test]
 fn staging_a_whole_file_moves_to_the_next_file() {
@@ -345,11 +346,13 @@ fn staging_a_whole_file_moves_to_the_next_file() {
     );
     let st = states(&out);
     assert!(st[0].contains("Line { src: Unstaged, file: 1"), "{out}");
-    assert!(st[1].contains("staged=1") && st[1].contains("File { src: Unstaged, file: 1 }"), "c.txt: {out}");
-    assert_eq!(num(st[1], "diff_offset"), num(st[1], "cursor"), "on top: {out}");
+    let screen_row = |s: &str| num(s, "cursor") - num(s, "diff_offset");
+    let hunk = |file| format!("Hunk {{ src: Unstaged, file: {file}, hunk: 0 }}");
+    assert!(st[1].contains("staged=1") && st[1].contains(&hunk(1)), "c.txt: {out}");
+    assert_eq!(screen_row(st[1]), screen_row(st[0]), "on the same row: {out}");
     assert!(st[2].contains("Line { src: Unstaged, file: 1"), "{out}");
-    assert!(st[3].contains("staged=2") && st[3].contains("File { src: Unstaged, file: 0 }"), "a.txt: {out}");
-    assert_eq!(num(st[3], "diff_offset"), num(st[3], "cursor"), "on top: {out}");
+    assert!(st[3].contains("staged=2") && st[3].contains(&hunk(0)), "a.txt: {out}");
+    assert!(screen_row(st[3]) == screen_row(st[2]) || num(st[3], "diff_offset") == 0, "on the same row or the list at its top: {out}");
 }
 
 /// "Show more lines": ⏎ / x on the expander above the first hunk reveal 20 lines each, X

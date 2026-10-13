@@ -36,6 +36,7 @@ mod message_editor;
 mod modal;
 mod nav_keys;
 mod navigate;
+mod op_anchor;
 mod op_cancel;
 mod op_progress;
 mod op_stops;
@@ -421,6 +422,11 @@ pub struct GittiApp {
     commit_fs: Arc<gitti_core::fs_paths::PathReport>,
     /// Height of the diff list viewport (measured while painting).
     diff_viewport_h: Rc<Cell<Pixels>>,
+    /// The diff rows whose sticky header copy the last frame drew, with its top
+    /// (`op_anchor.rs`: a click on the copy acts there).
+    sticky_drawn: RefCell<Vec<(usize, Pixels)>>,
+    /// What the stage / unstage / discard about to start acts on (`op_anchor.rs`).
+    op_anchor: Option<op_anchor::OpAnchor>,
     log_scroll: UniformListScrollHandle,
     /// The git log panel's list (Tab / click; the list / scroll keys scroll it).
     log_focus: FocusHandle,
@@ -773,6 +779,8 @@ impl GittiApp {
             note_wrap: fs_paths::NoteWrapper::new(cx),
             commit_fs: Default::default(),
             diff_viewport_h: Rc::new(Cell::new(px(0.))),
+            sticky_drawn: RefCell::default(),
+            op_anchor: None,
             log_scroll: UniformListScrollHandle::new(),
             log_focus: cx.focus_handle(),
             log_seen: Cell::new(0),
@@ -1118,7 +1126,7 @@ impl GittiApp {
         if matches!(self.detail, Detail::Empty) && self.selected == 0 {
             self.detail = Detail::Worktree;
         }
-        self.rebuild_rows_if_worktree(prev_sel_diff, &prev_working);
+        self.rebuild_rows_if_worktree(prev_sel_diff, &prev_working, None);
         self.restore_worktree_view_anchor(cx);
         if matches!(self.detail, Detail::Worktree) {
             self.schedule_highlight(cx);
@@ -1254,15 +1262,23 @@ impl GittiApp {
     }
 
     /// New rows for a new working state (`prev` = the one the current rows show). What is
-    /// at the top of the view stays there, also when a hunk above it was staged / unstaged.
-    fn rebuild_rows_if_worktree(&mut self, prev_sel_diff: Option<FileDiff>, prev: &WorkingState) {
+    /// at the top of the view stays there, also when a hunk above it was staged / unstaged;
+    /// after an operation (`op`, what it acted on) what followed the acted row comes where
+    /// that row was (`op_anchor.rs`).
+    fn rebuild_rows_if_worktree(
+        &mut self,
+        prev_sel_diff: Option<FileDiff>,
+        prev: &WorkingState,
+        op: Option<op_anchor::OpAnchor>,
+    ) {
         if !matches!(self.detail, Detail::Worktree) {
             return;
         }
         let anchor = self.worktree_anchor(prev);
         self.rows = Arc::new(self.worktree_rows(self.wrap()));
         self.rows_for = Some(self.working.clone());
-        if let Some(a) = anchor {
+        let followed = op.is_some_and(|op| self.follow_op_anchor(op));
+        if !followed && let Some(a) = anchor {
             self.follow_worktree_anchor(&a, prev);
         }
         let sel = self.line_sel.take();
@@ -2191,6 +2207,7 @@ impl GittiApp {
         cx: &mut Context<Self>,
         op: impl FnOnce(&Repo) -> anyhow::Result<Option<String>> + Send + 'static,
     ) {
+        let op_anchor = self.op_anchor.take();
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -2278,7 +2295,7 @@ impl GittiApp {
                     this.offer_stale_lock(&label, lock, window, cx);
                 }
                 match working {
-                    Ok((w, styles)) => this.apply_working(w, styles, touched, cx),
+                    Ok((w, styles)) => this.apply_working(w, styles, touched, op_anchor, cx),
                     Err(e) => {
                         this.set_error(format!("{e:#}"));
                         this.refresh(false, window, cx);
@@ -2302,6 +2319,7 @@ impl GittiApp {
         working: WorkingState,
         styles: Option<highlighting::Highlights>,
         paths: Option<Vec<String>>,
+        op: Option<op_anchor::OpAnchor>,
         cx: &mut Context<Self>,
     ) {
         let prev_sel_diff = self
@@ -2313,7 +2331,7 @@ impl GittiApp {
             self.conflict_sides = None;
         }
         self.publish_marks(cx);
-        self.rebuild_rows_if_worktree(prev_sel_diff, &prev_working);
+        self.rebuild_rows_if_worktree(prev_sel_diff, &prev_working, op);
         self.restore_worktree_view_anchor(cx);
         self.refresh_worktree_compare(cx);
         match (styles, paths) {
@@ -2394,6 +2412,7 @@ impl GittiApp {
         let Some(path) = self.file_path(src, file) else {
             return;
         };
+        self.note_op_anchor(src, file, None);
         match src {
             Src::Unstaged => self.set_pending(src, file, None, "Staging"),
             Src::Staged => self.set_pending(src, file, None, "Unstaging"),
@@ -2565,6 +2584,7 @@ impl GittiApp {
         let Some(shown) = self.file_diff(src, file) else {
             return;
         };
+        let acted = sel.clone();
         // With "ignore whitespace" the shown diff (`-w`) cannot be applied: transfer the
         // selection onto the exact diff of the file.
         let exact = self
@@ -2590,6 +2610,7 @@ impl GittiApp {
             PatchMode::Unstage => "Unstaging",
             PatchMode::Discard => "Discarding",
         };
+        self.note_op_anchor(src, file, Some(&acted));
         self.set_pending(src, file, Some(sel.hunks.keys().copied().collect()), label);
         // A partial patch of a new / deleted file touches only this path, too.
         let mut paths = vec![diff.path().to_string()];
@@ -2705,6 +2726,7 @@ impl GittiApp {
             )
         };
         self.confirm(message, Some(detail), button, window, cx, move |this, window, cx| {
+            this.note_op_anchor(Src::Unstaged, file, None);
             this.set_pending(Src::Unstaged, file, None, "Discarding");
             let paths = Some(vec![wf.path().to_string()]);
             this.work_op_noted("Discarding", paths, window, cx, move |r| {
@@ -3021,7 +3043,7 @@ impl GittiApp {
                     return;
                 }
                 match result {
-                    Ok(w) => this.apply_working(w, None, None, cx),
+                    Ok(w) => this.apply_working(w, None, None, None, cx),
                     Err(e) => this.set_error(format!("{e:#}")),
                 }
                 cx.notify();

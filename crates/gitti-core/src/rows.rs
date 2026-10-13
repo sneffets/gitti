@@ -9,10 +9,12 @@ use crate::diff::FileDiff;
 use crate::patch::Selection;
 
 mod anchor;
+mod follow;
 mod groups;
 mod marks;
 mod tree;
 pub use anchor::{AnchorAt, AnchorHit, RowAnchor, RowFiles, find_anchor, reveal_above, row_anchor};
+pub use follow::{Acted, Follow, follow_op};
 pub use groups::{Group, LineTotals, WorktreeTotals, group_files, group_paths, grouped};
 pub use marks::{FileMarks, discard_question, file_order, files_word};
 pub use tree::{Folder, Folders, TREE_STYLE_LABEL, TreeStyle, file_name, parent_folder};

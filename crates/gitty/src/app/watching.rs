@@ -137,7 +137,7 @@ impl App {
             Ok((w, scope)) if current => {
                 self.working_gen += 1;
                 self.watch_filter.reread(&scope, r.started);
-                self.apply_working(w, r.highlights, r.touched);
+                self.apply_working(w, r.highlights, r.touched, None);
                 self.refresh_submodule_states();
             }
             // An operation or a reload changed the working state meanwhile (this read
