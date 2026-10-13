@@ -543,6 +543,7 @@ impl GittiApp {
                         let menu = super::menus::commit_menu(menu, &app, c, window, cx);
                         let menu = super::patch_ui::commit_entries(menu, &app, ix, cx);
                         let menu = super::pick_several::mark_entries(menu, &app, ix, cx);
+                        let menu = super::signing_keys::commit_menu_items(menu, &app, &c.rev, cx);
                         let given = super::custom_commands::Given {
                             commit: Some(c.rev.clone()),
                             ..Default::default()

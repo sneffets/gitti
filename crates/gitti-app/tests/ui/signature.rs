@@ -1,10 +1,12 @@
 //! The commit header's signature: an SSH-signed commit whose key no allowed signers file
 //! lists, a GitHub remote, GitHub's answers from files (`GITTI_TEST_GITHUB`, no network), a
-//! private home and global config. The signature's context menu and its details window
-//! offer "Get Signing Keys from GitHub…"; the dialog lists the key ticked and says where it
-//! goes; Import writes the allowed signers file and the commit verifies — after which the
-//! entry is gone. With an allowed signers file at a usual place (but none set) they offer
-//! it instead: "for This Repository" writes the repository's config and the commit
+//! private home and global config. The signature's context menu, the commit's context menu
+//! and the signature's details window offer "Get Signing Keys from GitHub…"; the dialog
+//! lists the key ticked and says where it goes; Import writes the allowed signers file and
+//! the commit verifies — after which the signature's menu greys the entry with the reason
+//! and the others leave it out. Without a GitHub remote the signature's menu says so (greyed).
+//! With an allowed signers file at a usual place (but none set) they offer it — first —
+//! besides GitHub: "for This Repository" writes the repository's config and the commit
 //! verifies. With the user's own SSH signing key (the fixture's) they offer an allowed
 //! signers file with that key; it is created, set, and the commit verifies.
 //!
@@ -16,6 +18,7 @@ use crate::common;
 use std::path::{Path, PathBuf};
 
 use common::*;
+use gitti_core::availability::{NO_GITHUB_REMOTE, NO_KEY_MISSING, with_reason};
 use gitti_core::signing_keys::ACTION_LABEL;
 
 macro_rules! fail {
@@ -57,14 +60,21 @@ pub fn main() {
     let tests: &[(&str, Scenario)] = &[
         ("a_signers_file_is_offered", a_signers_file_is_offered),
         ("own_key_file", own_key_file),
+        ("no_github_remote", no_github_remote),
         ("github_keys_verify_the_commit", github_keys_verify_the_commit),
     ];
-    common::run(tests, |name| repo(&base.join(name), &github));
+    common::run(tests, |name| {
+        let url = match name {
+            "no_github_remote" => "https://gitlab.example.com/o/r.git",
+            _ => "https://github.com/o/r.git",
+        };
+        repo(&base.join(name), &github, url)
+    });
 }
 
-/// One SSH-signed commit (the key in `<dir>/../<name>-key`), origin on github.com, and
-/// GitHub's answers for it: the committer `tester` with this key and an older one.
-fn repo(dir: &Path, github: &Path) -> PathBuf {
+/// One SSH-signed commit (the key in `<dir>/../<name>-key`), origin at `url` (github.com),
+/// and GitHub's answers for it: the committer `tester` with this key and an older one.
+fn repo(dir: &Path, github: &Path, url: &str) -> PathBuf {
     init_repo(dir);
     let key = dir.with_extension("key");
     let st = std::process::Command::new("ssh-keygen")
@@ -76,7 +86,7 @@ fn repo(dir: &Path, github: &Path) -> PathBuf {
     append_config(
         dir,
         &format!(
-            "[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {}\n[remote \"origin\"]\n\turl = https://github.com/o/r.git\n",
+            "[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = {}\n[remote \"origin\"]\n\turl = {url}\n",
             key.display().to_string().replace('\\', "/")
         ),
     );
@@ -118,12 +128,28 @@ fn modal_message(ui: &mut Ui) -> String {
         .unwrap_or_default()
 }
 
+/// The signature's context menu: whether it has the action enabled, and its entries.
 fn menu_has_action(ui: &mut Ui) -> (bool, Vec<String>) {
-    gitti_app::testing::menu_labels();
-    ui.click_on("commit-signature", MouseButton::Right);
-    let labels = gitti_app::testing::menu_labels();
+    let (offered, entries) = menu_entries(ui, "commit-signature");
+    (offered, entries.into_iter().map(|(l, _)| l).collect())
+}
+
+/// The context menu of probe `on`: whether "Get Signing Keys from GitHub…" is in it
+/// enabled, and its entries (label, enabled).
+fn menu_entries(ui: &mut Ui, on: &str) -> (bool, Vec<(String, bool)>) {
+    gitti_app::testing::menu_entries();
+    ui.click_on(on, MouseButton::Right);
+    let entries = gitti_app::testing::menu_entries();
     ui.quick("key:escape");
-    (labels.iter().any(|l| l == ACTION_LABEL), labels)
+    (entries.iter().any(|(l, on)| l == ACTION_LABEL && *on), entries)
+}
+
+/// The details window's further buttons, in order (probes `modal-extra`, `modal-extra:1`).
+fn detail_buttons(ui: &mut Ui) -> usize {
+    let frame = ui.frame();
+    (0..4)
+        .take_while(|i| find(&frame, &if *i == 0 { "modal-extra".to_string() } else { format!("modal-extra:{i}") }).is_some())
+        .count()
 }
 
 fn github_keys_verify_the_commit(ui: &mut Ui) {
@@ -144,11 +170,20 @@ fn github_keys_verify_the_commit(ui: &mut Ui) {
     if !offered || !labels.iter().any(|l| l == "Signature Details…") || labels.iter().any(|l| l == "Expand All Files") {
         fail!(ui, "signature menu without {ACTION_LABEL:?}: {labels:?}");
     }
-    // The details window says why and has the button.
+    // The commit's menu in the list too (it is the shown commit).
+    let (offered, entries) = menu_entries(ui, "commit-row:1");
+    if !offered {
+        fail!(ui, "commit menu without {ACTION_LABEL:?}: {entries:?}");
+    }
+    // The details window says why and has the button — first, before how to set up an
+    // allowed signers file.
     ui.click_on("commit-signature", MouseButton::Left);
     let text = viewer_text(ui);
     if !text.starts_with("Not verified: set gpg.ssh.allowedSignersFile") {
         fail!(ui, "details: {text}");
+    }
+    if detail_buttons(ui) != 2 {
+        fail!(ui, "details window buttons: {}", detail_buttons(ui));
     }
     ui.click_on("modal-extra", MouseButton::Left);
     let found = ui.wait_real(1500, |ui| {
@@ -185,11 +220,46 @@ fn github_keys_verify_the_commit(ui: &mut Ui) {
     if !text.contains("Status: Good") || text.contains("Not verified") {
         fail!(ui, "after Import, details: {text}");
     }
-    ui.quick("key:escape");
-    let (offered, labels) = menu_has_action(ui);
-    if offered {
-        fail!(ui, "a verified signature still offers {ACTION_LABEL:?}: {labels:?}");
+    if detail_buttons(ui) != 0 {
+        fail!(ui, "a verified signature's details window has buttons");
     }
+    ui.quick("key:escape");
+    // The signature's menu greys it with the reason; the commit's menu leaves it out.
+    let (offered, entries) = menu_entries(ui, "commit-signature");
+    let greyed = with_reason(ACTION_LABEL, NO_KEY_MISSING);
+    if offered || !entries.iter().any(|(l, on)| *l == greyed && !on) {
+        fail!(ui, "a verified signature's menu: {entries:?}");
+    }
+    let (_, entries) = menu_entries(ui, "commit-row:1");
+    if entries.iter().any(|(l, _)| l.starts_with(ACTION_LABEL)) {
+        fail!(ui, "a verified commit's menu: {entries:?}");
+    }
+}
+
+/// The key is unknown but no remote is on GitHub: the signature's menu has the entry
+/// greyed with "no GitHub remote", the commit's menu and the details window leave it out
+/// (the details window keeps the allowed signers file's button).
+fn no_github_remote(ui: &mut Ui) {
+    git(&ui.repo, &["config", "--unset", "gpg.format"]);
+    ui.step("select:1");
+    if !ui.wait_real(1500, signature_shown) {
+        fail!(ui, "no signature in the commit header");
+        return;
+    }
+    let greyed = with_reason(ACTION_LABEL, NO_GITHUB_REMOTE);
+    let (_, entries) = menu_entries(ui, "commit-signature");
+    if !entries.iter().any(|(l, on)| *l == greyed && !on) {
+        fail!(ui, "signature menu without {greyed:?}: {entries:?}");
+    }
+    let (_, entries) = menu_entries(ui, "commit-row:1");
+    if entries.iter().any(|(l, _)| l.starts_with(ACTION_LABEL)) {
+        fail!(ui, "commit menu: {entries:?}");
+    }
+    ui.click_on("commit-signature", MouseButton::Left);
+    if detail_buttons(ui) != 1 {
+        fail!(ui, "details window buttons: {}", detail_buttons(ui));
+    }
+    ui.quick("key:escape");
 }
 
 /// `~/.ssh/allowed_signers` lists the commit's key, but no allowed signers file is set:
@@ -226,8 +296,11 @@ fn a_signers_file_is_offered(ui: &mut Ui) {
             fail!(ui, "signature menu lacks {want:?}: {labels:?}");
         }
     }
-    // The details window's button: the file the user has beats fetching keys.
+    // The details window's buttons: the file the user has first, then fetching keys.
     ui.click_on("commit-signature", MouseButton::Left);
+    if detail_buttons(ui) != 2 {
+        fail!(ui, "details window buttons: {}", detail_buttons(ui));
+    }
     ui.click_on("modal-extra", MouseButton::Left);
     match ui.modal() {
         Some((t, f)) if t == "Allowed Signers File" && f.first().map(String::as_str) == Some("~/.ssh/allowed_signers") => {}

@@ -1,8 +1,9 @@
 //! "Get Signing Keys from GitHub…" in gitty (as gitti's `app/signing_keys.rs`;
 //! logic in `gitti_core::signing_keys`). Offered when the shown commit's signature can't be
 //! verified because its key is unknown here and a remote is on GitHub: in the menu (`m`) on
-//! the header's Signature line and in the commit's menu; the Signature line and its details
-//! window say so. GitHub is asked on a job (`Msg::SigningKeys`); the dialog lists the keys
+//! the header's Signature line — always there, greyed with the reason when it doesn't apply
+//! (no GitHub remote, the key is known) —, in the commit's menu and as a key (`K`) of the
+//! signature's details window; the Signature line says so. GitHub is asked on a job (`Msg::SigningKeys`); the dialog lists the keys
 //! found (the one that made the signature ticked) and says what importing writes where;
 //! after the import the signature is verified again.
 
@@ -11,6 +12,8 @@ use gitti_core::signature::{SigKind, SignatureInfo};
 use gitti_core::signing_keys::{
     self as sk, FetchError, GitHubKey, GitHubRepo, ImportTarget, KeySet, Lookup,
 };
+
+use gitti_core::availability::NO_KEY_MISSING;
 
 use super::{App, Detail, MenuItem, Modal, Msg, spawn};
 
@@ -52,22 +55,33 @@ impl App {
         self.signing_key_offer().is_some()
     }
 
-    /// Menu entries for commit `sha` (the commit menu) or the shown one (`None`: the
-    /// Signature line's menu, which also has the details).
-    pub(super) fn signing_key_items(&self, sha: Option<&str>) -> Vec<MenuItem> {
-        let mut items = Vec::new();
-        if sha.is_none() && matches!(&self.signature, Some((_, Some(_)))) {
-            items.push(MenuItem::new("Signature Details", |app: &mut App| app.show_signature()));
+    /// Why "Get Signing Keys from GitHub…" can't act on the shown signature (`None`: it
+    /// can) — the menu bar's rule (`availability`), so all places give the same reason.
+    pub(super) fn signing_keys_why_not(&self) -> Option<&'static str> {
+        if self.signing_key_offer().is_some() {
+            return None;
         }
+        Some(gitti_core::availability::why_not("GetSigningKeys", &self.repo_facts()).unwrap_or(NO_KEY_MISSING))
+    }
+
+    /// Menu entries for commit `sha` (the commit menu: only when it applies) or the shown
+    /// one (`None`: the Signature line's menu, which also has the details and always the
+    /// action, greyed with the reason when it doesn't apply).
+    pub(super) fn signing_key_items(&self, sha: Option<&str>) -> Vec<MenuItem> {
+        let get = || MenuItem::new(sk::ACTION_LABEL, |app: &mut App| app.get_signing_keys(None)).key('K');
+        let Some(sha) = sha else {
+            if !matches!(&self.signature, Some((_, Some(_)))) {
+                return Vec::new();
+            }
+            return vec![
+                MenuItem::new("Signature Details", |app: &mut App| app.show_signature()),
+                get().unless(self.signing_keys_why_not()),
+            ];
+        };
         let offered = self
             .signing_key_offer()
-            .is_some_and(|o| {
-                sha.is_none_or(|s| ObjectId::from_hex(s.as_bytes()).is_ok_and(|id| id == o.id))
-            });
-        if offered {
-            items.push(MenuItem::new(sk::ACTION_LABEL, |app: &mut App| app.get_signing_keys(None)).key('K'));
-        }
-        items
+            .is_some_and(|o| ObjectId::from_hex(sha.as_bytes()).is_ok_and(|id| id == o.id));
+        if offered { vec![get()] } else { Vec::new() }
     }
 
     /// Asks GitHub for the signer's keys (of `login`, else of the commit's accounts).

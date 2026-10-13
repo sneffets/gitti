@@ -82,8 +82,8 @@ pub struct Modal {
     danger: bool,
     on_ok: Option<OkFn>,
     on_cancel: Option<CancelFn>,
-    /// A further button left of Cancel / OK (`ModalSpec::extra`).
-    extra: Option<(String, ExtraFn)>,
+    /// Further buttons left of Cancel / OK (`ModalSpec::extra`), in order.
+    extra: Vec<(String, ExtraFn)>,
     /// A Copy button (`ModalSpec::copy`): its label, the text, copied already.
     copy: Option<(String, String, bool)>,
     choices: Vec<Choice>,
@@ -169,7 +169,7 @@ pub struct ModalSpec {
     check_options: Vec<(usize, Vec<usize>)>,
     spell: Vec<usize>,
     live: Option<LiveFn>,
-    extra: Option<(String, ExtraFn)>,
+    extra: Vec<(String, ExtraFn)>,
     copy: Option<(String, String)>,
     /// The field the dialog starts in (`ModalSpec::start_in`).
     start: usize,
@@ -195,7 +195,7 @@ impl ModalSpec {
             check_options: Vec::new(),
             spell: Vec::new(),
             live: None,
-            extra: None,
+            extra: Vec::new(),
             copy: None,
             start: 0,
         }
@@ -215,13 +215,14 @@ impl ModalSpec {
     }
 
     /// A further button (`label`) left of Cancel / OK that closes the dialog and runs `f`
-    /// (e.g. the signature window's "Get Signing Keys from GitHub…").
+    /// (e.g. the signature window's "Get Signing Keys from GitHub…"). Several: in the
+    /// order given, probes `modal-extra`, `modal-extra:1`, …
     pub fn extra(
         mut self,
         label: impl Into<String>,
         f: impl FnOnce(&mut GittiApp, &mut Window, &mut Context<GittiApp>) + 'static,
     ) -> Self {
-        self.extra = Some((label.into(), Box::new(f)));
+        self.extra.push((label.into(), Box::new(f)));
         self
     }
 
@@ -1045,12 +1046,13 @@ impl GittiApp {
         cx.notify();
     }
 
-    /// The dialog's further button (`ModalSpec::extra`): closes it, runs its action.
-    pub(super) fn run_modal_extra(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// The dialog's further button `ix` (`ModalSpec::extra`): closes it, runs its action.
+    pub(super) fn run_modal_extra(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(mut modal) = self.modal.take() else {
             return;
         };
-        if let Some((_, f)) = modal.extra.take() {
+        if ix < modal.extra.len() {
+            let (_, f) = modal.extra.swap_remove(ix);
             f(self, window, cx);
         }
         self.after_modal_closed(modal.return_focus.take(), window, cx);
@@ -1591,17 +1593,19 @@ impl GittiApp {
                     ),
                 )
             })
-            .when_some(modal.extra.as_ref().map(|(l, _)| l.clone()), |d, label| {
-                d.child(
-                    div().probe("modal-extra").child(
-                        Button::new("modal-extra")
-                            .label(label)
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, w, cx| this.run_modal_extra(w, cx))),
-                    ),
+            .children(modal.extra.iter().enumerate().map(|(ix, (label, _))| {
+                let probe = match ix {
+                    0 => "modal-extra".to_string(),
+                    _ => format!("modal-extra:{ix}"),
+                };
+                div().probe(probe).child(
+                    Button::new(("modal-extra", ix))
+                        .label(label.clone())
+                        .small()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, w, cx| this.run_modal_extra(ix, w, cx))),
                 )
-            })
+            }))
             .when_some(modal.cancel_label.clone(), |d, label| {
                 d.child(
                     Button::new("modal-cancel")

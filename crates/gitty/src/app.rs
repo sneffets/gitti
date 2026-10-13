@@ -2016,35 +2016,41 @@ impl App {
         self.detail_running || self.detail_pending
     }
 
-    /// Details window of the shown commit's signature.
+    /// Details window of the shown commit's signature, with a key for each way to get it
+    /// verified that applies (as gitti's buttons): an allowed signers file (the user's,
+    /// else a new one with the user's own key, else how to set one up) and the signer's
+    /// keys from GitHub; the file first when it surely helps.
     pub fn show_signature(&mut self) {
-        if let Some((_, Some(info))) = &self.signature {
-            let mut text = info.details();
-            match self.signers_files_known() {
-                Some(n) if n > 0 => text.push_str(&format!(
-                    "\nYou have an allowed signers file to check it with: m on the Signature line → {}",
-                    signers::USE_LABEL.trim_end_matches('…')
-                )),
-                Some(_) => text.push_str(&format!(
-                    "\nHow to set up an allowed signers file: m on the Signature line → {}",
-                    gitti_core::allowed_signers::HELP_LABEL
-                )),
-                None => {}
-            }
-            if self.own_signers_offered().is_some() {
-                text.push_str(&format!(
-                    "\nAn allowed signers file with your own key: m on the Signature line → {}",
-                    gitti_core::allowed_signers::OWN_LABEL.trim_end_matches('…')
-                ));
-            }
-            if self.signing_keys_offered() {
-                text.push_str(&format!(
-                    "\nThe signer's keys may be on GitHub: m on the Signature line → {}",
-                    gitti_core::signing_keys::ACTION_LABEL
-                ));
-            }
-            self.modal = Some(Modal::text("Signature", text));
-        }
+        use crate::modal::TextKey;
+        let Some((_, Some(info))) = &self.signature else {
+            return;
+        };
+        let text = info.details();
+        let files = self.signers_files_known();
+        let own = self.own_signers_offered();
+        let label = if files.is_some_and(|n| n > 0) {
+            Some("use an allowed signers file")
+        } else if own.is_some() {
+            Some("allowed signers file with your key")
+        } else if files.is_some() {
+            Some("how to check SSH signatures")
+        } else {
+            None
+        };
+        let signers = label.map(|label| TextKey { key: 'a', label, keep: false, run: App::use_allowed_signers_file });
+        let github = self.signing_keys_offered().then_some(TextKey {
+            key: 'K',
+            label: "Get Signing Keys from GitHub",
+            keep: false,
+            run: |app| app.get_signing_keys(None),
+        });
+        let signers_first = files.is_some_and(|n| n > 0) || own == Some(true);
+        let keys: Vec<TextKey> = if signers_first {
+            signers.into_iter().chain(github).collect()
+        } else {
+            github.into_iter().chain(signers).collect()
+        };
+        self.modal = Some(Modal::text("Signature", text).with_text_keys(keys));
     }
 
     fn show_commit(&mut self, cv: CommitView) {

@@ -1,18 +1,24 @@
 //! "Get Signing Keys from GitHub…" on the commit header's signature: offered when
 //! the signature can't be verified because its key is unknown here and a remote is on
-//! GitHub (`gitti_core::signing_keys::offer`) — in the signature's context menu and as a
-//! button of its details window. GitHub is asked on a background job; the dialog lists the
-//! keys found (the one that made the signature ticked) and says what importing writes
+//! GitHub (`gitti_core::signing_keys::offer`) — as a button of its details window, in the
+//! commit's context menu (the shown commit, as gitty's commit menu) and in the signature's
+//! context menu, which always has it: greyed with the reason when it doesn't apply (no
+//! GitHub remote, the key is known). GitHub is asked on a background job; the dialog lists
+//! the keys found (the one that made the signature ticked) and says what importing writes
 //! where (`signing_keys::plan_text`); after the import the signature is verified again.
 
 use gitti_core::ObjectId;
 use gitti_core::signature::SignatureInfo;
+use gitti_core::availability::NO_KEY_MISSING;
 use gitti_core::signing_keys::{self as sk, GitHubKey, GitHubRepo, ImportTarget, Lookup};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
 use super::modal::ModalSpec;
 use super::{Detail, GittiApp};
+
+/// A button of the signature's details window.
+type ExtraAction = fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>);
 
 /// The shown commit's signature, when keys from GitHub can help verify it.
 pub(super) struct KeyOffer {
@@ -39,26 +45,56 @@ pub(super) fn take_signature_click() -> bool {
     SIGNATURE_CLICK.with(|c| c.replace(false))
 }
 
-/// The signature's context menu: its details, and the GitHub keys when offered.
+/// The signature's context menu: its details, the GitHub keys (greyed with the reason
+/// when they don't apply), and an allowed signers file when none is set.
 pub(super) fn signature_menu(menu: PopupMenu, app: &WeakEntity<GittiApp>, cx: &App) -> PopupMenu {
-    let offered = app
-        .upgrade()
-        .is_some_and(|a| a.read(cx).signing_key_offer().is_some());
-    let item = |label: &'static str, f: fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>)| {
+    let why = app.upgrade().map_or(Some(NO_KEY_MISSING), |a| a.read(cx).signing_keys_why_not());
+    let item = |label: String, f: fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>)| {
         let app = app.clone();
         super::menus::menu_entry(label).on_click(move |_, window, cx| {
             app.update(cx, |this, cx| f(this, window, cx)).ok();
         })
     };
-    let menu = menu.item(item("Signature Details…", |this, w, cx| {
+    let menu = menu.item(item("Signature Details…".into(), |this, w, cx| {
         this.show_signature_details(w, cx)
     }));
-    let menu = if offered {
-        menu.item(item(sk::ACTION_LABEL, |this, w, cx| this.get_signing_keys(None, w, cx)))
-    } else {
-        menu
+    let label = match why {
+        Some(why) => gitti_core::availability::with_reason(sk::ACTION_LABEL, why),
+        None => sk::ACTION_LABEL.to_string(),
     };
+    let menu = menu.item(
+        item(label, |this, w, cx| this.get_signing_keys(None, w, cx)).disabled(why.is_some()),
+    );
     // No allowed signers file set: use one the user has, or how to set one up.
+    super::signers::menu_items(menu, app, cx)
+}
+
+/// The commit list's menu of commit `rev`, when it is the shown one: what its signature's
+/// menu offers to get it verified ("Get Signing Keys from GitHub…", an allowed signers
+/// file) — only what applies, after a separator (as gitty's commit menu).
+pub(super) fn commit_menu_items(menu: PopupMenu, app: &WeakEntity<GittiApp>, rev: &str, cx: &App) -> PopupMenu {
+    let Some(this) = app.upgrade() else {
+        return menu;
+    };
+    let (offered, signers) = {
+        let a = this.read(cx);
+        let rev = ObjectId::from_hex(rev.as_bytes()).ok();
+        let shown = matches!(&a.detail, Detail::Commit(cv) if cv.compare.is_none() && Some(cv.details.id) == rev);
+        if !shown {
+            return menu;
+        }
+        (a.signing_key_offer().is_some(), a.signers_files_known().is_some())
+    };
+    if !offered && !signers {
+        return menu;
+    }
+    let mut menu = menu.separator();
+    if offered {
+        let app = app.clone();
+        menu = menu.item(super::menus::menu_entry(sk::ACTION_LABEL).on_click(move |_, window, cx| {
+            app.update(cx, |this, cx| this.get_signing_keys(None, window, cx)).ok();
+        }));
+    }
     super::signers::menu_items(menu, app, cx)
 }
 
@@ -68,6 +104,9 @@ impl GittiApp {
         let Detail::Commit(cv) = &self.detail else {
             return None;
         };
+        if cv.compare.is_some() {
+            return None;
+        }
         let (id, info) = self.signature.as_ref()?;
         let info = info.as_ref().filter(|_| *id == cv.details.id)?;
         let gh = sk::offer(info, &self.remotes)?;
@@ -79,33 +118,49 @@ impl GittiApp {
         })
     }
 
-    /// The signature's details window (+ "Get Signing Keys from GitHub…" when offered).
+    /// Why "Get Signing Keys from GitHub…" can't act on the shown signature (`None`: it
+    /// can) — the menu bar's rule (`availability`), so all places give the same reason.
+    pub(super) fn signing_keys_why_not(&self) -> Option<&'static str> {
+        if self.signing_key_offer().is_some() {
+            return None;
+        }
+        Some(gitti_core::availability::why_not("GetSigningKeys", &self.repo_facts()).unwrap_or(NO_KEY_MISSING))
+    }
+
+    /// The signature's details window: a button for each way to get it verified that
+    /// applies — an allowed signers file (the user's, else a new one with the user's own
+    /// key, else how to set one up) and "Get Signing Keys from GitHub…".
     pub(super) fn show_signature_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, Some(info))) = &self.signature else {
             return;
         };
         let details = info.details();
         let mut spec = ModalSpec::new("Signature").ok("Close").cancel(None);
-        // One button: an allowed signers file the user has beats a new one with the user's
-        // own key when that key signed, then fetching keys, a file with the own key, how
-        // to set one up.
+        // One button for an allowed signers file (an existing one beats a new one with
+        // the user's own key, which beats how to set one up) and one for the keys from
+        // GitHub; the file comes first when it surely helps (the user has one, or the
+        // user's own key made the signature).
         let files = self.signers_files_known();
         let own = self.own_signers_offered();
-        let own_button = |spec: ModalSpec| {
-            spec.extra(gitti_core::allowed_signers::OWN_LABEL, |this, w, cx| this.own_signers_dialog(w, cx))
-        };
-        if files.is_some_and(|n| n > 0) {
-            spec = spec.extra(super::signers::USE_LABEL, |this, w, cx| this.use_allowed_signers_file(w, cx));
-        } else if own == Some(true) {
-            spec = own_button(spec);
-        } else if self.signing_key_offer().is_some() {
-            spec = spec.extra(sk::ACTION_LABEL, |this, w, cx| this.get_signing_keys(None, w, cx));
+        let signers: Option<(&'static str, ExtraAction)> = if files.is_some_and(|n| n > 0) {
+            Some((super::signers::USE_LABEL, |this, w, cx| this.use_allowed_signers_file(w, cx)))
         } else if own.is_some() {
-            spec = own_button(spec);
+            Some((gitti_core::allowed_signers::OWN_LABEL, |this, w, cx| this.own_signers_dialog(w, cx)))
         } else if files.is_some() {
-            spec = spec.extra(gitti_core::allowed_signers::HELP_LABEL, |this, w, cx| {
-                this.allowed_signers_help(w, cx)
-            });
+            Some((gitti_core::allowed_signers::HELP_LABEL, |this, w, cx| this.allowed_signers_help(w, cx)))
+        } else {
+            None
+        };
+        let signers_first = files.is_some_and(|n| n > 0) || own == Some(true);
+        let github = self.signing_key_offer().is_some();
+        if let Some((label, f)) = signers.filter(|_| signers_first) {
+            spec = spec.extra(label, f);
+        }
+        if github {
+            spec = spec.extra(sk::ACTION_LABEL, |this, w, cx| this.get_signing_keys(None, w, cx));
+        }
+        if let Some((label, f)) = signers.filter(|_| !signers_first) {
+            spec = spec.extra(label, f);
         }
         self.show_text_modal_spec(spec, details, window, cx);
     }

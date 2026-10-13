@@ -1,8 +1,10 @@
 //! "Get Signing Keys from GitHub…" end to end: an SSH-signed commit whose key no
 //! allowed signers file lists, a GitHub remote, GitHub's answers from files
-//! (`GITTI_TEST_GITHUB`), a private home and global config: the commit menu offers it, the
-//! dialog lists the key ticked and says where it goes, ⏎ writes the allowed signers file,
-//! sets it in the global config, and the commit verifies. With an allowed signers file at
+//! (`GITTI_TEST_GITHUB`), a private home and global config: the commit menu, the Signature
+//! line's menu and its details window (key `K`) offer it, the dialog lists the key ticked
+//! and says where it goes, ⏎ writes the allowed signers file, sets it in the global config,
+//! and the commit verifies — the Signature line's menu then greys it with the reason.
+//! Without a GitHub remote that menu says so (greyed); the others leave it out. With an allowed signers file at
 //! a usual place (but none set), it is offered instead and "for This Repository" makes the
 //! commit verify. Signed with the user's own key and no file anywhere: a file with that key
 //! is offered, created and set.
@@ -14,6 +16,8 @@ use crate::common;
 use crate::support;
 
 use common::*;
+use gitti_core::availability::{NO_GITHUB_REMOTE, NO_KEY_MISSING, with_reason};
+use gitti_core::signing_keys::ACTION_LABEL;
 use support::*;
 
 fn run(dir: &Path, home: &Path, github: &Path, script: &str) -> String {
@@ -136,11 +140,22 @@ fn signing_keys_from_github_verify_the_commit() {
         &format!(r#"[{{"id":7,"key":"{line}","title":"laptop"}}]"#),
     );
 
-    // Row 1 = the signed commit; m = its menu, K = "Get Signing Keys from GitHub…".
-    let out = run(d, home.path(), github.path(), "press:j;wait;dump;key:m;items;press:K;wait;dump;state;key:enter;wait;dump;state");
+    // Row 1 = the signed commit; m = its menu; the Signature line (row 6): its menu
+    // (right click), its details (click) with K = "Get Signing Keys from GitHub…".
+    let out = run(
+        d,
+        home.path(),
+        github.path(),
+        "press:j;wait;dump;key:m;items;press:esc;rclick:100,6;items;press:esc;click:100,6;dump;key:K;wait;dump;state;key:enter;wait;dump;state;rclick:100,6;items",
+    );
+    let menus: Vec<&str> = out.split("item: ").collect();
     let s = screens(&out);
     assert!(s[0].contains("? Signed, not verified") && s[0].contains("m: Get Signing Keys from GitHub"), "{out}");
-    assert!(out.contains("item: Get Signing Keys from GitHub…"), "{out}");
+    assert!(out.contains(&format!("item: {ACTION_LABEL}\n")), "{out}");
+    // The Signature line's menu: its details and the action.
+    assert!(out.contains("item: Signature Details\nitem: Get Signing Keys from GitHub…\n"), "{out}");
+    assert!(s[1].contains("K Get Signing Keys from GitHub") && s[1].contains("Not verified"), "{out}");
+    let s = &s[1..];
     let dialog = s[1].split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(out.contains("Input \"Signing Keys from GitHub\""), "{out}");
     assert!(dialog.contains("☑ SSH SHA256:") && dialog.contains("tester (laptop) — signed this"), "{out}");
@@ -152,6 +167,33 @@ fn signing_keys_from_github_verify_the_commit() {
     assert!(s[2].contains("✓ Signed · t@example.com"), "{out}");
     let requests = std::fs::read_to_string(github.path().join("requests.log")).unwrap();
     assert_eq!(requests.lines().count(), 3, "{requests}");
+    // Verified: the Signature line's menu greys it with the reason.
+    let last = menus.iter().rev().take_while(|m| !m.contains("=== dump")).collect::<Vec<_>>();
+    let greyed = with_reason(ACTION_LABEL, NO_KEY_MISSING);
+    assert!(last.iter().any(|m| m.starts_with(&greyed)), "{greyed}: {out}");
+}
+
+/// The key is unknown but the only remote is not on GitHub: the Signature line's menu has
+/// the action greyed with "no GitHub remote"; the commit menu and the details window
+/// leave it out.
+#[gitti_test::test]
+fn signing_keys_without_a_github_remote_say_why() {
+    let keys = tempfile::tempdir().unwrap();
+    let (dir, _) = signed_repo(keys.path());
+    let d = dir.path();
+    git(d, &["config", "--unset", "gpg.format"]);
+    git(d, &["remote", "set-url", "origin", "https://gitlab.example.com/o/r.git"]);
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("global.gitconfig"), "").unwrap();
+    let github = tempfile::tempdir().unwrap();
+    let out = run(d, home.path(), github.path(), "press:j;wait;key:m;items;press:esc;rclick:100,6;items;press:esc;click:100,6;dump");
+    let (commit_menu, signature_menu) = out.split_once("item: Signature Details").expect("the Signature line's menu");
+    assert!(!commit_menu.contains(ACTION_LABEL), "{out}");
+    let greyed = with_reason(ACTION_LABEL, NO_GITHUB_REMOTE);
+    assert!(signature_menu.contains(&format!("item: {greyed}\n")), "{out}");
+    let s = screens(&out);
+    assert!(s[0].contains("Not verified") && !s[0].contains("Get Signing Keys"), "{out}");
+    assert!(!std::path::Path::new(&github.path().join("requests.log")).exists());
 }
 
 /// Signed with the user's own key (`user.signingKey`), no allowed signers file anywhere:
