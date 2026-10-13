@@ -37,21 +37,48 @@ use crate::signature::{SigKind, SignatureInfo};
 /// The label of the action (menus, palette, the details window's button).
 pub const ACTION_LABEL: &str = "Get Signing Keys from GitHub…";
 
-// ---------------------------------------------------------------------- the GitHub remote
+// ---------------------------------------------------------------------- the forge remote
 
-/// A repository on github.com, found among the remotes.
+/// A code hosting service that publishes its users' signing keys. Only GitHub so far; a
+/// new one gets a variant, a URL recogniser in [`forge_repo`] and its endpoints in
+/// [`lookup`] (the import, [`plan_text`] and the frontends' dialogs are shared).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Forge {
+    GitHub,
+}
+
+impl Forge {
+    /// "GitHub" — for the UI's words.
+    pub fn name(self) -> &'static str {
+        match self {
+            Forge::GitHub => "GitHub",
+        }
+    }
+}
+
+/// A repository on a forge, found among the remotes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitHubRepo {
+pub struct ForgeRepo {
+    pub forge: Forge,
+    /// The host the remote names (`github.com`): a self-hosted forge's API is found there.
+    pub host: String,
     /// The remote that points to it.
     pub remote: String,
     pub owner: String,
     pub name: String,
 }
 
-impl GitHubRepo {
+impl ForgeRepo {
     /// `owner/name`.
     pub fn slug(&self) -> String {
         format!("{}/{}", self.owner, self.name)
+    }
+
+    /// The base of the forge's REST API (`https://api.github.com`).
+    fn api(&self) -> &'static str {
+        match self.forge {
+            Forge::GitHub => API,
+        }
     }
 }
 
@@ -87,8 +114,14 @@ pub fn parse_github_url(url: &str) -> Option<(String, String)> {
     (ok(owner) && ok(name)).then(|| (owner.to_string(), name.to_string()))
 }
 
+/// The forge repository among `remotes` whose signing keys can be fetched (only GitHub so
+/// far: [`github_repo`]).
+pub fn forge_repo(remotes: &[RemoteInfo]) -> Option<ForgeRepo> {
+    github_repo(remotes)
+}
+
 /// The GitHub repository among `remotes`: `origin` first, then `upstream`, then the others.
-pub fn github_repo(remotes: &[RemoteInfo]) -> Option<GitHubRepo> {
+pub fn github_repo(remotes: &[RemoteInfo]) -> Option<ForgeRepo> {
     let rank = |r: &RemoteInfo| match r.name.as_str() {
         "origin" => 0,
         "upstream" => 1,
@@ -99,7 +132,9 @@ pub fn github_repo(remotes: &[RemoteInfo]) -> Option<GitHubRepo> {
     sorted.into_iter().find_map(|r| {
         let (owner, name) =
             parse_github_url(&r.fetch_url).or_else(|| parse_github_url(&r.push_url))?;
-        Some(GitHubRepo {
+        Some(ForgeRepo {
+            forge: Forge::GitHub,
+            host: "github.com".into(),
             remote: r.name.clone(),
             owner,
             name,
@@ -108,12 +143,13 @@ pub fn github_repo(remotes: &[RemoteInfo]) -> Option<GitHubRepo> {
 }
 
 /// Whether "Get Signing Keys from GitHub…" applies to a verified signature: its key is
-/// unknown here ([`SignatureInfo::key_unknown`]) and a remote points to GitHub.
-pub fn offer(info: &SignatureInfo, remotes: &[RemoteInfo]) -> Option<GitHubRepo> {
+/// unknown here ([`SignatureInfo::key_unknown`]) and a remote points to a forge
+/// ([`forge_repo`]; its [`Forge`] names it).
+pub fn offer(info: &SignatureInfo, remotes: &[RemoteInfo]) -> Option<ForgeRepo> {
     if !info.key_unknown() {
         return None;
     }
-    github_repo(remotes)
+    forge_repo(remotes)
 }
 
 // ---------------------------------------------------------------------- the commit's key
@@ -852,7 +888,7 @@ const API: &str = "https://api.github.com";
 /// accounts the commit API names. Runs on a background job (network).
 pub fn lookup(
     fetch: &dyn Fetch,
-    gh: &GitHubRepo,
+    gh: &ForgeRepo,
     sha: &str,
     commit_key: Option<CommitKey>,
     login: Option<&str>,
@@ -868,7 +904,7 @@ pub fn lookup(
             (vec![l.to_string()], false, None)
         }
         None => {
-            let r = fetch.get(&format!("{API}/repos/{}/{}/commits/{sha}", gh.owner, gh.name))?;
+            let r = fetch.get(&format!("{}/repos/{}/{}/commits/{sha}", gh.api(), gh.owner, gh.name))?;
             if is_rate_limit(&r) {
                 return Err(FetchError::RateLimited);
             }
@@ -902,8 +938,8 @@ pub fn lookup(
     };
     let mut keys = Vec::new();
     for l in &logins {
-        let gpg = fetch.get(&format!("{API}/users/{l}/gpg_keys"))?;
-        let ssh = fetch.get(&format!("{API}/users/{l}/ssh_signing_keys"))?;
+        let gpg = fetch.get(&format!("{}/users/{l}/gpg_keys", gh.api()))?;
+        let ssh = fetch.get(&format!("{}/users/{l}/ssh_signing_keys", gh.api()))?;
         for r in [&gpg, &ssh] {
             if is_rate_limit(r) {
                 return Err(FetchError::RateLimited);
@@ -940,7 +976,7 @@ impl Repo {
     pub fn lookup_signing_keys(
         &self,
         fetch: &dyn Fetch,
-        gh: &GitHubRepo,
+        gh: &ForgeRepo,
         id: ObjectId,
         info: &SignatureInfo,
         login: Option<&str>,

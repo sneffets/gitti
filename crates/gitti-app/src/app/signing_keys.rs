@@ -10,7 +10,7 @@
 use gitti_core::ObjectId;
 use gitti_core::signature::SignatureInfo;
 use gitti_core::availability::NO_KEY_MISSING;
-use gitti_core::signing_keys::{self as sk, GitHubKey, GitHubRepo, ImportTarget, Lookup};
+use gitti_core::signing_keys::{self as sk, ForgeRepo, GitHubKey, ImportTarget, Lookup};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
@@ -24,7 +24,7 @@ type ExtraAction = fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>);
 pub(super) struct KeyOffer {
     id: ObjectId,
     info: SignatureInfo,
-    gh: GitHubRepo,
+    gh: ForgeRepo,
     /// The committer's e-mail: the principal of new allowed-signers lines.
     email: String,
 }
@@ -180,7 +180,7 @@ impl GittiApp {
         };
         self.set_info(match &login {
             Some(l) => format!("Asking GitHub for the signing keys of {l}…"),
-            None => format!("Asking GitHub ({}) for the signing keys…", offer.gh.slug()),
+            None => format!("Asking {} ({}) for the signing keys…", offer.gh.forge.name(), offer.gh.slug()),
         });
         cx.notify();
         let KeyOffer { id, info, gh, email } = offer;

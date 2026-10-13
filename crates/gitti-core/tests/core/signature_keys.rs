@@ -11,7 +11,7 @@ use gitti_core::Repo;
 use gitti_core::ops::RemoteInfo;
 use gitti_core::signature::{SigKind, SigStatus, SignatureInfo};
 use gitti_core::signing_keys::{
-    self as sk, CommitKey, DirFetch, FetchError, GitHubRepo, ImportTarget, KeySet, Lookup,
+    self as sk, CommitKey, DirFetch, FetchError, ForgeRepo, ImportTarget, KeySet, Lookup,
     SignersFile, UserDirs,
 };
 
@@ -25,8 +25,10 @@ fn remote(name: &str, url: &str) -> RemoteInfo {
     }
 }
 
-fn gh() -> GitHubRepo {
-    GitHubRepo {
+fn gh() -> ForgeRepo {
+    ForgeRepo {
+        forge: sk::Forge::GitHub,
+        host: "github.com".into(),
         remote: "origin".into(),
         owner: "o".into(),
         name: "r".into(),

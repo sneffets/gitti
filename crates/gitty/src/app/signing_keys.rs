@@ -10,7 +10,7 @@
 use gitti_core::ObjectId;
 use gitti_core::signature::{SigKind, SignatureInfo};
 use gitti_core::signing_keys::{
-    self as sk, FetchError, GitHubKey, GitHubRepo, ImportTarget, KeySet, Lookup,
+    self as sk, FetchError, ForgeRepo, GitHubKey, ImportTarget, KeySet, Lookup,
 };
 
 use gitti_core::availability::NO_KEY_MISSING;
@@ -27,7 +27,7 @@ pub enum KeysMsg {
 struct KeyOffer {
     id: ObjectId,
     info: SignatureInfo,
-    gh: GitHubRepo,
+    gh: ForgeRepo,
     email: String,
 }
 
@@ -92,7 +92,7 @@ impl App {
         };
         self.set_info(match &login {
             Some(l) => format!("Asking GitHub for the signing keys of {l}…"),
-            None => format!("Asking GitHub ({}) for the signing keys…", gh.slug()),
+            None => format!("Asking {} ({}) for the signing keys…", gh.forge.name(), gh.slug()),
         });
         self.keys_job = true;
         let repo = self.repo.clone();
