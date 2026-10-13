@@ -2,7 +2,7 @@
 //! empty box and is refused unedited, its comment lines go when committed; Sign Off adds
 //! the trailer and is remembered; ↑ in the empty box and "Recent Commit Messages…" bring
 //! back earlier messages; "Add Co-Author…" offers the other authors and adds the
-//! `Co-authored-by` trailer once.
+//! `Co-authored-by` trailer once; ⏎ with a modifier commits as ctrl-s does.
 
 use crate::common::*;
 use crate::support::items;
@@ -85,6 +85,22 @@ fn earlier_messages_by_up_and_the_picker() {
     assert!(s[3].contains("Replace your commit message?"), "asks over typed text: {out}");
     let replaced = message_box(s[4]);
     assert!(replaced.contains("Session one") && !replaced.contains("typed"), "replaced: {out}");
+}
+
+/// ⏎ in the box is a new line; ⏎ with a modifier commits: shift-⏎, then (amending) ⌘-⏎
+/// and ctrl-⏎ — terminals that tell them apart from ⏎ send them so.
+#[gitti_test::test]
+fn enter_with_a_modifier_commits() {
+    let dir = repo();
+    let d = dir.path();
+    git(d, &["add", "a.txt"]);
+    let script = "wait;press:c;type:One;key:enter;type:two;key:shift-enter;\
+                  press:A;press:c;key:super-enter;press:A;press:c;key:ctrl-enter;state";
+    let out = gitty_with(d, tempfile::tempdir().unwrap().path(), "160x30", script);
+    assert_eq!(last_message(d), "One\ntwo", "{out}");
+    let reflog = git(d, &["reflog", "-3", "--format=%gs"]);
+    let kinds: Vec<&str> = reflog.lines().map(|l| l.split(':').next().unwrap_or_default()).collect();
+    assert_eq!(kinds, ["commit (amend)", "commit (amend)", "commit"], "{out}");
 }
 
 /// "Add Co-Author…" (palette): the other authors, most commits first (not the user); the

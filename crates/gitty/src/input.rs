@@ -126,7 +126,17 @@ impl App {
             match key.code {
                 KeyCode::Esc => self.focus = Focus::Detail,
                 KeyCode::Char('s') if ctrl => self.commit(),
-                KeyCode::Enter if ctrl || alt => self.commit(),
+                // Enter with any modifier commits: alt-⏎ reaches gitty in most terminals
+                // (Windows Terminal keeps it for full screen); ctrl-, shift- and ⌘-⏎ only
+                // where the terminal tells them apart from ⏎ (Windows' console, terminals
+                // with the kitty keyboard protocol) — elsewhere they arrive as a plain ⏎.
+                KeyCode::Enter
+                    if key.modifiers.intersects(
+                        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER,
+                    ) =>
+                {
+                    self.commit()
+                }
                 KeyCode::Tab | KeyCode::BackTab => self.focus = Focus::Detail,
                 KeyCode::Char('c') if ctrl => self.request_quit(),
                 // Earlier messages in an untouched box (`app/commit_box.rs`); else the

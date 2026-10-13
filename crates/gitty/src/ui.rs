@@ -4309,6 +4309,7 @@ Dialogs
 
 Commit message
   ctrl-s, alt-⏎   commit         esc  leave the message box
+  ctrl-⏎, shift-⏎, ⌘-⏎  commit too, where the terminal tells them from ⏎
   ctrl-w ctrl-u   delete word / to line start
 
 Top line
