@@ -468,7 +468,7 @@ impl App {
                 app.run_op(
                     "Repair worktrees",
                     true,
-                    After::ShowOutput("git worktree repair".into()),
+                    After::ShowOutput("Repair Worktrees — what was fixed".into()),
                     move |r| r.repair_worktrees(&paths),
                 );
             },

@@ -601,6 +601,98 @@ pub fn checked_out_elsewhere(stderr: &str) -> Option<PathBuf> {
     None
 }
 
+/// `git worktree repair`'s report in plain words. git reports every fix it made as
+/// `repair: <what was wrong>: <path>` — read raw, "gitdir incorrect" looks like an error
+/// although the link has just been rewritten. Each such line becomes a sentence naming
+/// the worktree and where its link points now (`read` gives a link file's contents after
+/// the repair: the repository's `worktrees/<id>/gitdir`, a worktree's `.git`); git's own
+/// lines follow below. Empty stays empty (nothing needed repairing).
+pub fn describe_repair(report: &str, read: impl Fn(&Path) -> Option<String>) -> String {
+    let report = report.trim();
+    if report.is_empty() {
+        return String::new();
+    }
+    // A link file's target: `gitdir: <path>` in a worktree's `.git`, the bare path in
+    // the repository's `gitdir`; relative ones (worktree.useRelativePaths) are relative
+    // to the file's folder.
+    let target = |file: &Path| -> Option<PathBuf> {
+        let text = read(file)?;
+        let t = text.trim();
+        let t = Path::new(t.strip_prefix("gitdir:").unwrap_or(t).trim());
+        (!t.as_os_str().is_empty()).then(|| match file.parent() {
+            Some(dir) if t.is_relative() => normalize(&dir.join(t)),
+            _ => t.to_path_buf(),
+        })
+    };
+    let name = |p: &Path| {
+        p.file_name()
+            .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned())
+    };
+    let mut said = Vec::new();
+    for line in report.lines() {
+        let Some((what, path)) = line.strip_prefix("repair: ").and_then(|l| l.split_once(": "))
+        else {
+            continue;
+        };
+        let path = Path::new(path);
+        let sentence = match what {
+            // `path` = <common dir>/worktrees/<id>/gitdir, which now names <folder>/.git.
+            "gitdir incorrect" | "gitdir unreadable" | "gitdir absolute/relative path mismatch" => {
+                let folder = target(path).and_then(|t| t.parent().map(Path::to_path_buf));
+                let id = path.parent().map(name).unwrap_or_default();
+                let wt = folder.as_deref().map(name).unwrap_or(id);
+                let was = match what {
+                    "gitdir incorrect" => "the repository still had its old folder",
+                    "gitdir unreadable" => "the repository's note of its folder was missing",
+                    _ => "the repository's note of its folder used the other path style \
+                          (worktree.useRelativePaths)",
+                };
+                match folder {
+                    Some(f) => format!("Reconnected worktree {wt}: {was}; it now knows {}.", f.display()),
+                    None => format!("Reconnected worktree {wt}: {was}; git rewrote it."),
+                }
+            }
+            // `path` = the worktree's folder, whose `.git` now names the repository.
+            ".git file broken" | ".git file incorrect" | ".git file absolute/relative path mismatch" => {
+                let was = match what {
+                    ".git file broken" => "its .git file didn't lead to the repository any more",
+                    ".git file incorrect" => "its .git file pointed to another place",
+                    _ => "its .git file used the other path style (worktree.useRelativePaths)",
+                };
+                match target(&path.join(".git")) {
+                    Some(t) => format!(
+                        "Reconnected worktree {}: {was}; it now points to {}.",
+                        name(path),
+                        t.display()
+                    ),
+                    None => format!("Reconnected worktree {}: {was}; git rewrote it.", name(path)),
+                }
+            }
+            _ => format!("Repaired {}: {what}.", path.display()),
+        };
+        said.push(sentence);
+    }
+    if said.is_empty() {
+        return report.to_string();
+    }
+    format!("{}\n\ngit's report:\n{report}", said.join("\n"))
+}
+
+/// `.` and `..` resolved without touching the disk.
+fn normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// The stderr of a failed git call.
 pub(crate) fn git_stderr(err: &anyhow::Error) -> Option<&str> {
     match err.downcast_ref::<GitError>()? {
@@ -944,8 +1036,8 @@ impl Repo {
     /// `git worktree repair [<path>…]`: reconnects worktrees whose folders were moved by
     /// hand — without paths the links between this repository and its worktrees (e.g. the
     /// main worktree moved: the linked ones find it again), with the new folders of moved
-    /// linked worktrees those. Returns git's report (one `repair: …` line per fix; empty
-    /// = nothing needed repairing).
+    /// linked worktrees those. Returns what was fixed in plain words, git's report below
+    /// ([`describe_repair`]; empty = nothing needed repairing).
     pub fn repair_worktrees(&self, paths: &[PathBuf]) -> Result<String> {
         let paths: Vec<String> = paths
             .iter()
@@ -954,9 +1046,8 @@ impl Repo {
         let mut args = vec!["worktree", "repair"];
         args.extend(paths.iter().map(String::as_str));
         let out = self.git().run(&args)?;
-        Ok(format!("{}{}", out.stdout_str(), out.stderr)
-            .trim()
-            .to_string())
+        let report = format!("{}{}", out.stdout_str(), out.stderr);
+        Ok(describe_repair(&report, |f| std::fs::read_to_string(f).ok()))
     }
 
     /// Locks the worktree at `path` (git won't prune, move or remove it), with an
@@ -1047,6 +1138,37 @@ pub fn validate_add(path: &Path, mode: &AddMode) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gitti_test::test]
+    fn repair_report_in_plain_words() {
+        assert_eq!(describe_repair("  \n", |_| None), "");
+        let read = |f: &Path| match f.to_str()? {
+            "/r/.git/worktrees/agent-1/gitdir" => Some("/ssd/new/agent-1/.git\n".into()),
+            "/ssd/wt2/.git" => Some("gitdir: ../r/.git/worktrees/wt2\n".into()),
+            _ => None,
+        };
+        let report = "repair: gitdir incorrect: /r/.git/worktrees/agent-1/gitdir\n\
+                      repair: .git file broken: /ssd/wt2\n\
+                      repair: gitdir unreadable: /r/.git/worktrees/gone/gitdir\n\
+                      repair: something new: /x\n";
+        let said = describe_repair(report, read);
+        let lines: Vec<&str> = said.lines().collect();
+        assert_eq!(
+            lines[..4],
+            [
+                "Reconnected worktree agent-1: the repository still had its old folder; \
+                 it now knows /ssd/new/agent-1.",
+                "Reconnected worktree wt2: its .git file didn't lead to the repository any \
+                 more; it now points to /ssd/r/.git/worktrees/wt2.",
+                "Reconnected worktree gone: the repository's note of its folder was missing; \
+                 git rewrote it.",
+                "Repaired /x: something new.",
+            ]
+        );
+        assert!(said.ends_with(&format!("git's report:\n{}", report.trim())), "{said}");
+        // Lines git didn't mark as a fix stay as they are.
+        assert_eq!(describe_repair("hint: x\n", |_| None), "hint: x");
+    }
 
     #[gitti_test::test]
     fn parses_porcelain_records() {
