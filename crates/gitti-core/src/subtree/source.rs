@@ -68,11 +68,13 @@ pub fn remote_of<'a>(repository: &str, remotes: &'a [RemoteInfo]) -> Option<&'a 
 /// "remote origin2 (https://…)" / "https://…" for dialogs and the sidebar.
 pub fn describe_repository(repository: &str, remotes: &[RemoteInfo]) -> String {
     let r = repository.trim();
-    match remote_of(r, remotes) {
+    let text = match remote_of(r, remotes) {
         Some(x) if x.name == r => format!("remote {} ({})", x.name, x.fetch_url),
         Some(x) => format!("{r} (remote {})", x.name),
         None => r.to_string(),
-    }
+    };
+    // Shown in dialogs: a token in the URL stays hidden.
+    crate::redact::redact(&text).into_owned()
 }
 
 /// A URL compared without a trailing `/` or `.git`.
@@ -217,6 +219,16 @@ mod tests {
             "https://example.com/lib.git (remote lib)"
         );
         assert_eq!(describe_repository("../x", &remotes), "../x");
+        // A token in a URL stays hidden, from a remote or typed.
+        let secret = vec![remote("priv", "https://jane:tok123@example.com/p.git")];
+        assert_eq!(
+            describe_repository("priv", &secret),
+            "remote priv (https://jane:***@example.com/p.git)"
+        );
+        assert_eq!(
+            describe_repository("https://bob:pw9@example.com/q.git", &secret),
+            "https://bob:***@example.com/q.git"
+        );
     }
 
     #[gitti_test::test]

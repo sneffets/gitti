@@ -384,7 +384,7 @@ impl GittiApp {
                 .remotes
                 .iter()
                 .find(|x| &x.name == r)
-                .map(|x| x.push_url.clone())
+                .map(|x| gitti_core::redact::redact(&x.push_url).into_owned())
                 .unwrap_or_default();
             spec = spec.check(format!("Push to {r}  {url}"), d.remotes.contains(r));
         }
