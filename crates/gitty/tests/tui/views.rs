@@ -517,7 +517,8 @@ fn repo_marks_after_the_name() {
 /// The sidebar's worktree entries carry the same marks: ● a worktree with uncommitted
 /// changes, ○ one whose branch has commits no remote has, none on gitty's own (clean,
 /// pushed); moving onto one says what its mark means. The other worktrees are read with
-/// one `git status` each, none while moving through the sidebar.
+/// one `git status` each, none while moving through the sidebar. The top line's mark takes
+/// them in (gitty clean itself shows ●) and a click on it names each worktree.
 /// Workflow: WT-06
 #[gitti_test::test]
 fn worktree_entries_carry_the_marks() {
@@ -536,9 +537,14 @@ fn worktree_entries_carry_the_marks() {
     git(d, &["worktree", "add", "-q", "--detach", dirty.to_str().unwrap(), "main"]);
     std::fs::write(dirty.join("new.txt"), "n\n").unwrap();
     // Rows: 0 BRANCHES, 1 ahead, 2 main, 3 WORKTREES, 4–6 the worktrees.
+    // " gitty " + two spaces + the folder name + " ●": the click on the mark.
+    let x = 7 + 2 + d.file_name().unwrap().to_string_lossy().chars().count() + 1;
     let out = gitty(
         d,
-        "press:backtab;cmds;press:g;press:j;press:j;press:j;press:j;dump;state;press:j;state;press:j;state;cmds",
+        &format!(
+            "press:backtab;cmds;press:g;press:j;press:j;press:j;press:j;dump;state;press:j;state;press:j;state;cmds;\
+             click:{x},0;state"
+        ),
     );
     let s = screens(&out);
     // The sidebar's rows (the commit list's worktree badges name them too).
@@ -557,11 +563,27 @@ fn worktree_entries_carry_the_marks() {
     let others = |c: &[String]| c.iter().filter(|c| c.starts_with("status ") && !c.contains("--branch")).count();
     assert_eq!(others(&c[0]), 2, "the start reads the two others: {out}");
     assert_eq!(others(&c[1]), 0, "moving through the sidebar reads none: {out}");
+    // The top line: gitty's own worktree is clean, the others' marks show (● beats ○).
+    let top = s[0].lines().next().unwrap_or_default();
+    assert!(top.contains(" ●  ⎇ main"), "{out}");
+    let st = states(&out)[3];
+    let sep = std::path::MAIN_SEPARATOR;
+    let (dirty_at, ahead_at) = (
+        st.find(&format!("{sep}dirty-wt (detached ")),
+        st.find(&format!("{sep}ahead-wt (branch ahead): 1 commit on no remote (ahead has no upstream branch)")),
+    );
+    assert!(
+        st.contains("● Worktree ") && st.contains("): uncommitted changes in 1 file: 1 untracked · ○ Worktree "),
+        "a click on the mark names the worktrees: {out}"
+    );
+    assert!(dirty_at.is_some() && dirty_at < ahead_at, "uncommitted first: {out}");
+    assert!(!st.contains("This worktree"), "gitty's own has nothing to say: {out}");
 }
 
 /// One source: gitty's top-line mark and its own WORKTREES entry are the same store entry;
-/// a change in another worktree shows after a refresh (`r`), a change in gitty's own on
-/// both places at once.
+/// a change in another worktree shows after a refresh (`r`) — on its entry and, carried,
+/// on the top line, not on gitty's own entry —, a change in gitty's own on both places at
+/// once.
 #[gitti_test::test]
 fn top_line_and_worktree_entries_agree() {
     let dir = import(&[Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "a\n")] }]);
@@ -585,7 +607,8 @@ fn top_line_and_worktree_entries_agree() {
     let top = |i: usize| s[i].lines().next().unwrap_or_default().to_string();
     assert!(!row(0, "other-wt").contains('●') && !top(0).contains(&format!("{own} ●")), "clean at the start: {out}");
     assert!(row(1, "other-wt").contains("● detached"), "the other worktree's change after r: {out}");
-    assert!(!top(1).contains(&format!("{own} ●")), "gitty's own still clean: {out}");
+    assert!(top(1).contains(&format!("{own} ●")), "the top line carries the other worktree's: {out}");
+    assert!(!row(1, &own).contains("● ⎇"), "gitty's own entry still clean: {out}");
     assert!(top(2).contains(&format!("{own} ●")), "gitty's own change on the top line: {out}");
     assert!(row(2, &own).contains("● ⎇ main"), "…and on its WORKTREES entry: {out}");
 }

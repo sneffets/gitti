@@ -4314,7 +4314,8 @@ Commit message
 
 Top line
   ● / ○           after the repository name: uncommitted changes / else commits not
-                  pushed (a click on it says what is open)
+                  pushed — here or in another worktree of the repository (a click on
+                  it says what is open and where; WORKTREES lists each worktree's)
 ";
 
 /// Greedy word wrap to `cols` display columns (long words are split); keeps leading indent.

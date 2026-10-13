@@ -1571,9 +1571,17 @@ impl App {
     }
 
     /// The mark after the repository name: ● uncommitted changes, else ○ commits not
-    /// pushed (`gitti_core::tab_marks::mark`, from what the refreshes read anyway).
+    /// pushed — in gitty's own worktree or in another worktree of the repository
+    /// (`gitti_core::tab_marks::RepoMarks`, from what the refreshes read anyway).
     pub fn repo_mark(&self) -> Option<gitti_core::tab_marks::Mark> {
-        self.own_marks_shown().mark()
+        self.repo_marks().mark()
+    }
+
+    /// What the top line's mark stands for: gitty's own worktree's marks and those of the
+    /// repository's other worktrees (as last read; gitty has one repository open, so
+    /// every other worktree is one without a tab of its own).
+    pub fn repo_marks(&self) -> gitti_core::tab_marks::RepoMarks {
+        self.wt_marks.repo_marks(self.own_marks_shown(), &self.worktrees)
     }
 
     /// gitty's own worktree's marks as the store has them (the same entry its WORKTREES
@@ -1598,9 +1606,10 @@ impl App {
     }
 
     /// What the marks mean, each behind its glyph, in the status line (a click on them) —
-    /// the words of gitti's repository tab tooltip.
+    /// the words of gitti's repository tab tooltip, naming the worktree of each mark that
+    /// isn't gitty's own ("● Worktree ../app-fix (branch fix): uncommitted …").
     pub fn explain_repo_marks(&mut self) {
-        let text = self.own_marks_shown().legend().replace('\n', " · ");
+        let text = self.repo_marks().legend().replace('\n', " · ");
         if !text.is_empty() {
             self.set_info(text);
         }
