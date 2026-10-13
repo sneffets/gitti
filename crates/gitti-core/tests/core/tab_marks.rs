@@ -289,6 +289,7 @@ fn a_worktrees_own_marks_equal_what_the_others_read() {
 /// `<common>/worktrees/<name>`. Reading those worktrees' marks never writes their index
 /// (`GIT_OPTIONAL_LOCKS=0`, also when its stat data is stale): no change of ours that
 /// the watchers would report again — no loop.
+/// Workflow: EX-25
 #[gitti_test::test]
 fn index_changes_name_their_worktree_and_our_reads_write_no_index() {
     let dir = tempfile::tempdir().unwrap();

@@ -613,6 +613,50 @@ fn top_line_and_worktree_entries_agree() {
     assert!(row(2, &own).contains("● ⎇ main"), "…and on its WORKTREES entry: {out}");
 }
 
+/// Other worktrees (gitty runs in the main one): `git add` in one shows on the top line at
+/// once — its index is in the watched git dir — with one `git status` there alone, no
+/// refresh of gitty's own state. A plain edit in another (its files aren't watched) shows
+/// when the terminal gains the focus: that refresh reads each other worktree once; the
+/// focus gained again within 2 s runs nothing (one refresh queued for the gap's end).
+/// Workflow: EX-25
+#[gitti_test::test]
+fn other_worktrees_index_and_focus() {
+    let dir = import(&[Commit { branch: "main", from: None, merge: None, msg: "one", files: &[("a.txt", "a\n")] }]);
+    let d = dir.path();
+    let wt = tempfile::tempdir().unwrap();
+    let (a, b) = (wt.path().join("wt-a"), wt.path().join("wt-b"));
+    for w in [&a, &b] {
+        git(d, &["worktree", "add", "-q", "--detach", w.to_str().unwrap(), "main"]);
+    }
+    // `write:` is relative to gitty's folder.
+    let up = format!("../{}", wt.path().file_name().unwrap().to_string_lossy());
+    // " gitty " + two spaces + the folder name + " ●": the click on the mark.
+    let x = 7 + 2 + d.file_name().unwrap().to_string_lossy().chars().count() + 1;
+    let out = gitty(
+        d,
+        &format!(
+            "wait;dump;write:{up}/wt-a/a.txt=staged;cmds;git:-C {} add a.txt;watched:worktrees/wt-a/index;cmds;\
+             dump;click:{x},0;state;write:{up}/wt-b/new.txt=n;cmds;focus;cmds;click:{x},0;state;focus;cmds",
+            a.display()
+        ),
+    );
+    let s = screens(&out);
+    let own = d.file_name().unwrap().to_string_lossy().to_string();
+    let top = |i: usize| s[i].lines().next().unwrap_or_default().to_string();
+    assert!(!top(0).contains(&format!("{own} ●")), "clean at the start: {out}");
+    assert!(top(1).contains(&format!("{own} ●")), "git add in wt-a: {out}");
+    let st = states(&out);
+    let sep = std::path::MAIN_SEPARATOR;
+    assert!(st[0].contains(&format!("{sep}wt-a (detached ")) && st[0].contains("1 file: 1 staged"), "{out}");
+    assert!(!st[0].contains("wt-b"), "{out}");
+    assert!(st[1].contains(&format!("{sep}wt-b (detached ")) && st[1].contains("1 file: 1 untracked"), "focus: {out}");
+    let c = cmds(&out);
+    let others = |c: &[String]| c.iter().filter(|c| c.starts_with("status ") && !c.contains("--branch")).count();
+    assert_eq!((c[1].len(), others(&c[1])), (1, 1), "git add in wt-a: its status alone: {out}");
+    assert_eq!(others(&c[3]), 2, "focus: one status per other worktree: {out}");
+    assert!(c[4].is_empty(), "focus again within 2 s: nothing now: {out}");
+}
+
 /// HEAD's refs in [`many_refs_repo`] (`main` checked out), in badge order.
 const HEAD_REFS: &[&str] = &[
     "main",

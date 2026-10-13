@@ -1443,6 +1443,7 @@ fn other_statuses(ran: &[String]) -> usize {
 /// aren't watched) shows when the window is activated: its refresh reads each worktree
 /// without a tab once; activated again within 2 s, nothing runs until the gap is over, then
 /// one refresh.
+/// Workflow: EX-25
 fn other_index_and_activation(ui: &mut Ui) {
     let name = "other_index_and_activation";
     let repo = base().join(name);

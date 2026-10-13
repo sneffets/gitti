@@ -139,18 +139,35 @@ impl App {
     }
 
     /// Reads the marks of the other worktrees in the background (one `git status` each,
-    /// `gitti_core::tab_marks::other_worktrees`) — after a refresh and when the WORKTREES
-    /// section unfolds. Never on navigation. One read at a time; asked for meanwhile, it
-    /// runs once more afterwards.
+    /// `gitti_core::tab_marks::other_worktrees`) — after a refresh (also the one when the
+    /// terminal gains the focus) and when the WORKTREES section unfolds. Never on
+    /// navigation. One read at a time; asked for meanwhile, it runs once more afterwards.
     pub(crate) fn refresh_worktree_marks(&mut self) {
-        let to_read = self.wt_marks.to_read(&self.worktrees);
+        self.read_worktree_marks(None);
+    }
+
+    /// The file watcher saw the index of the worktrees with git dirs `git_dirs` change
+    /// (`git add`, reset, stash there): their marks are read again (those changed since
+    /// their last read started). No refresh of gitty's own state.
+    pub(super) fn worktree_index_changed(&mut self, git_dirs: &[PathBuf]) {
+        self.read_worktree_marks(Some(git_dirs));
+    }
+
+    /// [`App::refresh_worktree_marks`]; with `changed`, only the worktrees whose index
+    /// changed (by their git dirs).
+    fn read_worktree_marks(&mut self, changed: Option<&[PathBuf]>) {
+        let common = self.repo.common_dir();
+        let mut to_read = self.wt_marks.to_read(&self.worktrees);
+        if let Some(git_dirs) = changed {
+            to_read = self.wt_marks.index_changed(to_read, &common, git_dirs);
+        }
         if to_read.is_empty() {
             return;
         }
-        let common = self.repo.common_dir();
         if !self.wt_marks.begin_read(&common) {
             return;
         }
+        self.wt_marks.read_starts(&to_read, gitti_core::watch::read_start().1);
         self.worktree_marks_loading = true;
         self.loads_in_flight += 1;
         let repo = self.repo.clone();

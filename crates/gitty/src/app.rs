@@ -150,6 +150,9 @@ pub enum Msg {
     /// The first read waited this long for the file watcher's first report: it goes
     /// ahead without (`app/watching.rs`).
     FirstReadDue,
+    /// The refresh queued by a focus gain within 2 s of the last one is due
+    /// (`app/watching.rs::refresh_on_focus`).
+    FocusRefreshDue,
     /// The commit message draft stored for this worktree, read at start (and Sign Off).
     Draft(Option<gitti_core::store::Draft>, Option<gitti_core::store::AmendDraft>, bool),
     /// The user's own earlier commit messages, read at this HEAD (`app/commit_box.rs`).
@@ -628,6 +631,9 @@ pub struct App {
     watch_pending: Option<Change>,
     /// Which watcher changes are already covered by what we read (see `WatchFilter`).
     watch_filter: gitti_core::watch::WatchFilter,
+    /// The refresh when the terminal gains the focus: at most one per 2 s
+    /// (`app/watching.rs::refresh_on_focus`).
+    focus_refresh: gitti_core::watch::FocusRefresh,
     /// Working-state reloads and other loads running (`Msg::Working`, …).
     loads_in_flight: u32,
     /// The history loads on its own, beside the working state.
@@ -929,6 +935,7 @@ impl App {
             history_queued: None,
             watch_pending: None,
             watch_filter: Default::default(),
+            focus_refresh: Default::default(),
             deferred: VecDeque::new(),
             op_cancel: None,
             op_progress: Default::default(),
@@ -1347,6 +1354,7 @@ impl App {
             Msg::Tick => {}
             Msg::DraftDue => self.draft_due(),
             Msg::FirstReadDue => self.first_read_due(),
+            Msg::FocusRefreshDue => self.focus_refresh_due(),
             Msg::Draft(draft, amend, sign_off) => {
                 self.commit_box.sign_off = sign_off;
                 self.restore_draft(draft, amend)

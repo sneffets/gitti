@@ -1650,6 +1650,7 @@ mod tests {
 
     /// A focus gain refreshes at once, another one within the gap queues one refresh
     /// for its end (a third one adds nothing); after the gap, at once again.
+    /// Workflow: EX-25
     #[gitti_test::test]
     fn focus_refreshes_at_most_once_per_gap() {
         let t0 = Instant::now();
@@ -1773,6 +1774,7 @@ mod tests {
     }
 
     /// Another worktree's index is named by its git dir (`git add` there: its marks).
+    /// Workflow: EX-25
     #[gitti_test::test]
     fn classifies_paths_of_main_and_linked_worktrees() {
         let main = GitDirs {

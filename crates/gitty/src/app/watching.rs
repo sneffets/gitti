@@ -1,14 +1,16 @@
 //! The file watcher's changes (as gitti's `app/watching.rs`): the refresh each one
 //! needs — an outside edit of work-tree files re-reads just those paths, the index or
 //! worktree metadata the working state, refs everything
-//! (`gitti_core::watch::WatchFilter::needs`).
+//! (`gitti_core::watch::WatchFilter::needs`); another worktree's index (`git add` there)
+//! only that worktree's marks. And the refresh when the terminal gains the focus (what no
+//! watcher reports: edits in the other worktrees), at most one per 2 s.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Instant, SystemTime};
 
 use anyhow::Result;
 use gitti_core::rows::Src;
-use gitti_core::watch::{Change, Refresh};
+use gitti_core::watch::{Change, OnFocus, Refresh};
 use gitti_core::{DiffOptions, ReadScope, WorkingState};
 
 use super::{App, FileHighlight, Msg, compute_highlights, spawn, worktree_jobs};
@@ -80,6 +82,29 @@ impl App {
             Some(Refresh::Paths(paths)) => self.refresh_paths(paths),
             None => {}
         }
+        // Another worktree's index: its marks, nothing else.
+        let others = change.other_indexes();
+        if !others.is_empty() {
+            self.worktree_index_changed(&others);
+        }
+    }
+
+    /// The terminal gained the focus: the working state and refs are read again (and with
+    /// them the other worktrees' marks) — what the file watcher can't report (those
+    /// worktrees' files, a tree above the OS watch limit). At most one per
+    /// [`gitti_core::watch::FOCUS_GAP`]: focused again sooner, it runs once at the gap's
+    /// end.
+    pub(crate) fn refresh_on_focus(&mut self) {
+        match self.focus_refresh.gained(Instant::now()) {
+            OnFocus::Now => self.refresh(false),
+            OnFocus::Later(wait) => spawn(&self.tx, move || std::thread::sleep(wait), |_| Msg::FocusRefreshDue),
+            OnFocus::Queued => {}
+        }
+    }
+
+    pub(super) fn focus_refresh_due(&mut self) {
+        self.focus_refresh.due(Instant::now());
+        self.refresh(false);
     }
 
     /// An outside change of work-tree files only (an editor saved, a tool wrote): re-reads

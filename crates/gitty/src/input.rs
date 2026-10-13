@@ -35,7 +35,7 @@ impl App {
             Event::FocusGained => {
                 self.merge_check_disk();
                 self.reload_settings();
-                self.refresh(false);
+                self.refresh_on_focus();
             }
             Event::Paste(text) => self.on_paste(&text),
             _ => {}

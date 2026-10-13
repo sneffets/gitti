@@ -173,6 +173,7 @@ working tree or the index while the app shows an older state.
 | EX-22 | Commit / branch made outside | a terminal commit or branch | history updated in place, selection kept | `repo_shapes::history_updates_reuse_what_did_not_change` | `scroll::commit_list_reload`, `speed::working_state_does_not_wait_for_the_history` | `speed::outside_ref_changes_update_the_history_in_place` |
 | EX-23 | Tracked file made unreadable | `chmod 000` on a modified file | refresh works; the file listed without a diff | `unix_fs::unreadable_tracked_file_does_not_break_the_refresh`, `unix_fs::unreadable_directory_with_tracked_files` | — | — |
 | EX-24 | Conflict resolved elsewhere while the merge editor is open | another program writes the resolution | taken in on focus; undo brings the conflict back | ~`merge_session::starts_from_an_edited_file_on_disk` (unit) | — | `merge_editor::merge_editor_takes_in_outside_edits` |
+| EX-25 | Change in a worktree no tab has open | a terminal `git add` in another worktree of the repository; an editor writes a new file in a third; the window / terminal gains the focus (twice quickly) | the repository's mark takes the `git add` in at once — that worktree's `git status` alone, no refresh of the open one; the new file at the focus gain, one status per worktree without a tab; the second focus gain within 2 s runs nothing (one refresh at the gap's end) | `tab_marks::index_changes_name_their_worktree_and_our_reads_write_no_index`, `watch::classifies_paths_of_main_and_linked_worktrees` (unit), `watch::focus_refreshes_at_most_once_per_gap` (unit) | `worktrees::other_index_and_activation` | `views::other_worktrees_index_and_focus` |
 
 ## CM — Commit, amend, reword
 
@@ -525,7 +526,7 @@ checks these numbers against the rows.
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
 | ST staging | 22 | 17 | 20 | 16 |
-| EX external changes | 24 | 21 | 12 | 14 |
+| EX external changes | 25 | 22 | 13 | 15 |
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
 | SH stash | 22 | 21 | 20 | 21 |
 | BR branches | 21 | 21 | 21 | 20 |
@@ -547,7 +548,7 @@ checks these numbers against the rows.
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **281** | **271** | **261** | **262** |
+| **Total** | **282** | **272** | **262** | **263** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.
