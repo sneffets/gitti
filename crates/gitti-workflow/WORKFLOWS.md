@@ -135,11 +135,12 @@ the merge got wrong).
 | ST-14 | Stage inside a file tab | file tab of the working directory active; stage hunk / lines / file | tab stays and its mark follows; empty tab falls back | n/a | `speed::staging_in_a_file_tab_updates_the_tabs` | n/a |
 | ST-15 | Keys during a running stage | press stage-all while a stage runs | runs after it, not refused | n/a | `speed::key_during_an_operation_waits_for_it` | `staging::keys_pressed_during_a_stage_run_after_it` |
 | ST-16 | Refresh racing a stage | a full refresh starts before a stage ends | never shows the older state, not even one frame | n/a | `speed::refresh_racing_a_stage_shows_no_old_state` | — |
-| ST-17 | View kept across staging | scrolled into a file; stage a hunk / the whole file | rows above stay; whole file → next file on top | n/a | `scroll::diff_stays_on_refresh_and_stage`, `scroll::diff_stage_whole_file_shows_the_next` | `scroll::scroll_position_is_kept_across_staging_and_refresh`, `scroll::staging_a_whole_file_moves_to_the_next_file` |
+| ST-17 | View kept across staging | scrolled into a file; stage a hunk / the whole file | rows above stay; whole file → the next file where the acted row was (ST-22) | n/a | `scroll::diff_stays_on_refresh_and_stage`, `scroll::diff_stage_whole_file_shows_the_next` | `scroll::scroll_position_is_kept_across_staging_and_refresh`, `scroll::staging_a_whole_file_moves_to_the_next_file` |
 | ST-18 | Path-limited re-read equals a full read | after hunk / line / file operations | the cheap re-read gives what a full read gives | `staging::working_state_after_hunks_and_lines_match_a_full_read`, `staging::working_state_after_takes_directories` | ~`speed::staging_keys` | `speed::staging_runs_path_limited_git_and_its_own_writes_refresh_nothing` |
 | ST-19 | Staging under a hostile global config | noprefix, mnemonicprefix, colour, textconv, external diff, … | stage / unstage / discard unaffected | `wf_staging::st19_staging_under_a_hostile_global_config`, `hostile_config::stage_hunk_lines_unstage_and_discard`, `hostile_config::untracked_deleted_and_trailing_whitespace` | `wf_staging::st19_staging_under_a_hostile_global_config` | — |
 | ST-20 | Random line selections | random files and selections (fixed seeds) | byte-exact against a model | `non_utf8::random_byte_lines_stage_exactly` | n/a | n/a |
 | ST-21 | Stage a line in a Unicode / wrapped line | wrapped CJK / RTL line; select one row; stage | the whole line staged exactly | — | `render_linux::unicode_staging` | `unicode::staging_copying_and_committing_unicode` |
+| ST-22 | Stage hunk by hunk on one spot | click Stage / Unstage / Discard on a hunk header (or its sticky copy, a file header, lines) again and again on one spot; flat, tree, wrapped | the next hunk's header (else the next file's first) comes where the clicked one was; at the section's end the one before; lines around a staged selection stay; the list's end clamps | `staging::the_view_follows_to_the_next_hunk_across_stage_discard_unstage` | `hunk_stays::clicks_on_one_spot_walk_the_hunks`, `hunk_stays::sticky_hunk_copy`, `hunk_stays::wrapped_lines`, `hunk_stays::tree_view_next_folder`, `hunk_stays::file_headers`, `hunk_stays::unstage_and_discard`, `hunk_stays::staged_lines_keep_the_lines_around`, `hunk_stays::list_end` | `hunk_stays::s_on_one_row_walks_the_hunks`, `hunk_stays::s_under_the_sticky_header`, `hunk_stays::u_and_d_on_one_row`, `hunk_stays::staged_lines_keep_the_lines_around` |
 
 ## EX — Changes behind the app's back
 
@@ -522,7 +523,7 @@ checks these numbers against the rows.
 
 | Area | Workflows | core | gitti | gitty |
 |---|---|---|---|---|
-| ST staging | 21 | 16 | 19 | 15 |
+| ST staging | 22 | 17 | 20 | 16 |
 | EX external changes | 24 | 21 | 12 | 14 |
 | CM commit / amend / reword | 21 | 21 | 21 | 21 |
 | SH stash | 22 | 21 | 20 | 21 |
@@ -545,7 +546,7 @@ checks these numbers against the rows.
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **279** | **269** | **259** | **260** |
+| **Total** | **280** | **270** | **260** | **261** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

@@ -160,7 +160,7 @@ impl GittiApp {
                             this.submodules = subs;
                             this.sync_side_cursor();
                         }
-                        this.apply_working(w, styles, touched, cx);
+                        this.apply_working(w, styles, touched, None, cx);
                     }
                     // An operation or a reload changed the working state meanwhile (this
                     // read started from an older one), or it failed: read it all.

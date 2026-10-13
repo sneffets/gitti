@@ -1014,7 +1014,9 @@ impl GittiApp {
         }
         let (file_row, hunk_row, file_end, hunk_end) = self.sticky_rows(scroll_y, row_h);
         let top_of = |row: usize| row_h * row as f32 - scroll_y;
+        self.sticky_drawn.borrow_mut().clear();
         let mut sticky = |ix: usize, top: Pixels, id: &'static str, out: &mut Vec<AnyElement>| {
+            self.sticky_drawn.borrow_mut().push((ix, top));
             out.push(
                 div()
                     .id(id)
@@ -1964,6 +1966,7 @@ impl GittiApp {
                     )
                     .child(
                         Button::new(("stage-file", ix))
+                            .probe(format!("file-stage:{ix}"))
                             .label("Stage File")
                             .xsmall()
                             .on_click(cx.listener(move |this, _, w, cx| {
@@ -1975,6 +1978,7 @@ impl GittiApp {
             Src::Staged => {
                 el = el.child(
                     Button::new(("unstage-file", ix))
+                        .probe(format!("file-unstage:{ix}"))
                         .label("Unstage File")
                         .xsmall()
                         .on_click(cx.listener(move |this, _, w, cx| {
@@ -2236,6 +2240,7 @@ impl GittiApp {
                 );
                 el = el.child(
                     Button::new(("unstage-hunk", ix))
+                        .probe(format!("hunk-unstage:{ix}"))
                         .label(if n_sel > 0 {
                             format!("Unstage {n_sel} Line{plural}")
                         } else {

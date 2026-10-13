@@ -16,6 +16,7 @@ mod faults;
 mod file_tree;
 mod fs_paths;
 mod git_settings;
+mod hunk_stays;
 mod keybar;
 mod lfs;
 mod linux;

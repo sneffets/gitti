@@ -929,3 +929,48 @@ fn crlf_last_line_without_newline_gets_crlf() {
     assert_eq!(fx.read("l.txt"), "one\ntwo\nlast\nLAST");
     assert_eq!(fx.index("a.txt"), "x\r\nlast\r\nmore\r\n");
 }
+
+/// Stage / discard / unstage a hunk that changes the line count before the others: the
+/// row the view follows to (`rows::follow_op`) is the next hunk's header, found in the
+/// rebuilt rows of the real re-read state (its start moved in one of the versions).
+/// Workflow: ST-22
+#[gitti_test::test]
+fn the_view_follows_to_the_next_hunk_across_stage_discard_unstage() {
+    use gitti_core::rows::{Acted, DiffRow, Expansion, RowFiles, Src, build_worktree_rows, follow_op};
+    let fx = fixture(&[("a.txt", &numbered(80))]);
+    // Hunk 0 adds two lines, hunks 1 and 2 change one each.
+    let changed = numbered(80)
+        .replace("line 5\n", "line 5\nnew a\nnew b\n")
+        .replace("line 30\n", "line thirty\n")
+        .replace("line 60\n", "line sixty\n");
+    fx.write("a.txt", &changed);
+    let exp = Expansion::default();
+    // Acts on hunk `h` of `src`; what the view follows to: a hunk's first change, else the
+    // row's kind.
+    let act = |src: Src, h: usize, mode: PatchMode| -> Option<String> {
+        let before = fx.state();
+        let rows = build_worktree_rows(&before, &exp, None);
+        let acted = rows.iter().position(|r| *r == DiffRow::Hunk { src, file: 0, hunk: h })?;
+        let files = if src == Src::Staged { &before.staged } else { &before.unstaged };
+        let d = files[0].diff.clone()?;
+        fx.repo.apply_selection(&d, &Selection::whole_hunk(h), mode).unwrap();
+        let after = fx.state();
+        let new_rows = build_worktree_rows(&after, &exp, None);
+        let f = follow_op(&rows, RowFiles::Worktree(&before), acted, Acted::Hunk, &new_rows, RowFiles::Worktree(&after))?;
+        assert_eq!(f.shift, 0);
+        let DiffRow::Hunk { src, file, hunk } = new_rows[f.row] else {
+            return Some(new_rows[f.row].kind_name().to_string());
+        };
+        let files = if src == Src::Staged { &after.staged } else { &after.unstaged };
+        let h = &files[file].diff.as_ref()?.hunks[hunk];
+        h.lines.iter().find(|l| l.is_change()).map(|l| l.text.clone())
+    };
+    // Staging hunk 0 (+2 lines in the index): hunk 1 (its old start moved) comes.
+    assert_eq!(act(Src::Unstaged, 0, PatchMode::Stage).as_deref(), Some("line 30"));
+    // Discarding hunk 0 of the unstaged (line 30): hunk 1 (line 60) comes.
+    assert_eq!(act(Src::Unstaged, 0, PatchMode::Discard).as_deref(), Some("line 60"));
+    // Staging the last one: the section goes, nothing before it is left — the staged
+    // section's header comes. Then unstaging the first staged hunk: the second comes.
+    assert_eq!(act(Src::Unstaged, 0, PatchMode::Stage).as_deref(), Some("section"));
+    assert_eq!(act(Src::Staged, 0, PatchMode::Unstage).as_deref(), Some("line 60"));
+}

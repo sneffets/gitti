@@ -55,6 +55,7 @@ mod keybar;
 mod lfs;
 mod lfs_fetch;
 mod lfs_health;
+mod op_anchor;
 mod op_cancel;
 mod op_output;
 mod op_stops;
@@ -572,6 +573,10 @@ pub struct App {
     pub diff_offset: usize,
     /// The diff's place across a view toggle (`app/view_anchor.rs`).
     view_anchor: Option<view_anchor::PendingAnchor>,
+    /// What the stage / unstage / discard about to start acts on, and the running one's
+    /// (`app/op_anchor.rs`).
+    op_anchor: Option<op_anchor::OpAnchor>,
+    op_running: Option<op_anchor::OpAnchor>,
     anchor_ids: u64,
     pub hscroll: usize,
     /// Columns available for diff text when wrapping (set by the renderer).
@@ -886,6 +891,8 @@ impl App {
             diff_cursor: 0,
             diff_offset: 0,
             view_anchor: None,
+            op_anchor: None,
+            op_running: None,
             anchor_ids: 0,
             hscroll: 0,
             wrap_cols: None,
@@ -1315,9 +1322,10 @@ impl App {
                 if let Some(lock) = stale {
                     self.offer_stale_lock(&label, lock);
                 }
+                let op = self.op_running.take();
                 match working {
                     Ok(w) => {
-                        self.apply_working(w, highlights, touched);
+                        self.apply_working(w, highlights, touched, op);
                         self.refresh_submodule_states();
                     }
                     Err(e) => {
@@ -1366,7 +1374,7 @@ impl App {
                 self.loads_in_flight -= 1;
                 if generation == self.working_gen {
                     match result {
-                        Ok(w) => self.apply_working(w, None, None),
+                        Ok(w) => self.apply_working(w, None, None, None),
                         Err(e) => self.set_error(format!("{e:#}")),
                     }
                 }
@@ -2520,10 +2528,12 @@ impl App {
         paths: Option<Vec<String>>,
         op: impl FnOnce(&Repo) -> Result<Option<String>> + Send + 'static,
     ) {
+        let anchor = self.op_anchor.take();
         if self.busy.is_some() {
             self.refuse_busy();
             return;
         }
+        self.op_running = anchor;
         self.set_busy(label);
         self.working_gen += 1;
         let repo = self.repo.clone();
@@ -2616,6 +2626,7 @@ impl App {
         working: WorkingState,
         highlights: Option<HashMap<(Src, String), FileHighlight>>,
         paths: Option<Vec<String>>,
+        op: Option<op_anchor::OpAnchor>,
     ) {
         let prev_sel_diff = self.line_sel.as_ref().and_then(|sel| {
             work_files(&self.working, sel.src)
@@ -2637,7 +2648,10 @@ impl App {
         }
         self.rebuild_rows();
         self.apply_regroup(regroup);
-        self.follow_cursor_file(&prev, at);
+        // After an operation the cursor goes to what followed what it acted on.
+        if !op.is_some_and(|op| self.follow_op_anchor(op)) {
+            self.follow_cursor_file(&prev, at);
+        }
         self.settle_cursor(at_folder);
         self.restore_view_anchor();
         let sel = self.line_sel.take();
@@ -3075,13 +3089,16 @@ impl App {
         };
         let entry = wf.entry.clone();
         let path = entry.path.clone();
+        let anchor = self.op_anchor_for(src, file, None);
         match mode {
             PatchMode::Stage => self.guard_fs_stage(vec![path.clone()], move |app, _| {
+                app.op_anchor = anchor;
                 app.git_op("Stage file", Some(vec![path.clone()]), move |r| {
                     r.stage_paths(&[&path])
                 })
             }),
             PatchMode::Unstage => {
+                self.op_anchor = anchor;
                 self.git_op("Unstage file", Some(vec![path.clone()]), move |r| {
                     r.unstage_paths(&[&path])
                 })
@@ -3115,6 +3132,7 @@ impl App {
                 };
                 self.modal = Some(Modal::confirm(title, what, button, move |app| {
                     let paths = Some(vec![entry.path.clone()]);
+                    app.op_anchor = anchor;
                     app.work_op_noted("Discard file", paths, move |r| {
                         Ok(r.discard_with(&[&entry], opts)?.note())
                     })
@@ -3131,6 +3149,7 @@ impl App {
         let Some(shown) = self.file_diff(src, file) else {
             return;
         };
+        let anchor = self.op_anchor_for(src, file, Some(&sel));
         // A file name that is not UTF-8 whose bytes aren't known for sure: the patch could
         // name another file.
         if let Err(e) = self.repo.check_names(shown, mode) {
@@ -3162,6 +3181,7 @@ impl App {
         };
         let run = move |app: &mut App| {
             app.line_sel = None;
+            app.op_anchor = anchor;
             let mut paths = vec![diff.path().to_string()];
             paths.extend(diff.old_path.clone().filter(|p| *p != paths[0]));
             app.git_op(label, Some(paths), move |r| r.apply_selection(&diff, &sel, mode));
