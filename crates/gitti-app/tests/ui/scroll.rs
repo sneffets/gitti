@@ -646,11 +646,17 @@ thread_local! {
 /// on the sticky folder folds it and shows its row. Nothing runs git.
 fn sticky_folder_in_a_commit_tree(ui: &mut Ui) {
     let id = TREE_COMMIT.with(|c| c.borrow().clone());
+    // Wide enough that the long folder path takes less than the indent's cap (40 % of
+    // the list).
+    ui.resize(2200., 950.);
     ui.step(&format!("select:{id}"));
     let n = ui.n_git();
-    ui.step("action:gitti::ToggleChangesTree");
     // (The commit's files load in the background.)
-    ui.wait_real(1500, |ui| ui.ui_state().rows.iter().any(|r| r.starts_with("folder ")));
+    ui.wait_real(1500, |ui| ui.ui_state().rows.iter().any(|r| r.starts_with("file ")));
+    // Settings persist between scenarios: the tree may be on already.
+    if !ui.ui_state().rows.iter().any(|r| r.starts_with("folder ")) {
+        ui.step("action:gitti::ToggleChangesTree");
+    }
     let folders: Vec<String> =
         ui.ui_state().rows.into_iter().filter(|r| r.starts_with("folder ")).collect();
     let app = "src/claude_code/gitti/crates/gitti-app/src/app";
@@ -733,6 +739,8 @@ fn sticky_folder_in_a_commit_tree(ui: &mut Ui) {
         ui.fail(format!("the folded folder's row {row} is not shown"));
     }
     ui.expect_no_git(n, "the commit's tree");
+    // Back to the indented tree for the scenarios after this one.
+    ui.step("action:gitti::ToggleTreeStyle");
 }
 
 /// `ws.txt` (300 lines) for the diff anchor scenarios. HEAD changed line 30 and 250 and

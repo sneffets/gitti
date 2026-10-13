@@ -617,7 +617,8 @@ fn unstaged_groups_fold_and_stage_cheaply(ui: &mut Ui) {
     }
 }
 
-/// The tree of the working directory: switching it and folding a folder run no git and
+/// The tree of the working directory: switching it (and its style) and folding a folder run
+/// no git and
 /// switching back gives the flat rows again; a folder's Stage is one `git add` of exactly
 /// its files plus a path-limited re-read. Marked files (⌘-click, shift-click on file
 /// headers): `s` stages them, `u` unstages them, Esc clears the marks.
@@ -627,8 +628,13 @@ fn changes_as_tree_and_marked_files(ui: &mut Ui) {
     let n = ui.n_git();
     ui.step("action:gitti::ToggleChangesTree");
     ui.no_git_since(n, "switching to the tree");
-    // Folder rows keep the layout's invariants (inside the list, no overlap).
+    // Folder rows keep the layout's invariants (inside the list, no overlap), in both
+    // styles; switching the style runs no git either.
     ui.check("tree view");
+    ui.step("action:gitti::ToggleTreeStyle");
+    ui.check("tree view, path headers");
+    ui.step("action:gitti::ToggleTreeStyle");
+    ui.no_git_since(n, "switching to the tree and its style");
     let rows = ui.metrics().diff_rows;
     // Untracked: docs/, src/app/ (one row for the chain).
     let folders = rows.iter().filter(|k| **k == "folder").count();

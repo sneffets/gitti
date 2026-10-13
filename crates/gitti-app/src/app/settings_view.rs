@@ -428,6 +428,27 @@ impl GittiApp {
             ),
             setting_row(
                 p,
+                "Changes as a tree of folders",
+                "Every diff (working directory, commits, comparisons, stashes) lists its files \
+                 under folder rows that fold; the folder of the top row stays on top while \
+                 scrolling. View ▸ Show Changes as Tree. Shared with gitty.",
+                switch(p, "sw-tree", s.changes_as_tree, cx, |this, _, cx| this.toggle_changes_tree(cx)),
+            ),
+            setting_row(
+                p,
+                "Tree with path headers (experiment)",
+                "Folder rows drawn like file headers, each file by its name where it starts in \
+                 the whole path. Off: folders as bars, files indented. Shared with gitty.",
+                switch(
+                    p,
+                    "sw-tree-style",
+                    s.tree_style == gitti_core::rows::TreeStyle::PathHeaders,
+                    cx,
+                    |this, _, cx| this.toggle_tree_style(cx),
+                ),
+            ),
+            setting_row(
+                p,
                 "Context lines",
                 "Unchanged lines shown around each change. The working directory keeps at least 1 so line staging works.",
                 stepper(

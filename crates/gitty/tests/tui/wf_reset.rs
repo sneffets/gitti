@@ -212,3 +212,29 @@ fn rs07_restore_and_stage_the_version_before_an_addition() {
     assert!(status_of(st[0]).starts_with("Restored added.txt from"), "{out}");
     wf::expect_added(d).unwrap();
 }
+
+/// RS-11: the commit as a tree (palette Changes as Tree), its folder row `src/app` (one
+/// row for its three files, right above the first one); its menu's Restore Folder as
+/// Before This Commit…, Restore and Stage (s): the folder as `init` had it, staged.
+/// Workflow: RS-11
+#[gitti_test::test]
+fn rs11_restore_a_folder_from_a_commits_tree() {
+    use rs::restore_folder as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    let s = wf::fixture(d);
+    let tree = format!("press:ctrl-p;{}press:enter;", presses("changes as tree"));
+    let out = gitty(
+        d,
+        &format!(
+            "{RS07_COMMIT}{tree}key:];key:k;state;key:.;pick:Restore Folder as Before This Commit;dump;key:s;state"
+        ),
+    );
+    let st = states(&out);
+    assert!(st[0].contains("Folder { src: Commit"), "the cursor on the folder row: {out}");
+    let sc = screens(&out);
+    assert!(sc[0].contains(&format!("from {}", &s.init[..7])), "{out}");
+    assert!(dialog_text(sc[0]).contains("src/app/c.rs"), "the file it deletes: {out}");
+    assert!(status_of(st[1]).starts_with("Restored src/app/ from"), "{out}");
+    wf::expect(d).unwrap();
+}

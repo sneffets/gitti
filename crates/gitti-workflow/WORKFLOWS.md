@@ -350,7 +350,7 @@ working tree or the index while the app shows an older state.
 | RS-08 | Reset the remote branch | Reset origin/main to Here… | origin moves back (lease), local untouched | `push::reset_the_remote_branch_to_a_commit` | `wf_reset::rs08_reset_the_remote_branch` | `remote::reset_remote_branch_from_the_palette` |
 | RS-09 | Move another branch to a reflog commit | reflog of `feat`; move it | `feat` at that commit | `reflog::another_branch_moves_to_a_reflog_commit`, `wf_reset::rs09_move_another_branch_to_a_reflog_commit` | `wf_reset::rs09_move_another_branch_from_its_reflog` | `wf_reset::rs09_move_another_branch_from_its_reflog` |
 | RS-10 | Undo a hard reset from the reflog | HEAD's reflog; the lost commit's entry ▸ Reset main to Here ▸ Hard (asks: nothing lost, untracked file stays) | main back at the commit, its files; untracked file kept | `wf_reset::rs10_undo_a_hard_reset_through_the_reflog` | `wf_reset::rs10_undo_a_hard_reset_from_the_reflog` | `wf_reset::rs10_undo_a_hard_reset_from_the_reflog` |
-| RS-11 | Restore a folder from a commit's tree | show a commit with Show Changes as Tree on (its files under one row `src/app`); the folder row's Restore Folder as Before This Commit…, with the index | the folder as the parent had it in working tree and index (changed file old, deleted file back, added file gone, all staged); other paths untouched | `restore::restore_a_folder_of_a_commits_tree`, `wf_reset::rs11_restore_a_folder_of_a_commits_tree` | — | — |
+| RS-11 | Restore a folder from a commit's tree | show a commit with Show Changes as Tree on (its files under one row `src/app`); the folder row's Restore Folder as Before This Commit…, with the index | the folder as the parent had it in working tree and index (changed file old, deleted file back, added file gone, all staged); other paths untouched | `restore::restore_a_folder_of_a_commits_tree`, `wf_reset::rs11_restore_a_folder_of_a_commits_tree` | `wf_reset::rs11_restore_a_folder_from_a_commits_tree` | `wf_reset::rs11_restore_a_folder_from_a_commits_tree` |
 
 ## TG — Tags
 
@@ -533,7 +533,7 @@ checks these numbers against the rows.
 | CP cherry-pick | 19 | 19 | 19 | 19 |
 | RV revert | 8 | 8 | 8 | 8 |
 | RB rebase | 9 | 9 | 9 | 9 |
-| RS reset / restore | 11 | 11 | 10 | 10 |
+| RS reset / restore | 11 | 11 | 11 | 11 |
 | TG tags | 7 | 7 | 7 | 7 |
 | RM remotes | 19 | 18 | 17 | 19 |
 | WT worktrees | 8 | 8 | 8 | 8 |
@@ -547,7 +547,7 @@ checks these numbers against the rows.
 | BG big / many | 5 | 5 | 4 | 4 |
 | NU non-UTF-8 | 8 | 8 | 8 | 8 |
 | FS paths | 8 | 8 | 8 | 8 |
-| **Total** | **281** | **271** | **260** | **261** |
+| **Total** | **281** | **271** | **261** | **262** |
 
 The release suite (`release-tests/`) holds older, slower duplicates of several of these
 and the randomized `staging_fuzz`; it is not counted here.

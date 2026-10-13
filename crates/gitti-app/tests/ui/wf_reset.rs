@@ -52,6 +52,7 @@ pub fn main() {
         ("rs08_reset_the_remote_branch", rs08_reset_the_remote_branch),
         ("rs09_move_another_branch_from_its_reflog", rs09_move_another_branch_from_its_reflog),
         ("rs10_undo_a_hard_reset_from_the_reflog", rs10_undo_a_hard_reset_from_the_reflog),
+        ("rs11_restore_a_folder_from_a_commits_tree", rs11_restore_a_folder_from_a_commits_tree),
     ];
     common::run(tests, |name| {
         let dir: PathBuf = base.join(name);
@@ -62,6 +63,7 @@ pub fn main() {
             "rs08" => Box::new(rs::reset_remote::fixture(&dir)),
             "rs09" => Box::new(rs::move_other_branch::fixture(&dir)),
             "rs10" => Box::new(rs::reset_around_work::undo::fixture(&dir)),
+            "rs11" => Box::new(rs::restore_folder::fixture(&dir)),
             other => panic!("no fixture for {other}"),
         };
         SETUP.with(|c| *c.borrow_mut() = Some(s));
@@ -365,4 +367,44 @@ fn rs10_undo_a_hard_reset_from_the_reflog(ui: &mut Ui) {
     }
     ui.step("modalok");
     expect(ui, wf::expect(&dir, &s));
+}
+
+/// RS-11: the commit as a tree (one folder row `src/app` for its three files); the folder
+/// row's Restore Folder as Before This Commit…, with the index: the folder as `init` had
+/// it, staged; the rest untouched.
+/// Workflow: RS-11
+fn rs11_restore_a_folder_from_a_commits_tree(ui: &mut Ui) {
+    use rs::restore_folder as wf;
+    let s: wf::Setup = setup();
+    let dir = ui.workdir();
+    let entry = gitti_core::restore::FOLDER_BEFORE_LABEL;
+    ui.step(&format!("select:{}", s.commit));
+    ui.step("action:gitti::ToggleChangesTree");
+    let probe = format!("folder:commit/{}", wf::FOLDER);
+    ui.wait_real(1500, |ui| ui.ui_state().rows.iter().any(|r| r.starts_with("folder Commit")));
+    let folders: Vec<String> = ui.ui_state().rows.into_iter().filter(|r| r.starts_with("folder ")).collect();
+    if folders != [format!("folder Commit {}", wf::FOLDER)] {
+        ui.step("action:gitti::ToggleChangesTree");
+        return fail!(ui, "the commit's tree: {folders:?}");
+    }
+    testing::menu_labels();
+    ui.click_on(&probe, MouseButton::Right);
+    let labels = testing::menu_labels();
+    if !labels.iter().any(|l| l == entry) {
+        ui.step("action:gitti::ToggleChangesTree");
+        return fail!(ui, "the folder row's menu lacks {entry}: {labels:?}");
+    }
+    ui.step(&format!("menu:{entry}"));
+    ui.wait_real(1500, |ui| ui.modal().is_some());
+    match ui.modal() {
+        Some((t, _)) if t.contains(&s.init[..7]) => {}
+        other => {
+            ui.step("action:gitti::ToggleChangesTree");
+            return fail!(ui, "restore dialog: {other:?}, status {:?}", ui.status());
+        }
+    }
+    ui.quick("option:1");
+    ui.step("modalok");
+    expect(ui, wf::expect(&dir));
+    ui.step("action:gitti::ToggleChangesTree");
 }
