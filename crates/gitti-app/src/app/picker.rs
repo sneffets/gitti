@@ -694,6 +694,7 @@ impl GittiApp {
         items.extend(self.restore_contains_palette_items());
         items.extend(self.commit_lines_palette_items());
         items.extend(self.stash_palette_items());
+        items.extend(self.tree_palette_items());
         items.extend(self.file_marks_palette_items());
         items.extend(self.pick_several_palette_items());
         items.extend(self.patch_palette_items());

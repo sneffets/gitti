@@ -117,7 +117,8 @@ impl HunkFilter {
 }
 
 /// `rows` (a commit's, [`crate::rows::build_commit_rows`]) limited to the files and hunks
-/// `filter` keeps: other files go with their spacer, other hunks with their lines; in a
+/// `filter` keeps: other files go with their spacer, other hunks with their lines (a tree
+/// is built of the kept files only: [`crate::rows::CommitRows::keep`]); in a
 /// trimmed file the revealed context and expanders go (they belonged to gaps that are no
 /// longer next to each other) and a gap separates the hunks left.
 pub fn filter_rows(rows: &[DiffRow], filter: &HunkFilter) -> Vec<DiffRow> {
@@ -173,9 +174,16 @@ pub fn filter_rows(rows: &[DiffRow], filter: &HunkFilter) -> Vec<DiffRow> {
                     out.push(*row);
                 }
             }
-            DiffRow::Section(_) | DiffRow::Group(_) | DiffRow::Folder { .. } | DiffRow::HeaderSpace => {
+            // A folder row (the tree, built of the files with matches only): the band
+            // before it stays, none follows it.
+            DiffRow::Folder { .. } => {
+                if spacer && any_file {
+                    out.push(DiffRow::Spacer);
+                }
+                spacer = false;
                 out.push(*row)
             }
+            DiffRow::Section(_) | DiffRow::Group(_) | DiffRow::HeaderSpace => out.push(*row),
         }
     }
     out
@@ -218,6 +226,37 @@ mod tests {
         );
         assert!(kept.iter().all(|r| !matches!(r, DiffRow::Hunk { hunk: 1, .. })));
         assert!(!kept.iter().any(|r| r.file_ref() == Some((Src::Commit, 1))));
+    }
+
+    /// The tree of the files with matches: folder rows stay, no band under them, one
+    /// between a file and the next folder.
+    #[gitti_test::test]
+    fn tree_of_the_files_with_matches() {
+        let files = crate::diff::parse_unified(
+            "diff --git a/d/a.rs b/d/a.rs\n--- a/d/a.rs\n+++ b/d/a.rs\n@@ -1 +1 @@\n-old foo\n+new foo\n\
+             diff --git a/d/b.rs b/d/b.rs\n--- a/d/b.rs\n+++ b/d/b.rs\n@@ -1 +1 @@\n-a\n+b\n\
+             diff --git a/e/c.rs b/e/c.rs\n--- a/e/c.rs\n+++ b/e/c.rs\n@@ -1 +1 @@\n-foo\n+bar\n",
+        );
+        let f = HunkFilter::new(&ChangeQuery::parse("foo", false), &files, false);
+        let keep = |i: usize| f.keeps_file(i);
+        let notes = crate::rows::NoteWrap::None;
+        let (rows, folders) = crate::rows::CommitRows {
+            files: &files,
+            only: None,
+            fs: None,
+            notes: &notes,
+            tree: true,
+            keep: Some(&keep),
+        }
+        .build(&Expansion::default(), None);
+        let kept = filter_rows(&rows, &f);
+        assert_eq!(kept, rows, "only kept files in the tree: nothing more to drop");
+        let kinds: Vec<_> = kept.iter().map(DiffRow::kind_name).collect();
+        assert_eq!(
+            kinds,
+            ["folder", "file", "hunk", "line", "line", "spacer", "folder", "file", "hunk", "line", "line"]
+        );
+        assert_eq!(folders.iter().map(|d| d.files.len()).collect::<Vec<_>>(), [1, 1]);
     }
 
     #[gitti_test::test]

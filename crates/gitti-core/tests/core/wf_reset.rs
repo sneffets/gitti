@@ -112,3 +112,37 @@ fn rs09_move_another_branch_to_a_reflog_commit() {
     assert_eq!(out, format!("Moved feat to {}", short(&s.f2)));
     wf::expect(dir, &s).unwrap();
 }
+
+/// RS-11: the commit's files as a tree — its changed files under one row `src/app`; that
+/// folder restored as before the commit, with the index: `init`'s folder back in both,
+/// the rest untouched.
+/// Workflow: RS-11
+#[gitti_test::test]
+fn rs11_restore_a_folder_of_a_commits_tree() {
+    use gitti_core::rows::{CommitRows, DiffRow, Expansion, NoteWrap};
+    use gitti_core::version_file::{DiffSource, version_sides};
+    use rs::restore_folder as wf;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let s = wf::fixture(dir);
+    let repo = Repo::open(dir).unwrap();
+    let id = gitti_core::ObjectId::from_hex(s.commit.as_bytes()).unwrap();
+    let parent = gitti_core::ObjectId::from_hex(s.init.as_bytes()).unwrap();
+    let files = repo.commit_diff(id).unwrap();
+    let notes = NoteWrap::None;
+    let (rows, folders) =
+        CommitRows { files: &files, only: None, fs: None, notes: &notes, tree: true, keep: None }
+            .build(&Expansion::default(), None);
+    let folder = rows
+        .iter()
+        .find_map(|r| match *r {
+            DiffRow::Folder { folder, .. } => folders.get(folder),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!((folder.path.as_str(), folder.files.len()), (wf::FOLDER, 3));
+    let sides = version_sides(DiffSource::Commit { id, parents: &[parent], stash: false });
+    let plan = repo.restore_plan(&gitti_core::restore::folder_target(sides, &folder.path, true).unwrap()).unwrap();
+    repo.restore(&plan, true).unwrap();
+    wf::expect(dir).unwrap();
+}

@@ -252,9 +252,11 @@ pub struct Settings {
     /// The sidebar's branch order (shared with gitty, `gitti_core::branch_order`).
     pub branch_sort: gitti_core::branch_order::BranchSort,
     pub remote_branch_sort: gitti_core::branch_order::BranchSort,
-    /// The working directory's changes as a tree of folders (shared with gitty,
-    /// `gitti_core::rows::build_worktree_view`).
+    /// Every diff's changed files as a tree of folders (shared with gitty,
+    /// `gitti_core::rows::build_worktree_view`, `CommitRows`).
     pub changes_as_tree: bool,
+    /// How the tree is drawn (shared with gitty, `gitti_core::rows::TreeStyle`).
+    pub tree_style: gitti_core::rows::TreeStyle,
     /// Pane sizes as fractions, shared with gitty (`gitti_core::store::PaneLayout`).
     pub pane_sidebar: f32,
     pub pane_list: f32,
@@ -286,6 +288,7 @@ impl Default for Settings {
             branch_sort: gitti_core::branch_order::BranchSort::Name,
             remote_branch_sort: gitti_core::branch_order::BranchSort::Name,
             changes_as_tree: false,
+            tree_style: gitti_core::rows::TreeStyle::Indented,
             pane_sidebar: 0.,
             pane_list: 0.,
             pane_log: 0.,

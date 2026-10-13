@@ -1012,8 +1012,7 @@ impl GittiApp {
                 );
             }
         }
-        let (file_row, hunk_row, file_end, hunk_end) = self.sticky_rows(scroll_y, row_h);
-        let top_of = |row: usize| row_h * row as f32 - scroll_y;
+        let stack = self.sticky_stack(scroll_y, row_h);
         let mut sticky = |ix: usize, top: Pixels, id: &'static str, out: &mut Vec<AnyElement>| {
             out.push(
                 div()
@@ -1030,24 +1029,51 @@ impl GittiApp {
                     .into_any_element(),
             );
         };
-        // Push the sticky rows up when the next file / hunk arrives.
-        let mut file_bottom = px(0.);
-        let hunk = hunk_row.map(|h| {
-            let min_top = if file_row.is_some() { row_h } else { px(0.) };
-            (h, min_top.min(top_of(hunk_end) - row_h))
-        });
-        if let Some(f) = file_row {
-            let top = px(0.).min(top_of(file_end) - row_h);
-            file_bottom = top + row_h;
-            // Drawn after the hunk row so it covers it while both slide out.
-            if let Some((h, top)) = hunk {
-                sticky(h, top.max(file_bottom - row_h), "sticky-hunk", &mut out);
-            }
+        // Drawn bottom up, so each covers the one below while they slide out.
+        if let Some((h, top)) = stack.hunk {
+            sticky(h, top, "sticky-hunk", &mut out);
+        }
+        if let Some((f, top)) = stack.file {
             sticky(f, top, "sticky-file", &mut out);
-        } else if let Some((h, top)) = hunk {
-            sticky(h, top.max(file_bottom), "sticky-hunk", &mut out);
+        }
+        if let Some((d, top)) = stack.folder {
+            sticky(d, top, "sticky-folder", &mut out);
         }
         out
+    }
+
+    /// The sticky header rows over the top of the diff list scrolled to `scroll_y`, each
+    /// one row tall: the folder of the top row (the tree; one row, never a stack of
+    /// folders), below it the file and the hunk whose headers scrolled away — at most
+    /// three. Each is pushed up when the next folder / file / hunk arrives.
+    pub(super) fn sticky_stack(&self, scroll_y: Pixels, row_h: Pixels) -> StickyStack {
+        let top_of = |row: usize| row_h * row as f32 - scroll_y;
+        let first = (scroll_y / row_h).floor().max(0.) as usize;
+        // The folder: while its row is (partly) above the top edge.
+        let folder = self
+            .folders
+            .sticky(&self.rows, first)
+            .and_then(|id| self.folders.rows_of(id))
+            .filter(|&(row, end)| top_of(row) < px(0.) && end > first)
+            .map(|(row, end)| (row, px(0.).min(top_of(end) - row_h)));
+        // The file and hunk below it: as without a folder, the list's top being the
+        // folder row's bottom.
+        let base = folder.map_or(px(0.), |(_, top)| top + row_h);
+        let (file_row, hunk_row, file_end, hunk_end) = self.sticky_rows(scroll_y + base, row_h);
+        let file = file_row.map(|f| (f, base.min(top_of(file_end) - row_h)));
+        let file_bottom = file.map_or(base, |(_, top)| top + row_h);
+        let hunk = hunk_row.map(|h| {
+            let min_top = if file.is_some() { base + row_h } else { base };
+            // Slides under the file row when the next file pushes both out.
+            (h, min_top.min(top_of(hunk_end) - row_h).max(file_bottom - row_h))
+        });
+        StickyStack { folder, file, hunk }
+    }
+
+    /// How many sticky header rows cover the top of the diff list at `scroll_y` (0–3:
+    /// folder, file, hunk — [`Self::sticky_stack`]).
+    pub(super) fn sticky_rows_shown(&self, scroll_y: Pixels) -> usize {
+        self.sticky_stack(scroll_y, self.settings.diff_row_h()).count()
     }
 
     /// Rebuilds the rows after the wrapping changed (on / off, panel width) without moving
@@ -1344,7 +1370,7 @@ impl GittiApp {
             DiffRow::HunkGap => base.bg(p.bg_hunk_gap).into_any_element(),
             DiffRow::Section(src) => self.render_section_row(base, src, ix, &p, cx),
             DiffRow::Group(group) => self.render_group_row(base, group, ix, &p, cx),
-            DiffRow::Folder { src, folder } => self.render_folder_row(base, src, folder, ix, &p, cx),
+            DiffRow::Folder { src, folder } => self.render_folder_row(base, src, folder, ix, !probe, &p, cx),
             DiffRow::File { src, file } => self.render_file_row(base, src, file, ix, !probe, &p, cx),
             DiffRow::Note { src, file }
                 if let Some(size) = self
@@ -1759,12 +1785,8 @@ impl GittiApp {
             .and_then(|d| self.lfs_lock_of(d.path()))
             .map(gitti_core::lfs::lock_badge);
         let letter_color = super::file_tabs::letter_color(letter, conflicted, p);
-        // The tree: indented under its folder, the file's name only (not the sticky copy).
-        let (indent, path) = if sticky {
-            (None, path)
-        } else {
-            (self.file_indent(src, file), self.tree_file_label(src, file, path))
-        };
+        // The tree: the file's name under its folder (`tree_rows.rs`).
+        let (indent, path) = self.tree_file_header(src, file, path, sticky, cx);
         let mut el = base
             .pr_2()
             .gap_2()
@@ -2416,6 +2438,21 @@ pub(super) fn textarea_inset() -> Point<Pixels> {
 }
 
 /// `−714 +5012` pills of a section / group / comparison header; none without lines.
+/// The sticky header rows at a scroll position ([`GittiApp::sticky_stack`]): each a row
+/// index and its top in the list.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(super) struct StickyStack {
+    pub folder: Option<(usize, Pixels)>,
+    pub file: Option<(usize, Pixels)>,
+    pub hunk: Option<(usize, Pixels)>,
+}
+
+impl StickyStack {
+    pub fn count(&self) -> usize {
+        usize::from(self.folder.is_some()) + usize::from(self.file.is_some()) + usize::from(self.hunk.is_some())
+    }
+}
+
 pub(super) fn totals_pills(t: LineTotals, p: &Palette) -> Option<impl IntoElement + use<>> {
     (!t.is_empty()).then(|| {
         h_flex()

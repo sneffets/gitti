@@ -476,7 +476,7 @@ pub(super) fn diff_menu(
     };
     // A folder row right-clicked, marked files: their actions first.
     let menu = match app.upgrade() {
-        Some(a) if worktree => a.read(cx).marks_menu_items(menu, app),
+        Some(a) => a.read(cx).marks_menu_items(menu, app),
         _ => menu,
     };
     let mut menu = menu
@@ -547,13 +547,16 @@ pub(super) fn diff_menu(
             this.rebuild_rows();
             cx.notify();
         }));
-    // The working directory only (a commit's files stay a list).
-    if worktree {
-        menu = menu.item(
+    // Every diff: the changed files as a tree of folders, and how it is drawn.
+    menu = menu
+        .item(
             item("Show Changes as Tree", app, |this, _, cx| this.toggle_changes_tree(cx))
                 .checked(s.changes_as_tree),
+        )
+        .item(
+            item(gitti_core::rows::TREE_STYLE_LABEL, app, |this, _, cx| this.toggle_tree_style(cx))
+                .checked(s.changes_as_tree && s.tree_style == gitti_core::rows::TreeStyle::PathHeaders),
         );
-    }
     if worktree {
         menu = menu
             .separator()

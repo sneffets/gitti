@@ -1,10 +1,11 @@
-//! The working directory's changes as a tree (View ▸ Show Changes as Tree, setting
-//! `changes_as_tree`, shared with gitty) and several files at once.
+//! What the folder rows of the tree do (their drawing: `tree_rows.rs`) and several files
+//! at once.
 //!
-//! Tree: folder rows above the files inside them (`gitti_core::rows::build_worktree_view`),
-//! folded by a click, with the number of files, their line totals and Stage / Unstage /
-//! Discard buttons that act on exactly the files listed under them (literal paths, one
-//! `git add` / `restore` per 200, those paths re-read — `work_op`).
+//! Folder rows: a working-directory folder's Stage / Unstage / Discard act on exactly the
+//! files listed under it (literal paths, one `git add` / `restore` per 200, those paths
+//! re-read — `work_op`); a commit's folder restores the folder as the commit has it or as
+//! before it (`gitti_core::restore::folder_target`, the plan dialog of `from_commit.rs`).
+//! Both: Copy Folder Path, Copy Paths of Its Files.
 //!
 //! Several files: ⌘-click (ctrl elsewhere) on a file header marks it, shift-click marks the
 //! files from the last one marked, ⌘-click on a folder row marks / unmarks its files.
@@ -17,18 +18,13 @@
 use std::rc::Rc;
 
 use gitti_core::patch::PatchMode;
-use gitti_core::rows::{Folder, discard_question, file_name, file_order, files_word};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gitti_core::rows::{Folder, discard_question, file_order, files_word};
 use gpui_kit::component::menu::PopupMenu;
-use gpui_kit::component::Sizable as _;
 use gpui_kit::*;
 
 use super::GittiApp;
 use super::picker::PickerItem;
-use crate::ToggleChangesTree;
-use crate::probe::ProbeExt as _;
 use crate::rows::{DiffRow, Src};
-use crate::theme::{BADGE_RADIUS, Palette};
 
 type AppHandle = WeakEntity<GittiApp>;
 type RunFn = Rc<dyn Fn(&mut GittiApp, &mut Window, &mut Context<GittiApp>)>;
@@ -57,64 +53,21 @@ fn stash_marked_label(n: usize) -> String {
     format!("Stash Marked ({})…", files_word(n))
 }
 
-/// Width of one tree level.
-const INDENT: f32 = 16.;
-
 /// A folder row's identity across rebuilds (its index in `folders` changes).
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FolderKey {
-    src: Src,
-    group: Option<crate::rows::Group>,
-    path: String,
+pub(super) struct FolderKey {
+    pub src: Src,
+    pub group: Option<crate::rows::Group>,
+    pub path: String,
 }
 
 impl FolderKey {
-    fn of(src: Src, f: &Folder) -> Self {
+    pub(super) fn of(src: Src, f: &Folder) -> Self {
         FolderKey { src, group: f.group, path: f.path.clone() }
     }
 }
 
 impl GittiApp {
-    /// Registers the handlers of this module's menu-bar actions.
-    pub(super) fn file_marks_actions(&self, root: Div, cx: &mut Context<Self>) -> Div {
-        root.on_action(cx.listener(|this, _: &ToggleChangesTree, _, cx| this.toggle_changes_tree(cx)))
-    }
-
-    /// Flat list ↔ tree of folders (runs no git).
-    pub(super) fn toggle_changes_tree(&mut self, cx: &mut Context<Self>) {
-        self.update_settings(cx, |s| s.changes_as_tree = !s.changes_as_tree);
-        self.set_info(if self.settings.changes_as_tree {
-            "Changes shown as a tree of folders"
-        } else {
-            "Changes shown as a list of paths"
-        });
-        self.rebuild_rows();
-        cx.notify();
-    }
-
-    /// The indent of a file header row in the tree (0 in the flat list).
-    pub(super) fn file_indent(&self, src: Src, file: usize) -> Option<Pixels> {
-        self.folders.file_depth(src, file).map(|d| px(INDENT * d as f32))
-    }
-
-    /// What a file header shows in the tree: the file's name (a rename: where from).
-    pub(super) fn tree_file_label(&self, src: Src, file: usize, path: String) -> String {
-        if self.folders.file_depth(src, file).is_none() {
-            return path;
-        }
-        match self.file_diff(src, file) {
-            Some(d) if d.old_path.is_some() && d.old_path != d.new_path => format!(
-                "{} ← {}",
-                file_name(d.path()),
-                d.old_path.as_deref().unwrap_or_default()
-            ),
-            _ => self
-                .file_path(src, file)
-                .map(|p| file_name(&p).to_string())
-                .unwrap_or(path),
-        }
-    }
-
     pub(super) fn is_marked(&self, src: Src, file: usize) -> bool {
         !self.file_marks.is_empty()
             && self.file_path(src, file).is_some_and(|p| self.file_marks.contains(src, &p))
@@ -167,28 +120,35 @@ impl GittiApp {
         self.folders.get(id)
     }
 
+    /// The paths of the files listed under a folder row (a working-directory section's or
+    /// a commit's).
     fn folder_paths(&self, key: &FolderKey) -> Vec<String> {
         let Some(f) = self.folder(key) else {
             return Vec::new();
         };
-        let files = self.work_files(key.src).unwrap_or_default();
-        f.files.iter().filter_map(|&i| Some(files.get(i)?.path().to_string())).collect()
+        f.files.iter().filter_map(|&i| self.file_path(key.src, i)).collect()
     }
 
-    fn folder_clicked(&mut self, key: &FolderKey, m: Modifiers, cx: &mut Context<Self>) {
-        if m.secondary() {
+    /// A click on a folder row: folds it (⌘ / ctrl in the working directory: marks its
+    /// files). On the sticky copy the list goes back to the folder's row, so it stays where
+    /// it was clicked.
+    pub(super) fn folder_clicked(&mut self, key: &FolderKey, m: Modifiers, sticky: bool, cx: &mut Context<Self>) {
+        if m.secondary() && key.src != Src::Commit {
             let paths = self.folder_paths(key);
             self.file_marks.toggle_all(key.src, &paths);
             self.say_marks();
         } else {
             self.expansion.toggle_folder(key.src, key.group, &key.path);
             self.rebuild_rows();
+            if sticky && let Some(row) = self.folder_row(key) {
+                self.set_diff_scroll_y(self.settings.diff_row_h() * row as f32, cx);
+            }
         }
         cx.notify();
     }
 
     /// Stage / unstage / discard the files of a folder row.
-    fn folder_action(&mut self, key: FolderKey, mode: PatchMode, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn folder_action(&mut self, key: FolderKey, mode: PatchMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.defer_while_busy({
             let key = key.clone();
             move |this, w, cx| this.folder_action(key, mode, w, cx)
@@ -311,9 +271,7 @@ impl GittiApp {
 
     /// The diff's context menu entries for a folder row (right-clicked) and the marked files.
     pub(super) fn marks_menu_items(&self, mut menu: PopupMenu, app: &AppHandle) -> PopupMenu {
-        if !matches!(self.detail, super::Detail::Worktree) {
-            return menu;
-        }
+        let worktree = matches!(self.detail, super::Detail::Worktree);
         // A stash would end a merge / rebase / cherry-pick / revert half-done.
         let busy = gitti_core::availability::in_progress(self.repo_state);
         let row = self.menu_row.and_then(|r| self.rows.get(r).copied());
@@ -340,7 +298,8 @@ impl GittiApp {
                         this.folder_action(k.clone(), PatchMode::Unstage, w, cx)
                     }))
                 }
-                _ => {}
+                Src::Commit => menu = self.commit_folder_items(menu, app, &key.path),
+                Src::Conflicted => {}
             }
             if matches!(src, Src::Unstaged | Src::Staged) {
                 let p = paths.clone();
@@ -353,9 +312,10 @@ impl GittiApp {
             }
             menu = menu
                 .item(super::menus::copy_item("Copy Folder Path", format!("{}/", key.path)))
+                .item(super::menus::copy_item(format!("Copy Paths of Its Files ({n})"), paths.join("\n")))
                 .separator();
         }
-        if self.file_marks.is_empty() {
+        if self.file_marks.is_empty() || !worktree {
             return menu;
         }
         let n = files_word(self.file_marks.len());
@@ -393,6 +353,28 @@ impl GittiApp {
         .separator()
     }
 
+    /// A commit's (comparison's) folder row: the folder restored as the new side has it or
+    /// as the old side had it (the plan dialog says what is written, deleted and lost);
+    /// greyed with the reason where there is no such version.
+    fn commit_folder_items(&self, mut menu: PopupMenu, app: &AppHandle, path: &str) -> PopupMenu {
+        use gitti_core::restore;
+        let Some(sides) = self.version_sides() else {
+            return menu;
+        };
+        for (label, before) in [(restore::FOLDER_THIS_LABEL, false), (restore::FOLDER_BEFORE_LABEL, true)] {
+            menu = match restore::folder_target(sides, path, before) {
+                Ok(t) => menu.item(entry(label, app, move |this, w, cx| {
+                    this.menu_row = None;
+                    this.plan_restore(t.clone(), w, cx)
+                })),
+                Err(why) => menu.item(
+                    entry(gitti_core::availability::with_reason(label, &why), app, |_, _, _| {}).disabled(true),
+                ),
+            };
+        }
+        menu
+    }
+
     /// Palette entries of this module.
     /// This module's palette entries that can't act now, by label (`mark_unavailable`
     /// greys them): Stash Marked while a merge / rebase / cherry-pick / revert is in
@@ -415,11 +397,7 @@ impl GittiApp {
             run,
             action: None,
         };
-        let on = if self.settings.changes_as_tree { "on" } else { "off" };
-        let mut items = vec![
-            item(format!("Toggle Changes as Tree ({on})"), Rc::new(|t, _, cx| t.toggle_changes_tree(cx)))
-                .act(&ToggleChangesTree),
-        ];
+        let mut items = Vec::new();
         if !self.file_marks.is_empty() {
             let n = files_word(self.file_marks.len());
             items.push(item(format!("Stage Marked ({n})"), Rc::new(|t, w, cx| {
@@ -448,111 +426,6 @@ impl GittiApp {
         items
     }
 
-    /// A folder row of the tree: ▾ / ▸, its name (a chain of folders: `src/app`), the
-    /// number of files, their line totals, and the buttons of its section. Probes
-    /// `folder:PATH`, `folder-stage:PATH`, `folder-unstage:PATH`, `folder-discard:PATH`
-    /// (`PATH` with the section: `unstaged/src/app`).
-    pub(super) fn render_folder_row(
-        &self,
-        base: Stateful<Div>,
-        src: Src,
-        folder: usize,
-        ix: usize,
-        p: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(f) = self.folders.get(folder) else {
-            return base.into_any_element();
-        };
-        let key = FolderKey::of(src, f);
-        let name = format!("{}/{}", src_name(src), f.path);
-        let collapsed = self.expansion.is_folder_collapsed(src, f.group, &f.path);
-        let files = self.work_files(src).unwrap_or_default();
-        let marked = !self.file_marks.is_empty()
-            && f.files
-                .iter()
-                .all(|&i| files.get(i).is_some_and(|w| self.file_marks.contains(src, w.path())));
-        let k = key.clone();
-        let mut el = base
-            .probe(format!("folder:{name}"))
-            .pl(px(20. + INDENT * f.depth as f32))
-            .pr_3()
-            .gap_2()
-            .bg(if marked { p.bg_list_selected } else { p.bg_section })
-            .text_size(self.settings.ui_small())
-            .cursor_pointer()
-            .child(
-                div()
-                    .w(px(12.))
-                    .flex_none()
-                    .text_color(p.text_muted)
-                    .child(if collapsed { "▸" } else { "▾" }),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(p.text_strong)
-                    .child(format!("{}/", f.label)),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .px(px(6.))
-                    .rounded(BADGE_RADIUS)
-                    .bg(p.bg_hunk_header)
-                    .text_color(p.text_muted)
-                    .child(f.files.len().to_string()),
-            )
-            .children(super::diff_view::totals_pills(f.totals, p))
-            .child(div().flex_1())
-            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                this.folder_clicked(&k, ev.modifiers(), cx)
-            }));
-        let button = |id: &'static str, label: &'static str, tip: String, mode: PatchMode| {
-            let k = key.clone();
-            Button::new((id, ix))
-                .probe(format!("{id}:{name}"))
-                .label(label)
-                .xsmall()
-                .ghost()
-                .tooltip(tip)
-                .on_click(cx.listener(move |this, _, w, cx| {
-                    cx.stop_propagation();
-                    this.folder_action(k.clone(), mode, w, cx)
-                }))
-        };
-        let n = files_word(f.files.len());
-        match src {
-            Src::Unstaged => {
-                el = el
-                    .child(button(
-                        "folder-discard",
-                        "Discard",
-                        format!("Discard the unstaged changes of the {n} in {}/", f.path),
-                        PatchMode::Discard,
-                    ))
-                    .child(button(
-                        "folder-stage",
-                        "Stage",
-                        format!("Stage the {n} in {}/", f.path),
-                        PatchMode::Stage,
-                    ))
-            }
-            Src::Staged => {
-                el = el.child(button(
-                    "folder-unstage",
-                    "Unstage",
-                    format!("Unstage the {n} in {}/", f.path),
-                    PatchMode::Unstage,
-                ))
-            }
-            _ => {}
-        }
-        el.into_any_element()
-    }
-
     /// Test hook: the marked paths (`unstaged:path`, …), sorted.
     pub fn script_marks(&self) -> Vec<String> {
         let mut v: Vec<String> = [Src::Conflicted, Src::Unstaged, Src::Staged]
@@ -570,7 +443,7 @@ impl GittiApp {
 }
 
 /// A section's name in probes and test output.
-fn src_name(src: Src) -> &'static str {
+pub(super) fn src_name(src: Src) -> &'static str {
     match src {
         Src::Conflicted => "conflicted",
         Src::Unstaged => "unstaged",

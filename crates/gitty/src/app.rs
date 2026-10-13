@@ -560,8 +560,10 @@ pub struct App {
     pub marks: gitti_core::rows::FileMarks,
     /// Marked commits of the commit list (`app/pick_several.rs`).
     pub commit_marks: gitti_core::commit_marks::CommitMarks,
-    /// The working directory's changes as a tree (setting `changes_as_tree`).
+    /// Every diff's changed files as a tree (setting `changes_as_tree`).
     pub changes_tree: bool,
+    /// How the tree is drawn (setting `tree_style`, shared with gitti).
+    pub tree_style: gitti_core::rows::TreeStyle,
     /// Marked files still to open in a terminal editor, one after the other.
     pub open_queue: Vec<String>,
     pub expansion: Expansion,
@@ -880,6 +882,7 @@ impl App {
             marks: Default::default(),
             commit_marks: Default::default(),
             changes_tree: settings.changes_as_tree,
+            tree_style: settings.tree_style,
             open_queue: Vec::new(),
             expansion: Expansion::default(),
             worktree_totals: Default::default(),
@@ -1013,6 +1016,7 @@ impl App {
             branch_sort: self.branches.sort,
             remote_branch_sort: self.branches.remote_sort,
             changes_as_tree: self.changes_tree,
+            tree_style: self.tree_style,
         }
     }
 
@@ -1079,6 +1083,7 @@ impl App {
             self.changes_tree = s.changes_as_tree;
             self.rebuild_rows();
         }
+        self.tree_style = s.tree_style;
         self.log_reads = s.log_show_reads;
         self.merge_single = s.merge_single_view;
         self.terminal_command = s.terminal_command.clone();
@@ -2260,6 +2265,7 @@ impl App {
         };
         self.commit_fs = self.shown_commit_fs();
         self.folders = Default::default();
+        let mut commit_folders = gitti_core::rows::Folders::default();
         self.rows = match &self.detail {
             Detail::Worktree => {
                 self.worktree_totals = gitti_core::rows::WorktreeTotals::of(&self.working);
@@ -2277,21 +2283,29 @@ impl App {
             }
             Detail::Commit(cv) => {
                 let mut rows = vec![DiffRow::HeaderSpace; self.header.len()];
-                rows.extend(self.change_search_rows(
-                    cv,
-                    gitti_core::rows::build_commit_rows_noted(
-                        &cv.files,
-                        None,
-                        &self.expansion,
-                        wrap,
-                        Some(&self.commit_fs),
-                        &notes,
-                    ),
-                ));
+                // A search in the changes: the tree of the files with matches only.
+                let filter = self.change_rows_filter(cv);
+                let keep = |i: usize| filter.as_ref().is_none_or(|f| f.keeps_file(i));
+                let (built, folders) = gitti_core::rows::CommitRows {
+                    files: &cv.files,
+                    only: None,
+                    fs: Some(&self.commit_fs),
+                    notes: &notes,
+                    tree: self.changes_tree,
+                    keep: filter.is_some().then_some(&keep as &dyn Fn(usize) -> bool),
+                }
+                .build(&self.expansion, wrap);
+                commit_folders = folders;
+                rows.extend(self.change_search_rows(cv, built));
                 rows
             }
             _ => Vec::new(),
         };
+        if !commit_folders.is_empty() {
+            self.folders = commit_folders;
+        }
+        // Where each folder's rows are (the sticky folder row).
+        self.folders.index_rows(&self.rows);
         self.diff_cursor = self.diff_cursor.min(self.rows.len().saturating_sub(1));
     }
 
@@ -4275,9 +4289,7 @@ impl App {
                 app.show_changes_only(Some(file));
             }));
         }
-        if matches!(self.detail, Detail::Worktree) {
-            items.push(self.tree_menu_item());
-        }
+        items.extend(self.tree_menu_items());
         items.push(MenuItem::new("Expand All Files", |app| {
             app.set_all_expanded(true)
         }));

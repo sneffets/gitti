@@ -156,9 +156,11 @@ pub struct SharedSettings {
     pub branch_sort: crate::branch_order::BranchSort,
     /// The sidebar's remote branches: by name or last commit date.
     pub remote_branch_sort: crate::branch_order::BranchSort,
-    /// The working directory's changes as a tree of folders instead of a flat list of
-    /// paths (`rows::build_worktree_view`).
+    /// Every diff's changed files as a tree of folders instead of a flat list of paths
+    /// (`rows::build_worktree_view`, `rows::CommitRows`).
     pub changes_as_tree: bool,
+    /// How that tree is drawn (`rows::TreeStyle`).
+    pub tree_style: crate::rows::TreeStyle,
 }
 
 impl Default for SharedSettings {
@@ -182,6 +184,7 @@ impl Default for SharedSettings {
             branch_sort: crate::branch_order::BranchSort::Name,
             remote_branch_sort: crate::branch_order::BranchSort::Name,
             changes_as_tree: false,
+            tree_style: crate::rows::TreeStyle::Indented,
         }
     }
 }

@@ -1964,14 +1964,21 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         app.rows.len(),
         app.follow,
     );
-    // The sticky file header covers the top row: a cursor there (moving up through a
-    // file's lines) would be hidden behind it, so the view keeps one row more above.
-    if app.follow
-        && h > 1
-        && app.diff_cursor == app.diff_offset
-        && sticky_file_row(&app.rows, app.diff_offset).is_some()
-    {
-        app.diff_offset -= 1;
+    // The sticky folder / file headers cover the top rows: a cursor there (moving up
+    // through a file's lines) would be hidden behind them, so the view keeps rows more
+    // above.
+    if app.follow && h > 2 {
+        for _ in 0..3 {
+            let covered = sticky_stack(app, app.diff_offset).count();
+            if app.diff_offset > 0
+                && app.diff_cursor >= app.diff_offset
+                && app.diff_cursor < app.diff_offset + covered
+            {
+                app.diff_offset -= 1;
+            } else {
+                break;
+            }
+        }
     }
     let show_cursor = app.focus == Focus::Detail;
     let wrap = app.opts.wrap.then_some(text_cols);
@@ -1981,15 +1988,58 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &mut App, p: &Palette) {
         let cursor = show_cursor && i == app.diff_cursor;
         draw_diff_row(buf, row, app, i, cursor, digits, wrap, false, p);
     }
-    // Sticky header: the file whose lines fill the top keeps its header row visible.
-    if let Some(file_row) = sticky_file_row(&app.rows, app.diff_offset).filter(|_| h > 0) {
-        let row = Rect::new(content.x, content.y, content.width, 1);
+    // Sticky headers: the folder of the top row (the tree), below it the file whose lines
+    // fill the top — their header rows stay visible.
+    let stack = sticky_stack(app, app.diff_offset);
+    for (i, index) in [stack.folder, stack.file].into_iter().flatten().enumerate() {
+        if i >= h {
+            break;
+        }
+        let row = Rect::new(content.x, content.y + i as u16, content.width, 1);
         // The covered row's text must not show through behind the header.
         Clear.render(row, buf);
         buf.set_style(row, Style::new().bg(p.bg_diff));
-        let cursor = show_cursor && app.diff_cursor == file_row;
-        draw_diff_row(buf, row, app, file_row, cursor, digits, wrap, true, p);
+        let cursor = show_cursor && app.diff_cursor == index;
+        draw_diff_row(buf, row, app, index, cursor, digits, wrap, true, p);
     }
+}
+
+/// The sticky header rows over the top of the diff pane when row `top` is the first one
+/// shown: the folder of that row (the tree; one row, its whole path) while its own row is
+/// above, and the file whose lines fill the top below it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StickyStack {
+    pub folder: Option<usize>,
+    pub file: Option<usize>,
+}
+
+impl StickyStack {
+    /// Rows they cover (0–2).
+    pub fn count(&self) -> usize {
+        usize::from(self.folder.is_some()) + usize::from(self.file.is_some())
+    }
+
+    /// The row drawn at screen line `y` of the pane, if a sticky one is there.
+    pub fn at(&self, y: usize) -> Option<usize> {
+        [self.folder, self.file].into_iter().flatten().nth(y)
+    }
+}
+
+pub fn sticky_stack(app: &App, top: usize) -> StickyStack {
+    let folder = app
+        .folders
+        .sticky(&app.rows, top)
+        .and_then(|id| app.folders.rows_of(id))
+        .filter(|&(row, end)| row < top && end > top)
+        .map(|(row, _)| row);
+    let file = sticky_file_row(&app.rows, top + usize::from(folder.is_some()));
+    StickyStack { folder, file }
+}
+
+/// Indent (cells) of a path-header row whose text continues `prefix` (the path above it,
+/// `src/app/`): its display width, at most half the pane.
+fn path_indent(prefix: &str, w: u16) -> u16 {
+    (prefix.width() as u16).min(w / 2)
 }
 
 /// The compare banner: `COMPARING a1b2c3d subject → e4f5g6h subject`, or the hint while
@@ -2055,6 +2105,81 @@ fn totals_spans(t: gitti_core::rows::LineTotals, p: &Palette) -> Vec<Span<'stati
             Style::new().fg(p.text_added).bg(p.bg_added),
         ),
     ]
+}
+
+/// A folder row of the tree (`sticky`: its copy over the top of the pane, with the whole
+/// path) in either style (`TreeStyle`): indented — a section-like bar, the label one level
+/// in per folder; path headers — drawn like a file header, the label where it continues
+/// its folder's path. Both: ▾ / ▸, the number of files, their totals, the keys of its
+/// section on the cursor. The one place to change how folders look (gitti:
+/// `app/tree_rows.rs`).
+#[allow(clippy::too_many_arguments)]
+fn draw_folder_row(
+    buf: &mut Buffer,
+    area: Rect,
+    app: &App,
+    src: Src,
+    folder: usize,
+    cursor: bool,
+    sticky: bool,
+    p: &Palette,
+) {
+    let (x, y, w) = (area.x, area.y, area.width);
+    let Some(f) = app.folders.get(folder) else {
+        return;
+    };
+    let cursor_bg = |bg: Color| if cursor { blend(p.text_strong, bg, 0.14) } else { bg };
+    let marked = src != Src::Commit
+        && !f.files.is_empty()
+        && f.files.iter().all(|&i| {
+            work_files(&app.working, src)
+                .get(i)
+                .is_some_and(|w| app.marks.contains(src, w.path()))
+        });
+    let path_headers = app.tree_style == gitti_core::rows::TreeStyle::PathHeaders;
+    let header_bg = if path_headers { p.bg_file_header } else { p.bg_section };
+    let bg = cursor_bg(if marked { p.bg_list_selected } else { header_bg });
+    buf.set_style(area, Style::new().bg(bg));
+    let mark = if app.expansion.is_folder_collapsed(src, f.group, &f.path) {
+        "▸ "
+    } else {
+        "▾ "
+    };
+    let label = format!("{}/", if sticky { &f.path } else { &f.label });
+    let mut spans = Vec::new();
+    let indent = if path_headers {
+        // As a file header: the bar, the chevron, the letter's place, the path.
+        let indent = if sticky { 0 } else { path_indent(f.prefix(), w) };
+        spans.push(Span::styled("▌", Style::new().fg(p.text_faint)));
+        spans.push(Span::raw(" ".repeat(indent as usize)));
+        spans.push(Span::styled(mark, Style::new().fg(p.text_muted)));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(label, Style::new().fg(p.text_strong).add_modifier(Modifier::BOLD)));
+        0
+    } else {
+        spans.push(Span::styled(mark, Style::new().fg(p.text_muted)));
+        spans.push(Span::styled(label, Style::new().fg(p.text_strong)));
+        // Under its group header (3) or folder, two columns per level.
+        3 + 2 * if sticky { u16::from(f.group.is_some()) } else { f.depth }
+    };
+    spans.push(Span::styled(format!(" ({})", f.files.len()), Style::new().fg(p.text_muted)));
+    spans.extend(totals_spans(f.totals, p));
+    let end = put(buf, x + indent, y, w.saturating_sub(indent), spans);
+    let hint = match src {
+        Src::Unstaged => "⏎ fold · s stage · d discard · space mark",
+        Src::Staged => "⏎ fold · u unstage · space mark",
+        Src::Commit => "⏎ fold · m restore / copy paths",
+        Src::Conflicted => "⏎ fold",
+    };
+    if cursor && end + hint.width() as u16 + 3 < x + w {
+        put_right(
+            buf,
+            x,
+            y,
+            w.saturating_sub(1),
+            vec![Span::styled(hint, Style::new().fg(p.text_faint))],
+        );
+    }
 }
 
 /// The `File` row of the file that row `top` belongs to, if `top` is inside its body.
@@ -2328,6 +2453,7 @@ fn draw_diff_row(
         }
     };
     let wt = matches!(app.detail, Detail::Worktree);
+    let path_headers = app.tree_style == gitti_core::rows::TreeStyle::PathHeaders && !app.folders.is_empty();
     match app.rows[index] {
         DiffRow::HeaderSpace => {
             // Leading rows: row index == header line. The cursor's background goes under
@@ -2413,47 +2539,7 @@ fn draw_diff_row(
                 );
             }
         }
-        DiffRow::Folder { src, folder } => {
-            let Some(f) = app.folders.get(folder) else {
-                return;
-            };
-            let marked = !f.files.is_empty()
-                && f.files.iter().all(|&i| {
-                    work_files(&app.working, src)
-                        .get(i)
-                        .is_some_and(|w| app.marks.contains(src, w.path()))
-                });
-            let bg = cursor_bg(if marked { p.bg_list_selected } else { p.bg_section });
-            buf.set_style(area, Style::new().bg(bg));
-            let mark = if app.expansion.is_folder_collapsed(src, f.group, &f.path) {
-                "▸ "
-            } else {
-                "▾ "
-            };
-            let mut spans = vec![
-                Span::styled(mark, Style::new().fg(p.text_muted)),
-                Span::styled(format!("{}/", f.label), Style::new().fg(p.text_strong)),
-                Span::styled(format!(" ({})", f.files.len()), Style::new().fg(p.text_muted)),
-            ];
-            spans.extend(totals_spans(f.totals, p));
-            // Under its group header (3) or folder, two columns per level.
-            let indent = 3 + 2 * f.depth;
-            let end = put(buf, x + indent, y, w.saturating_sub(indent), spans);
-            let hint = match src {
-                Src::Unstaged => "⏎ fold · s stage · d discard · space mark",
-                Src::Staged => "⏎ fold · u unstage · space mark",
-                _ => "⏎ fold",
-            };
-            if cursor && end + hint.width() as u16 + 3 < x + w {
-                put_right(
-                    buf,
-                    x,
-                    y,
-                    w.saturating_sub(1),
-                    vec![Span::styled(hint, Style::new().fg(p.text_faint))],
-                );
-            }
-        }
+        DiffRow::Folder { src, folder } => draw_folder_row(buf, area, app, src, folder, cursor, sticky, p),
         DiffRow::File { src, file } => {
             let marked = work_files(&app.working, src)
                 .get(file)
@@ -2496,9 +2582,21 @@ fn draw_diff_row(
                 })
                 .or_else(|| wf.map(|w| w.path().to_string()))
                 .unwrap_or_default();
-            // The tree: the file's name under its folder (a rename says where from).
-            let depth = app.folders.file_depth(src, file).filter(|_| !sticky);
-            let path = match (depth, diff) {
+            // The tree: the file's name under its folder (a rename says where from) — one
+            // level in per folder, or (path headers) where it starts in the whole path.
+            // The sticky copy of the indented style: the whole path.
+            let full = diff.map(|d| d.path().to_string()).or_else(|| wf.map(|w| w.path().to_string()));
+            let indent = match app.folders.file_depth(src, file) {
+                _ if path_headers => {
+                    let parent = gitti_core::rows::parent_folder(full.as_deref().unwrap_or_default());
+                    let prefix = if parent.is_empty() { String::new() } else { format!("{parent}/") };
+                    Some(" ".repeat(path_indent(&prefix, w) as usize))
+                }
+                Some(_) if sticky => None,
+                Some(d) => Some("  ".repeat(d as usize + 1)),
+                None => None,
+            };
+            let path = match (&indent, diff) {
                 (None, _) => path,
                 (Some(_), Some(d)) if d.old_path.is_some() && d.old_path != d.new_path => format!(
                     "{} ← {}",
@@ -2511,7 +2609,7 @@ fn draw_diff_row(
             let mut spans = vec![
                 Span::styled("▌", Style::new().fg(color)),
                 // The tree: the chevron one level right of its folder's.
-                Span::raw(depth.map_or(String::new(), |d| "  ".repeat(d as usize + 1))),
+                Span::raw(indent.unwrap_or_default()),
                 Span::styled(
                     if expanded { "▾ " } else { "▸ " },
                     Style::new().fg(p.text_muted),

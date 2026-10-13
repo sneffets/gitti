@@ -1109,7 +1109,11 @@ impl App {
                     }
                 } else if a.detail.contains(pos) {
                     self.focus = Focus::Detail;
-                    let row = self.diff_offset + (m.row - a.detail.y) as usize;
+                    let line = (m.row - a.detail.y) as usize;
+                    // A sticky header over the top rows: that header's row.
+                    let row = crate::ui::sticky_stack(self, self.diff_offset)
+                        .at(line)
+                        .unwrap_or(self.diff_offset + line);
                     if row >= self.rows.len() {
                         return;
                     }
@@ -1134,6 +1138,7 @@ impl App {
                             }
                             DiffRow::File { .. } => self.toggle_file(),
                             DiffRow::Group(_) => self.toggle_group(),
+                            DiffRow::Folder { .. } => self.toggle_folder(),
                             DiffRow::Expand { src, file, gap } => self.show_more_lines(
                                 src,
                                 file,

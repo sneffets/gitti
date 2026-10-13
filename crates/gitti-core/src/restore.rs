@@ -37,6 +37,10 @@ use crate::version_file::VersionSide;
 pub const THIS_LABEL: &str = "Restore This Version to the Working Tree…";
 /// A commit file's menu entry: its version in the commit's parent (the old side).
 pub const BEFORE_LABEL: &str = "Restore Version Before This Commit…";
+/// A folder row's menu entry (the tree of a commit's files): the folder as the commit has it.
+pub const FOLDER_THIS_LABEL: &str = "Restore Folder as in This Commit…";
+/// A folder row's menu entry: the folder as the commit's parent (the old side) has it.
+pub const FOLDER_BEFORE_LABEL: &str = "Restore Folder as Before This Commit…";
 /// A commit's menu entry: any path (a file or a folder) of it.
 pub const PICK_LABEL: &str = "Restore File or Folder from This Commit…";
 /// The same in the Commit menu / palettes (acts on the selected commit).
@@ -144,6 +148,36 @@ pub fn restore_target(
         paths,
         source,
     })
+}
+
+/// A folder of a commit's or comparison's tree (`sides` as for [`restore_target`]) as the
+/// new side has it, or (`before`) the old side: the whole folder — files the diff doesn't
+/// list come back too, tracked files that side doesn't have are deleted (the plan lists
+/// both). `Err` = why there is no such version.
+pub fn folder_target(
+    sides: (Option<VersionSide>, Option<VersionSide>),
+    folder: &str,
+    before: bool,
+) -> std::result::Result<RestoreTarget, String> {
+    let (new, old) = sides;
+    if new.is_some_and(|s| s.stash) {
+        return Err("a stash: Apply Stash or Pop Stash restores its files".into());
+    }
+    let paths = vec![folder.trim_end_matches('/').to_string()];
+    if !before {
+        let Some(side) = new else {
+            return Err("the new side is the working tree".into());
+        };
+        return Ok(RestoreTarget { commit: side.commit, paths, source: short(&side.commit) });
+    }
+    let Some(side) = old else {
+        return Err("this commit has no parent: there is no version before it".into());
+    };
+    let source = match new {
+        Some(n) => format!("{} (the version before {})", short(&side.commit), short(&n.commit)),
+        None => short(&side.commit),
+    };
+    Ok(RestoreTarget { commit: side.commit, paths, source })
 }
 
 /// An uncommitted change of a path the restore touches.

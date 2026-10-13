@@ -251,6 +251,15 @@ impl App {
 
     /// The shown commit's rows while searching: the matching hunks only (all rows when
     /// nothing matches or "all hunks" is on).
+    /// The filter [`Self::change_search_rows`] applies to the shown commit's rows, if any
+    /// (the tree is built of the files it keeps).
+    pub(crate) fn change_rows_filter(&self, cv: &CommitView) -> Option<Arc<HunkFilter>> {
+        if self.change.show_all {
+            return None;
+        }
+        self.change_filter(cv).filter(|f| f.any())
+    }
+
     pub(crate) fn change_search_rows(&self, cv: &CommitView, rows: Vec<DiffRow>) -> Vec<DiffRow> {
         if self.change.show_all {
             return rows;

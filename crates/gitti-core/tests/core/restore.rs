@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use gitti_core::diff::FileChange;
-use gitti_core::restore::{Reread, RestoreTarget, restore_target};
+use gitti_core::restore::{Reread, RestoreTarget, folder_target, restore_target};
 use gitti_core::version_file::{DiffSource, version_sides};
 use gitti_core::{DiffOptions, LogOrder, ObjectId, Repo, WorkingState};
 
@@ -171,6 +171,37 @@ fn restore_the_version_before_a_commit() {
     });
     let why = restore_target(root, file("a.txt"), true).unwrap_err();
     assert!(why.contains("no parent"), "{why}");
+}
+
+/// A folder row of a commit's tree: the folder as before the commit (with the index), then
+/// as the commit has it — files the diff doesn't list come back too, tracked files that
+/// side lacks go; a stash and a root commit say why not.
+/// Workflow: RS-11
+#[gitti_test::test]
+fn restore_a_folder_of_a_commits_tree() {
+    let (_tmp, dir, c1, c2) = fixture();
+    let repo = Repo::open(&dir).unwrap();
+    let sides = version_sides(DiffSource::Commit { id: c2, parents: &[c1], stash: false });
+    // Back to c1's d/: x and y written, z deleted.
+    let t = folder_target(sides, "d/", true).unwrap();
+    assert_eq!(t.paths, ["d"]);
+    assert!(t.source.contains("(the version before "), "{}", t.source);
+    let plan = repo.restore_plan(&t).unwrap();
+    assert_eq!((plan.written.as_slice(), plan.deleted.as_slice()), (&["d/x".to_string(), "d/y".to_string()][..], &["d/z".to_string()][..]));
+    repo.restore(&plan, true).unwrap();
+    assert_eq!((read(&dir, "d/x"), read(&dir, "d/y")), ("x1\n".into(), "y1\n".into()));
+    assert!(!dir.join("d/z").exists());
+    // And as c2 has it again (d/y tracked again: it goes).
+    let plan = repo.restore_plan(&folder_target(sides, "d", false).unwrap()).unwrap();
+    assert_eq!((plan.written.as_slice(), plan.deleted.as_slice()), (&["d/x".to_string(), "d/z".to_string()][..], &["d/y".to_string()][..]));
+    repo.restore(&plan, true).unwrap();
+    assert_eq!(read(&dir, "d/z"), "z2\n");
+    assert!(!dir.join("d/y").exists());
+
+    let root = version_sides(DiffSource::Commit { id: c1, parents: &[], stash: false });
+    assert!(folder_target(root, "d", true).unwrap_err().contains("no parent"));
+    let stash = version_sides(DiffSource::Commit { id: c2, parents: &[c1], stash: true });
+    assert!(folder_target(stash, "d", false).unwrap_err().contains("stash"));
 }
 
 /// What the apps show of a working state: each section's files with their status letters

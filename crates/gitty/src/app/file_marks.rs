@@ -1,17 +1,32 @@
 //! Several files at once and the folder rows of the tree view, as in gitti
-//! (`gitti-app/src/app/file_marks.rs`). Space on a file row marks it (on a folder row: its
-//! files); s / u / d, the diff menu and the palette then act on the marked files — Stage,
-//! Unstage, Discard, Stash, Open in Editor, Copy Paths. Esc clears the marks (after a
-//! line selection). The tree (`changes_as_tree`, shared with gitti) is switched in the
-//! diff menu and the palette. Models: `gitti_core::rows::{FileMarks, Folders}`.
+//! (`gitti-app/src/app/file_marks.rs`, `tree_rows.rs`). Space on a file row marks it (on a
+//! folder row: its files); s / u / d, the diff menu and the palette then act on the marked
+//! files — Stage, Unstage, Discard, Stash, Open in Editor, Copy Paths. Esc clears the
+//! marks (after a line selection). The tree (`changes_as_tree`, shared with gitti) is in
+//! every diff — a commit's folder row restores the folder from the commit — and is
+//! switched in the diff menu and the palette, as its style (`tree_style`: indented / path
+//! headers; drawn in `ui.rs`). Models: `gitti_core::rows::{FileMarks, Folders}`.
 
 use gitti_core::patch::PatchMode;
-use gitti_core::rows::{DiffRow, Folder, Src, discard_question, files_word};
+use gitti_core::rows::{DiffRow, Folder, Src, TREE_STYLE_LABEL, TreeStyle, discard_question, files_word};
 
 use super::{App, Detail, work_files};
 use crate::modal::{MenuItem, PickItem};
 
 impl App {
+    /// "Tree with Path Headers" on / off (palette, diff menu; runs no git): folder rows
+    /// drawn like file headers, files by name. Turns the tree on when it is off.
+    pub fn toggle_tree_style(&mut self) {
+        self.tree_style = self.tree_style.other();
+        if !self.changes_tree {
+            self.toggle_changes_tree();
+        }
+        self.set_info(match self.tree_style {
+            TreeStyle::PathHeaders => "Tree drawn with path headers",
+            TreeStyle::Indented => "Tree drawn indented",
+        });
+    }
+
     /// "Changes as Tree" on / off (palette, diff menu; runs no git).
     pub fn toggle_changes_tree(&mut self) {
         self.changes_tree = !self.changes_tree;
@@ -61,7 +76,16 @@ impl App {
         self.diff_offset = gitti_core::nav::keep_visible(self.diff_offset, self.diff_cursor, h, self.rows.len());
     }
 
+    /// The paths of the files listed under a folder row (a working-directory section's or
+    /// a commit's).
     fn folder_paths(&self, src: Src, folder: &Folder) -> Vec<String> {
+        if src == Src::Commit {
+            return folder
+                .files
+                .iter()
+                .filter_map(|&i| Some(self.file_diff(src, i)?.path().to_string()))
+                .collect();
+        }
         let files = work_files(&self.working, src);
         folder.files.iter().filter_map(|&i| Some(files.get(i)?.path().to_string())).collect()
     }
@@ -230,9 +254,7 @@ impl App {
     /// The diff menu's entries for the marked files and for a folder row.
     pub(crate) fn marks_menu_items(&self) -> Vec<MenuItem> {
         let mut items = Vec::new();
-        if !matches!(self.detail, Detail::Worktree) {
-            return items;
-        }
+        let worktree = matches!(self.detail, Detail::Worktree);
         // A stash would end a merge / rebase / cherry-pick / revert half-done.
         let busy = gitti_core::availability::in_progress(self.repo_state);
         let stash_item =
@@ -252,16 +274,19 @@ impl App {
                 Src::Staged => items.push(MenuItem::new(format!("Unstage Folder ({n})"), |app| {
                     app.folder_action(PatchMode::Unstage)
                 })),
-                _ => {}
+                Src::Commit => items.extend(self.restore_folder_items(&f.path)),
+                Src::Conflicted => {}
             }
             if matches!(src, Src::Unstaged | Src::Staged) {
                 items.push(stash_item(format!("Stash Folder ({n})…"), paths.clone()));
             }
             let dir = format!("{}/", f.path);
             items.push(MenuItem::new("Copy Folder Path", move |app| app.copy(dir)));
+            let text = paths.join("\n");
+            items.push(MenuItem::new(format!("Copy Paths of Its Files ({n})"), move |app| app.copy(text)));
             items.push(MenuItem::separator());
         }
-        if self.marks.is_empty() {
+        if self.marks.is_empty() || !worktree {
             return items;
         }
         let n = files_word(self.marks.len());
@@ -294,21 +319,40 @@ impl App {
         items
     }
 
-    /// The tree toggle's diff menu entry.
-    pub(crate) fn tree_menu_item(&self) -> MenuItem {
-        MenuItem::new(
-            format!("Changes as Tree: {}", super::on_off(self.changes_tree)),
-            |app| app.toggle_changes_tree(),
-        )
+    /// The tree toggles' diff menu entries.
+    pub(crate) fn tree_menu_items(&self) -> Vec<MenuItem> {
+        vec![
+            MenuItem::new(
+                format!("Changes as Tree: {}", super::on_off(self.changes_tree)),
+                |app| app.toggle_changes_tree(),
+            ),
+            MenuItem::new(
+                format!(
+                    "{TREE_STYLE_LABEL}: {}",
+                    super::on_off(self.changes_tree && self.tree_style == TreeStyle::PathHeaders)
+                ),
+                |app| app.toggle_tree_style(),
+            ),
+        ]
     }
 
     /// Palette entries of this module.
     pub(crate) fn file_marks_palette_items(&self) -> Vec<PickItem> {
-        let mut items = vec![PickItem::new(
-            format!("Changes as Tree: {}", super::on_off(self.changes_tree)),
-            "working directory: folders instead of paths",
-            |app: &mut App| app.toggle_changes_tree(),
-        )];
+        let mut items = vec![
+            PickItem::new(
+                format!("Changes as Tree: {}", super::on_off(self.changes_tree)),
+                "every diff: folders instead of paths",
+                |app: &mut App| app.toggle_changes_tree(),
+            ),
+            PickItem::new(
+                format!(
+                    "{TREE_STYLE_LABEL}: {}",
+                    super::on_off(self.changes_tree && self.tree_style == TreeStyle::PathHeaders)
+                ),
+                "folders drawn like file headers, files by name",
+                |app: &mut App| app.toggle_tree_style(),
+            ),
+        ];
         if !self.marks.is_empty() {
             let n = files_word(self.marks.len());
             items.push(PickItem::new(format!("Stage Marked ({n})"), "", |app: &mut App| {

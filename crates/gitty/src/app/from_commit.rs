@@ -113,21 +113,26 @@ impl App {
         let Some(f) = self.file_diff(src, file).filter(|_| src == Src::Commit) else {
             return Vec::new();
         };
-        let source = match &cv.compare {
-            Some(c) => DiffSource::Compare {
-                old: c.old.commit(),
-                new: c.new.commit(),
-            },
-            None => DiffSource::Commit {
-                id: cv.details.id,
-                parents: &cv.details.parents,
-                stash: cv.stash.is_some(),
-            },
-        };
-        let sides = version_sides(source);
+        let sides = shown_sides(cv);
         [(restore::THIS_LABEL, false), (restore::BEFORE_LABEL, true)]
             .into_iter()
             .map(|(label, before)| match restore::restore_target(sides, f, before) {
+                Ok(t) => MenuItem::new(label, move |app: &mut App| app.plan_restore(t)),
+                Err(why) => MenuItem::new(label, |_| {}).unless(Some(&why)),
+            })
+            .collect()
+    }
+
+    /// The diff menu's restore entries for a folder row of a commit's tree: the folder as
+    /// the commit has it or as before it (the plan says what is written, deleted, lost).
+    pub(crate) fn restore_folder_items(&self, path: &str) -> Vec<MenuItem> {
+        let Detail::Commit(cv) = &self.detail else {
+            return Vec::new();
+        };
+        let sides = shown_sides(cv);
+        [(restore::FOLDER_THIS_LABEL, false), (restore::FOLDER_BEFORE_LABEL, true)]
+            .into_iter()
+            .map(|(label, before)| match restore::folder_target(sides, path, before) {
                 Ok(t) => MenuItem::new(label, move |app: &mut App| app.plan_restore(t)),
                 Err(why) => MenuItem::new(label, |_| {}).unless(Some(&why)),
             })
@@ -247,4 +252,22 @@ impl App {
             Reread::Snapshot => self.run_op("Restore", false, After::Summary, op),
         }
     }
+}
+
+/// The two sides of the shown commit / comparison (for restoring).
+fn shown_sides(
+    cv: &super::CommitView,
+) -> (Option<gitti_core::version_file::VersionSide>, Option<gitti_core::version_file::VersionSide>) {
+    let source = match &cv.compare {
+        Some(c) => DiffSource::Compare {
+            old: c.old.commit(),
+            new: c.new.commit(),
+        },
+        None => DiffSource::Commit {
+            id: cv.details.id,
+            parents: &cv.details.parents,
+            stash: cv.stash.is_some(),
+        },
+    };
+    version_sides(source)
 }

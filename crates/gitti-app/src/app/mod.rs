@@ -17,6 +17,7 @@ mod conflict_ui;
 mod diff_view;
 mod ext_tools;
 mod file_marks;
+mod tree_rows;
 mod file_tabs;
 mod folder_picker;
 mod from_commit;
@@ -102,7 +103,7 @@ use gitti_core::store::PaneLayout;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::rows::{DiffRow, Expansion, LineSel, Src, build_commit_rows_noted, line_part_range};
+use crate::rows::{CommitRows, DiffRow, Expansion, LineSel, Src, line_part_range};
 use crate::probe::ProbeExt as _;
 use crate::shortcuts as tips;
 use crate::theme::{PaletteExt as _, Settings};
@@ -1300,6 +1301,7 @@ impl GittiApp {
         let before = self.rows.clone();
         self.commit_fs = self.shown_commit_fs();
         self.folders = Default::default();
+        let mut folders_built = gitti_core::rows::Folders::default();
         self.rows_for = matches!(self.detail, Detail::Worktree).then(|| self.working.clone());
         self.rows = Arc::new(match &self.detail {
             Detail::Worktree => self.worktree_rows(wrap),
@@ -1307,21 +1309,31 @@ impl GittiApp {
                 // A comparison has its banner above the list instead of a header.
                 let header = if cv.compare.is_some() { 0 } else { self.header_rows };
                 let mut rows = vec![DiffRow::HeaderSpace; header];
-                let built = self.with_note_wrap(|notes| {
-                    build_commit_rows_noted(
-                        &cv.files,
-                        self.file_tab,
-                        &self.expansion,
-                        wrap,
-                        Some(&self.commit_fs),
+                // A search in the changes: the tree of the files with matches only.
+                let filter = self.change_rows_filter(cv);
+                let keep = |i: usize| filter.as_ref().is_none_or(|f| f.keeps_file(i));
+                let (built, folders) = self.with_note_wrap(|notes| {
+                    CommitRows {
+                        files: &cv.files,
+                        only: self.file_tab,
+                        fs: Some(&self.commit_fs),
                         notes,
-                    )
+                        tree: self.settings.changes_as_tree,
+                        keep: filter.is_some().then_some(&keep as &dyn Fn(usize) -> bool),
+                    }
+                    .build(&self.expansion, wrap)
                 });
+                folders_built = folders;
                 rows.extend(self.change_search_rows(cv, built));
                 rows
             }
             _ => Vec::new(),
         });
+        if !folders_built.is_empty() {
+            self.folders = folders_built;
+        }
+        // Where each folder's rows are (the sticky folder row, `diff_view.rs`).
+        self.folders.index_rows(&self.rows);
         // Row indices of a character selection only stay meaningful for the same rows.
         if *before != *self.rows {
             self.text_sel = None;
@@ -3856,7 +3868,7 @@ impl Render for GittiApp {
         let root = self.restore_contains_actions(root, cx);
         let root = self.commit_lines_actions(root, cx);
         let root = self.stash_ui_actions(root, cx);
-        let root = self.file_marks_actions(root, cx);
+        let root = self.tree_actions(root, cx);
         let root = self.pick_several_actions(root, cx);
         let root = self.patch_actions(root, cx);
         let root = self.list_layout_actions(root, cx);

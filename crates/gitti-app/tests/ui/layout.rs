@@ -23,6 +23,7 @@ pub fn main() {
     let merge_conflict_repo = make_conflict_repo(&tmp.path().join("merge-conflict"), true);
     let wt_repo = make_worktrees_repo(&tmp.path().join("wt"));
     let folder_repo = make_folder_repo(&tmp.path().join("folders"));
+    let tree_repo = make_tree_repo(&tmp.path().join("tree"));
     let remotes_repo = make_remotes_repo(&tmp.path().join("remotes"));
     let marks_repo = make_marks_repo(&tmp.path().join("marks"));
     let marks_sweep_repo = make_marks_repo(&tmp.path().join("marks-sweep"));
@@ -64,6 +65,7 @@ pub fn main() {
         ("commit_list_layouts", commit_list_layouts),
         ("ref_badges_sweep", ref_badges_sweep),
         ("delete_conflict_choices", delete_conflict_choices),
+        ("tree_sweep", tree_sweep),
     ];
     common::run(tests, |name| {
         if name == "merge_sync_scroll" {
@@ -76,6 +78,8 @@ pub fn main() {
             merge_conflict_repo.clone()
         } else if name == "sidebar_worktrees_sweep" {
             wt_repo.clone()
+        } else if name == "tree_sweep" {
+            tree_repo.clone()
         } else if name == "folder_picker_sweep" {
             folder_repo.clone()
         } else if name == "toolbar_command_bar" {
@@ -1274,6 +1278,76 @@ fn make_folder_repo(dir: &std::path::Path) -> std::path::PathBuf {
     git(&d, &["add", "."]);
     git(&d, &["commit", "-qm", "Folders"]);
     d
+}
+
+/// [`make_folder_repo`] (its last commit: 30 chains `dirNN/sub/deeper/x.txt` and a very
+/// long folder name) with three of those files changed in the working tree and an
+/// untracked one.
+fn make_tree_repo(dir: &std::path::Path) -> std::path::PathBuf {
+    let d = make_folder_repo(dir);
+    for i in [0, 1, 7] {
+        std::fs::write(d.join(format!("dir{i:02}/sub/deeper/x.txt")), "changed\nlines\n").unwrap();
+    }
+    std::fs::write(d.join("dir03/sub/new.txt"), "new\n").unwrap();
+    d
+}
+
+/// The tree in both styles, in a commit (deep chains compacted, a very long folder name)
+/// and in the working directory, at the sweep's sizes and fonts: folder rows and the
+/// sticky folder keep the layout's invariants (inside the list, no overlap, the sticky
+/// folder above the sticky file); scrolled, the sticky folder shows.
+fn tree_sweep(ui: &mut Ui) {
+    let head = git_out(&ui.workdir(), &["rev-parse", "HEAD"]).trim().to_string();
+    ui.step("action:gitti::ToggleChangesTree");
+    for style in ["indented", "path headers"] {
+        if style == "path headers" {
+            ui.step("action:gitti::ToggleTreeStyle");
+        }
+        for pt in points() {
+            let ctx = format!("{style}, {}", set_point(ui, pt));
+            ui.step(&format!("select:{head}"));
+            ui.wait_real(1500, |ui| ui.ui_state().rows.iter().any(|r| r.starts_with("folder Commit")));
+            ui.check(&format!("{ctx}, commit top"));
+            let rows = ui.ui_state().rows;
+            let folders = rows.iter().filter(|r| r.starts_with("folder Commit")).count();
+            // 30 chains + the long folder: one row each.
+            if folders != 31 || !rows.iter().any(|r| r == "folder Commit dir00/sub/deeper") {
+                ui.fail(format!("{ctx}: {folders} folder rows of the commit"));
+            }
+            let mut sticky = false;
+            for i in 0..12 {
+                ui.wheel("diff-list", 90.);
+                let p = ui.check(&format!("{ctx}, commit scrolled {i}"));
+                sticky |= find(&p, "sticky-folder").and_then(Probe::visible).is_some();
+            }
+            if !sticky {
+                ui.fail(format!("{ctx}: no sticky folder while scrolling the commit"));
+            }
+            ui.step("select:0");
+            let p = ui.check(&format!("{ctx}, working directory"));
+            let rows = ui.ui_state().rows;
+            for row in ["folder Unstaged dir00/sub/deeper", "folder Unstaged dir03/sub"] {
+                if !rows.iter().any(|r| r == row) {
+                    ui.fail(format!("{ctx}: no {row}: {rows:?}"));
+                }
+            }
+            // (A row wholly shown has its button — where the list has room for it.)
+            let wide = find(&p, "diff-list").is_some_and(|l| f32::from(l.bounds.size.width) >= 500.);
+            if wide
+                && find(&p, "folder:unstaged/dir00/sub/deeper").is_some_and(|r| r.visible() == Some(r.bounds))
+                && find(&p, "folder-stage:unstaged/dir00/sub/deeper").and_then(Probe::visible).is_none()
+            {
+                ui.fail(format!("{ctx}: a folder row without its Stage button"));
+            }
+            for dy in [70., 210.] {
+                ui.wheel("diff-list", dy);
+                ui.check(&format!("{ctx}, working directory scrolled {dy}"));
+            }
+        }
+    }
+    ui.step("action:gitti::ToggleTreeStyle");
+    ui.step("action:gitti::ToggleChangesTree");
+    reset_point(ui);
 }
 
 /// [`make_repo`] with two (bare) remotes and no upstream: Push… lists both, a plain Pull

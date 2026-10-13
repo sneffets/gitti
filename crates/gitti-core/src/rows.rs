@@ -15,7 +15,7 @@ mod tree;
 pub use anchor::{AnchorAt, AnchorHit, RowAnchor, RowFiles, find_anchor, reveal_above, row_anchor};
 pub use groups::{Group, LineTotals, WorktreeTotals, group_files, group_paths, grouped};
 pub use marks::{FileMarks, discard_question, file_order, files_word};
-pub use tree::{Folder, Folders, file_name, parent_folder};
+pub use tree::{Folder, Folders, TREE_STYLE_LABEL, TreeStyle, file_name, parent_folder};
 
 /// Where a diff comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -594,7 +594,11 @@ pub fn build_worktree_view(
         let files = section(ws, src);
         let file = |rows: &mut Vec<DiffRow>, i: usize| {
             let f = &files[i];
-            rows.push(DiffRow::Spacer);
+            // A band between files, none right under the folder row (as little room for
+            // the tree as possible).
+            if !matches!(rows.last(), Some(DiffRow::Folder { .. })) {
+                rows.push(DiffRow::Spacer);
+            }
             push_file(rows, src, i, f.diff.as_ref(), exp, wrap, &path_notes(ws, f, notes));
         };
         if !tree {
@@ -604,18 +608,13 @@ pub fn build_worktree_view(
             return;
         }
         let collapsed = |path: &str| exp.is_folder_collapsed(src, group, path);
-        let build = tree::TreeBuild { src, group, files, collapsed: &collapsed };
+        let path = |i: usize| files[i].path();
+        let totals = |of: &[usize]| LineTotals::of_work(of.iter().map(|&i| &files[i]));
+        let build = tree::TreeBuild { src, group, path: &path, totals: &totals, collapsed: &collapsed };
         for item in build.items(members, &mut folders) {
             match item {
                 tree::TreeItem::Folder(folder) => {
-                    // A band between a file's diff and the next folder, none between headers.
-                    if !matches!(
-                        rows.last(),
-                        Some(DiffRow::Section(_) | DiffRow::Group(_) | DiffRow::Folder { .. })
-                    ) {
-                        rows.push(DiffRow::Spacer);
-                    }
-                    rows.push(DiffRow::Folder { src, folder });
+                    push_folder_row(rows, src, folder);
                 }
                 tree::TreeItem::File(i) => file(rows, i),
             }
@@ -656,6 +655,17 @@ pub fn build_worktree_view(
         push_files(&mut rows, src, None, &members);
     }
     (rows, folders)
+}
+
+/// A folder row, a band before it after a file's diff (none between header rows).
+fn push_folder_row(rows: &mut Vec<DiffRow>, src: Src, folder: usize) {
+    if !matches!(
+        rows.last(),
+        None | Some(DiffRow::Section(_) | DiffRow::Group(_) | DiffRow::Folder { .. } | DiffRow::HeaderSpace)
+    ) {
+        rows.push(DiffRow::Spacer);
+    }
+    rows.push(DiffRow::Folder { src, folder });
 }
 
 /// The explanation rows ([`DiffRow::PathNote`]) of a working-directory file: (line, part)
@@ -835,18 +845,59 @@ pub fn build_commit_rows_noted(
     fs: Option<&crate::fs_paths::PathReport>,
     notes: &NoteWrap,
 ) -> Vec<DiffRow> {
-    let mut rows = Vec::new();
-    for (i, f) in files.iter().enumerate() {
-        if only.is_some_and(|o| o != i) {
-            continue;
+    CommitRows { files, only, fs, notes, tree: false, keep: None }.build(exp, wrap).0
+}
+
+/// The rows of a commit's (comparison's, stash's) files: a list, or a tree of folders.
+pub struct CommitRows<'a> {
+    pub files: &'a [FileDiff],
+    /// One file only (a file tab): never a tree.
+    pub only: Option<usize>,
+    /// Paths this file system can't hold ([`build_commit_rows_noted`]).
+    pub fs: Option<&'a crate::fs_paths::PathReport>,
+    pub notes: &'a NoteWrap<'a>,
+    /// As a tree of folders (setting `changes_as_tree`).
+    pub tree: bool,
+    /// The files to show (a search in the changes: those with matches); `None` = all.
+    pub keep: Option<&'a dyn Fn(usize) -> bool>,
+}
+
+impl CommitRows<'_> {
+    /// The rows and their folders ([`Folders`], empty for the list). A band separates
+    /// files, none stands under a folder row.
+    pub fn build(&self, exp: &Expansion, wrap: Option<usize>) -> (Vec<DiffRow>, Folders) {
+        let mut rows = Vec::new();
+        let mut folders = Folders::default();
+        let members: Vec<usize> = (0..self.files.len())
+            .filter(|&i| self.only.is_none_or(|o| o == i) && self.keep.is_none_or(|k| k(i)))
+            .collect();
+        let file = |rows: &mut Vec<DiffRow>, i: usize| {
+            let f = &self.files[i];
+            if !matches!(rows.last(), None | Some(DiffRow::Folder { .. })) {
+                rows.push(DiffRow::Spacer);
+            }
+            let path_notes = self.fs.map(|r| change_notes(r, f, self.notes)).unwrap_or_default();
+            push_file(rows, Src::Commit, i, Some(f), exp, wrap, &path_notes);
+        };
+        if !self.tree || self.only.is_some() {
+            for &i in &members {
+                file(&mut rows, i);
+            }
+            return (rows, folders);
         }
-        if !rows.is_empty() {
-            rows.push(DiffRow::Spacer);
+        let src = Src::Commit;
+        let collapsed = |path: &str| exp.is_folder_collapsed(src, None, path);
+        let path = |i: usize| self.files[i].path();
+        let totals = |of: &[usize]| LineTotals::of(of.iter().map(|&i| &self.files[i]));
+        let build = tree::TreeBuild { src, group: None, path: &path, totals: &totals, collapsed: &collapsed };
+        for item in build.items(&members, &mut folders) {
+            match item {
+                tree::TreeItem::Folder(folder) => push_folder_row(&mut rows, src, folder),
+                tree::TreeItem::File(i) => file(&mut rows, i),
+            }
         }
-        let path_notes = fs.map(|r| change_notes(r, f, notes)).unwrap_or_default();
-        push_file(&mut rows, Src::Commit, i, Some(f), exp, wrap, &path_notes);
+        (rows, folders)
     }
-    rows
 }
 
 /// The issue of a commit's file `f` in `fs` (its report): deleted files have none.
@@ -1468,6 +1519,167 @@ mod tests {
             ["S Unstaged", "D a (2)", "  D b/c (1)", "    F d.txt", "  F x.txt", "D e (1)", "  F dir/"]
         );
         assert_eq!(folders.get(1).unwrap().path, "a/b/c");
+    }
+
+    /// A commit touching `paths` (one `-a +b` line each).
+    fn commit_files(paths: &[&str]) -> Vec<FileDiff> {
+        let text: String = paths
+            .iter()
+            .map(|p| format!("diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n@@ -1 +1 @@\n-a\n+b\n"))
+            .collect();
+        parse_unified(&text)
+    }
+
+    /// The header rows of a commit's tree: `D` folder (label at its depth), `F` file.
+    fn commit_tree_text(files: &[FileDiff], rows: &[DiffRow], folders: &Folders) -> Vec<String> {
+        rows.iter()
+            .filter_map(|r| match *r {
+                DiffRow::Folder { folder, .. } => {
+                    let f = folders.get(folder).unwrap();
+                    Some(format!("{}D {} ({})", "  ".repeat(f.depth as usize), f.label, f.files.len()))
+                }
+                DiffRow::File { src, file } => {
+                    let depth = folders.file_depth(src, file).unwrap_or(0);
+                    Some(format!("{}F {}", "  ".repeat(depth as usize), file_name(files[file].path())))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A commit's files as a tree: chains compact at any depth (also deep ones, as in a
+    /// kernel tree), no band under a folder row, one between a file and the next folder;
+    /// a file tab and the setting off give the list.
+    #[gitti_test::test]
+    fn commit_files_as_a_tree() {
+        let files = commit_files(&[
+            "src/claude_code/gitti/Cargo.lock",
+            "src/claude_code/gitti/crates/gitti-app/src/app/fs_paths.rs",
+            "src/claude_code/gitti/crates/gitti-app/src/app/message_editor.rs",
+            "drivers/net/ethernet/intel/ice/ice_main.c",
+            "drivers/net/ethernet/intel/ice/ice_lib.c",
+            "drivers/net/ethernet/intel/igb/igb_main.c",
+            "README",
+        ]);
+        let mut exp = Expansion::default();
+        let notes = NoteWrap::None;
+        let view = |exp: &Expansion, tree: bool, only: Option<usize>| {
+            CommitRows { files: &files, only, fs: None, notes: &notes, tree, keep: None }.build(exp, None)
+        };
+        let (flat, none) = view(&exp, false, None);
+        assert_eq!(flat, build_commit_rows(&files, None, &exp, None));
+        assert!(none.is_empty());
+        let (rows, folders) = view(&exp, true, None);
+        assert_eq!(
+            commit_tree_text(&files, &rows, &folders),
+            [
+                "D drivers/net/ethernet/intel (3)",
+                "  D ice (2)",
+                "    F ice_main.c",
+                "    F ice_lib.c",
+                "  D igb (1)",
+                "    F igb_main.c",
+                "D src/claude_code/gitti (3)",
+                "  D crates/gitti-app/src/app (2)",
+                "    F fs_paths.rs",
+                "    F message_editor.rs",
+                "  F Cargo.lock",
+                "F README",
+            ]
+        );
+        // Bands: none at the start or under a folder, one after a file's diff.
+        assert!(matches!(rows[0], DiffRow::Folder { .. }));
+        for (i, r) in rows.iter().enumerate().skip(1) {
+            match r {
+                DiffRow::Folder { .. } if matches!(rows[i - 1], DiffRow::Line { .. }) => {
+                    panic!("no band before folder row {i}")
+                }
+                DiffRow::Spacer => assert!(!matches!(rows[i - 1], DiffRow::Folder { .. }), "band under a folder"),
+                _ => {}
+            }
+        }
+        let app = folders.position(Src::Commit, None, "src/claude_code/gitti/crates/gitti-app/src/app").unwrap();
+        let app_f = folders.get(app).unwrap();
+        assert_eq!(app_f.prefix(), "src/claude_code/gitti/");
+        assert_eq!(app_f.parent, folders.position(Src::Commit, None, "src/claude_code/gitti"));
+        assert_eq!((app_f.totals.added, app_f.totals.removed, app_f.totals.files), (2, 2, 2));
+        assert_eq!(folders.file_folder(Src::Commit, 1), Some(app));
+        assert_eq!(folders.file_folder(Src::Commit, 6), None, "README is at the top");
+        // Every file once, with its index.
+        let mut shown: Vec<usize> = rows.iter().filter_map(|r| match r {
+            DiffRow::File { file, .. } => Some(*file),
+            _ => None,
+        }).collect();
+        shown.sort();
+        assert_eq!(shown, (0..files.len()).collect::<Vec<_>>());
+        // Folded: the row stays, its insides go.
+        exp.toggle_folder(Src::Commit, None, "drivers/net/ethernet/intel");
+        let (rows, folders) = view(&exp, true, None);
+        assert_eq!(commit_tree_text(&files, &rows, &folders)[..2], ["D drivers/net/ethernet/intel (3)", "D src/claude_code/gitti (3)"]);
+        // A file tab: the list.
+        let (tab, folders) = view(&exp, true, Some(3));
+        assert_eq!(tab, build_commit_rows(&files, Some(3), &exp, None));
+        assert!(folders.is_empty());
+        // Only the files a search keeps.
+        let keep = |i: usize| i == 1 || i == 6;
+        let (rows, folders) =
+            CommitRows { files: &files, only: None, fs: None, notes: &notes, tree: true, keep: Some(&keep) }
+                .build(&Expansion::default(), None);
+        assert_eq!(
+            commit_tree_text(&files, &rows, &folders),
+            ["D src/claude_code/gitti/crates/gitti-app/src/app (1)", "  F fs_paths.rs", "F README"]
+        );
+    }
+
+    /// Where each folder's rows are, and which folder stays on top for a top row: the
+    /// innermost one of the top row's file (one folder, never a stack).
+    #[gitti_test::test]
+    fn folder_rows_and_the_sticky_folder() {
+        let files = commit_files(&["a/b/c/d.txt", "a/b/c/e.txt", "a/x.txt", "top.txt"]);
+        let notes = NoteWrap::None;
+        let (body, mut folders) =
+            CommitRows { files: &files, only: None, fs: None, notes: &notes, tree: true, keep: None }
+                .build(&Expansion::default(), None);
+        // As gitti has them: header space before, indexed after.
+        let mut rows = vec![DiffRow::HeaderSpace; 2];
+        rows.extend(body);
+        folders.index_rows(&rows);
+        let kinds: String = rows.iter().map(|r| match r {
+            DiffRow::HeaderSpace => 'h',
+            DiffRow::Folder { .. } => 'D',
+            DiffRow::File { .. } => 'F',
+            DiffRow::Spacer => '_',
+            _ => '.',
+        }).collect();
+        assert_eq!(kinds, "hhDDF..._F..._F..._F...");
+        let a = folders.position(Src::Commit, None, "a").unwrap();
+        let c = folders.position(Src::Commit, None, "a/b/c").unwrap();
+        assert_eq!(folders.get(c).unwrap().label, "b/c");
+        assert_eq!(folders.rows_of(a), Some((2, 18)), "up to the band before top.txt");
+        assert_eq!(folders.rows_of(c), Some((3, 13)), "up to the band before x.txt");
+        assert_eq!(folders.sticky(&rows, 0), None);
+        assert_eq!(folders.sticky(&rows, 2), Some(a));
+        assert_eq!(folders.sticky(&rows, 3), Some(c));
+        assert_eq!(folders.sticky(&rows, 6), Some(c), "a line of d.txt");
+        assert_eq!(folders.sticky(&rows, 8), Some(c), "the band after it");
+        assert_eq!(folders.sticky(&rows, 14), Some(a), "x.txt is in a");
+        assert_eq!(folders.sticky(&rows, 19), None, "top.txt is at the top");
+        assert_eq!(folders.sticky(&rows, 99), None);
+        // A folded folder: its row alone.
+        let mut exp = Expansion::default();
+        exp.toggle_folder(Src::Commit, None, "a/b/c");
+        let (rows, mut folders) =
+            CommitRows { files: &files, only: None, fs: None, notes: &notes, tree: true, keep: None }.build(&exp, None);
+        folders.index_rows(&rows);
+        assert_eq!(folders.rows_of(c), Some((1, 2)));
+        assert_eq!(folders.rows_of(a), Some((0, 6)));
+    }
+
+    #[gitti_test::test]
+    fn tree_styles() {
+        assert_eq!(TreeStyle::default(), TreeStyle::Indented);
+        assert_eq!(TreeStyle::Indented.other(), TreeStyle::PathHeaders);
+        assert_eq!(serde_json::to_string(&TreeStyle::PathHeaders).unwrap(), "\"path_headers\"");
     }
 
     #[gitti_test::test]

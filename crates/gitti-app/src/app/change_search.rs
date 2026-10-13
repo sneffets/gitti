@@ -311,6 +311,15 @@ impl GittiApp {
 
     /// The rows of the shown commit while searching: limited to the matching hunks (all
     /// rows when nothing matches, e.g. a commit selected outside the hits, or "Show all").
+    /// The filter [`Self::change_search_rows`] applies to the shown commit's rows, if any
+    /// (the tree is built of the files it keeps).
+    pub(super) fn change_rows_filter(&self, cv: &CommitView) -> Option<Rc<HunkFilter>> {
+        if self.change_search.show_all || cv.compare.is_some() {
+            return None;
+        }
+        self.change_filter(cv).filter(|f| f.any())
+    }
+
     pub(super) fn change_search_rows(&self, cv: &CommitView, rows: Vec<DiffRow>) -> Vec<DiffRow> {
         if self.change_search.show_all || cv.compare.is_some() {
             return rows;

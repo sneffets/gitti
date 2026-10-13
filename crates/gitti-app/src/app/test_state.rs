@@ -151,6 +151,12 @@ impl GittiApp {
         if let DiffRow::Group(g) = row {
             out.push_str(&format!(" {}", g.name()));
         }
+        // A folder of the tree: its section and path (`folder Commit src/app`).
+        if let DiffRow::Folder { src, folder } = *row
+            && let Some(f) = self.folders.get(folder)
+        {
+            out.push_str(&format!(" {src:?} {}", f.path));
+        }
         if let Some((src, file)) = row.file_ref() {
             // A commit's file header: as shown (`old → new` for a rename).
             let path = match (row, self.file_diff(src, file)) {

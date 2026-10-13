@@ -1,6 +1,6 @@
 //! RS — reset and restore: moving a branch back with its three modes around uncommitted
 //! work, undoing a reset through the reflog, moving another branch, restoring the version
-//! before a commit.
+//! before a commit, restoring a folder from a commit's tree.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -383,6 +383,76 @@ pub mod restore_before {
         k.text("added.txt", e.file("added.txt").as_deref(), None);
         k.text("added.txt in the index", e.index("added.txt").as_deref(), None);
         k.text("old.txt", e.file("old.txt").as_deref(), Some(&old()));
+        k.done()
+    }
+}
+
+/// **RS-11 — restore a folder from a commit's tree.** `main`: `init` (`src/app/a.rs`,
+/// `src/app/b.rs`, `src/lib.rs`, `top.txt`), then [`REWORK`] (changes `a.rs`, deletes
+/// `b.rs`, adds `c.rs`, changes `top.txt`), checked out, clean. The user shows
+/// [`REWORK`] as a tree (its files under one row `src/app`), and on that folder row
+/// chooses "Restore Folder as Before This Commit…" with the index ("Working Tree and
+/// Index").
+///
+/// Expected ([`expect`]): `src/app` as `init` had it in working tree and index — `a.rs`
+/// old, `b.rs` back, `c.rs` gone (all staged); `top.txt` and `src/lib.rs` untouched.
+pub mod restore_folder {
+    use super::*;
+
+    pub const REWORK: &str = "Rework the app";
+    /// The folder row of [`REWORK`]'s tree (the chain `src/app`).
+    pub const FOLDER: &str = "src/app";
+
+    pub fn old_a() -> String {
+        lines("a", 6, &[])
+    }
+
+    pub fn new_a() -> String {
+        lines("a", 6, &[(3, "a 3 reworked")])
+    }
+
+    pub struct Setup {
+        pub init: String,
+        pub commit: String,
+    }
+
+    /// See the module docs. Three git processes.
+    pub fn fixture(dir: &Path) -> Setup {
+        let mut fx = Fixture::new();
+        let init = fx.commit(
+            "main",
+            "init",
+            &[
+                put("src/app/a.rs", &old_a()),
+                put("src/app/b.rs", "b\n"),
+                put("src/lib.rs", "lib\n"),
+                put("top.txt", "top\n"),
+            ],
+        );
+        let c = fx.commit(
+            "main",
+            REWORK,
+            &[
+                put("src/app/a.rs", &new_a()),
+                crate::fixture::del("src/app/b.rs"),
+                put("src/app/c.rs", "c\n"),
+                put("top.txt", "top 2\n"),
+            ],
+        );
+        let ids = fx.build(dir);
+        Setup { init: ids[init].into(), commit: ids[c].into() }
+    }
+
+    /// After the restore with the index. Two git processes.
+    pub fn expect(dir: &Path) -> Result<(), String> {
+        let e = Expect::new(dir);
+        let mut k = Checks::new("RS-11 after restoring src/app as before the commit");
+        k.eq("status", e.status_lines(), status(&["M  src/app/a.rs", "A  src/app/b.rs", "D  src/app/c.rs"]));
+        k.text("src/app/a.rs", e.file("src/app/a.rs").as_deref(), Some(&old_a()));
+        k.text("src/app/b.rs", e.file("src/app/b.rs").as_deref(), Some("b\n"));
+        k.text("src/app/c.rs", e.file("src/app/c.rs").as_deref(), None);
+        k.text("src/app/c.rs in the index", e.index("src/app/c.rs").as_deref(), None);
+        k.text("top.txt", e.file("top.txt").as_deref(), Some("top 2\n"));
         k.done()
     }
 }

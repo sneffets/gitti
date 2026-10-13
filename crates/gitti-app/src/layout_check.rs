@@ -302,9 +302,10 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
     }
 
     // 4. Sticky header rows and the commit header stay inside the diff list (below the
-    //    commit box / file tabs), and the sticky file row is above the sticky hunk row.
+    //    commit box / file tabs); the sticky folder row (the tree) is above the sticky file
+    //    row, that one above the sticky hunk row.
     if let Some(lv) = get("diff-list").and_then(Probe::visible) {
-        for name in ["sticky-file", "sticky-hunk", "commit-header"] {
+        for name in ["sticky-folder", "sticky-file", "sticky-hunk", "commit-header"] {
             if let Some(v) = get(name).and_then(Probe::visible)
                 && !contains(&lv, &v)
             {
@@ -324,6 +325,17 @@ pub fn check(probes: &[Probe]) -> Vec<String> {
         && f32::from(h.bounds.top()) + TOL < f32::from(f.bounds.top())
     {
         out.push("sticky-hunk is above the sticky file row".into());
+    }
+
+    // (The file row pushed out by the next folder slides under the folder row.)
+    if let Some(d) = get("sticky-folder") {
+        for name in ["sticky-file", "sticky-hunk"] {
+            if let Some(r) = get(name)
+                && f32::from(r.bounds.top()) + TOL < f32::from(d.bounds.top())
+            {
+                out.push(format!("{name} is above the sticky folder row"));
+            }
+        }
     }
 
     // 4b. The commit header lies over its `HeaderSpace` rows only: it covers no diff row.

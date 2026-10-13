@@ -42,6 +42,7 @@ pub fn main() {
         ("diff_long_and_wrapped", diff_long_and_wrapped),
         ("diff_anchor_across_toggles", diff_anchor_across_toggles),
         ("sticky_path_in_tree", sticky_path_in_tree),
+        ("sticky_folder_in_a_commit_tree", sticky_folder_in_a_commit_tree),
         ("diff_stays_on_refresh_and_stage", diff_stays_on_refresh_and_stage),
         ("diff_stage_whole_file_shows_the_next", diff_stage_whole_file_shows_the_next),
         ("sidebar_scroll", sidebar_scroll),
@@ -65,6 +66,9 @@ pub fn main() {
         }
         if name == "diff_anchor_across_toggles" {
             return make_ws_repo(&tmp.path().join("ws"));
+        }
+        if name == "sticky_folder_in_a_commit_tree" {
+            return make_tree_commit_repo(&tmp.path().join("tree"));
         }
         if name == "sticky_path_in_tree" {
             return make_nested_repo(&tmp.path().join("nested"));
@@ -434,6 +438,7 @@ impl ScrollUi for Ui {
 const COMMIT_KINDS: &[&str] = &["commit-row"];
 const DIFF_KINDS: &[&str] = &[
     "diff-row",
+    "sticky-folder",
     "sticky-file",
     "sticky-hunk",
     "commit-header",
@@ -531,7 +536,7 @@ fn diff_page_keys(ui: &mut Ui) {
 /// inside the list; whether the sticky file row is shown.
 fn shown_rows(p: &[Probe]) -> Option<(usize, usize, bool)> {
     let list = find(p, "diff-list")?.visible()?;
-    let sticky = ["sticky-file", "sticky-hunk"].map(|n| find(p, n).and_then(Probe::visible));
+    let sticky = ["sticky-file", "sticky-hunk", "sticky-folder"].map(|n| find(p, n).and_then(Probe::visible));
     let covered = sticky.iter().flatten().map(bottom).fold(top(&list), f32::max);
     let rows = p.iter().filter(|q| q.kind() == "diff-row" && q.visible().is_some());
     let first = rows.clone().filter(|q| top(&q.bounds) >= covered - 0.5).filter_map(Probe::index).min()?;
@@ -598,6 +603,136 @@ fn sticky_path_in_tree(ui: &mut Ui) {
     if paths != ["src/app/long.rs"] || find(&p, "folder:unstaged/src/app").and_then(Probe::visible).is_some() {
         ui.fail(format!("sticky header in the tree: {paths:?}, scrolled {y}"));
     }
+}
+
+/// A commit in the shape of a monorepo change: `src/claude_code/gitti/Cargo.lock` and two
+/// long files in `src/claude_code/gitti/crates/gitti-app/src/app/`, plus `README`;
+/// checked out, clean. Returns the commit's id via `TREE_COMMIT`.
+fn make_tree_commit_repo(dir: &Path) -> PathBuf {
+    init_repo(dir);
+    let text = |tag: &str, n: usize| -> String { (0..n).map(|i| format!("{tag} {i}\n")).collect() };
+    let app = "src/claude_code/gitti/crates/gitti-app/src/app";
+    let (fs, me) = (format!("{app}/fs_paths.rs"), format!("{app}/message_editor.rs"));
+    let lock = "src/claude_code/gitti/Cargo.lock";
+    let mut st = Stream::new();
+    let (a, b, c, r) = (text("fs", 60), text("me", 60), text("lock", 6), text("readme", 3));
+    st.commit(
+        "refs/heads/main",
+        "Base",
+        None,
+        &[(fs.as_str(), Some(&a)), (me.as_str(), Some(&b)), (lock, Some(&c)), ("README", Some(&r))],
+    );
+    let (a2, b2, c2, r2) = (text("FS", 60), text("ME", 60), text("LOCK", 6), text("README", 3));
+    st.commit(
+        "refs/heads/main",
+        "Rework the app",
+        None,
+        &[(fs.as_str(), Some(&a2)), (me.as_str(), Some(&b2)), (lock, Some(&c2)), ("README", Some(&r2))],
+    );
+    let ids = st.import(dir);
+    read_tree(dir, "main");
+    TREE_COMMIT.with(|c| *c.borrow_mut() = ids[2].clone());
+    dir.to_path_buf()
+}
+
+thread_local! {
+    static TREE_COMMIT: std::cell::RefCell<String> = std::cell::RefCell::default();
+}
+
+/// A commit's files as a tree, both styles: one row for the chain of folders
+/// `crates/gitti-app/src/app`; scrolled into a file, the sticky rows are its folder (whole
+/// path, one row), the file and the hunk; with path headers the sticky file's name starts
+/// where the sticky folder's path ends; PgDn skips no row under three sticky rows; a click
+/// on the sticky folder folds it and shows its row. Nothing runs git.
+fn sticky_folder_in_a_commit_tree(ui: &mut Ui) {
+    let id = TREE_COMMIT.with(|c| c.borrow().clone());
+    ui.step(&format!("select:{id}"));
+    let n = ui.n_git();
+    ui.step("action:gitti::ToggleChangesTree");
+    // (The commit's files load in the background.)
+    ui.wait_real(1500, |ui| ui.ui_state().rows.iter().any(|r| r.starts_with("folder ")));
+    let folders: Vec<String> =
+        ui.ui_state().rows.into_iter().filter(|r| r.starts_with("folder ")).collect();
+    let app = "src/claude_code/gitti/crates/gitti-app/src/app";
+    if folders != ["folder Commit src/claude_code/gitti", &format!("folder Commit {app}")] {
+        return ui.fail(format!("folder rows of the commit: {folders:?}"));
+    }
+    let sticky = |ui: &mut Ui| {
+        let ws = ui.ws.clone();
+        ui.cx.update(|cx| testing::sticky(&ws, cx))
+    };
+    for style in ["indented", "path headers"] {
+        if style == "path headers" {
+            ui.step("action:gitti::ToggleTreeStyle");
+        }
+        ui.step("focusdiff");
+        ui.key_ff("home", DIFF_KINDS);
+        // Into fs_paths.rs's lines (the first file under the folder).
+        let mut found = false;
+        for _ in 0..40 {
+            ui.wheel_ff("diff-list", 60.);
+            let s = sticky(ui);
+            if s.first().is_some_and(|f| f == &format!("folder:{app}"))
+                && s.get(1).is_some_and(|f| f.ends_with("fs_paths.rs"))
+            {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            let s = sticky(ui);
+            return ui.fail(format!("{style}: never got the folder + file sticky: {s:?}"));
+        }
+        let p = ui.check(&format!("{style}: sticky rows"));
+        let folder_path: Vec<&str> = p.iter().filter_map(|q| q.name.strip_prefix("sticky-folder-path:")).collect();
+        if folder_path != [app] {
+            ui.fail(format!("{style}: the sticky folder shows {folder_path:?}"));
+        }
+        if style == "path headers" {
+            // The file's name continues the folder's path.
+            let (Some(d), Some(f)) = (
+                p.iter().find(|q| q.name.starts_with("sticky-folder-path:")),
+                p.iter().find(|q| q.name == "sticky-path:fs_paths.rs"),
+            ) else {
+                return ui.fail(format!("{style}: no sticky path probes"));
+            };
+            let (end, start) = (f32::from(d.bounds.right()), f32::from(f.bounds.left()));
+            if (end - start).abs() > 3. {
+                ui.fail(format!("{style}: the sticky file's name starts at {start}, the folder's path ends at {end}"));
+            }
+        }
+        // PgDn under three sticky rows: the last row shown becomes the first one below them.
+        for _ in 0..2 {
+            let Some((_, last, _)) = shown_rows(&ui.frame()) else {
+                return ui.fail(format!("{style}: no rows shown"));
+            };
+            let p = ui.key_ff("pagedown", DIFF_KINDS);
+            let Some((first2, _, _)) = shown_rows(&p) else {
+                return ui.fail(format!("{style}: no rows after PgDn"));
+            };
+            if first2 != last {
+                ui.fail(format!("{style}: PgDn showed row {first2} first below the sticky rows, {last} was the last"));
+            }
+        }
+    }
+    // A click on the sticky folder folds it; its row is on top.
+    let s = sticky(ui);
+    let Some(folder) = s.first().and_then(|f| f.strip_prefix("folder:")).map(String::from) else {
+        return ui.fail(format!("no sticky folder to click: {s:?}"));
+    };
+    ui.click_on("sticky-folder", MouseButton::Left);
+    let rows = ui.ui_state().rows;
+    let Some(row) = rows.iter().position(|r| r == &format!("folder Commit {folder}")) else {
+        return ui.fail(format!("folder row gone: {rows:?}"));
+    };
+    if rows.iter().any(|r| r.starts_with("file Commit") && r.contains(&format!("{folder}/")) && !r.ends_with("Cargo.lock")) {
+        ui.fail(format!("{folder} did not fold: {rows:?}"));
+    }
+    let p = ui.frame();
+    if find(&p, &format!("diff-row:{row}:folder")).and_then(Probe::visible).is_none() {
+        ui.fail(format!("the folded folder's row {row} is not shown"));
+    }
+    ui.expect_no_git(n, "the commit's tree");
 }
 
 /// `ws.txt` (300 lines) for the diff anchor scenarios. HEAD changed line 30 and 250 and

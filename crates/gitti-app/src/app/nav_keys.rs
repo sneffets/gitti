@@ -103,7 +103,7 @@ impl GittiApp {
 
     /// Diff: scrolls (gitti's diff has no line cursor) — a row, a page less a row, half a
     /// page, to the top / end. A page keeps one row of the last one in view, also where
-    /// the sticky file / hunk rows cover the top of the list: PgDn puts the last row shown
+    /// the sticky folder / file / hunk rows cover the top of the list: PgDn puts the last row shown
     /// wholly right below them, PgUp brings the first row shown wholly below them to the
     /// bottom — no row is skipped under them.
     fn diff_nav(&mut self, nav: Nav, cx: &mut Context<Self>) {
@@ -112,10 +112,7 @@ impl GittiApp {
         let half = (view / 2.).max(row);
         let (_, y) = self.diff_scroll_y();
         // What the sticky rows cover at the top when the list is scrolled to `at`.
-        let covered = |at: Pixels| {
-            let (file, hunk, _, _) = self.sticky_rows(at, row);
-            row * (file.is_some() as u8 + hunk.is_some() as u8) as f32
-        };
+        let covered = |at: Pixels| row * self.sticky_rows_shown(at) as f32;
         let to = match nav {
             Nav::LineUp => y - row,
             Nav::LineDown => y + row,
@@ -126,11 +123,11 @@ impl GittiApp {
                 to.min(y - row)
             }
             // The last row wholly shown becomes the first one wholly below the sticky rows
-            // (at most two rows: `c` = 2 always fits).
+            // (at most three rows — folder, file, hunk: `c` = 3 always fits).
             Nav::PageDown => {
                 let last = ((y + view) / row + 0.01).floor() - 1.;
-                let mut to = row * (last - 2.);
-                for c in [0., 1.] {
+                let mut to = row * (last - 3.);
+                for c in [0., 1., 2.] {
                     let at = row * (last - c);
                     if covered(at) <= row * c + px(0.5) {
                         to = at;
